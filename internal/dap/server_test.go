@@ -981,6 +981,62 @@ func TestChannelWorkerExampleDebugSession(t *testing.T) {
 	}
 }
 
+func TestChannelWorkerStepReleasesThreadThatClosesChannel(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "channel_step.gb")
+	if err := os.WriteFile(scriptPath, []byte(`import io;
+import async;
+import async.channel as channel;
+
+let jobs = channel.Channel<int>(4);
+
+let worker = async.run(func(): int {
+    let total = 0;
+    while (true) {
+        let job = jobs.recv();
+        if (job == null) {
+            break;
+        }
+        total = total + (job as int);
+    }
+    return total;
+});
+
+for (int n = 1; n <= 4; n++) {
+    jobs.send(n);
+}
+await async.sleep(1000);
+jobs.close();
+
+io.println(await worker);
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newTestSession(t, scriptPath)
+	defer s.close()
+	s.setBreakpoints(scriptPath, 14)
+	s.configurationDone()
+
+	st := s.waitStopped()
+	tid := st.ThreadID
+	for steps := 0; steps < 40; steps++ {
+		s.next(tid)
+		select {
+		case next := <-s.stops:
+			tid = next.ThreadID
+		case <-s.term:
+			if !strings.Contains(s.collectedOutput(), "10") {
+				t.Fatalf("expected output to contain '10', got %q", s.collectedOutput())
+			}
+			return
+		case <-time.After(3 * time.Second):
+			t.Fatal("step deadlocked while the worker waited for another thread to close its channel")
+		}
+	}
+	t.Fatal("channel worker did not terminate after 40 step requests")
+}
+
 // TestEvaluateInWorkerFrame evaluates in a stopped worker frame, resolving its locals.
 func TestEvaluateInWorkerFrame(t *testing.T) {
 	dir := t.TempDir()

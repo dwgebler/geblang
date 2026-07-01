@@ -185,8 +185,10 @@ worker to park at its next statement boundary. This pause is cooperative:
 workers currently inside a native or blocking operation may not park
 immediately, so the adapter reports `allThreadsStopped: false`. **Continue**
 (F5) resumes the focused thread and every worker that has parked. A step action
-(Step Over / Into / Out) advances only the selected thread, leaving parked
-workers paused.
+(Step Over / Into / Out) advances the selected thread in step mode and resumes
+other parked threads in continue mode. This lets those threads satisfy channel,
+lock, and task dependencies needed by the selected thread. They park again
+when the next debugger stop is established.
 
 Only the focused (stopped) thread is fully inspectable. Other worker threads
 appear in the thread list but their call stack and variables are not

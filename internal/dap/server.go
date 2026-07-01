@@ -625,7 +625,7 @@ func (s *Server) resumeAll() {
 	}
 }
 
-// stepThread advances only the focused thread, leaving the world stopped for others.
+// stepThread advances the focused thread while allowing dependencies in other threads to run.
 func (s *Server) stepThread(req *Message, mode stepMode) {
 	var a NextArgs
 	_ = remarshal(req.Arguments, &a)
@@ -648,10 +648,30 @@ func (s *Server) stepThread(req *Message, mode stepMode) {
 	ti.stepDepth = depth
 	ti.stopped = false
 	ti.pendingReason = "" // a pending pause must not survive a step onto this thread's next stop
+	s.stopped = false
 	s.clearFrameRefsLocked()
 	ch := ti.resume
+	var wake []chan stepMode
+	for id, other := range s.threads {
+		if id == tid {
+			continue
+		}
+		other.mode = modeContinue
+		other.pendingReason = ""
+		if other.parked || other.stopped {
+			other.parked = false
+			other.stopped = false
+			wake = append(wake, other.resume)
+		}
+	}
 	s.mu.Unlock()
 	s.sendResponse(req, nil)
+	for _, parked := range wake {
+		select {
+		case parked <- modeContinue:
+		default:
+		}
+	}
 	select {
 	case ch <- mode:
 	default:

@@ -156,7 +156,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: geblang -m <module> [args...]")
 			os.Exit(2)
 		}
-		exitCode, err := runModule(os.Args[2], os.Args[3:], executionAuto, false, os.Stdout, os.Stderr)
+		exitCode, err := runModule(os.Args[2], os.Args[3:], executionAuto, false, nil, os.Stdout, os.Stderr)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -243,10 +243,8 @@ func runScriptOrModule(args []string) {
 		}
 	}
 doneFlags:
-	_ = allowFFI
-
 	if moduleName != "" {
-		exitCode, err := runModule(moduleName, args, mode, traceExec, os.Stdout, os.Stderr)
+		exitCode, err := runModule(moduleName, args, mode, traceExec, allowFFI, os.Stdout, os.Stderr)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -305,6 +303,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  geblang --vm-strict <script.gb>    run a script with the VM only, failing instead of falling back")
 	fmt.Fprintln(writer, "  geblang --trace-exec <script.gb>   print which engine handled the script")
 	fmt.Fprintln(writer, "  geblang --no-assert <script.gb>    elide assert(...) calls (arguments are not evaluated)")
+	fmt.Fprintln(writer, "  geblang --allow-ffi <path-or-glob> <script.gb>  enable FFI access to matching libraries (repeatable)")
 	fmt.Fprintln(writer, "  geblang --allow-process-control <script.gb>  enable privileged process ops (setuid/setgid, kill/signal by pid)")
 	fmt.Fprintln(writer, "  geblang --allow-onnx <script.gb>   enable local ONNX model inference (loads a native shared library)")
 	fmt.Fprintln(writer, "  geblang --allow-browser <script.gb>  enable headless-browser automation (launches a browser subprocess)")
@@ -359,14 +358,16 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang repl --vm-strict")
 		return true
 	case "run":
-		fmt.Fprintln(writer, "usage: geblang [run] [--disable-vm|--vm-strict|--trace-exec] <script.gb> [args...]")
+		fmt.Fprintln(writer, "usage: geblang [run] [--disable-vm|--vm-strict|--trace-exec] [--allow-ffi <path-or-glob>] <script.gb> [args...]")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Runs a script. VM execution is attempted by default and falls back to the evaluator when needed.")
 		fmt.Fprintln(writer, "The `run` verb is optional; `geblang app.gb` and `geblang run app.gb` are equivalent.")
+		fmt.Fprintln(writer, "`--allow-ffi <path-or-glob>` grants FFI access to matching libraries and may be repeated.")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Examples:")
 		fmt.Fprintln(writer, "  geblang app.gb")
 		fmt.Fprintln(writer, "  geblang run app.gb")
+		fmt.Fprintln(writer, "  geblang run --allow-ffi 'libm.so.*' app.gb")
 		fmt.Fprintln(writer, "  geblang --vm-strict app.gb --port 8080")
 		fmt.Fprintln(writer, "  geblang --trace-exec app.gb")
 		return true
@@ -453,13 +454,16 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang dap")
 		return true
 	case "module", "-m":
-		fmt.Fprintln(writer, "usage: geblang -m <module> [args...]")
+		fmt.Fprintln(writer, "usage: geblang [--disable-vm|--vm-strict|--trace-exec] [--allow-ffi <path-or-glob>] -m <module> [args...]")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Resolves a module and invokes its exported main(args) function without a wrapper script.")
 		fmt.Fprintln(writer, "VM execution is attempted by default and falls back to the evaluator when needed.")
+		fmt.Fprintln(writer, "`--allow-ffi <path-or-glob>` grants FFI access in addition to permissions from geblang.yaml.")
+		fmt.Fprintln(writer, "Execution options must appear before `-m`; later arguments are passed to the module.")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Examples:")
 		fmt.Fprintln(writer, "  geblang -m http.server 8080")
+		fmt.Fprintln(writer, "  geblang --allow-ffi 'libsqlite3*' -m app.cli")
 		fmt.Fprintln(writer, "  geblang --vm-strict -m app.main --verbose")
 		return true
 	case "test":
@@ -1295,7 +1299,7 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 	return runEvaluator(sourcePath, scriptArgs, program, allowFFI, stdout)
 }
 
-func runModule(moduleName string, moduleArgs []string, mode executionMode, traceExec bool, stdout io.Writer, stderr io.Writer) (int, error) {
+func runModule(moduleName string, moduleArgs []string, mode executionMode, traceExec bool, allowFFI []string, stdout io.Writer, stderr io.Writer) (int, error) {
 	if moduleName == "" {
 		return 2, fmt.Errorf("module name is required")
 	}
@@ -1317,7 +1321,7 @@ if (__geb_result != null) {
 	if err != nil {
 		return 1, err
 	}
-	return runScript(sourcePath, moduleArgs, source, program, mode, nil, stdout, traceWriter(traceExec, stderr))
+	return runScript(sourcePath, moduleArgs, source, program, mode, allowFFI, stdout, traceWriter(traceExec, stderr))
 }
 
 func traceWriter(enabled bool, writer io.Writer) io.Writer {

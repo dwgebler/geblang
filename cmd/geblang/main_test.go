@@ -147,6 +147,7 @@ func TestPrintHelpShowsTopLevelCommands(t *testing.T) {
 		"geblang doctor",
 		"geblang doc",
 		"geblang cache stats",
+		"geblang --allow-ffi <path-or-glob>",
 		"geblang help [topic]",
 		"Use `geblang help <topic>` or `geblang <command> --help`",
 		"Topics: repl, run, module, build, install, fmt, lsp, dap, test, check, init, doctor, doc, cache, completion",
@@ -176,6 +177,18 @@ func TestPrintHelpShowsTopicDetails(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("topic %q output missing %q: %q", topic, want, out.String())
+		}
+	}
+}
+
+func TestPrintRunAndModuleHelpShowAllowFFI(t *testing.T) {
+	for _, topic := range []string{"run", "module"} {
+		var out bytes.Buffer
+		if !printHelp(&out, topic) {
+			t.Fatalf("topic %q should be known", topic)
+		}
+		if !strings.Contains(out.String(), "--allow-ffi <path-or-glob>") {
+			t.Fatalf("topic %q output missing --allow-ffi: %q", topic, out.String())
 		}
 	}
 }
@@ -1621,7 +1634,7 @@ export func main(list<string> args): int {
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runModule("app.cli", []string{"one", "two"}, executionAuto, true, &out, &trace)
+	code, err := runModule("app.cli", []string{"one", "two"}, executionAuto, true, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run module: %v", err)
 	}
@@ -1633,6 +1646,64 @@ export func main(list<string> args): int {
 	}
 	if !strings.Contains(trace.String(), "execution=vm") {
 		t.Fatalf("trace: got %q, want VM execution", trace.String())
+	}
+}
+
+func TestCLIAllowFFIAppliesToModule(t *testing.T) {
+	gebBin := filepath.Join(t.TempDir(), "geblang")
+	if out, err := exec.Command("go", "build", "-o", gebBin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build geblang: %v\n%s", err, out)
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "src", "app"), 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+	writePermFile(t, filepath.Join(dir, "geblang.yaml"), "name: app\nsource: src\n")
+	writePermFile(t, filepath.Join(dir, "src", "app", "cli.gb"), `module app.cli;
+
+import ffi;
+import io;
+
+export func main(list<string> args): int {
+    try {
+        let lib = ffi.dlopen("/no/such/module-ffi.so");
+        lib.close();
+        io.println("OPENED");
+    } catch (PermissionError e) {
+        io.println("DENIED");
+    } catch (Error e) {
+        io.println("ALLOWED");
+    }
+    return 0;
+}
+`)
+	cacheDir := t.TempDir()
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "vm",
+			args: []string{"--allow-ffi", "/no/such/module-ffi.so", "-m", "app.cli"},
+		},
+		{
+			name: "evaluator",
+			args: []string{"--disable-vm", "--allow-ffi", "/no/such/module-ffi.so", "-m", "app.cli"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(gebBin, tc.args...)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "XDG_CACHE_HOME="+cacheDir)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("run module: %v\n%s", err, out)
+			}
+			if string(out) != "ALLOWED\n" {
+				t.Fatalf("output: got %q, want CLI FFI permission to apply", out)
+			}
+		})
 	}
 }
 
@@ -1649,7 +1720,7 @@ func TestRunModuleInvokesSourceStdlibModule(t *testing.T) {
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runModule("http.server", []string{"--help"}, executionAuto, true, &out, &trace)
+	code, err := runModule("http.server", []string{"--help"}, executionAuto, true, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run module: %v", err)
 	}

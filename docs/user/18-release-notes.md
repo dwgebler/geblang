@@ -1,5 +1,21 @@
 # Release Notes
 
+## 1.31.1
+
+### Debugging
+
+- Step Over, Step Into, and Step Out in an asynchronous worker now resume other
+  parked threads in continue mode. This prevents a selected worker from
+  deadlocking when its next operation depends on another thread closing a
+  channel, releasing a lock, or completing a task.
+
+### Fixes
+
+- `--allow-ffi <path-or-glob>` permissions now apply when running an exported module
+  entry point with `geblang -m`, in addition to permissions declared in
+  `geblang.yaml`. Top-level, `run`, and module help now document the repeatable
+  FFI permission flag and its required library path or glob.
+
 ## 1.31.0
 
 ### Debugging
