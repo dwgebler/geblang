@@ -1,0 +1,15 @@
+module deserialize_donor;
+
+/* Cross-module base with a static __deserialize factory (Money) and one without (Plain). */
+export class Money {
+    int amount;
+    func Money(int amount) { this.amount = amount; }
+    static func __deserialize(dict d): Money { return Money(d["amount"] * 10); }
+    func value(): int { return this.amount; }
+}
+
+export class Plain {
+    int amount;
+    func Plain(int amount) { this.amount = amount; }
+    func value(): int { return this.amount; }
+}

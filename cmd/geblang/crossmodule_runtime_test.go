@@ -301,6 +301,159 @@ func TestCrossModuleBuildBinaryIdenticalOutput(t *testing.T) {
 	}
 }
 
+// TestCrossModuleInheritedDeserializeAcrossRuntimePaths pins json.parseAs dispatch of a cross-module-inherited static __deserialize__ across cold VM, cached .gbc, and evaluator (own, inherited, override).
+func TestCrossModuleInheritedDeserializeAcrossRuntimePaths(t *testing.T) {
+	bin := buildCMBinary(t)
+	pkgDir := t.TempDir()
+	srcDir := filepath.Join(pkgDir, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "geblang.yaml"),
+		[]byte("name: dsmod\nversion: 0.1.0\nsource: src\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "dsbase.gb"), []byte(`module dsmod.dsbase;
+export class Base {
+    int value;
+    func Base(int value) { this.value = value; }
+    static func __deserialize__(dict d): Base { return Base(d["value"] * 10); }
+    func show(): int { return this.value; }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entryPath := filepath.Join(srcDir, "main.gb")
+	if err := os.WriteFile(entryPath, []byte(`module dsmod.main;
+import dsmod.dsbase as base;
+import io;
+import json;
+class Sub extends base.Base {
+    func Sub(int value) { parent(value); }
+}
+class SubOwn extends base.Base {
+    func SubOwn(int value) { parent(value); }
+    static func __deserialize__(dict d): SubOwn { return SubOwn(d["value"] + 1); }
+}
+export func main(list<string> args): void {
+    io.println(json.parseAs("{\"value\": 4}", base.Base).show());
+    io.println(json.parseAs("{\"value\": 4}", Sub).show());
+    io.println(json.parseAs("{\"value\": 4}", SubOwn).show());
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(label string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = pkgDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s failed: %v\n%s", label, err, out)
+		}
+		return string(out)
+	}
+
+	const want = "40\n40\n5\n"
+	if cold := run("cold VM", entryPath); cold != want {
+		t.Fatalf("cold VM: got %q, want %q", cold, want)
+	}
+	if _, err := os.Stat(filepath.Join(pkgDir, ".geblang-cache")); err != nil {
+		t.Fatalf("cold VM did not create bytecode cache: %v", err)
+	}
+	if warm := run("cached VM", entryPath); warm != want {
+		t.Fatalf("cached VM: got %q, want %q", warm, want)
+	}
+	if eval := run("evaluator", "--disable-vm", entryPath); eval != want {
+		t.Fatalf("evaluator: got %q, want %q", eval, want)
+	}
+
+	// Built binary: the entry module loads as a sub-module, so its class-as-value constants must carry the running module (regression guard for the entry-module class index out of range crash).
+	outBin := filepath.Join(pkgDir, "dsmod")
+	if buildOut, err := exec.Command(bin, "build", "--entry", "dsmod.main", "--out", outBin, pkgDir).CombinedOutput(); err != nil {
+		t.Fatalf("geblang build failed: %v\n%s", err, buildOut)
+	}
+	if built, err := exec.Command(outBin).CombinedOutput(); err != nil {
+		t.Fatalf("built binary failed: %v\n%s", err, built)
+	} else if string(built) != want {
+		t.Fatalf("built binary: got %q, want %q", string(built), want)
+	}
+}
+
+// Regression guard: json.parseAs of a plain constructor-hydrated entry-module subclass whose parent is in an imported module, across cold VM, cached .gbc, evaluator, and the built binary (where the entry loads as a sub-module).
+func TestEntryModuleSubclassCrossModuleParentDeserialize(t *testing.T) {
+	bin := buildCMBinary(t)
+	pkgDir := t.TempDir()
+	srcDir := filepath.Join(pkgDir, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "geblang.yaml"),
+		[]byte("name: dsplain\nversion: 0.1.0\nsource: src\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "shapes.gb"), []byte(`module dsplain.shapes;
+export class Base {
+    int a;
+    func Base(int a) { this.a = a; }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entryPath := filepath.Join(srcDir, "main.gb")
+	if err := os.WriteFile(entryPath, []byte(`module dsplain.main;
+import dsplain.shapes as shapes;
+import io;
+import json;
+class Derived extends shapes.Base {
+    int b;
+    func Derived(int a, int b) { parent(a); this.b = b; }
+}
+export func main(list<string> args): void {
+    let d = json.parseAs("{\"a\": 1, \"b\": 2}", Derived);
+    io.println("${d.a}-${d.b}");
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(label string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = pkgDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s failed: %v\n%s", label, err, out)
+		}
+		return string(out)
+	}
+
+	const want = "1-2\n"
+	if cold := run("cold VM", entryPath); cold != want {
+		t.Fatalf("cold VM: got %q, want %q", cold, want)
+	}
+	if _, err := os.Stat(filepath.Join(pkgDir, ".geblang-cache")); err != nil {
+		t.Fatalf("cold VM did not create bytecode cache: %v", err)
+	}
+	if warm := run("cached VM", entryPath); warm != want {
+		t.Fatalf("cached VM: got %q, want %q", warm, want)
+	}
+	if eval := run("evaluator", "--disable-vm", entryPath); eval != want {
+		t.Fatalf("evaluator: got %q, want %q", eval, want)
+	}
+
+	outBin := filepath.Join(pkgDir, "dsplain")
+	if buildOut, err := exec.Command(bin, "build", "--entry", "dsplain.main", "--out", outBin, pkgDir).CombinedOutput(); err != nil {
+		t.Fatalf("geblang build failed: %v\n%s", err, buildOut)
+	}
+	if built, err := exec.Command(outBin).CombinedOutput(); err != nil {
+		t.Fatalf("built binary failed: %v\n%s", err, built)
+	} else if string(built) != want {
+		t.Fatalf("built binary: got %q, want %q", string(built), want)
+	}
+}
+
 // TestCrossModuleBothBackendsIdenticalOutput runs main.gb on the VM and the
 // evaluator and asserts identical stdout (divergence probe).
 func TestCrossModuleBothBackendsIdenticalOutput(t *testing.T) {

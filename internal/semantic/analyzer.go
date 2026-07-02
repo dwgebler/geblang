@@ -2167,7 +2167,10 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		a.analyzeAssignment(expr)
 	case *ast.InfixExpression:
 		a.analyzeExpression(expr.Left)
-		a.analyzeExpression(expr.Right)
+		// instanceof's right operand is a type reference, not a value.
+		if expr.Operator != "instanceof" {
+			a.analyzeExpression(expr.Right)
+		}
 		a.checkDecimalFloatMix(expr)
 		if expr.Operator == "//" || expr.Operator == "%" || expr.Operator == "/" {
 			if lit, ok := expr.Right.(*ast.IntegerLiteral); ok && strings.Trim(lit.Value, "0_") == "" {

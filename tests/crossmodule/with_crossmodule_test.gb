@@ -1,0 +1,62 @@
+/**
+ * @title Cross-module context-manager faults propagate cleanly
+ * @summary A fault or throw inside a cross-module __enter/__exit is caught with
+ * the clean message and, for a typed throw, by its real class (not wrapped as
+ * RuntimeError). A subclass inheriting __enter/__exit from a cross-module parent
+ * still invokes it. Same on both backends; before the fix the VM caught a
+ * flattened "with: __enter: uncaught ..." blob.
+ */
+import test;
+import with_fault_donor as cm;
+
+class WSubEnter extends cm.WEnterFault {
+    func WSubEnter() { parent(); }
+}
+
+class CrossModuleWithTest extends test.Test {
+    @test
+    func enterFaultCleanMessage(): void {
+        bool caught = false;
+        try {
+            with (r = cm.WEnterFault()) { this.assertTrue(false); }
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertEquals("integer division by zero", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func exitThrowCaughtByClass(): void {
+        bool caught = false;
+        try {
+            with (r = cm.WExitThrow()) { }
+        } catch (ValueError e) {
+            caught = true;
+            this.assertEquals("exit boom", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func inheritedEnterFaultInvoked(): void {
+        bool caught = false;
+        try {
+            with (r = WSubEnter()) { this.assertTrue(false); }
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertEquals("integer division by zero", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func enterFaultTracePreserved(): void {
+        try {
+            with (r = cm.WEnterFault()) { }
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("WEnterFault.__enter", frames[0].function());
+        }
+    }
+}

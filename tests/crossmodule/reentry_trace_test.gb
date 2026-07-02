@@ -1,0 +1,39 @@
+/**
+ * @title Cross-module synchronous re-entry stack trace
+ * @summary A module function invokes a callback that synchronously
+ * re-enters the module (host -> module -> callback -> same module) and
+ * throws. The caught error's structured trace lists each call-chain frame
+ * exactly once, with no leaked outer-run duplication, identically on both
+ * backends.
+ */
+import test;
+import reentry_trace_donor as donor;
+
+class ReentryTraceTest extends test.Test {
+    func countFrames(any frames, string name): int {
+        int c = 0;
+        for (f in frames) {
+            if (f.function() == name) {
+                c = c + 1;
+            }
+        }
+        return c;
+    }
+
+    @test
+    func synchronousReentryTraceHasNoDuplicateFrames(): void {
+        try {
+            donor.runCallback(func(): void { donor.bumpThrows(); });
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            # Innermost first: throw site, callback, invoking module function; each once.
+            this.assertEquals("bumpThrows", frames[0].function());
+            this.assertEquals("<closure>", frames[1].function());
+            this.assertEquals("runCallback", frames[2].function());
+            this.assertEquals(1, this.countFrames(frames, "bumpThrows"));
+            this.assertEquals(1, this.countFrames(frames, "runCallback"));
+            this.assertEquals(1, this.countFrames(frames, "<closure>"));
+            this.assertEquals("<top level>", frames[frames.length() - 1].function());
+        }
+    }
+}

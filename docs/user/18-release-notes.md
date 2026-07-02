@@ -8,13 +8,70 @@
   parked threads in continue mode. This prevents a selected worker from
   deadlocking when its next operation depends on another thread closing a
   channel, releasing a lock, or completing a task.
+- Single-thread execution is supported: continue or step one selected thread
+  while the others stay paused (the adapter advertises single-thread execution
+  requests and honors the per-request `singleThread` flag).
+- Setting a variable while paused now persists in the Variables view across
+  refreshes, including in outer stack frames.
+
+### Added
+
+- A new `serveFile(path, opts)` in the `web.http` module returns a response the
+  server streams from disk with HTTP conditional-request semantics: HEAD, byte
+  ranges, If-None-Match/ETag, and If-Modified-Since, with Content-Length set and
+  without reading the whole file into memory. A missing file yields 404. The file
+  response is an opaque value that request data cannot forge, and the server sets
+  a default ETag so If-None-Match works without the caller supplying one.
+- A new `path.real(p)` returns the canonical absolute path with symlinks
+  resolved, for containment checks that must not be fooled by a symlink.
 
 ### Fixes
 
+- A runtime fault (for example division by zero) inside a function or method in
+  another module is now caught with its clean message, matching the evaluator,
+  instead of a rendered `uncaught ...` block; an uncaught fault still renders the
+  full cross-module trace exactly once.
+- An error thrown from a `with` resource's `__enter` or `__exit` is now caught by
+  its real class with the clean message (for example `catch (ValueError e)`),
+  instead of a flattened `RuntimeError`. A `with` resource whose `__enter`/`__exit`
+  is inherited from a class in another module now runs it (it was silently
+  skipped).
+- When a `with` body and its `__exit` both raise, the `__exit` error now
+  propagates and replaces the body's, consistently on both backends (Python
+  `__exit__` semantics). A `with` body that returns is likewise overridden by an
+  `__exit` that raises.
+- The HTTP server now canonicalizes the request path (collapsing a leading `//`
+  and resolving `.`/`..` segments) before it reaches handlers and routing, so a
+  non-canonical path like `//admin` can no longer slip past a path-prefix check
+  while still matching a trimmed route.
 - `--allow-ffi <path-or-glob>` permissions now apply when running an exported module
   entry point with `geblang -m`, in addition to permissions declared in
   `geblang.yaml`. Top-level, `run`, and module help now document the repeatable
   FFI permission flag and its required library path or glob.
+- The `redis` client now parses replies at the byte level, so values are read
+  without converting the whole reply buffer to text. Values that are valid UTF-8
+  are returned as strings as before; a value that is not valid UTF-8 raises a
+  clear error naming `getBytes`, and a new `getBytes(key)` returns the raw bytes.
+  This also fixes replies whose bytes span more than one socket read.
+- The `messaging` backends (`sqs`, `sns`, `stomp`) now raise a clear error when a
+  `bytes` payload is not valid UTF-8, telling the caller to encode it first (for
+  example as base64), instead of failing with a generic decode error. Valid
+  UTF-8 byte payloads are sent as text as before.
+- `llm` image analysis (`analyzeImage`) again accepts binary image bytes; the
+  base64 encoding no longer round-trips the image through a UTF-8 string.
+- The file-backed session store now validates the session id read from the
+  request cookie before using it in a file path. A malformed or tampered cookie
+  is treated as no session instead of reaching the filesystem.
+- `instanceof` against a builtin type name that also names an imported module
+  (such as `bytes` or `string`) is now accepted in expression position (return,
+  argument, assignment), not only inside `if`/`while` conditions.
+- `assertEquals` now treats the type value from `typeof(x)` as equal to its name
+  string or to a class value of the same name, matching the `==` operator, so
+  `assertEquals("bytes", typeof(x))` and `assertEquals(SomeClass, typeof(inst))`
+  both pass.
+- `json.parseAs` no longer fails with "class index out of range" when
+  deserializing a class whose parent is in another module, including in
+  `geblang build` binaries.
 
 ## 1.31.0
 
@@ -26,6 +83,12 @@
   worker appears as its own thread in the Call Stack pane; hitting a
   breakpoint stops all threads, Continue resumes them, and a step advances
   only the selected thread.
+
+### Changed
+
+- `bytes.toString()` and the `bytes` value `.toString()` method now reject data
+  that is not valid UTF-8 with a clear error, instead of returning a string that
+  carried the raw bytes. Convert non-text bytes with `.toHex()` or `.toBase64()`.
 
 ### Performance
 

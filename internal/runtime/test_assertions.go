@@ -259,8 +259,14 @@ func primitiveValuesEqual(left Value, right Value) bool {
 		rightValue, ok := right.(Float)
 		return ok && leftValue.Value == rightValue.Value
 	case String:
-		rightValue, ok := right.(String)
-		return ok && leftValue.Value == rightValue.Value
+		if rightValue, ok := right.(String); ok {
+			return leftValue.Value == rightValue.Value
+		}
+		// typeof(x) yields a Type; assertEquals against its name string mirrors the == operator.
+		if rightType, ok := right.(Type); ok {
+			return leftValue.Value == rightType.Name
+		}
+		return false
 	case Bytes:
 		rightValue, ok := right.(Bytes)
 		return ok && bytes.Equal(leftValue.Value, rightValue.Value)
@@ -313,8 +319,14 @@ func primitiveValuesEqual(left Value, right Value) bool {
 		rightValue, ok := right.(BytecodeFunction)
 		return ok && leftValue.Module == rightValue.Module && leftValue.Name == rightValue.Name && leftValue.Index == rightValue.Index
 	case BytecodeClass:
-		rightValue, ok := right.(BytecodeClass)
-		return ok && leftValue.Module == rightValue.Module && leftValue.Name == rightValue.Name && leftValue.Index == rightValue.Index
+		if rightValue, ok := right.(BytecodeClass); ok {
+			return leftValue.Module == rightValue.Module && leftValue.Name == rightValue.Name && leftValue.Index == rightValue.Index
+		}
+		// A class value compares equal to typeof(instance) of the same name, mirroring ==.
+		if rightType, ok := right.(Type); ok {
+			return leftValue.Name == rightType.Name
+		}
+		return false
 	case NativeObject:
 		rightValue, ok := right.(NativeObject)
 		return ok && leftValue == rightValue
@@ -322,14 +334,31 @@ func primitiveValuesEqual(left Value, right Value) bool {
 		rightValue, ok := right.(Error)
 		return ok && leftValue.Class == rightValue.Class && leftValue.Message == rightValue.Message
 	case Type:
-		rightValue, ok := right.(Type)
-		return ok && leftValue == rightValue
+		if rightValue, ok := right.(Type); ok {
+			return leftValue == rightValue
+		}
+		if rightStr, ok := right.(String); ok {
+			return leftValue.Name == rightStr.Value
+		}
+		// typeof(x) compares equal to a class value of the same name, mirroring ==.
+		if rightClass, ok := right.(*Class); ok {
+			return leftValue.Name == rightClass.Name
+		}
+		if rightClass, ok := right.(BytecodeClass); ok {
+			return leftValue.Name == rightClass.Name
+		}
+		return false
 	case *Module:
 		rightValue, ok := right.(*Module)
 		return ok && leftValue == rightValue
 	case *Class:
-		rightValue, ok := right.(*Class)
-		return ok && leftValue == rightValue
+		if rightValue, ok := right.(*Class); ok {
+			return leftValue == rightValue
+		}
+		if rightType, ok := right.(Type); ok {
+			return leftValue.Name == rightType.Name
+		}
+		return false
 	case *Interface:
 		rightValue, ok := right.(*Interface)
 		return ok && leftValue == rightValue

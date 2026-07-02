@@ -38,6 +38,7 @@ if (client.auth("secret")) {
 | `auth(password)` | `bool` | Authenticate with `AUTH` |
 | `select(database)` | `bool` | Select a numeric Redis database |
 | `get(key)` | `any` | Return a string value or `null` |
+| `getBytes(key)` | `?bytes` | Return a value as raw `bytes`, or `null` |
 | `set(key, value)` | `bool` | Set a string value |
 | `del(key)` | `int` | Delete one key |
 | `exists(key)` | `bool` | Return whether a key exists |
@@ -59,6 +60,21 @@ if (client.auth("secret")) {
 `ttl(key)` returns the remaining time-to-live in seconds, or one of Redis's
 negative sentinels: `-2` if the key does not exist, and `-1` if the key exists
 but has no expiry set.
+
+## Binary values
+
+String accessors such as `get` decode values as UTF-8. Values that are valid
+UTF-8 come back as strings. If a stored value is not valid UTF-8, `get` raises a
+clear error naming `getBytes`; read such a value with `getBytes(key)` instead,
+which returns the raw `bytes` (or `null` when the key is missing).
+
+```gb
+client.set("name", "Ada");
+io.println(client.get("name"));       # "Ada"
+
+let raw = client.getBytes("thumbnail");
+io.println(bytes.toHex(raw));
+```
 
 ## Examples
 

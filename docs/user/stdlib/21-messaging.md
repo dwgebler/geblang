@@ -25,8 +25,12 @@ let q = messaging.connect({
 ## Publishing
 
 `publish(payload)` accepts a string, bytes, or any value that JSON
-can serialise. Non-string payloads are JSON-encoded before being
-sent so the consumer can `json.parse` them back.
+can serialise. The text-based brokers (SQS, SNS, STOMP) send a `bytes`
+payload as text when it is valid UTF-8 and raise a clear error on binary
+bytes, so encode those first (for example as base64). The binary-capable
+brokers (Kafka, RabbitMQ) send raw bytes as-is. Other non-string payloads
+are JSON-encoded before being sent so the consumer can `json.parse` them
+back.
 
 ```gb
 q.publish("ping");

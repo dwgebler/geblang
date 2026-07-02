@@ -129,7 +129,13 @@ export func connect(dict<string, any> opts): SnsTopic {
 
 func payloadToString(any payload): string {
     if (payload instanceof string) { return payload as string; }
-    if (payload instanceof bytes) { return bytes.toString(payload as bytes); }
+    if (payload instanceof bytes) {
+        try {
+            return bytes.toString(payload as bytes);
+        } catch {
+            throw RuntimeError("messaging.sns: binary payload is not valid UTF-8; encode it first (e.g. base64) before publishing");
+        }
+    }
     return json.stringify(payload);
 }
 

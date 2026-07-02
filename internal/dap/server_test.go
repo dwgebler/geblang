@@ -196,8 +196,9 @@ func TestScopesAndVariablesReturnPausedLocals(t *testing.T) {
 		w:       &out,
 		focused: 1,
 		threads: map[int]*threadInfo{1: {name: "main", stopped: true, lastPause: &evaluator.DebugPause{
-			Frames: []evaluator.DebugFrame{{Name: "<top level>", Path: "/tmp/main.gb", Line: 1}},
-			Vars:   []evaluator.DebugVariable{{Name: "name", Value: "Geblang", Type: "string"}},
+			Frames:    []evaluator.DebugFrame{{Name: "<top level>", Path: "/tmp/main.gb", Line: 1}},
+			Vars:      []evaluator.DebugVariable{{Name: "name", Value: "Geblang", Type: "string"}},
+			FrameVars: [][]evaluator.DebugVariable{{{Name: "name", Value: "Geblang", Type: "string"}}},
 		}}},
 	}
 	if err := s.handleRequest(&Message{Seq: 1, Command: "stackTrace"}); err != nil {
@@ -1672,8 +1673,8 @@ func TestNonFocusedThreadNotInspectable(t *testing.T) {
 	sess.continueUntilTerminated()
 }
 
-// TestInitializeDoesNotAdvertiseSingleThread verifies the capability is not advertised.
-func TestInitializeDoesNotAdvertiseSingleThread(t *testing.T) {
+// TestInitializeAdvertisesSingleThread verifies the single-thread execution capability is advertised.
+func TestInitializeAdvertisesSingleThread(t *testing.T) {
 	clientR, clientW := io.Pipe()
 	serverR, serverW := io.Pipe()
 	t.Cleanup(func() {
@@ -1709,8 +1710,8 @@ func TestInitializeDoesNotAdvertiseSingleThread(t *testing.T) {
 		if body == nil {
 			t.Fatal("initialize response has no body")
 		}
-		if v, _ := body["supportsSingleThreadExecutionRequests"].(bool); v {
-			t.Error("initialize response advertises supportsSingleThreadExecutionRequests:true; want false")
+		if v, _ := body["supportsSingleThreadExecutionRequests"].(bool); !v {
+			t.Error("initialize response does not advertise supportsSingleThreadExecutionRequests:true; want true")
 		}
 		return
 	}
@@ -1993,4 +1994,177 @@ io.println(y);
 
 	// disconnect must recover the adapter; close() fails the test if Serve does not exit.
 	sess.close()
+}
+
+// TestSetVariableOuterFramePersistsAcrossRefresh: a value set on a non-zero frame survives a stackTrace refresh.
+func TestSetVariableOuterFramePersistsAcrossRefresh(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "setvarouter.gb")
+	if err := os.WriteFile(scriptPath, []byte(`import io;
+func f(): void {
+    let inner = 99;
+    io.println("inside f");
+}
+func run(int outer): void {
+    f();
+    io.println(outer);
+}
+run(42);
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := newTestSession(t, scriptPath)
+	defer sess.close()
+	sess.setBreakpoints(scriptPath, 4) // io.println; f's frame is current, run's frame is outer
+	sess.configurationDone()
+
+	st := sess.waitStopped()
+	if st.ThreadID != 1 {
+		t.Fatalf("expected main thread (1), got %d", st.ThreadID)
+	}
+	frames := sess.stackTrace(st.ThreadID)
+	if len(frames) < 3 {
+		t.Fatalf("expected >= 3 frames (current + f + run), got %d", len(frames))
+	}
+	outerFrameID := int(frames[len(frames)-1]["id"].(float64))
+
+	if vars := sess.variables(outerFrameID); vars["outer"] != "42" {
+		t.Fatalf("expected outer=42 before mutation, got %q", vars["outer"])
+	}
+
+	resp := sess.setVariableReq(outerFrameID, "outer", "77")
+	if success, _ := resp["success"].(bool); !success {
+		t.Fatalf("setVariable on outer frame failed: %v", resp)
+	}
+
+	// Refresh the stack (same stop): the Variables pane is rebuilt from the frame snapshot.
+	_ = sess.stackTrace(st.ThreadID)
+	if vars := sess.variables(outerFrameID); vars["outer"] != "77" {
+		t.Fatalf("outer-frame value reverted after refresh: got %q, want 77", vars["outer"])
+	}
+
+	sess.continueAll()
+	sess.waitTerminated()
+	if !strings.Contains(sess.collectedOutput(), "77") {
+		t.Fatalf("outer-frame mutation was not observed at runtime: %q", sess.collectedOutput())
+	}
+}
+
+// twoStopBarrierScript gates two workers behind a channel so both reach work(); two adjacent breakpoint lines let a single-thread resume re-stop the focused worker without it exiting.
+const twoStopBarrierScript = `import async;
+import async.channel as ch;
+let ready = ch.Channel<int>(2);
+let gate = ch.Channel<int>(0);
+func work(int n): int {
+    let x = n;
+    let y = x + 1;
+    let z = y + 1;
+    return z;
+}
+let a = async.run(func(): int { ready.send(1); gate.recv(); return work(10); });
+let b = async.run(func(): int { ready.send(1); gate.recv(); return work(20); });
+ready.recv();
+ready.recv();
+gate.close();
+await a;
+await b;
+`
+
+// TestSingleThreadContinueResumesOnlyTarget: single-thread continue runs only the focused worker; the other stays frozen.
+func TestSingleThreadContinueResumesOnlyTarget(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "stcont.gb")
+	if err := os.WriteFile(scriptPath, []byte(twoStopBarrierScript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := newTestSession(t, scriptPath)
+	defer sess.close()
+	sess.setBreakpoints(scriptPath, 7, 8) // let y = ...; let z = ...
+	sess.configurationDone()
+
+	if !sess.waitThreadStarted(5 * time.Second) {
+		t.Fatal("worker A did not start")
+	}
+	if !sess.waitThreadStarted(5 * time.Second) {
+		t.Fatal("worker B did not start")
+	}
+
+	first := sess.waitStopped()
+	if first.ThreadID < 2 {
+		t.Fatalf("expected a worker thread (>= 2) to stop first, got %d", first.ThreadID)
+	}
+	focused := first.ThreadID
+
+	resp := sess.request("continue", map[string]any{"threadId": focused, "singleThread": true})
+	if success, _ := resp["success"].(bool); !success {
+		t.Fatalf("single-thread continue failed: %v", resp["message"])
+	}
+	body, _ := resp["body"].(map[string]any)
+	if atc, _ := body["allThreadsContinued"].(bool); atc {
+		t.Fatalf("single-thread continue reported allThreadsContinued:true; want false")
+	}
+
+	second := sess.waitStopped()
+	if second.ThreadID != focused {
+		t.Fatalf("single-thread continue resumed thread %d, not the focused thread %d", second.ThreadID, focused)
+	}
+
+	// The other worker must remain frozen: it cannot stop while the focused worker owns the stop.
+	if ev, ok := sess.waitStoppedTimeout(2 * time.Second); ok {
+		t.Fatalf("worker %d stopped while single-thread continue held the focused stop", ev.ThreadID)
+	}
+
+	sess.continueAll()
+	sess.continueUntilTerminated()
+}
+
+// TestSingleThreadStepResumesOnlyTarget: single-thread stepping advances only the focused worker; the other stays frozen.
+func TestSingleThreadStepResumesOnlyTarget(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "ststep.gb")
+	if err := os.WriteFile(scriptPath, []byte(twoStopBarrierScript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := newTestSession(t, scriptPath)
+	defer sess.close()
+	sess.setBreakpoints(scriptPath, 7) // let y = x + 1;
+	sess.configurationDone()
+
+	if !sess.waitThreadStarted(5 * time.Second) {
+		t.Fatal("worker A did not start")
+	}
+	if !sess.waitThreadStarted(5 * time.Second) {
+		t.Fatal("worker B did not start")
+	}
+
+	first := sess.waitStopped()
+	if first.ThreadID < 2 {
+		t.Fatalf("expected a worker thread (>= 2) to stop first, got %d", first.ThreadID)
+	}
+	focused := first.ThreadID
+
+	resp := sess.request("next", map[string]any{"threadId": focused, "singleThread": true})
+	if success, _ := resp["success"].(bool); !success {
+		t.Fatalf("single-thread step failed: %v", resp["message"])
+	}
+
+	second := sess.waitStopped()
+	if second.ThreadID != focused {
+		t.Fatalf("single-thread step advanced thread %d, not the focused thread %d", second.ThreadID, focused)
+	}
+	frames := sess.stackTrace(focused)
+	if len(frames) == 0 {
+		t.Fatal("no frames after single-thread step")
+	}
+	if line := int(frames[0]["line"].(float64)); line != 8 {
+		t.Fatalf("after single-thread step, expected line 8, got %d", line)
+	}
+
+	// The other worker must remain frozen while the focused worker owns the stop.
+	if ev, ok := sess.waitStoppedTimeout(2 * time.Second); ok {
+		t.Fatalf("worker %d stopped while single-thread step held the focused stop", ev.ThreadID)
+	}
+
+	sess.continueAll()
+	sess.continueUntilTerminated()
 }

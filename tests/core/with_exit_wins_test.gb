@@ -1,0 +1,33 @@
+import test;
+
+class ExitThrows { func __enter(): ExitThrows { return this; } func __exit(): void { throw ValueError("EXIT"); } }
+class ExitClean  { func __enter(): ExitClean  { return this; } func __exit(): void {} }
+
+/** A with resource's __exit raising replaces any body outcome (Python __exit__ semantics). */
+class WithExitWinsTest extends test.Test {
+    @test
+    func exitThrowReplacesBodyThrow(): void {
+        string seen = "";
+        try { with (r = ExitThrows()) { throw ValueError("BODY"); } }
+        catch (Error e) { seen = e.message; }
+        this.assertEquals("EXIT", seen);
+    }
+
+    @test
+    func cleanExitLetsBodyThrowPropagate(): void {
+        string seen = "";
+        try { with (r = ExitClean()) { throw ValueError("BODY"); } }
+        catch (Error e) { seen = e.message; }
+        this.assertEquals("BODY", seen);
+    }
+
+    func returnHelper(): int { with (r = ExitThrows()) { return 42; } return 0; }
+
+    @test
+    func exitThrowReplacesReturn(): void {
+        string seen = "";
+        try { let v = this.returnHelper(); }
+        catch (Error e) { seen = e.message; }
+        this.assertEquals("EXIT", seen);
+    }
+}

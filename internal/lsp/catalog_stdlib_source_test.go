@@ -27,11 +27,14 @@ var stdlibExportAllowlist = map[string]string{
 	"datetime.DateTime.withMinute": "see datetime.DateTime",
 	"datetime.DateTime.withSecond": "see datetime.DateTime",
 
-	// Internal store helpers, not part of the documented VectorStore API
-	// (users call search / searchFilter); kept off completion as noise.
+	// Internal VectorStore helpers, kept off completion as noise.
 	"vectorstore.PgVectorStore.runSearch":        "internal SQL-search helper",
 	"vectorstore.HnswVectorStore.filteredSearch": "internal over-fetch helper",
 	"vectorstore.HnswVectorStore.toHit":          "internal record-to-hit helper",
+
+	// Internal helpers exported only for tests, not user-facing surfaces.
+	"redis.decodeReply":        "low-level RESP parser; exported for offline parser tests",
+	"messaging.sqs.signingKey": "internal SigV4 signing-key helper; exported for known-vector test",
 }
 
 // sourceModuleExports parses a stdlib .gb file and returns its declared

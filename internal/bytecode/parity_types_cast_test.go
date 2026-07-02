@@ -361,3 +361,26 @@ try {
 }
 `, "int 42\nstr ada\nbool true\n1\nx\nrejected\n")
 }
+
+// instanceof against a builtin type name that also names an imported module, in expression position.
+func TestParityInstanceofBuiltinTypeCollidingWithModule(t *testing.T) {
+	runParity(t, `import io;
+import bytes;
+import string;
+
+func isBytes(any v): bool { return v instanceof bytes; }
+func isString(any v): bool { let r = v instanceof string; return r; }
+func show(bool b): void { io.println(b); }
+
+let b = bytes.fromHex("0a0b") as any;
+let s = "hi" as any;
+let n = 42 as any;
+
+io.println(isBytes(b));
+io.println(isBytes(s));
+io.println(isString(s));
+io.println(isString(n));
+show(b instanceof bytes);
+show(n instanceof string);
+`, "true\nfalse\ntrue\nfalse\ntrue\nfalse\n")
+}

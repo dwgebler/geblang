@@ -1,0 +1,182 @@
+/**
+ * @title redis RESP reply parsing (1.31.1)
+ * @summary Byte-level RESP framing via redis.decodeReply: simple string,
+ * error, integer, bulk (text, binary, embedded CRLF), arrays, and null
+ * replies, plus a multibyte value split across a read boundary. The
+ * get / getBytes contract is exercised end-to-end over an in-process TCP
+ * mock: binary values raise on the string API and round-trip via getBytes.
+ */
+import test;
+import bytes;
+import net;
+import async;
+import redis;
+
+func sourceFrom(list<bytes> chunks): callable {
+    int idx = 0;
+    return func(): bytes {
+        if (idx >= chunks.length()) { return bytes.fromString(""); }
+        let c = chunks[idx];
+        idx = idx + 1;
+        return c;
+    };
+}
+
+func source1(bytes data): callable {
+    return sourceFrom([data]);
+}
+
+func frame(string text): bytes {
+    return bytes.fromString(text);
+}
+
+# Serve one canned RESP reply over a throwaway loopback socket.
+func serveOnce(bytes reply): string {
+    let listener = net.listenTcp("127.0.0.1:0");
+    let addr = net.localAddr(listener) as string;
+    let _ = async.run(func(): void {
+        let conn = net.accept(listener);
+        net.setDeadline(conn, 1000);
+        try { let _ = net.read(conn, 65536); } catch { }
+        net.write(conn, reply);
+        net.close(conn);
+        net.closeListener(listener);
+    });
+    return addr;
+}
+
+class RedisRespReaderTest extends test.Test {
+    @test
+    func parsesSimpleString(): void {
+        this.assertEquals("OK", redis.decodeReply(source1(frame("+OK\r\n"))));
+    }
+
+    @test
+    func parsesErrorReplyAsThrow(): void {
+        string seen = "";
+        try {
+            redis.decodeReply(source1(frame("-ERR no such key\r\n")));
+        } catch (RuntimeError e) {
+            seen = e.message;
+        }
+        this.assertEquals("ERR no such key", seen);
+    }
+
+    @test
+    func parsesInteger(): void {
+        this.assertEquals(42, redis.decodeReply(source1(frame(":42\r\n"))));
+    }
+
+    @test
+    func parsesBulkString(): void {
+        this.assertEquals("hello", redis.decodeReply(source1(frame("$5\r\nhello\r\n"))));
+    }
+
+    @test
+    func rejectsOversizedBulk(): void {
+        string seen = "";
+        try {
+            redis.decodeReply(source1(frame("$999999999999\r\n")));
+        } catch (RuntimeError e) {
+            seen = e.message;
+        }
+        this.assertContains(seen, "exceeds");
+    }
+
+    @test
+    func bulkStringKeepsEmbeddedCrlf(): void {
+        /* Length-prefixed framing must not split on CRLF inside the value. */
+        this.assertEquals("a\r\nb\r\nc", redis.decodeReply(source1(frame("$7\r\na\r\nb\r\nc\r\n"))));
+    }
+
+    @test
+    func binaryBulkReturnsRawBytes(): void {
+        let payload = bytes.concat(frame("$2\r\n"), bytes.concat(bytes.fromHex("ff00"), frame("\r\n")));
+        let value = redis.decodeReply(source1(payload));
+        bool isBytes = false;
+        if (value instanceof bytes) { isBytes = true; }
+        this.assertTrue(isBytes);
+        this.assertEquals("ff00", bytes.toHex(value as bytes));
+    }
+
+    @test
+    func parsesArrayOfMixedTypes(): void {
+        let value = redis.decodeReply(source1(frame("*3\r\n:1\r\n$5\r\nhello\r\n$-1\r\n"))) as list<any>;
+        this.assertEquals(3, value.length());
+        this.assertEquals(1, value[0]);
+        this.assertEquals("hello", value[1] as string);
+        this.assertNull(value[2]);
+    }
+
+    @test
+    func arrayElementCanBeBinary(): void {
+        let payload = bytes.concat(frame("*1\r\n$2\r\n"), bytes.concat(bytes.fromHex("ff00"), frame("\r\n")));
+        let value = redis.decodeReply(source1(payload)) as list<any>;
+        this.assertEquals(1, value.length());
+        bool isBytes = false;
+        if (value[0] instanceof bytes) { isBytes = true; }
+        this.assertTrue(isBytes);
+    }
+
+    @test
+    func parsesNullBulk(): void {
+        this.assertNull(redis.decodeReply(source1(frame("$-1\r\n"))));
+    }
+
+    @test
+    func parsesNullArray(): void {
+        this.assertNull(redis.decodeReply(source1(frame("*-1\r\n"))));
+    }
+
+    @test
+    func multibyteValueSplitAcrossReadBoundary(): void {
+        /* Accented e (2 UTF-8 bytes) split mid-rune, header split too. */
+        list<bytes> chunks = [
+            frame("$"),
+            frame("5\r\n"),
+            bytes.concat(frame("caf"), bytes.fromHex("c3")),
+            bytes.concat(bytes.fromHex("a9"), frame("\r\n"))
+        ];
+        this.assertEquals("café", redis.decodeReply(sourceFrom(chunks)));
+    }
+}
+
+class RedisBinaryValueTest extends test.Test {
+    @test
+    func getReturnsStringForValidValue(): void {
+        let c = redis.connect(serveOnce(frame("$5\r\nhello\r\n")));
+        this.assertEquals("hello", c.get("k") as string);
+        c.close();
+    }
+
+    @test
+    func getRaisesClearErrorOnBinaryValue(): void {
+        let reply = bytes.concat(frame("$2\r\n"), bytes.concat(bytes.fromHex("ff00"), frame("\r\n")));
+        let c = redis.connect(serveOnce(reply));
+        string seen = "";
+        try {
+            c.get("k");
+        } catch (RuntimeError e) {
+            seen = e.message;
+        }
+        c.close();
+        this.assertTrue(seen.contains("not valid UTF-8"));
+        this.assertTrue(seen.contains("getBytes"));
+    }
+
+    @test
+    func getBytesReturnsRawBinary(): void {
+        let reply = bytes.concat(frame("$2\r\n"), bytes.concat(bytes.fromHex("ff00"), frame("\r\n")));
+        let c = redis.connect(serveOnce(reply));
+        let raw = c.getBytes("k");
+        c.close();
+        this.assertEquals("ff00", bytes.toHex(raw as bytes));
+    }
+
+    @test
+    func getBytesReturnsNullForMissingKey(): void {
+        let c = redis.connect(serveOnce(frame("$-1\r\n")));
+        this.assertNull(c.getBytes("k"));
+        c.close();
+    }
+}

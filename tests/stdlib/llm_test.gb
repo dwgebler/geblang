@@ -114,6 +114,25 @@ class OpenaiClientTest extends test.Test {
     }
 
     @test
+    func analyzeImageHandlesBinaryImageBytes(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"model\":\"gpt-4o\",\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"ok\"}}]}"};
+        });
+        let c = llm.client({"provider": "openai", "apiKey": "sk-test",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let img = bytes.fromHex("89504e470d0a1a0aff10");
+        let resp = c.analyzeImage(img, "what is this?", {"model": "gpt-4o"});
+        http.shutdown(mock["server"]);
+        this.assertEquals("ok", resp["content"] as string);
+        let bodyDict = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        let content = ((bodyDict["messages"] as list<any>)[0] as dict<string, any>)["content"] as list<any>;
+        let url = ((content[1] as dict<string, any>)["image_url"] as dict<string, any>)["url"] as string;
+        let b64 = url.substring(url.indexOf("base64,") + 7, url.length());
+        this.assertEquals(encoding.base64Encode(img), b64);
+    }
+
+    @test
     func generateImageDecodesB64Json(): void {
         let payload = encoding.base64Encode("fake-png");
         let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
@@ -289,6 +308,24 @@ class AnthropicClientTest extends test.Test {
     }
 
     @test
+    func analyzeImageHandlesBinaryImageBytes(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}"};
+        });
+        let c = llm.client({"provider": "anthropic", "apiKey": "x",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let img = bytes.fromHex("89504e470d0a1a0aff10");
+        let resp = c.analyzeImage(img, "what is this?", {"model": "claude-opus-4-8"});
+        http.shutdown(mock["server"]);
+        this.assertEquals("ok", resp["content"] as string);
+        let bodyDict = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        let content = ((bodyDict["messages"] as list<any>)[0] as dict<string, any>)["content"] as list<any>;
+        let data = ((content[0] as dict<string, any>)["source"] as dict<string, any>)["data"] as string;
+        this.assertEquals(encoding.base64Encode(img), data);
+    }
+
+    @test
     func embedThrowsNotSupported(): void {
         let c = llm.client({"provider": "anthropic", "apiKey": "x"});
         this.assertThrows(func(): void {
@@ -421,6 +458,24 @@ class BedrockClientTest extends test.Test {
         let bodyDict = json.parse(io.readText(path.join(dir, "body"))) as dict<string, any>;
         this.assertEquals("bedrock-2023-05-31", bodyDict["anthropic_version"] as string);
         this.assertEquals(256, bodyDict["max_tokens"]);
+    }
+
+    @test
+    func analyzeImageHandlesBinaryImageBytes(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}"};
+        });
+        let c = llm.client({"provider": "bedrock", "region": "us-east-1", "accessKey": "AK", "secretKey": "SK",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let img = bytes.fromHex("89504e470d0a1a0aff10");
+        let resp = c.analyzeImage(img, "what is this?", {"model": "anthropic.claude-3-5-sonnet-20241022-v2:0"});
+        http.shutdown(mock["server"]);
+        this.assertEquals("ok", resp["content"] as string);
+        let bodyDict = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        let content = ((bodyDict["messages"] as list<any>)[0] as dict<string, any>)["content"] as list<any>;
+        let data = ((content[0] as dict<string, any>)["source"] as dict<string, any>)["data"] as string;
+        this.assertEquals(encoding.base64Encode(img), data);
     }
 
     @test

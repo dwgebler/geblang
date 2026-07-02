@@ -16,6 +16,8 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -543,6 +545,21 @@ func httpRequestDict(request *http.Request, body []byte, tp *trustedProxies) run
 	return runtime.Dict{Entries: entries}
 }
 
+// Canonicalize the request path so a non-canonical form (leading //, dot segments) cannot slip past a path-prefix check that a trimmed route still matches.
+func cleanRequestPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if p[0] != '/' {
+		p = "/" + p
+	}
+	cleaned := path.Clean(p)
+	if p[len(p)-1] == '/' && cleaned != "/" {
+		cleaned += "/" // path.Clean drops a trailing slash; keep it for route parity.
+	}
+	return cleaned
+}
+
 func httpRequestEntries(request *http.Request, body []byte) map[string]runtime.DictEntry {
 	headers := map[string]runtime.DictEntry{}
 	for name, values := range request.Header {
@@ -555,7 +572,7 @@ func httpRequestEntries(request *http.Request, body []byte) map[string]runtime.D
 		entries[dictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: value}
 	}
 	put("method", runtime.String{Value: request.Method})
-	put("path", runtime.String{Value: request.URL.Path})
+	put("path", runtime.String{Value: cleanRequestPath(request.URL.Path)})
 	put("query", runtime.String{Value: request.URL.RawQuery})
 	put("remoteAddr", runtime.String{Value: request.RemoteAddr})
 	put("body", runtime.String{Value: string(body)})
@@ -1049,7 +1066,97 @@ func (e *Evaluator) writeHTTPResponse(w http.ResponseWriter, r *http.Request, re
 		e.writeWebSocketResponse(w, r, response, handler)
 		return
 	}
+	if outer, desc, ok := serveFileDescriptor(response); ok {
+		writeHTTPServeFile(w, r, outer, desc)
+		return
+	}
 	e.writeHTTPResponseValue(w, response)
+}
+
+// Response-dict key carrying the file marker.
+const serveFileMarkerKey = "__serveFile"
+
+// serveFileMarkerKind tags the native sentinel only web.serveFileMarker produces, so echoed JSON cannot forge a file response.
+const serveFileMarkerKind = "serveFile"
+
+func serveFileDescriptor(response runtime.Value) (runtime.Dict, runtime.Dict, bool) {
+	dict, ok := response.(runtime.Dict)
+	if !ok {
+		return runtime.Dict{}, runtime.Dict{}, false
+	}
+	value, ok := dictField(dict, serveFileMarkerKey)
+	if !ok {
+		return runtime.Dict{}, runtime.Dict{}, false
+	}
+	marker, ok := value.(runtime.NativeObject)
+	if !ok || marker.Kind != serveFileMarkerKind {
+		return runtime.Dict{}, runtime.Dict{}, false
+	}
+	desc, ok := marker.Payload.(runtime.Dict)
+	if !ok {
+		return runtime.Dict{}, runtime.Dict{}, false
+	}
+	return dict, desc, true
+}
+
+// Serves the marker file via http.ServeContent (HEAD/Range/conditional/Content-Length); any open or stat failure is a 404 that never leaks the path.
+func writeHTTPServeFile(w http.ResponseWriter, r *http.Request, outer runtime.Dict, desc runtime.Dict) {
+	path, _ := dictStringField(desc, "path")
+	if path == "" {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+	if headers, ok := dictField(outer, "headers"); ok {
+		writeHTTPHeaders(w.Header(), headers)
+	}
+	if headers, ok := dictField(desc, "headers"); ok {
+		writeHTTPHeaders(w.Header(), headers)
+	}
+	name, ok := dictStringField(desc, "name")
+	if !ok || name == "" {
+		name = filepath.Base(path)
+	}
+	if ct, ok := dictStringField(desc, "contentType"); ok && ct != "" && w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	// Default validator so If-None-Match yields a 304 for callers that set no ETag.
+	if w.Header().Get("Etag") == "" {
+		w.Header().Set("Etag", fmt.Sprintf("\"%x-%x\"", info.Size(), info.ModTime().UnixNano()))
+	}
+	if status, ok := dictField(outer, "status"); ok {
+		if code, ok := toInt64(status); ok && code != 0 && int(code) != http.StatusOK {
+			w = &statusOverrideWriter{ResponseWriter: w, override: int(code)}
+		}
+	}
+	http.ServeContent(w, r, name, info.ModTime(), file)
+}
+
+// statusOverrideWriter substitutes a caller status for the 200 ServeContent writes on a full body, leaving 206/304/416 intact so range and conditional semantics hold.
+type statusOverrideWriter struct {
+	http.ResponseWriter
+	override int
+	wrote    bool
+}
+
+func (w *statusOverrideWriter) WriteHeader(code int) {
+	if !w.wrote {
+		w.wrote = true
+		if code == http.StatusOK {
+			code = w.override
+		}
+	}
+	w.ResponseWriter.WriteHeader(code)
 }
 
 func streamResponseHandler(response runtime.Value) (runtime.Function, bool) {

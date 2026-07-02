@@ -1,0 +1,18 @@
+/**
+ * @title messaging.sqs SigV4 signing key (known vector)
+ * @summary Pins messaging.sqs.signingKey against AWS's published
+ * Signature V4 "deriving the signing key" example vector, so the
+ * HMAC-SHA256 chain (date -> region -> service -> aws4_request) cannot
+ * silently drift.
+ */
+import test;
+import bytes;
+import messaging.sqs as sqs;
+
+class MessagingSigV4Test extends test.Test {
+    @test
+    func signingKeyMatchesAwsPublishedVector(): void {
+        let key = sqs.signingKey("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "20120215", "us-east-1", "iam");
+        this.assertEquals("f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d", bytes.toHex(key));
+    }
+}

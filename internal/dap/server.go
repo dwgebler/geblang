@@ -256,7 +256,7 @@ func (s *Server) handleRequest(req *Message) error {
 	case "initialize":
 		s.sendResponse(req, InitializeResponseBody{
 			SupportsConfigurationDoneRequest:      true,
-			SupportsSingleThreadExecutionRequests: false,
+			SupportsSingleThreadExecutionRequests: true,
 			SupportsEvaluateForHovers:             true,
 			SupportsTerminateRequest:              true,
 			SupportsSetVariable:                   true,
@@ -372,8 +372,6 @@ func (s *Server) handleRequest(req *Message) error {
 			frames[i] = StackFrame{ID: id, Name: f.Name, Source: src, Line: line, Column: 1}
 			if i < len(pause.FrameVars) {
 				frameVars[id] = dapVariables(pause.FrameVars[i])
-			} else if i == 0 {
-				frameVars[id] = dapVariables(pause.Vars)
 			} else {
 				frameVars[id] = []Variable{}
 			}
@@ -527,6 +525,16 @@ func (s *Server) handleRequest(req *Message) error {
 		})
 
 	case "continue":
+		var a ContinueArgs
+		_ = remarshal(req.Arguments, &a)
+		if a.SingleThread {
+			if !s.resumeThreadOnly(a.ThreadID) {
+				s.sendErrorResponse(req, "can only single-thread continue the focused stopped thread")
+				return nil
+			}
+			s.sendResponse(req, ContinueResponseBody{AllThreadsContinued: false})
+			return nil
+		}
 		s.resumeAll()
 		s.sendResponse(req, ContinueResponseBody{AllThreadsContinued: true})
 
@@ -625,6 +633,30 @@ func (s *Server) resumeAll() {
 	}
 }
 
+// resumeThreadOnly releases just the focused stopped thread; the world stays stopped so parked workers remain parked.
+func (s *Server) resumeThreadOnly(tid int) bool {
+	s.mu.Lock()
+	if tid == 0 {
+		tid = s.focused
+	}
+	ti := s.threads[tid]
+	if ti == nil || !ti.stopped || tid != s.focused || ti.stoppedGen != s.stopGen {
+		s.mu.Unlock()
+		return false
+	}
+	ti.mode = modeContinue
+	ti.pendingReason = ""
+	ti.stopped = false // close the continue-then-evaluate TOCTOU before the worker leaves onPause
+	s.clearFrameRefsForThreadLocked(tid)
+	ch := ti.resume // fresh one-shot channel from this stop; a stale token cannot reach it
+	s.mu.Unlock()
+	select {
+	case ch <- modeContinue:
+	default:
+	}
+	return true
+}
+
 // stepThread advances the focused thread while allowing dependencies in other threads to run.
 func (s *Server) stepThread(req *Message, mode stepMode) {
 	var a NextArgs
@@ -648,20 +680,23 @@ func (s *Server) stepThread(req *Message, mode stepMode) {
 	ti.stepDepth = depth
 	ti.stopped = false
 	ti.pendingReason = "" // a pending pause must not survive a step onto this thread's next stop
-	s.stopped = false
 	s.clearFrameRefsLocked()
 	ch := ti.resume
 	var wake []chan stepMode
-	for id, other := range s.threads {
-		if id == tid {
-			continue
-		}
-		other.mode = modeContinue
-		other.pendingReason = ""
-		if other.parked || other.stopped {
-			other.parked = false
-			other.stopped = false
-			wake = append(wake, other.resume)
+	if !a.SingleThread {
+		// Default step unfreezes the world so other threads can satisfy the stepped thread's dependencies.
+		s.stopped = false
+		for id, other := range s.threads {
+			if id == tid {
+				continue
+			}
+			other.mode = modeContinue
+			other.pendingReason = ""
+			if other.parked || other.stopped {
+				other.parked = false
+				other.stopped = false
+				wake = append(wake, other.resume)
+			}
 		}
 	}
 	s.mu.Unlock()
@@ -751,6 +786,19 @@ func (s *Server) currentFrameLocked(id int) (frameRef, bool) {
 func (s *Server) clearFrameRefsLocked() {
 	s.frameRefs = map[int]frameRef{}
 	for _, ti := range s.threads {
+		ti.frameIDs = nil
+		ti.frameVars = nil
+	}
+}
+
+// clearFrameRefsForThreadLocked drops just one thread's frame refs, leaving other stopped threads inspectable.
+func (s *Server) clearFrameRefsForThreadLocked(tid int) {
+	for id, ref := range s.frameRefs {
+		if ref.thread == tid {
+			delete(s.frameRefs, id)
+		}
+	}
+	if ti := s.threads[tid]; ti != nil {
 		ti.frameIDs = nil
 		ti.frameVars = nil
 	}
@@ -1000,8 +1048,9 @@ func (s *Server) handlePausedCmd(cmd pausedCmd, pause evaluator.DebugPause) paus
 		newVars := rebuildVars(env)
 		s.mu.Lock()
 		if ti := s.threads[cmd.thread]; ti != nil {
-			if ti.lastPause != nil && cmd.frameIndex == 0 {
-				ti.lastPause.Vars = newVars
+			// Persist into the frame's snapshot so a later stackTrace refresh does not revert the value.
+			if ti.lastPause != nil && cmd.frameIndex >= 0 && cmd.frameIndex < len(ti.lastPause.FrameVars) {
+				ti.lastPause.FrameVars[cmd.frameIndex] = newVars
 			}
 			if ti.frameVars != nil {
 				ti.frameVars[cmd.frame] = dapVariables(newVars)

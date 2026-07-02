@@ -1,0 +1,46 @@
+/**
+ * @title Cross-module inherited static __deserialize factory
+ * @summary json.parseAs of a subclass whose static __deserialize factory is
+ * inherited from a parent in another module dispatches to the inherited factory;
+ * an override wins over the inherited one, and a subclass whose cross-module
+ * parent has no factory hydrates via its own constructor.
+ */
+import test;
+import json;
+import deserialize_donor as money;
+
+class Wallet extends money.Money {
+    func Wallet(int amount) { parent(amount); }
+}
+
+class Vault extends money.Money {
+    func Vault(int amount) { parent(amount); }
+    static func __deserialize(dict d): Vault { return Vault(d["amount"] + 1); }
+}
+
+class Bag extends money.Plain {
+    func Bag(int amount) { parent(amount); }
+}
+
+class DeserializeCrossModuleTest extends test.Test {
+
+    @test
+    func ownFactoryOnBase(): void {
+        this.assertEquals(40, json.parseAs("{\"amount\": 4}", money.Money).value());
+    }
+
+    @test
+    func inheritedFactoryAcrossModule(): void {
+        this.assertEquals(40, json.parseAs("{\"amount\": 4}", Wallet).value());
+    }
+
+    @test
+    func overrideFactoryWins(): void {
+        this.assertEquals(5, json.parseAs("{\"amount\": 4}", Vault).value());
+    }
+
+    @test
+    func noFactoryHydratesViaConstructor(): void {
+        this.assertEquals(7, json.parseAs("{\"amount\": 7}", Bag).value());
+    }
+}

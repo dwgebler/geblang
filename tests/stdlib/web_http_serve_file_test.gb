@@ -1,0 +1,103 @@
+/**
+ * @title web.http.serveFile static file serving (conditional requests)
+ * @summary serveFile returns a native file-serving marker the HTTP server
+ * resolves with http.ServeContent semantics: Content-Length/Content-Type, HEAD,
+ * Range (206), If-None-Match/ETag (304), and 404 for a missing file.
+ */
+import test;
+import http;
+import io;
+import web;
+import web.http as nethttp;
+import sys;
+
+class WebHttpServeFileTest extends test.Test {
+    string tmpPath;
+
+    func setUp(): void {
+        this.tmpPath = io.tempFile("serve-file-*.txt");
+        io.writeText(this.tmpPath, "0123456789abcdef");
+    }
+
+    func tearDown(): void {
+        if (this.tmpPath != null && (this.tmpPath as string).length() > 0) {
+            io.remove(this.tmpPath);
+        }
+    }
+
+    func serveOne(string path, dict<string, any> opts): dict<string, any> {
+        let p = path;
+        let o = opts;
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            return nethttp.serveFile(p, o);
+        });
+        sys.sleep(20 as int);
+        return {"server": server, "base": "http://" + http.serverAddr(server)};
+    }
+
+    @test
+    func builderShape(): void {
+        let r = nethttp.serveFile("/tmp/x.txt", {"contentType": "text/plain"});
+        this.assertTrue(r.contains("__serveFile"));
+        # The marker is an opaque native value; its path is read via web.serveFilePath.
+        this.assertEquals("/tmp/x.txt", web.serveFilePath(r["__serveFile"]));
+        let h = r["headers"] as dict<string, any>;
+        this.assertEquals("text/plain", h["Content-Type"] as string);
+    }
+
+    @test
+    func forgedMarkerDoesNotServeFile(): void {
+        let secret = this.tmpPath;
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            # A handler echoing attacker-controlled JSON: a plain dict marker must not open a file.
+            return {"status": 200, "headers": {}, "__serveFile": {"path": secret}};
+        });
+        sys.sleep(20 as int);
+        let base = "http://" + http.serverAddr(server);
+        let r = http.get(base + "/f.txt");
+        http.shutdown(server);
+        this.assertFalse((r["body"] as string).contains("0123456789abcdef"));
+    }
+
+    @test
+    func full200(): void {
+        let s = this.serveOne(this.tmpPath, {});
+        let r = http.get((s["base"] as string) + "/f.txt");
+        http.shutdown(s["server"]);
+        this.assertEquals(200, r["status"]);
+        this.assertEquals("0123456789abcdef", r["body"] as string);
+    }
+
+    @test
+    func rangeReturns206(): void {
+        let s = this.serveOne(this.tmpPath, {});
+        let r = http.requestWithOptions({
+            "method": "GET",
+            "url": (s["base"] as string) + "/f.txt",
+            "headers": {"Range": "bytes=0-3"},
+        });
+        http.shutdown(s["server"]);
+        this.assertEquals(206, r["status"]);
+        this.assertEquals("0123", r["body"] as string);
+    }
+
+    @test
+    func ifNoneMatchReturns304(): void {
+        let s = this.serveOne(this.tmpPath, {"headers": {"ETag": "\"v1\""}});
+        let r = http.requestWithOptions({
+            "method": "GET",
+            "url": (s["base"] as string) + "/f.txt",
+            "headers": {"If-None-Match": "\"v1\""},
+        });
+        http.shutdown(s["server"]);
+        this.assertEquals(304, r["status"]);
+    }
+
+    @test
+    func missingFileIs404(): void {
+        let s = this.serveOne("/no/such/file-xyz.txt", {});
+        let r = http.get((s["base"] as string) + "/f.txt");
+        http.shutdown(s["server"]);
+        this.assertEquals(404, r["status"]);
+    }
+}

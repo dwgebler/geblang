@@ -98,6 +98,48 @@ func runParityWithStdlib(t *testing.T, source string, want string) {
 	}
 }
 
+// runParityModulesDir runs mainSource (loader-wired VM) against modules under dir on both backends and asserts identical output.
+func runParityModulesDir(t *testing.T, dir string, mainSource string, want string) {
+	t.Helper()
+
+	p := parser.New(lexer.New(mainSource))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator error: %v", err)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(mainSource), "parity")
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
+	loader.SetMainChunk(chunk)
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	loader.SetMainVM(vm)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	stateful.SetMethodDispatcher(vm)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm error: %v", err)
+	}
+
+	if evOut.String() != vmOut.String() {
+		t.Errorf("output mismatch:\n  evaluator: %q\n  vm:        %q", evOut.String(), vmOut.String())
+	}
+	if want != "" && evOut.String() != want {
+		t.Errorf("wrong output: got %q, want %q", evOut.String(), want)
+	}
+}
+
 // runParity compiles and runs source through both the evaluator and the VM,
 // then checks that their outputs agree.  If want is non-empty it also asserts
 // the exact expected output.

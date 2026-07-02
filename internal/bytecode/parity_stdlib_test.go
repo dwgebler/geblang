@@ -5,6 +5,8 @@ package bytecode_test
 // features that both execution paths are expected to support identically.
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -818,6 +820,99 @@ let t = json.parseAs("{\"kind\":\"x\",\"label\":\"hi\"}", Tagged);
 io.println(t.kind);
 io.println(t.label);
 `, "x-decoded\nhi\n")
+}
+
+// TestParityJSONParseAsInheritedDeserializeSameFile: a subclass uses a same-file base's inherited static __deserialize__ on both backends.
+func TestParityJSONParseAsInheritedDeserializeSameFile(t *testing.T) {
+	runParity(t, `import io;
+import json;
+class Base {
+    int value;
+    func Base(int value) { this.value = value; }
+    static func __deserialize__(dict d): Base { return Base(d["value"] * 10); }
+    func show(): int { return this.value; }
+}
+class Sub extends Base {
+    func Sub(int value) { parent(value); }
+}
+io.println(json.parseAs("{\"value\": 4}", Sub).show());
+`, "40\n")
+}
+
+// TestParityJSONParseAsCanonicalDeserialize: the single-underscore canonical __deserialize name is honored identically on both backends.
+func TestParityJSONParseAsCanonicalDeserialize(t *testing.T) {
+	runParity(t, `import io;
+import json;
+class Point {
+    int x;
+    func Point(int x) { this.x = x; }
+    static func __deserialize(dict d): Point { return Point(d["x"] + 100); }
+}
+io.println(json.parseAs("{\"x\": 5}", Point).x);
+`, "105\n")
+}
+
+// TestParityJSONParseAsOverrideDeserialize: an overriding subclass uses its own __deserialize__, not the inherited one, on both backends.
+func TestParityJSONParseAsOverrideDeserialize(t *testing.T) {
+	runParity(t, `import io;
+import json;
+class Base {
+    int value;
+    func Base(int value) { this.value = value; }
+    static func __deserialize__(dict d): Base { return Base(d["value"] * 10); }
+    func show(): int { return this.value; }
+}
+class Sub extends Base {
+    func Sub(int value) { parent(value); }
+    static func __deserialize__(dict d): Sub { return Sub(d["value"] + 1); }
+}
+io.println(json.parseAs("{\"value\": 4}", Sub).show());
+`, "5\n")
+}
+
+// TestParityJSONParseAsInheritedDeserializeCrossModule: a subclass inheriting a static __deserialize__ from a cross-module parent dispatches to it on both backends.
+func TestParityJSONParseAsInheritedDeserializeCrossModule(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "base.gb"), []byte(`module base;
+export class Base {
+    int value;
+    func Base(int value) { this.value = value; }
+    static func __deserialize__(dict d): Base { return Base(d["value"] * 10); }
+    func show(): int { return this.value; }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	runParityModulesDir(t, dir, `import io;
+import json;
+import base;
+class Sub extends base.Base {
+    func Sub(int value) { parent(value); }
+}
+io.println(json.parseAs("{\"value\": 4}", Sub).show());
+`, "40\n")
+}
+
+// TestParityJSONParseAsNoInheritedDeserializeCrossModule: a subclass whose cross-module parent has no factory hydrates via its own constructor on both backends.
+func TestParityJSONParseAsNoInheritedDeserializeCrossModule(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "base.gb"), []byte(`module base;
+export class Base {
+    int value;
+    func Base(int value) { this.value = value; }
+    func show(): int { return this.value; }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	runParityModulesDir(t, dir, `import io;
+import json;
+import base;
+class Sub extends base.Base {
+    func Sub(int value) { parent(value); }
+}
+io.println(json.parseAs("{\"value\": 7}", Sub).show());
+`, "7\n")
 }
 
 // TestParityJSONRoundTrip verifies stringify followed by parseAs

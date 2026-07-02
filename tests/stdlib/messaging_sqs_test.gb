@@ -12,6 +12,7 @@ import http;
 import sys;
 import io;
 import path;
+import bytes;
 import messaging;
 
 func startMockSqs(): dict<string, any> {
@@ -68,6 +69,35 @@ class MessagingSqsTest extends test.Test {
         let body = io.readText(path.join(mock["dir"] as string, "lastBody"));
         this.assertTrue(body.contains("MessageBody=hello+world") || body.contains("MessageBody=hello%20world"));
         http.shutdown(mock["server"]);
+    }
+
+    @test
+    func publishValidUtf8BytesSentAsString(): void {
+        let mock = startMockSqs();
+        let q = newSqs(mock["url"] as string);
+        q.publish(bytes.fromString("hi bytes"));
+        let body = io.readText(path.join(mock["dir"] as string, "lastBody"));
+        this.assertTrue(body.contains("MessageBody=hi+bytes") || body.contains("MessageBody=hi%20bytes"));
+        http.shutdown(mock["server"]);
+    }
+
+    @test
+    func publishBinaryBytesRaisesClearError(): void {
+        let q = messaging.connect({
+            "driver":    "sqs",
+            "region":    "us-east-1",
+            "queueUrl":  "http://127.0.0.1:1/q",
+            "accessKey": "AK",
+            "secretKey": "SK"
+        });
+        string seen = "";
+        try {
+            q.publish(bytes.fromHex("ff00"));
+        } catch (RuntimeError e) {
+            seen = e.message;
+        }
+        this.assertTrue(seen.contains("not valid UTF-8"));
+        this.assertTrue(seen.contains("base64"));
     }
 
     @test

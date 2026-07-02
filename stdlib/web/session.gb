@@ -5,6 +5,7 @@ import datetime;
 import db;
 import io;
 import json;
+import re;
 import secrets;
 import web.http as http;
 
@@ -110,6 +111,11 @@ func sessionDataFromPayload(string value): dict<string, any> {
     return payload["data"] as dict<string, any>;
 }
 
+# Matches secrets.randomHex(32); rejects cookie ids before they reach a path.
+func isValidSessionId(string id): bool {
+    return re.test("^[0-9a-f]{64}$", id);
+}
+
 ## Session store backed by JSON files in a directory.
 export class FileSessionStore {
     string directory;
@@ -127,7 +133,7 @@ export class FileSessionStore {
 
     func load(dict<string, any> request): dict<string, any> {
         string id = http.requestObject(request).cookie("geb_sid");
-        if (id.isEmpty()) {
+        if (!isValidSessionId(id)) {
             return {};
         }
         string path = this.path(id);
@@ -155,7 +161,7 @@ export class FileSessionStore {
 
     func clear(dict<string, any> response, dict<string, any> request): dict<string, any> {
         string id = http.requestObject(request).cookie("geb_sid");
-        if (!id.isEmpty()) {
+        if (isValidSessionId(id)) {
             io.remove(this.path(id));
         }
         return http.deleteCookie(response, "geb_sid");

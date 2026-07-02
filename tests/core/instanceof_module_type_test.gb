@@ -1,0 +1,61 @@
+/**
+ * @title instanceof against a builtin type name that also names a module
+ * @summary `bytes` and `string` are both builtin type names and importable
+ * modules. Used as the right operand of `instanceof` in expression position
+ * (return / let / argument), the bare name must resolve as a type, not be
+ * rejected as a module-used-as-value.
+ */
+import test;
+import bytes;
+import string;
+
+func isBytes(any v): bool { return v instanceof bytes; }
+
+func isString(any v): bool {
+    let ok = v instanceof string;
+    return ok;
+}
+
+func report(bool b): bool { return b; }
+
+class InstanceofModuleTypeTest extends test.Test {
+    @test
+    func bytesReturnPositionTrue(): void {
+        let b = bytes.fromHex("0a0b") as any;
+        this.assertTrue(isBytes(b));
+    }
+
+    @test
+    func bytesReturnPositionFalse(): void {
+        let n = 42 as any;
+        this.assertFalse(isBytes(n));
+    }
+
+    @test
+    func stringLetPositionTrue(): void {
+        let s = "hi" as any;
+        this.assertTrue(isString(s));
+    }
+
+    @test
+    func stringLetPositionFalse(): void {
+        let b = bytes.fromHex("00") as any;
+        this.assertFalse(isString(b));
+    }
+
+    @test
+    func bytesArgumentPosition(): void {
+        let b = bytes.fromHex("ff") as any;
+        this.assertTrue(report(b instanceof bytes));
+        this.assertFalse(report(b instanceof string));
+    }
+
+    @test
+    func inlineLetTrueAndFalse(): void {
+        let b = bytes.fromHex("01") as any;
+        bool isB = b instanceof bytes;
+        bool isS = b instanceof string;
+        this.assertTrue(isB);
+        this.assertFalse(isS);
+    }
+}

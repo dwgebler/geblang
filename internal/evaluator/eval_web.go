@@ -281,6 +281,38 @@ func webWithHeader(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 	return out, nil
 }
 
+// webServeFileMarker wraps a descriptor dict in an unforgeable native sentinel; the HTTP writer serves a file only when the __serveFile value is this type.
+func webServeFileMarker(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects a descriptor dict", call.Callee.String())
+	}
+	desc, ok := args[0].(runtime.Dict)
+	if !ok {
+		return nil, fmt.Errorf("%s descriptor must be dict", call.Callee.String())
+	}
+	if _, ok := dictStringField(desc, "path"); !ok {
+		return nil, fmt.Errorf("%s descriptor requires a path", call.Callee.String())
+	}
+	return runtime.NativeObject{Kind: serveFileMarkerKind, Payload: copyDict(desc)}, nil
+}
+
+// webServeFilePath reads the path from a serve-file marker so the in-process TestClient can materialize the body; empty for anything else.
+func webServeFilePath(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects a marker value", call.Callee.String())
+	}
+	marker, ok := args[0].(runtime.NativeObject)
+	if !ok || marker.Kind != serveFileMarkerKind {
+		return runtime.String{}, nil
+	}
+	desc, ok := marker.Payload.(runtime.Dict)
+	if !ok {
+		return runtime.String{}, nil
+	}
+	path, _ := dictStringField(desc, "path")
+	return runtime.String{Value: path}, nil
+}
+
 // webParseMultipart parses a `multipart/form-data` request body and
 // returns a dict of the form
 //

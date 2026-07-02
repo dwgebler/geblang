@@ -1,0 +1,9 @@
+module reentry_trace_donor;
+
+export func bumpThrows(): void {
+    throw RuntimeError("reentry boom");
+}
+
+export func runCallback(callable cb): void {
+    cb();
+}

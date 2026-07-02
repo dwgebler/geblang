@@ -1,0 +1,28 @@
+import test;
+
+class Widget {}
+class Gadget {}
+
+/** assertEquals treats a class value and typeof(instance) of the same name as equal, matching the == operator. */
+class AssertTypeofClassTest extends test.Test {
+    @test
+    func classEqualsTypeof(): void {
+        let w = Widget();
+        this.assertEquals(Widget, typeof(w));
+        this.assertEquals(typeof(w), Widget);
+    }
+
+    @test
+    func mismatchIsNotEqual(): void {
+        let w = Widget();
+        this.assertNotEquals(Gadget, typeof(w));
+    }
+
+    @test
+    func mirrorsOperator(): void {
+        let w = Widget();
+        this.assertTrue(Widget == typeof(w));
+        this.assertTrue(typeof(w) == Widget);
+        this.assertFalse(Gadget == typeof(w));
+    }
+}

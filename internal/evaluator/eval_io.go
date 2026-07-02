@@ -154,6 +154,23 @@ func pathAbs(call *ast.CallExpression, args []runtime.Value) (runtime.Value, err
 	return runtime.String{Value: abs}, nil
 }
 
+// pathReal resolves symlinks and returns the canonical absolute path, so callers can root-jail a served file against its intended directory.
+func pathReal(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	value, err := singleStringValue(call, args)
+	if err != nil {
+		return nil, err
+	}
+	abs, err := filepath.Abs(value)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.String{Value: resolved}, nil
+}
+
 func pathRel(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("%s expects exactly two arguments", call.Callee.String())

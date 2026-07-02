@@ -45,8 +45,39 @@ http.serve("127.0.0.1:8080", func(dict<string, any> request): dict<string, any> 
 
 Use `web.http` for request builders and response helpers such as `request`,
 `requestWithBody`, `context`, `jsonResponse`, `jsonStatus`, `jsonCreated`,
-`jsonError`, `html`, `render`, `redirect`, `normalize`, `statusCode`,
-`body`, `header`, `withHeader`, `withCookieOptions`, and `deleteCookie`.
+`jsonError`, `html`, `render`, `redirect`, `serveFile`, `normalize`,
+`statusCode`, `body`, `header`, `withHeader`, `withCookieOptions`, and
+`deleteCookie`.
+
+### Serving files
+
+`web.http.serveFile(path, opts?)` returns a response that streams a file
+straight from disk. The file is not read into memory; the server sets
+`Content-Length` and answers conditional and partial requests with the same
+semantics a static file server would:
+
+- `HEAD` returns the headers with an empty body.
+- A `Range` request returns `206 Partial Content` with a `Content-Range`.
+- A matching `If-None-Match` returns `304`. The server derives a default `ETag`
+  from the file size and modification time when you set none, so conditional
+  caching works out of the box; an `ETag` you set yourself is preserved.
+- An `If-Modified-Since` at or after the file's modification time returns `304`.
+- A missing or unreadable file returns `404` (the path is never disclosed).
+
+```gb
+router.get(app, "/downloads/{name}", func(dict<string, any> request): dict<string, any> {
+    let name = ((request["params"] as dict<string, any>)["name"]) as string;
+    return wh.serveFile("./downloads/" + name, {"contentType": "application/pdf"});
+});
+```
+
+Options (all optional): `contentType` overrides the sniffed type, `name` sets
+the download / sniff name (defaults to the base name), `headers` adds extra
+response headers, and `status` sets the base status. Path safety is the
+caller's responsibility; `serveFile` does not resolve `..` traversal, so
+validate the path (for example with `path.real` and a root check) before
+serving. The file marker `serveFile` returns is an opaque native value, so a
+handler that echoes a parsed request body cannot forge a file response.
 
 `Request`, `Response`, and `Context` are object wrappers over the same
 dictionaries used by the native router. They are conveniences, not a separate
@@ -280,7 +311,10 @@ let response = auth.login(sessions, wh.text("ok"), {"name": "Ada"}, {"httpOnly":
 let cacheStore = cache.fileCacheStore("/tmp/app-cache", 3600);
 ```
 
-Session stores are available for Redis, files, and SQL databases.
+Session stores are available for Redis, files, and SQL databases. The file
+store requires a `geb_sid` cookie to match the 64-character lowercase-hex id
+shape it generates before deriving a filesystem path from it; a cookie that
+doesn't match is treated as no session rather than read or deleted.
 
 ### Cache: `web.cache`
 

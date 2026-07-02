@@ -190,6 +190,17 @@ other parked threads in continue mode. This lets those threads satisfy channel,
 lock, and task dependencies needed by the selected thread. They park again
 when the next debugger stop is established.
 
+The adapter also honours single-thread execution requests. When the client
+issues Continue or a step with the single-thread flag set, only the selected
+thread runs; the other parked workers stay suspended rather than being resumed.
+The selected thread runs (or steps) until it stops again, at which point the
+world is once more fully stopped. Single-thread execution is useful for
+advancing one worker without letting the others make progress, but a thread
+that depends on a suspended worker (for example, awaiting a channel it does not
+feed itself) will not make progress until you resume the others with a normal
+Continue. A normal (all-thread) Continue or step is unchanged and remains the
+default.
+
 Only the focused (stopped) thread is fully inspectable. Other worker threads
 appear in the thread list but their call stack and variables are not
 expandable while a different thread holds the stop.

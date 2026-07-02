@@ -60,19 +60,13 @@ type VariablesArgs struct {
 }
 
 type ContinueArgs struct {
-	ThreadID int `json:"threadId"`
+	ThreadID     int  `json:"threadId"`
+	SingleThread bool `json:"singleThread"`
 }
 
 type NextArgs struct {
-	ThreadID int `json:"threadId"`
-}
-
-type StepInArgs struct {
-	ThreadID int `json:"threadId"`
-}
-
-type StepOutArgs struct {
-	ThreadID int `json:"threadId"`
+	ThreadID     int  `json:"threadId"`
+	SingleThread bool `json:"singleThread"`
 }
 
 type SetVariableArgs struct {

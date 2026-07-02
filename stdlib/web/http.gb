@@ -537,6 +537,29 @@ export func notFound(any body): dict<string, any> {
     return {"status": 404, "body": body};
 }
 
+## Builds a response that streams the file at `path` with server-handled HEAD, Range, If-None-Match/ETag, If-Modified-Since, and Content-Length; opts: contentType, name, headers, status. A missing file yields 404 at serve time.
+export func serveFile(string path, ?dict<string, any> opts = null): dict<string, any> {
+    dict<string, any> o = opts == null ? {} : (opts as dict<string, any>);
+    dict<string, any> headers = {};
+    if (o.contains("headers")) {
+        for (k, v in (o["headers"] as dict<string, any>).items()) {
+            headers[k as string] = v;
+        }
+    }
+    if (o.contains("contentType")) {
+        headers["Content-Type"] = o["contentType"] as string;
+    }
+    dict<string, any> descriptor = {"path": path};
+    if (o.contains("name")) {
+        descriptor["name"] = o["name"] as string;
+    }
+    int status = 200;
+    if (o.contains("status")) {
+        status = o["status"] as int;
+    }
+    return {"status": status, "headers": headers, "__serveFile": web.serveFileMarker(descriptor)};
+}
+
 ## Adds a simple Set-Cookie header to a response dictionary.
 export func withCookie(dict<string, any> response, string name, string value): dict<string, any> {
     return web.withHeader(response, "Set-Cookie", name + "=" + value);

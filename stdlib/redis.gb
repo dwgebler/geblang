@@ -1,6 +1,10 @@
 module redis;
 
+import bytes;
 import net;
+
+# Reject an implausible bulk length instead of allocating toward the deadline (Redis proto-max-bulk-len default).
+let MAX_BULK_BYTES = 536870912;
 
 func encodeCommand(list<string> parts): string {
     string out = "*" + (parts.length() as string) + "\r\n";
@@ -11,54 +15,116 @@ func encodeCommand(list<string> parts): string {
     return out;
 }
 
-func parseReply(string reply): any {
-    if (reply.isEmpty()) {
-        return null;
+# Valid UTF-8 bulk strings decode to text; binary stays raw bytes.
+func decodeBulk(bytes raw): any {
+    try {
+        return bytes.toString(raw);
+    } catch {
+        return raw;
     }
-    string kind = reply[0];
-    string rest = reply[1..].trim();
-    if (kind == "+") {
-        return rest;
+}
+
+func requireStringValue(any value): any {
+    if (value instanceof bytes) {
+        throw RuntimeError("redis value is not valid UTF-8; use getBytes to read it as raw bytes");
     }
-    if (kind == "-") {
-        throw RuntimeError(rest);
+    return value;
+}
+
+## Reads one RESP reply from a `source` func(): bytes that yields byte chunks.
+export func decodeReply(any source): any {
+    let reader = RespReader(source);
+    return reader.readReply();
+}
+
+# Byte-level RESP reader; frames by length prefix so binary and split values parse.
+class RespReader {
+    any source;
+    bytes buf;
+    int pos;
+
+    func RespReader(any source) {
+        this.source = source;
+        this.buf = bytes.fromString("");
+        this.pos = 0;
     }
-    if (kind == ":") {
-        return rest as int;
-    }
-    if (kind == "$") {
-        let lines = rest.split("\r\n");
-        if ((lines[0] as string) == "-1") {
-            return null;
+
+    func fill(): bool {
+        let pull = this.source;
+        let chunk = pull() as bytes;
+        if (chunk.isEmpty()) {
+            return false;
         }
-        if (lines.length() > 1) {
-            return lines[1] as string;
-        }
-        return "";
+        this.buf = bytes.concat(this.buf, chunk);
+        return true;
     }
-    if (kind == "*") {
-        let lines = rest.split("\r\n");
-        list<any> values = [];
-        int i = 1;
-        while (i < lines.length()) {
-            string marker = lines[i] as string;
-            if (marker.startsWith("$")) {
-                if (marker == "$-1") {
-                    values = values.push(null);
-                } else if ((i + 1) < lines.length()) {
-                    values = values.push(lines[i + 1]);
-                    i = i + 1;
+
+    func ensure(int n): void {
+        while ((this.buf.length() - this.pos) < n) {
+            if (!this.fill()) {
+                throw RuntimeError("redis: connection closed before a full reply arrived");
+            }
+        }
+    }
+
+    func readLine(): bytes {
+        int i = this.pos;
+        while (true) {
+            if ((i + 1) >= this.buf.length()) {
+                if (!this.fill()) {
+                    throw RuntimeError("redis: connection closed before end of line");
                 }
-            } else if (marker.startsWith(":")) {
-                values = values.push(marker[1..] as int);
-            } else if (marker.startsWith("+")) {
-                values = values.push(marker[1..]);
+                continue;
+            }
+            if (this.buf.get(i) == 13 && this.buf.get(i + 1) == 10) {
+                let line = this.buf.slice(this.pos, i);
+                this.pos = i + 2;
+                return line;
             }
             i = i + 1;
         }
-        return values;
     }
-    return reply;
+
+    func readReply(): any {
+        this.ensure(1);
+        int kind = this.buf.get(this.pos);
+        this.pos = this.pos + 1;
+        let line = this.readLine();
+        if (kind == 43) {                              # '+' simple string
+            return line.toString();
+        }
+        if (kind == 45) {                              # '-' error
+            throw RuntimeError(line.toString());
+        }
+        if (kind == 58) {                              # ':' integer
+            return line.toString() as int;
+        }
+        if (kind == 36) {                              # '$' bulk string
+            int len = line.toString() as int;
+            if (len < 0) {
+                return null;
+            }
+            if (len > MAX_BULK_BYTES) {
+                throw RuntimeError("redis: bulk reply length exceeds the ${MAX_BULK_BYTES} byte limit");
+            }
+            this.ensure(len + 2);
+            let payload = this.buf.slice(this.pos, this.pos + len);
+            this.pos = this.pos + len + 2;
+            return decodeBulk(payload);
+        }
+        if (kind == 42) {                              # '*' array
+            int count = line.toString() as int;
+            if (count < 0) {
+                return null;
+            }
+            list<any> values = [];
+            for (let i = 0; i < count; i = i + 1) {
+                values.push(this.readReply());
+            }
+            return values;
+        }
+        return line.toString();
+    }
 }
 
 ## Minimal Redis client for strings, lists, sets, hashes, counters, expiry, and raw commands.
@@ -72,7 +138,10 @@ export class Client {
 
     func command(list<string> parts): any {
         net.write(this.conn, encodeCommand(parts));
-        return parseReply(net.read(this.conn, 65536).toString());
+        let conn = this.conn;
+        return decodeReply(func(): bytes {
+            return net.read(conn, 65536) as bytes;
+        });
     }
 
     func ping(): bool {
@@ -88,7 +157,19 @@ export class Client {
     }
 
     func get(string key): any {
-        return this.command(["GET", key]);
+        return requireStringValue(this.command(["GET", key]));
+    }
+
+    ## Fetches a key as raw bytes; use for binary values that are not valid UTF-8.
+    func getBytes(string key): ?bytes {
+        let value = this.command(["GET", key]);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof bytes) {
+            return value as bytes;
+        }
+        return bytes.fromString(value as string);
     }
 
     func set(string key, string value): bool {

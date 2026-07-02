@@ -3,9 +3,9 @@
 Import `path` for portable path string manipulation. Import `pathlib` when you
 want object-style path values.
 
-`path` does not touch the filesystem except for `abs` and `glob`, which ask the
-host to resolve or match paths. Creating directories, reading files, changing
-permissions, and deleting paths are `io` responsibilities.
+`path` does not touch the filesystem except for `abs`, `real`, and `glob`, which
+ask the host to resolve or match paths. Creating directories, reading files,
+changing permissions, and deleting paths are `io` responsibilities.
 
 ```gb
 import path;
@@ -27,6 +27,7 @@ if (io.exists(file)) {
 | `dir(path)` | `string` | Parent directory path |
 | `ext(path)` | `string` | Final file extension, including the dot |
 | `abs(path)` | `string` | Absolute path resolved from the current working directory |
+| `real(path)` | `string` | Canonical absolute path with all symlinks resolved |
 | `rel(base, target)` | `string` | Relative path from base to target |
 | `glob(pattern)` | `list<string>` | Shell-style path matches |
 
@@ -83,6 +84,20 @@ let rel = path.rel(sys.cwd(), abs);
 `abs` can raise an error if the host cannot resolve the path. `rel` can raise an
 error if the two paths cannot be related, for example across different Windows
 volumes.
+
+`real` resolves every symlink along the path and returns the canonical absolute
+target. It is the safe way to confirm a file stays inside an intended directory:
+resolve both the root and the requested file, then require the file to start
+with the root. Because it follows symlinks, it catches escapes that a lexical
+`clean` would miss. It raises an error if the path does not exist.
+
+```gb
+let root = path.real("public");
+let target = path.real(path.join("public", requested));
+if (target != root && !target.startsWith(root + "/")) {
+    # requested escaped the root; refuse it
+}
+```
 
 ## Glob Matching
 

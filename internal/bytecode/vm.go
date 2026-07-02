@@ -581,6 +581,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			case runtime.BytecodeClass:
 				if dec, exists := vm.decoratedClasses[x.Index]; exists {
 					vm.push(dec)
+				} else if x.Module == "" && vm.moduleName != "" {
+					// Class-as-value constants bake an empty module; stamp the running one so a sub-module (bundle/import) resolves it to this chunk.
+					x.Module = vm.moduleName
+					vm.push(x)
 				} else {
 					vm.push(value)
 				}
@@ -1449,13 +1453,17 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			ip = nextIP
 		case OpWithEnter:
-			if err := vm.withEnter(*instruction); err != nil {
+			nextIP, err := vm.withEnter(*instruction, ip)
+			if err != nil {
 				return err
 			}
+			ip = nextIP
 		case OpWithExit:
-			if err := vm.withExit(*instruction); err != nil {
+			nextIP, err := vm.withExit(*instruction, ip)
+			if err != nil {
 				return err
 			}
+			ip = nextIP
 		case OpDel:
 			if err := vm.execDel(*instruction); err != nil {
 				return err
@@ -2838,11 +2846,17 @@ func (vm *VM) throw(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) throwRecoverableError(instruction Instruction, ip int, err error) (int, error) {
-	// A vmThrownError in the chain carries the original typed throw from
-	// another VM (task body, module call); rethrow it so catch matches.
+	// A vmThrownError carries an original typed throw from another VM; rethrow so catch matches.
 	var thrown vmThrownError
 	if errors.As(err, &thrown) && !thrown.err.IsFatal() {
 		captured := thrown.err
+		vm.pendingThrow = &captured
+		return vm.jumpToExceptionHandler(instruction, ip)
+	}
+	// A cross-module fault surfaced through a native call (json.parseAs -> __deserialize) arrives as *vmRuntimeError; rethrow with its clean message, not the rendered blob.
+	var rt *vmRuntimeError
+	if errors.As(err, &rt) {
+		captured := rt.toRuntimeError()
 		vm.pendingThrow = &captured
 		return vm.jumpToExceptionHandler(instruction, ip)
 	}
@@ -2891,8 +2905,7 @@ func (vm *VM) faultToRuntimeError(loopErr error) (runtime.Error, bool) {
 	}
 	var rt *vmRuntimeError
 	if errors.As(loopErr, &rt) {
-		return runtime.Error{Class: "RuntimeError", Message: rt.message, Parents: []string{"RuntimeError", "Error"},
-			TraceFrames: rt.frames, ErrorLine: rt.line, TopLevelLine: rt.topLevelLine}, false
+		return rt.toRuntimeError(), false
 	}
 	full := loopErr.Error()
 	msg := cleanRuntimeFaultMessage(full)
@@ -4366,15 +4379,15 @@ func (vm *VM) userIteratorMethodPresence(iter *runtime.Instance, isForeign bool)
 // class instance whose class defines __enter__(), it invokes the
 // method and pushes its return value; otherwise it pushes the
 // resource back so the binding (if any) receives it.
-func (vm *VM) withEnter(instruction Instruction) error {
+func (vm *VM) withEnter(instruction Instruction, ip int) (int, error) {
 	value, err := vm.pop()
 	if err != nil {
-		return vm.callPropagate(instruction, err)
+		return 0, vm.callPropagate(instruction, err)
 	}
 	instance, ok := value.(*runtime.Instance)
 	if !ok {
 		vm.push(value)
-		return nil
+		return ip, nil
 	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
 	if !ok {
@@ -4387,26 +4400,41 @@ func (vm *VM) withEnter(instruction Instruction) error {
 					continue
 				}
 				if cerr != nil {
-					return vm.runtimeError(instruction, "with: %s: %s", name, cerr.Error())
+					return vm.propagateModuleError(instruction, ip, cerr)
 				}
 				vm.push(result)
-				return nil
+				return ip, nil
 			}
 		}
 		vm.push(value)
-		return nil
+		return ip, nil
 	}
 	indices, name, ok := vm.lookupDunder(classInfo, "__enter", "__enter__")
-	if !ok || len(indices) == 0 {
-		vm.push(value)
-		return nil
+	if ok && len(indices) > 0 {
+		result, err := vm.CallMethod(instance, name, nil)
+		if err != nil {
+			return vm.propagateModuleError(instruction, ip, err)
+		}
+		vm.push(result)
+		return ip, nil
 	}
-	result, err := vm.CallMethod(instance, name, nil)
-	if err != nil {
-		return vm.runtimeError(instruction, "with: %s: %s", name, err.Error())
+	// __enter may be inherited from a cross-module ancestor, which lookupDunder (this chunk only) misses; resolve via CallMethod and treat not-found as no context manager.
+	if _, _, mok := vm.crossModuleBoundary(classInfo); mok {
+		for _, name := range []string{"__enter", "__enter__"} {
+			result, err := vm.CallMethod(instance, name, nil)
+			var notFound *runtime.MethodNotFoundError
+			if errors.As(err, &notFound) {
+				continue
+			}
+			if err != nil {
+				return vm.propagateModuleError(instruction, ip, err)
+			}
+			vm.push(result)
+			return ip, nil
+		}
 	}
-	vm.push(result)
-	return nil
+	vm.push(value)
+	return ip, nil
 }
 
 // withExit pops the resource from the stack and invokes
@@ -4414,14 +4442,14 @@ func (vm *VM) withEnter(instruction Instruction) error {
 // defines it. Otherwise it is a no-op: destructors are end-of-
 // lifetime hooks, not block-scoped cleanup, and fire later via the
 // program-exit sweep or an explicit `del`.
-func (vm *VM) withExit(instruction Instruction) error {
+func (vm *VM) withExit(instruction Instruction, ip int) (int, error) {
 	value, err := vm.pop()
 	if err != nil {
-		return vm.callPropagate(instruction, err)
+		return 0, vm.callPropagate(instruction, err)
 	}
 	instance, ok := value.(*runtime.Instance)
 	if !ok {
-		return nil
+		return ip, nil
 	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
 	if !ok {
@@ -4434,19 +4462,34 @@ func (vm *VM) withExit(instruction Instruction) error {
 					continue
 				}
 				if cerr != nil {
-					return vm.runtimeError(instruction, "with: %s: %s", name, cerr.Error())
+					return vm.propagateModuleError(instruction, ip, cerr)
 				}
-				return nil
+				return ip, nil
 			}
 		}
-		return nil
+		return ip, nil
 	}
 	if indices, name, ok := vm.lookupDunder(classInfo, "__exit", "__exit__"); ok && len(indices) > 0 {
 		if _, err := vm.CallMethod(instance, name, nil); err != nil {
-			return vm.runtimeError(instruction, "with: %s: %s", name, err.Error())
+			return vm.propagateModuleError(instruction, ip, err)
+		}
+		return ip, nil
+	}
+	// __exit may be inherited from a cross-module ancestor, which lookupDunder (this chunk only) misses; resolve via CallMethod and treat not-found as no cleanup.
+	if _, _, mok := vm.crossModuleBoundary(classInfo); mok {
+		for _, name := range []string{"__exit", "__exit__"} {
+			_, err := vm.CallMethod(instance, name, nil)
+			var notFound *runtime.MethodNotFoundError
+			if errors.As(err, &notFound) {
+				continue
+			}
+			if err != nil {
+				return vm.propagateModuleError(instruction, ip, err)
+			}
+			return ip, nil
 		}
 	}
-	return nil
+	return ip, nil
 }
 
 // execDel implements OpDel. Looks up the binding, fires the
@@ -5704,15 +5747,35 @@ func ensureSlot(values *[]runtime.VMValue, slot int64, label string) error {
 	return nil
 }
 
+// Pop frames a completed inline run left above baseline (after an uncaught throw) so a shared re-entry worker's next run does not inherit them.
+func (vm *VM) dropInlineRunFrames(baseline int) {
+	for len(vm.frames) > baseline {
+		idx := len(vm.frames) - 1
+		slot := &vm.frames[idx]
+		vm.popLocalsStackFrame(slot)
+		slot.returnOverride = nil
+		slot.generator = nil
+		slot.generatorDone = nil
+		slot.typeBindings = nil
+		slot.immutableFieldsToLock = nil
+		slot.lockInstance = nil
+		vm.frames = vm.frames[:idx]
+	}
+}
+
 // Converts outermost-first frame snapshot to innermost-first contract frames; frame i pairs its CallLine with frame i+1's callLine.
 func (vm *VM) snapshotContractFrames() (frames []runtime.StackFrame, topLevelLine int) {
 	n := len(vm.frames)
-	if n == 0 {
+	// A synchronous re-entry on a shared worker starts this run's frames at runInlineExitDepth; frames below it belong to the caller's run and must not leak into this run's trace.
+	base := vm.runInlineExitDepth
+	if base < 0 {
+		base = 0
+	}
+	if n <= base {
 		return nil, 0
 	}
-	frames = make([]runtime.StackFrame, 0, n)
-	for k := 0; k < n; k++ {
-		i := n - 1 - k
+	frames = make([]runtime.StackFrame, 0, n-base)
+	for i := n - 1; i >= base; i-- {
 		callLine := 0
 		if i+1 < n {
 			callLine = vm.frames[i+1].callLine
@@ -5723,7 +5786,7 @@ func (vm *VM) snapshotContractFrames() (frames []runtime.StackFrame, topLevelLin
 			frames = append(frames, runtime.StackFrame{Name: vm.frames[i].functionName, CallLine: vm.frames[i].tailCallLine, Repeat: r})
 		}
 	}
-	return frames, vm.frames[0].callLine
+	return frames, vm.frames[base].callLine
 }
 
 // vmRuntimeError is the error vm.runtimeError returns. It snapshots the
@@ -5747,6 +5810,18 @@ func (e *vmRuntimeError) uncaught() *runtime.UncaughtError {
 }
 
 func (e *vmRuntimeError) Error() string { return e.uncaught().Render() }
+
+// toRuntimeError converts a dispatch-loop fault into a catchable runtime.Error, preserving frames.
+func (e *vmRuntimeError) toRuntimeError() runtime.Error {
+	return runtime.Error{
+		Class:        "RuntimeError",
+		Message:      e.message,
+		Parents:      []string{"RuntimeError", "Error"},
+		TraceFrames:  e.frames,
+		ErrorLine:    e.line,
+		TopLevelLine: e.topLevelLine,
+	}
+}
 
 func (vm *VM) runtimeError(instruction Instruction, format string, args ...any) error {
 	frames, topLevel := vm.snapshotContractFrames()
@@ -5825,6 +5900,13 @@ func (vm *VM) propagateModuleError(instruction Instruction, ip int, err error) (
 	var thrown vmThrownError
 	if errors.As(err, &thrown) {
 		captured := vm.mergeBoundaryFrames(thrown.err, int(instruction.Line))
+		vm.pendingThrow = &captured
+		return vm.jumpToExceptionHandler(instruction, ip)
+	}
+	// A non-typed fault uncaught in the callee VM returns as *vmRuntimeError; carry it as a throw so a cross-module catch sees the clean message, not the rendered "uncaught ..." blob (parity with typed throws and the evaluator).
+	var rt *vmRuntimeError
+	if errors.As(err, &rt) {
+		captured := vm.mergeBoundaryFrames(rt.toRuntimeError(), int(instruction.Line))
 		vm.pendingThrow = &captured
 		return vm.jumpToExceptionHandler(instruction, ip)
 	}

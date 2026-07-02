@@ -2290,18 +2290,12 @@ func (e *Evaluator) evalWithStatement(stmt *ast.WithStatement, env *runtime.Envi
 	}
 	sig, bodyErr := e.evalBlock(stmt.Body, scope)
 	cleanupErr := e.runWithCleanup(resource)
-	// If the body produced an exception (Go error or thrown
-	// signal), an exception from cleanup is suppressed - matches
-	// C++/Python semantics where destructor failures shouldn't
-	// mask the original failure.
-	if bodyErr != nil {
-		return signal{}, bodyErr
-	}
-	if sig.kind == "throw" {
-		return sig, nil
-	}
+	// __exit raising replaces any body outcome (Python __exit__ semantics), matching the VM.
 	if cleanupErr != nil {
 		return signal{}, cleanupErr
+	}
+	if bodyErr != nil {
+		return signal{}, bodyErr
 	}
 	return sig, nil
 }

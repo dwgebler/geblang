@@ -9,6 +9,7 @@ import http;
 import sys;
 import io;
 import path;
+import bytes;
 import messaging;
 
 /* Mock both SNS and SQS endpoints on the same listener. SNS POSTs
@@ -72,6 +73,25 @@ class MessagingSnsTest extends test.Test {
                 "secretKey": "s"
             });
         });
+    }
+
+    @test
+    func publishBinaryBytesRaisesClearError(): void {
+        let t = messaging.topic({
+            "driver":    "sns",
+            "region":    "us-east-1",
+            "topicArn":  "arn:aws:sns:us-east-1:123:t",
+            "accessKey": "k",
+            "secretKey": "s"
+        });
+        string seen = "";
+        try {
+            t.publish(bytes.fromHex("ff00"));
+        } catch (RuntimeError e) {
+            seen = e.message;
+        }
+        this.assertTrue(seen.contains("not valid UTF-8"));
+        this.assertTrue(seen.contains("base64"));
     }
 
     @test

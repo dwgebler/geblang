@@ -1,0 +1,9 @@
+module typeof_any_donor;
+
+import bytes;
+
+export func makeBytes(): any { return bytes.fromHex("fffe"); }
+
+export func makeList(): any { return [1, 2, 3]; }
+
+export func makeString(): any { return "hi"; }

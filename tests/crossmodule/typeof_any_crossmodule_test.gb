@@ -1,0 +1,37 @@
+/**
+ * @title Cross-module typeof of an `any` value
+ * @summary A bytes value returned as `any` from another module compares equal
+ * to its type-name string through assertEquals, matching the == operator and
+ * the VM. List and string controls confirm typeof is correct generally.
+ */
+import test;
+import typeof_any_donor;
+import bytes;
+
+class TypeofAnyCrossModuleTest extends test.Test {
+
+    @test
+    func typeofCrossModuleBytes(): void {
+        let v = typeof_any_donor.makeBytes();
+        this.assertEquals("bytes", typeof(v));
+        this.assertEquals(typeof(v), "bytes");
+    }
+
+    @test
+    func asBytesCrossModule(): void {
+        let v = typeof_any_donor.makeBytes();
+        this.assertEquals(2, (v as bytes).length());
+    }
+
+    @test
+    func typeofCrossModuleListControl(): void {
+        let v = typeof_any_donor.makeList();
+        this.assertEquals("list", typeof(v));
+    }
+
+    @test
+    func typeofCrossModuleStringControl(): void {
+        let v = typeof_any_donor.makeString();
+        this.assertEquals("string", typeof(v));
+    }
+}

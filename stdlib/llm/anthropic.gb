@@ -90,7 +90,7 @@ export class AnthropicClient {
 
     func analyzeImage(bytes image, string prompt, dict<string, any> opts): dict<string, any> {
         string mime = opts.contains("mimeType") ? (opts["mimeType"] as string) : "image/png";
-        string b64 = encoding.base64Encode(bytes.toString(image));
+        string b64 = encoding.base64Encode(image);
         list<dict<string, any>> content = [
             {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
             {"type": "text", "text": prompt}

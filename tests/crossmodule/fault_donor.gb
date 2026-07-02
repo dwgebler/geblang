@@ -1,0 +1,9 @@
+module fault_donor;
+
+/* Cross-module class whose static and instance methods fault non-typed. */
+export class FaultBase {
+    int amount;
+    func FaultBase(int amount) { this.amount = amount; }
+    static func boom(): int { int z = 0; return 4 // z; }
+    func instBoom(): int { int z = 0; return this.amount // z; }
+}

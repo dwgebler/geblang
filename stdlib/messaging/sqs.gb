@@ -168,10 +168,13 @@ func payloadToString(any payload): string {
         return payload as string;
     }
     if (payload instanceof bytes) {
-        return bytes.toString(payload as bytes);
+        try {
+            return bytes.toString(payload as bytes);
+        } catch {
+            throw RuntimeError("messaging.sqs: binary payload is not valid UTF-8; encode it first (e.g. base64) before publishing");
+        }
     }
-    /* Anything else - dicts, lists, primitives - is JSON-encoded so
-     * the consumer can round-trip with json.parse. */
+    /* Anything else is JSON-encoded so the consumer can json.parse it. */
     return json.stringify(payload);
 }
 
@@ -203,7 +206,8 @@ func pathFromUrl(string url): string {
     return "/";
 }
 
-func signingKey(string secretKey, string dateStamp, string region, string service): bytes {
+## Derives an AWS Signature V4 signing key by chaining HMAC-SHA256 over the date, region, service, and terminator.
+export func signingKey(string secretKey, string dateStamp, string region, string service): bytes {
     let kDate = crypt.hmacSha256Bytes("AWS4" + secretKey, dateStamp);
     let kRegion = crypt.hmacSha256Bytes(kDate, region);
     let kService = crypt.hmacSha256Bytes(kRegion, service);

@@ -1,0 +1,14 @@
+module with_fault_donor;
+
+/* Cross-module context managers whose __enter/__exit fault or throw. */
+export class WEnterFault {
+    func WEnterFault() {}
+    func __enter(): WEnterFault { int z = 0; let q = 4 // z; return this; }
+    func __exit(): void {}
+}
+
+export class WExitThrow {
+    func WExitThrow() {}
+    func __enter(): WExitThrow { return this; }
+    func __exit(): void { throw ValueError("exit boom"); }
+}

@@ -1,0 +1,58 @@
+/**
+ * @title Cross-module non-typed fault is catchable with a clean message
+ * @summary A non-typed runtime fault (integer division by zero) inside a
+ * cross-module static or instance call is caught with the clean message,
+ * and its stack trace still lists the cross-module fault frame (the same on
+ * both backends). Before the fix the VM caught the rendered "uncaught ..."
+ * blob instead of the clean message.
+ */
+import test;
+import fault_donor as fault;
+
+class CrossModuleFaultTest extends test.Test {
+    @test
+    func staticFaultCaughtClean(): void {
+        bool caught = false;
+        try {
+            fault.FaultBase.boom();
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertEquals("integer division by zero", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func instanceFaultCaughtClean(): void {
+        let b = fault.FaultBase(10);
+        bool caught = false;
+        try {
+            b.instBoom();
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertEquals("integer division by zero", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func staticFaultTracePreserved(): void {
+        try {
+            fault.FaultBase.boom();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("FaultBase.boom", frames[0].function());
+        }
+    }
+
+    @test
+    func instanceFaultTracePreserved(): void {
+        let b = fault.FaultBase(10);
+        try {
+            b.instBoom();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("FaultBase.instBoom", frames[0].function());
+        }
+    }
+}

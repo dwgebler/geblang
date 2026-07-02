@@ -1,0 +1,91 @@
+/**
+ * @title FileSessionStore session-id validation
+ * @summary A geb_sid cookie value must match secrets.randomHex(32)'s
+ * 64-lowercase-hex shape before FileSessionStore.load/clear build a
+ * filesystem path from it; a valid id still round-trips a session,
+ * and a path-traversal or malformed id is rejected as "no session"
+ * without any read or delete outside the session directory.
+ */
+import test;
+import io;
+import web.session as session;
+
+class FileSessionStoreValidationTest extends test.Test {
+    string root;
+    string sessionsDir;
+    any store;
+
+    func setUp(): void {
+        this.root = io.tempDir("geb-session-root-*");
+        this.sessionsDir = this.root + "/sessions";
+        this.store = session.fileSessionStore(this.sessionsDir, 3600);
+    }
+
+    func tearDown(): void {
+        if (io.exists(this.sessionsDir)) {
+            for (name in io.listDir(this.sessionsDir)) {
+                io.remove(this.sessionsDir + "/" + (name as string));
+            }
+            io.remove(this.sessionsDir);
+        }
+        let decoyPath = this.root + "/decoy.json";
+        if (io.exists(decoyPath)) {
+            io.remove(decoyPath);
+        }
+        if (io.exists(this.root)) {
+            io.remove(this.root);
+        }
+    }
+
+    func requestWithSid(string id): dict<string, any> {
+        return {"headers": {"Cookie": "geb_sid=" + id}};
+    }
+
+    @test
+    func validHexIdRoundTripsSession(): void {
+        let saved = (this.store).save({}, {"user": "ada"}, {}) as dict<string, any>;
+        let headers = saved["headers"] as dict<string, any>;
+        let setCookie = headers["Set-Cookie"] as string;
+        let eq = setCookie.indexOf("=");
+        let semi = setCookie.indexOf(";");
+        let id = setCookie.substring(eq + 1, semi);
+
+        this.assertEquals(64, id.length());
+        let loaded = (this.store).load(this.requestWithSid(id));
+        this.assertEquals("ada", loaded["user"] as string);
+    }
+
+    # Decoy sits where a "../decoy" id would resolve path() to, seeded so a regression leaks data rather than crashing.
+    @test
+    func traversalIdIsRejectedWithoutTouchingFilesystem(): void {
+        let decoyPath = this.root + "/decoy.json";
+        io.writeText(decoyPath, "{\"data\": {\"leaked\": true}, \"expiresAt\": 9999999999}");
+
+        let loaded = (this.store).load(this.requestWithSid("../decoy"));
+        this.assertTrue(loaded.isEmpty());
+        this.assertTrue(io.exists(decoyPath));
+
+        (this.store).clear({}, this.requestWithSid("../decoy"));
+        this.assertTrue(io.exists(decoyPath));
+    }
+
+    @test
+    func shortNonHexIdIsRejected(): void {
+        let loaded = (this.store).load(this.requestWithSid("not-a-valid-id"));
+        this.assertTrue(loaded.isEmpty());
+    }
+
+    @test
+    func uppercaseHexIdIsRejected(): void {
+        let hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        this.assertEquals(64, hex64.length());
+        let loaded = (this.store).load(this.requestWithSid(hex64.upper()));
+        this.assertTrue(loaded.isEmpty());
+    }
+
+    @test
+    func emptyIdIsRejected(): void {
+        let loaded = (this.store).load(this.requestWithSid(""));
+        this.assertTrue(loaded.isEmpty());
+    }
+}

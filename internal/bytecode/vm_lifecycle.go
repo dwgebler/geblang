@@ -97,13 +97,16 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 		return nil, fmt.Errorf("deserialize %s: class index out of range", class.Name)
 	}
 	classInfo := vm.chunk.Classes[class.Index]
-	if indices, ok := vm.lookupStaticMethod(classInfo, "__deserialize__"); ok && len(indices) > 0 {
+	if indices, name, ok := vm.lookupStaticDunder(classInfo, "__deserialize", "__deserialize__"); ok && len(indices) > 0 {
 		args := []runtime.Value{value}
-		functionIndex, err := vm.selectRuntimeFunction(Instruction{}, "__deserialize__", indices, args, 0)
+		functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 0)
 		if err != nil {
 			return nil, fmt.Errorf("deserialize %s: %w", class.Name, err)
 		}
 		return vm.CallFunctionRaw(functionIndex, args)
+	}
+	if result, found, err := vm.deserializeViaInheritedFactory(class, value); found || err != nil {
+		return result, err
 	}
 	dict, ok := value.(runtime.Dict)
 	if !ok {
@@ -156,6 +159,23 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 		args = append(args, entry.Value)
 	}
 	return vm.ConstructClass(class.Index, args)
+}
+
+// deserializeViaInheritedFactory runs a static __deserialize factory inherited from a cross-module ancestor (same-chunk ancestors handled by lookupStaticDunder); found is false when none declares it.
+func (vm *VM) deserializeViaInheritedFactory(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, bool, error) {
+	if vm.moduleLoader == nil {
+		return nil, false, nil
+	}
+	for _, dunder := range [2]string{"__deserialize", "__deserialize__"} {
+		result, found, err := vm.moduleLoader.CallModuleStaticMethodByName(class.Module, class.Name, dunder, []runtime.Value{value})
+		if err != nil {
+			return nil, true, err // unwrapped, matching the own-factory path and the evaluator so a fault renders identically
+		}
+		if found {
+			return result, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 func vmFieldTypeInfos(classInfo ClassInfo) []native.FieldTypeInfo {

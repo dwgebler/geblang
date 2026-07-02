@@ -2215,6 +2215,7 @@ func (vm *VM) enterDirectRun() func() {
 	oldDeferBaseline := vm.runDeferBaseline
 	entryHandlers := len(vm.exceptionHandlers)
 	entryDefers := len(vm.defers)
+	entryFrames := len(vm.frames)
 	vm.runHandlerBaseline = entryHandlers
 	vm.runDeferBaseline = entryDefers
 	return func() {
@@ -2222,6 +2223,7 @@ func (vm *VM) enterDirectRun() func() {
 		vm.runInlineExitDepth = oldExitDepth
 		vm.runHandlerBaseline = oldHandlerBaseline
 		vm.runDeferBaseline = oldDeferBaseline
+		vm.dropInlineRunFrames(entryFrames)
 		if len(vm.exceptionHandlers) > entryHandlers {
 			vm.exceptionHandlers = vm.exceptionHandlers[:entryHandlers]
 		}
@@ -2370,6 +2372,9 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 			return nil, fmt.Errorf("deserialize %s: %w", class.Name, err)
 		}
 		return vm.CallFunctionRaw(functionIndex, args)
+	}
+	if result, found, err := vm.deserializeViaInheritedFactory(class, value); found || err != nil {
+		return result, err
 	}
 	dict, ok := value.(runtime.Dict)
 	if !ok {

@@ -1,0 +1,43 @@
+/**
+ * @title path.real symlink resolution and root-jail use
+ * @summary path.real resolves symlinks to a canonical absolute path so callers can
+ * assert a served file stays under an intended directory.
+ */
+import test;
+import path;
+import io;
+
+class PathRealTest extends test.Test {
+    @test
+    func resolvesSymlinkToTarget(): void {
+        let dir = io.tempDir("geb-real-*");
+        let target = path.join(dir, "target.txt");
+        io.writeText(target, "x");
+        let link = path.join(dir, "link.txt");
+        io.symlink(target, link);
+        this.assertEquals(path.real(target), path.real(link));
+    }
+
+    @test
+    func canonicalPathIsAbsolute(): void {
+        let dir = io.tempDir("geb-real-*");
+        let file = path.join(dir, "f.txt");
+        io.writeText(file, "y");
+        let real = path.real(file);
+        this.assertTrue(real.startsWith("/"));
+    }
+
+    @test
+    func symlinkEscapeIsDetectableByContainmentCheck(): void {
+        # A link inside the root pointing outside resolves out of the root.
+        let root = io.tempDir("geb-real-root-*");
+        let outside = io.tempDir("geb-real-out-*");
+        let secret = path.join(outside, "secret.txt");
+        io.writeText(secret, "z");
+        let escape = path.join(root, "escape.txt");
+        io.symlink(secret, escape);
+        let realRoot = path.real(root);
+        let realEscape = path.real(escape);
+        this.assertFalse(realEscape.startsWith(realRoot + "/"));
+    }
+}

@@ -1287,6 +1287,36 @@ func TestAnalyzerAllowsShadowedModuleName(t *testing.T) {
 	}
 }
 
+// A builtin type name that also names an imported module is a valid instanceof target in expression position.
+func TestInstanceofBuiltinTypeCollidingWithModule(t *testing.T) {
+	accepted := []string{
+		"import bytes;\nfunc f(any v): bool { return v instanceof bytes; }\n",
+		"import string;\nfunc f(any v): bool { return v instanceof string; }\n",
+		"import bytes;\nfunc f(any v): bool { let ok = v instanceof bytes; return ok; }\n",
+		"import bytes;\nimport io;\nfunc g(bool b): void {}\nfunc f(any v): void { g(v instanceof bytes); }\n",
+		"import bytes;\nfunc f(any v): void { if (v instanceof bytes) {} }\n",
+	}
+	for _, input := range accepted {
+		diags := analyzeInput(t, input)
+		if hasDiagnostic(diags, "is a module, not a value") {
+			t.Errorf("unexpected module-as-value diagnostic for %q: %v", input, diags)
+		}
+	}
+
+	rejected := []string{
+		"import bytes;\nlet x = bytes;\n",
+		"import bytes;\nfunc f(any v): void {}\nf(bytes);\n",
+		"import bytes;\nlet y = bytes;\nlet z = y;\n",
+		"import bytes;\nfunc g(): any { return bytes; }\n",
+	}
+	for _, input := range rejected {
+		diags := analyzeInput(t, input)
+		if !hasDiagnostic(diags, "is a module, not a value") {
+			t.Errorf("expected module-as-value diagnostic for %q, got %v", input, diags)
+		}
+	}
+}
+
 // TestAnalyzerFlagsUnknownBareCallee: a call to an undeclared bare name must
 // be a static error so the evaluator path rejects what the VM compiler
 // already rejects (static-analysis contract).
