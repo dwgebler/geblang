@@ -428,6 +428,122 @@ func (g *fuzzGen) matchBlock() (decls string, calls []string) {
 	return d.String(), calls
 }
 
+// closureCaptureBlock: a closure whose ONLY reference to an outer local is via interpolation, comprehension, pipe, or partial application (upvalue-capture scan gap).
+func (g *fuzzGen) closureCaptureBlock() (decls string, calls []string) {
+	base := g.intLit()
+	add := g.intLit()
+	var d strings.Builder
+	d.WriteString("func capDbl(int x): int { return x * 2; }\n")
+	d.WriteString("func capAdd(int x, int y): int { return x + y; }\n")
+	calls = append(calls,
+		"let capBase = "+base+";",
+		"let capInterp = func(): string { return \"v=${capBase}\"; };",
+		"io.println((capInterp as callable)());",
+		"let capList = func(): list<int> { return [capBase + i for i in [0, 1, 2]]; };",
+		"io.println(\"${(capList as callable)()}\");",
+		"let capDict = func(): dict<int, int> { return {i: capBase + i for i in [0, 1, 2]}; };",
+		"io.println(\"${(capDict as callable)()}\");",
+		"let capPipe = func(): int { return capBase |> capDbl; };",
+		"io.println((capPipe as callable)());",
+		"let capPartial = func(): callable { return capAdd(capBase, _); };",
+		"io.println(((capPartial as callable)() as callable)("+add+"));",
+	)
+	return d.String(), calls
+}
+
+// spreadArgBlock: a spread mixed with non-spread args in non-trailing position and named-before-spread order (per-argument binding was silently mis-bound).
+func (g *fuzzGen) spreadArgBlock() (decls string, calls []string) {
+	a, b, c := g.intLit(), g.intLit(), g.intLit()
+	x, y := g.intLit(), g.intLit()
+	var d strings.Builder
+	d.WriteString("func spread3(int a, int b, int c): string { return \"${a}|${b}|${c}\"; }\n")
+	d.WriteString("func spreadVar(int a, int ...rest): string { return \"${a}:${rest}\"; }\n")
+	calls = append(calls,
+		"io.println(spread3(...["+a+"], "+b+", "+c+"));",
+		"io.println(spread3("+a+", ...["+b+"], "+c+"));",
+		"io.println(spread3(c: "+c+", ...["+a+", "+b+"]));",
+		"io.println(spreadVar("+a+", ...["+b+", "+c+"], "+x+"));",
+		"io.println(spreadVar(...["+a+", "+b+", "+y+"]));",
+	)
+	return d.String(), calls
+}
+
+// decoratedBlock: a callable decorator over func/method/static, each called succeeding and throwing (both CAUGHT). The uncaught decorated forms live in uncaughtProgram (9.37).
+func (g *fuzzGen) decoratedBlock() (decls string, calls []string) {
+	ok := strconv.Itoa(g.rng.Intn(50))
+	bad := "-" + strconv.Itoa(1+g.rng.Intn(50))
+	var d strings.Builder
+	d.WriteString("func decoWrap(any next): any { return func(any arg): any { return next(arg); }; }\n")
+	d.WriteString("@decoWrap\nfunc decoFn(int x): int { if (x < 0) { throw ValueError(\"fn ${x}\"); } return x + 1; }\n")
+	d.WriteString("class DecoSvc {\n")
+	d.WriteString("  @decoWrap\n  func handle(int x): int { if (x < 0) { throw ValueError(\"m ${x}\"); } return x + 2; }\n")
+	d.WriteString("  @decoWrap\n  static func shandle(int x): int { if (x < 0) { throw ValueError(\"s ${x}\"); } return x + 3; }\n")
+	d.WriteString("}\n")
+	d.WriteString("func dtry(callable f): void { try { io.println((f as callable)()); io.println(\"ok\"); } catch (Error e) { io.println(e.class); io.println(e.message); } }\n")
+	calls = append(calls,
+		"dtry(func(): any { return decoFn("+ok+"); });",
+		"dtry(func(): any { return decoFn("+bad+"); });",
+		"dtry(func(): any { return DecoSvc().handle("+ok+"); });",
+		"dtry(func(): any { return DecoSvc().handle("+bad+"); });",
+		"dtry(func(): any { return DecoSvc.shandle("+ok+"); });",
+		"dtry(func(): any { return DecoSvc.shandle("+bad+"); });",
+	)
+	return d.String(), calls
+}
+
+// methodValueBlock: a static method value and a bound instance method value used as first-class callables (called directly, passed to sortBy), including DECORATED method/static values whose wrapper must run with the receiver forwarded (9.39).
+func (g *fuzzGen) methodValueBlock() (decls string, calls []string) {
+	base := g.intLit()
+	m1, m2 := g.intLit(), g.intLit()
+	pos := strconv.Itoa(g.rng.Intn(50))
+	bad := "-" + strconv.Itoa(1+g.rng.Intn(50))
+	var d strings.Builder
+	d.WriteString("func mvWrap(any next): any { return func(int x): int { return (next(x) * 2); }; }\n")
+	d.WriteString("class MvCalc {\n")
+	d.WriteString("  int base;\n")
+	d.WriteString("  func MvCalc(int b) { this.base = b; }\n")
+	d.WriteString("  func addTo(int x): int { return (this.base + x); }\n")
+	d.WriteString("  static func mul(int a, int b): int { return (a * b); }\n")
+	d.WriteString("  @mvWrap\n  func decAdd(int x): int { if (x < 0) { throw ValueError(\"dv ${x}\"); } return (this.base + x); }\n")
+	d.WriteString("  @mvWrap\n  static func decMul(int x): int { return (x * 3); }\n")
+	d.WriteString("}\n")
+	calls = append(calls,
+		"let mvS = MvCalc.mul;",
+		"io.println((mvS as callable)("+m1+", "+m2+"));",
+		"let mvi = MvCalc("+base+");",
+		"let mvB = mvi.addTo;",
+		"io.println((mvB as callable)("+m1+"));",
+		"io.println(\"${[3, 1, 2].sortBy(mvi.addTo)}\");",
+		"let mvDb = mvi.decAdd;",
+		"io.println((mvDb as callable)("+pos+"));",
+		"let mvDs = MvCalc.decMul;",
+		"io.println((mvDs as callable)("+pos+"));",
+		"io.println(\"${[3, 1, 2].sortBy(mvi.decAdd)}\");",
+		"try { io.println((mvDb as callable)("+bad+")); } catch (ValueError e) { io.println(e.message); }",
+	)
+	return d.String(), calls
+}
+
+// deferFormsBlock: defer with a module-qualified callee, a nested-selector callee, an argument spread, and a loop-registered defer (all LIFO).
+func (g *fuzzGen) deferFormsBlock() (decls string, calls []string) {
+	a, b := g.intLit(), g.intLit()
+	var d strings.Builder
+	d.WriteString("class DfInner { func ping(): void { io.println(\"ping\"); } }\n")
+	d.WriteString("class DfOuter { DfInner inner; func DfOuter() { this.inner = DfInner(); } }\n")
+	d.WriteString("func dfShow(int a, int b): void { io.println(\"${a}|${b}\"); }\n")
+	d.WriteString("func dfRun(): void {\n")
+	d.WriteString("  let o = DfOuter();\n")
+	d.WriteString("  let xs = [" + a + ", " + b + "];\n")
+	d.WriteString("  defer o.inner.ping();\n")
+	d.WriteString("  defer dfShow(...xs);\n")
+	d.WriteString("  defer io.println(\"modq\");\n")
+	d.WriteString("  for (i in 0..<2) { defer io.println(\"loop${i}\"); }\n")
+	d.WriteString("  io.println(\"body\");\n")
+	d.WriteString("}\n")
+	calls = append(calls, "dfRun();")
+	return d.String(), calls
+}
+
 func (g *fuzzGen) program() string {
 	var b strings.Builder
 	b.WriteString("import io;\n")
@@ -435,7 +551,7 @@ func (g *fuzzGen) program() string {
 	// declarations cannot collide; the rest of the budget is scalar
 	// expressions and fault statements.
 	var sectionCalls []string
-	switch g.rng.Intn(7) {
+	switch g.rng.Intn(12) {
 	case 0:
 		decls, calls := g.classBlock()
 		b.WriteString(decls)
@@ -458,6 +574,26 @@ func (g *fuzzGen) program() string {
 		sectionCalls = calls
 	case 5:
 		decls, calls := g.matchBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 6:
+		decls, calls := g.closureCaptureBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 7:
+		decls, calls := g.spreadArgBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 8:
+		decls, calls := g.decoratedBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 9:
+		decls, calls := g.methodValueBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 10:
+		decls, calls := g.deferFormsBlock()
 		b.WriteString(decls)
 		sectionCalls = calls
 	}
@@ -489,7 +625,7 @@ func (g *fuzzGen) uncaughtProgram() string {
 	b.WriteString("import io;\n")
 	rt := func(n int) string { return "(\"" + strconv.Itoa(n) + "\".toInt())" }
 	msg := g.stringLit()
-	switch g.rng.Intn(7) {
+	switch g.rng.Intn(11) {
 	case 0: // plain call chain
 		b.WriteString("func inner(int x): int { throw ValueError(" + msg + "); }\n")
 		b.WriteString("func middle(int x): int { let r = inner(x + 1); return r; }\n")
@@ -517,6 +653,40 @@ func (g *fuzzGen) uncaughtProgram() string {
 		b.WriteString("func origin() { throw ValueError(" + msg + "); }\n")
 		b.WriteString("func relay() {\n  try { origin(); } catch (ValueError e) { throw e; }\n}\n")
 		b.WriteString("relay();\n")
+	case 6: // decorated callable throws, uncaught (9.37 wrapper-frame + top-level-line parity)
+		b.WriteString("func decoWrap(any next): any { return func(any arg): any { return next(arg); }; }\n")
+		switch g.rng.Intn(3) {
+		case 0:
+			b.WriteString("@decoWrap\nfunc dboom(int x): int { throw ValueError(" + msg + "); }\n")
+			b.WriteString("io.println(\"pre\");\n")
+			b.WriteString("io.println(dboom(" + g.intLit() + "));\n")
+		case 1:
+			b.WriteString("class DBoom {\n  @decoWrap\n  func work(int x): int { throw ValueError(" + msg + "); }\n}\n")
+			b.WriteString("io.println(\"pre\");\n")
+			b.WriteString("io.println(DBoom().work(" + g.intLit() + "));\n")
+		default:
+			b.WriteString("class DBoom {\n  @decoWrap\n  static func swork(int x): int { throw ValueError(" + msg + "); }\n}\n")
+			b.WriteString("io.println(\"pre\");\n")
+			b.WriteString("io.println(DBoom.swork(" + g.intLit() + "));\n")
+		}
+	case 7: // bound instance method value throws, uncaught
+		b.WriteString("class MvBoom {\n  func key(int n): int { throw ValueError(" + msg + "); }\n}\n")
+		b.WriteString("let mv = MvBoom();\n")
+		b.WriteString("let kf = mv.key;\n")
+		b.WriteString("io.println(\"pre\");\n")
+		b.WriteString("io.println((kf as callable)(" + g.intLit() + "));\n")
+	case 8: // decorated bound instance method value throws, uncaught (9.39)
+		b.WriteString("func decoWrap(any next): any { return func(int x): int { return next(x); }; }\n")
+		b.WriteString("class MvDBoom {\n  @decoWrap\n  func key(int n): int { throw ValueError(" + msg + "); }\n}\n")
+		b.WriteString("let mvd = MvDBoom();\n")
+		b.WriteString("let dkf = mvd.key;\n")
+		b.WriteString("io.println(\"pre\");\n")
+		b.WriteString("io.println((dkf as callable)(" + g.intLit() + "));\n")
+	case 9: // class-constructor decorator throws, uncaught (9.40)
+		b.WriteString("func guard(any cls): any { return func(any... a): any { throw ValueError(" + msg + "); }; }\n")
+		b.WriteString("@guard\nclass GBox {\n  int v;\n  func GBox(int v) { this.v = v; }\n}\n")
+		b.WriteString("io.println(\"pre\");\n")
+		b.WriteString("io.println(GBox(" + g.intLit() + "));\n")
 	default: // closure throw
 		b.WriteString("let f = func(int x): int { throw ValueError(" + msg + "); };\n")
 		b.WriteString("io.println(f(" + g.intLit() + "));\n")

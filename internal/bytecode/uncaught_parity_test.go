@@ -2,9 +2,11 @@ package bytecode_test
 
 import (
 	"bytes"
-	"strings"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"geblang/internal/ast"
 	"geblang/internal/bytecode"
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
@@ -35,6 +37,53 @@ func uncaughtOnBothBackends(t *testing.T, source string) (string, string) {
 		t.Fatalf("vm: expected an uncaught error, got none (stdout %q)", vmOut.String())
 	}
 	return evErr.Error(), vmErr.Error()
+}
+
+// uncaughtOnBothBackendsModulesDir runs mainSource against modules (name -> source) on both backends and returns each backend's uncaught-error string.
+func uncaughtOnBothBackendsModulesDir(t *testing.T, modules map[string]string, mainSource string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range modules {
+		if err := os.WriteFile(filepath.Join(dir, name+".gb"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write module %s: %v", name, err)
+		}
+	}
+	p := parser.New(lexer.New(mainSource))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, evErr := ev.Eval(program); evErr != nil {
+		vmErr := runModulesDirVMExpectError(t, dir, program, mainSource)
+		return evErr.Error(), vmErr
+	}
+	t.Fatalf("evaluator: expected an uncaught error, got none (stdout %q)", evOut.String())
+	return "", ""
+}
+
+func runModulesDirVMExpectError(t *testing.T, dir string, program *ast.Program, mainSource string) string {
+	t.Helper()
+	chunk, err := bytecode.Compile(program, []byte(mainSource), "parity")
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
+	loader.SetMainChunk(chunk)
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	loader.SetMainVM(vm)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	stateful.SetMethodDispatcher(vm)
+	vmErr := vm.Run()
+	if vmErr == nil {
+		t.Fatalf("vm: expected an uncaught error, got none (stdout %q)", vmOut.String())
+	}
+	return vmErr.Error()
 }
 
 // TestUncaughtRenderParity is the byte-identical guard for canonical
@@ -427,29 +476,20 @@ io.println("main done");
 	}
 }
 
-// TestUncaughtHofClosureErrorNotDoubled guards the fix for the VM doubling an
-// uncaught error raised inside a list-HOF closure (the message prefix and the
-// stack frames were rendered twice). The VM must render it once, like the
-// evaluator. (A residual top-level-frame line-number difference is a separate,
-// minor divergence, so this asserts no-doubling rather than byte-identity.)
+// TestUncaughtHofClosureErrorNotDoubled pins byte-identity for an uncaught throw inside a list-HOF closure (formerly the VM doubled the render; the residual top-level line divergence is now closed by the HOF caller-line fix).
 func TestUncaughtHofClosureErrorNotDoubled(t *testing.T) {
 	src := `import io;
 let xs = ["alpha", "beta"];
 io.println(xs.map(func(string w): int { return (w as int) + 1; }));
 `
+	want := `uncaught RuntimeError: invalid integer literal "alpha"
+  at <closure> (line 3)
+  at <top level> (line 3)`
 	evGot, vmGot := uncaughtOnBothBackends(t, src)
-	for backend, got := range map[string]string{"evaluator": evGot, "vm": vmGot} {
-		if strings.Contains(got, "uncaught RuntimeError: uncaught") {
-			t.Fatalf("%s doubled the uncaught prefix:\n%s", backend, got)
-		}
-		if n := strings.Count(got, "<closure>"); n != 1 {
-			t.Fatalf("%s rendered %d <closure> frames (want 1):\n%s", backend, n, got)
-		}
-		if n := strings.Count(got, "<top level>"); n != 1 {
-			t.Fatalf("%s rendered %d <top level> frames (want 1):\n%s", backend, n, got)
-		}
-		if !strings.Contains(got, `invalid integer literal "alpha"`) {
-			t.Fatalf("%s missing the underlying message:\n%s", backend, got)
-		}
+	if evGot != vmGot {
+		t.Fatalf("backend divergence:\n--- evaluator ---\n%s\n--- vm ---\n%s", evGot, vmGot)
+	}
+	if evGot != want {
+		t.Fatalf("canonical mismatch:\n--- got ---\n%s\n--- want ---\n%s", evGot, want)
 	}
 }

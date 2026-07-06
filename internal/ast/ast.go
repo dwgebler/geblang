@@ -730,6 +730,16 @@ func (*Literal) expressionNode()        {}
 func (e *Literal) TokenLiteral() string { return e.Token.Literal }
 func (e *Literal) String() string       { return e.Token.Literal }
 
+// PrecomputedValue wraps an already-evaluated runtime value (held as any to avoid an ast->runtime import) so a frozen deferred call re-evaluates to what it captured at registration time.
+type PrecomputedValue struct {
+	Token token.Token
+	Value any
+}
+
+func (*PrecomputedValue) expressionNode()        {}
+func (e *PrecomputedValue) TokenLiteral() string { return e.Token.Literal }
+func (e *PrecomputedValue) String() string       { return "<precomputed>" }
+
 type StringLiteral struct {
 	Token  token.Token
 	Value  string

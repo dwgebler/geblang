@@ -9,6 +9,7 @@ import (
 
 func (e *Evaluator) applyCallableFunctionDecorators(fn runtime.Function, decorators []ast.Decorator, env *runtime.Environment) (runtime.Function, error) {
 	current := fn
+	wrapped := false
 	for i := len(decorators) - 1; i >= 0; i-- {
 		decorator := decorators[i]
 		if decorator.Name == nil {
@@ -62,6 +63,10 @@ func (e *Evaluator) applyCallableFunctionDecorators(fn runtime.Function, decorat
 			return runtime.Function{}, fmt.Errorf("decorator %s returned incompatible wrapper for %s", decorator.Name.Value, fn.Name)
 		}
 		current = mergeDecoratedFunctionMetadata(fn, next)
+		wrapped = true
+	}
+	if wrapped {
+		current.OriginalParameters = fn.Parameters
 	}
 	return current, nil
 }
@@ -300,7 +305,7 @@ func mergeInterfaceMembers(stmt *ast.ClassStatement, ifaces []*runtime.Interface
 }
 
 func (e *Evaluator) buildInterface(stmt *ast.InterfaceStatement, env *runtime.Environment) (*runtime.Interface, error) {
-	iface := &runtime.Interface{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), Methods: e.resolveFunctionSignatures(stmt.Methods), Defaults: stmt.Defaults, Fields: stmt.Fields}
+	iface := &runtime.Interface{Name: stmt.Name.Value, Doc: stmt.Doc, Module: e.currentModule, TypeParameters: typeParameterNames(stmt.Generics), Methods: e.resolveFunctionSignatures(stmt.Methods), Defaults: stmt.Defaults, Fields: stmt.Fields}
 	for _, parentRef := range stmt.Parents {
 		parentValue, ok, err := e.resolveTypeValue(parentRef, env)
 		if err != nil {

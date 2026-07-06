@@ -515,7 +515,10 @@ func run(): void {
 ```
 
 Arguments to deferred calls are evaluated when the `defer` statement is
-executed.
+executed. A spread argument (`defer f(...xs)`) freezes which list `xs`
+refers to at that point; a later reassignment of `xs` does not change what
+runs, but an in-place mutation of the same list does, since the deferred
+call reads the list's elements when it fires.
 
 `defer` is especially useful with files, sockets, database transactions, and
 locks:

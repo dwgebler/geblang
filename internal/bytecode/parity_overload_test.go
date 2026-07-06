@@ -145,3 +145,45 @@ io.println(f(Box<Dog>(Dog())));
 io.println(f(Box<Animal>(Animal())));
 `, "boxDog\nboxAnimal\n")
 }
+
+// An overloaded ASYNC function used as a value yields a Task per selected overload (like a single async value and a direct overloaded async call), not the eagerly-run result.
+func TestParityOverloadedAsyncValue(t *testing.T) {
+	runParity(t, `import io;
+import async;
+async func af(int v): string { return "int:${v}"; }
+async func af(string s): string { return "str:${s}"; }
+let f = af;
+let a = f(5);
+let b = f("hi");
+io.println("${typeof(a)} ${typeof(b)}");
+io.println("${async.await(a)} ${async.await(b)}");
+io.println("${typeof(af(9))} ${async.await(af(9))}");
+`, "Task Task\nint:5 str:hi\nTask int:9\n")
+}
+
+// A mixed overload set wraps only the selected overload: an async winner yields a Task, a sync winner yields its plain result, matching the evaluator's post-selection async check.
+func TestParityOverloadedMixedAsyncValue(t *testing.T) {
+	runParity(t, `import io;
+import async;
+async func mf(int v): string { return "async:${v}"; }
+func mf(string s): string { return "sync:${s}"; }
+let f = mf;
+let a = f(5);
+let b = f("hi");
+io.println("${typeof(a)} ${typeof(b)}");
+io.println("${async.await(a)} ${b}");
+`, "Task string\nasync:5 sync:hi\n")
+}
+
+// An overloaded async value passed to a HOF callback yields a Task from the invocation, matching the evaluator.
+func TestParityOverloadedAsyncCallback(t *testing.T) {
+	runParity(t, `import io;
+import async;
+async func af(int v): string { return "int:${v}"; }
+async func af(string s): string { return "str:${s}"; }
+func apply(any cb, int x): any { return cb(x); }
+let f = af;
+let r = apply(f, 7);
+io.println("${typeof(r)} ${async.await(r)}");
+`, "Task int:7\n")
+}

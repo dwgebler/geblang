@@ -15,6 +15,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// watchWaitPollHook, when set, fires once per watchWait poll iteration (0-based, before the snapshot comparison) so a test can pin a mutation to a specific tick instead of racing an external sleep against the deadline.
+var watchWaitPollHook func(iteration int)
+
 func watchSnapshot(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	path, err := singleStringValue(call, args)
 	if err != nil {
@@ -52,7 +55,10 @@ func watchWait(call *ast.CallExpression, args []runtime.Value) (runtime.Value, e
 	}
 	before := watchSnapshotValue(path.Value)
 	deadline := time.Now().Add(time.Duration(timeout) * time.Millisecond)
-	for {
+	for iteration := 0; ; iteration++ {
+		if watchWaitPollHook != nil {
+			watchWaitPollHook(iteration)
+		}
 		after := watchSnapshotValue(path.Value)
 		if !watchSnapshotsEqual(before, after) {
 			return watchResult(true, before, after), nil

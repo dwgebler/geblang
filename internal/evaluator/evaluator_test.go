@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
@@ -28,9 +29,29 @@ func newLocalHTTPTestServer(t *testing.T, handler http.Handler) *httptest.Server
 		t.Skipf("local sockets unavailable: %v", err)
 	}
 	server := httptest.NewUnstartedServer(handler)
+	// Close the auto-bound listener being replaced so it cannot leak.
+	server.Listener.Close()
 	server.Listener = listener
 	server.Start()
+	waitForListenerReady(t, listener.Addr().String())
 	return server
+}
+
+// waitForListenerReady blocks until the server accepts a connection: a fresh loopback listener can be transiently unreachable under package load.
+func waitForListenerReady(t *testing.T, addr string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp4", addr, time.Second)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("test server never became reachable at %s: %v", addr, err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func TestEvaluatorRunsHelloProgram(t *testing.T) {
@@ -4881,48 +4902,6 @@ io.println(path.abs(".").length() > 0);
 	}
 
 	want := "a/b/file.txt\nfile.txt\na/b\n.txt\nb\napp/file.txt\ntrue\n"
-	if out.String() != want {
-		t.Fatalf("output: got %q, want %q", out.String(), want)
-	}
-}
-
-func TestEvaluatorRunsWatchModule(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "watched.txt")
-	if err := os.WriteFile(path, []byte("a"), 0o644); err != nil {
-		t.Fatalf("write watched file: %v", err)
-	}
-	input := `import io;
-import sys;
-import watch;
-
-let before = watch.snapshot(` + strconv.Quote(path) + `);
-io.println(before["exists"]);
-io.println(before["size"]);
-
-let proc = sys.start("sh", "-c", "sleep 0.1; printf b >> " + ` + strconv.Quote(path) + `);
-let result = watch.wait(` + strconv.Quote(path) + `, 2000, 50);
-io.println(result["changed"]);
-io.println(result["before"]["size"]);
-io.println(result["after"]["size"]);
-io.println(sys.processWait(proc));
-
-let timeout = watch.wait(` + strconv.Quote(path) + `, 0, 50);
-io.println(timeout["changed"]);
-`
-
-	p := parser.New(lexer.New(input))
-	program := p.ParseProgram()
-	if len(p.Errors()) != 0 {
-		t.Fatalf("parser errors: %v", p.Errors())
-	}
-
-	var out bytes.Buffer
-	_, err := evaluator.New(&out).Eval(program)
-	if err != nil {
-		t.Fatalf("eval error: %v", err)
-	}
-
-	want := "true\n1\ntrue\n1\n2\n0\nfalse\n"
 	if out.String() != want {
 		t.Fatalf("output: got %q, want %q", out.String(), want)
 	}

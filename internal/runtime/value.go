@@ -710,6 +710,8 @@ type Function struct {
 	IsGenerator          bool
 	Native               func(this *Instance, args []Value) (Value, error)
 	ForwardThis          bool
+	// OriginalParameters: pre-decoration signature, used only for named-arg binding.
+	OriginalParameters []ast.Parameter
 	// OwnerClass is set when the function is a class method/constructor; it
 	// identifies the lexical class for `parent(...)` resolution, which must
 	// dispatch on the declaring class rather than the runtime instance class
@@ -744,6 +746,9 @@ func (v Function) Inspect() string {
 type OverloadedFunction struct {
 	Name      string
 	Overloads []Function
+	// Set for an exported bytecode overload set; a cross-module member call selects a home-chunk overload by Indices.
+	Module  string
+	Indices []int64
 }
 
 func (v OverloadedFunction) TypeName() string { return "func" }
@@ -1334,9 +1339,18 @@ type Class struct {
 func (v *Class) TypeName() string { return "class" }
 func (v *Class) Inspect() string  { return "<class " + v.Name + ">" }
 
+// DeclaringModule prefers the evaluator's DefinitionModule, falling back to the VM's Module.
+func (v *Class) DeclaringModule() string {
+	if v.DefinitionModule != "" {
+		return v.DefinitionModule
+	}
+	return v.Module
+}
+
 type Interface struct {
 	Name           string
 	Doc            string
+	Module         string // declaring module, for module-exact instanceof
 	TypeParameters []string
 	Parents        []*Interface
 	Methods        []*ast.FunctionSignature

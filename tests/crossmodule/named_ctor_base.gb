@@ -1,0 +1,15 @@
+module named_ctor_base;
+
+export class Base {
+    int bx;
+    int bz;
+
+    func Base(int bx, int bz = 100) {
+        this.bx = bx;
+        this.bz = bz;
+    }
+
+    func describe(): string {
+        return "Base(${this.bx}, ${this.bz})";
+    }
+}

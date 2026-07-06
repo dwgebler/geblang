@@ -1,0 +1,15 @@
+module iterator_donor;
+
+export class Range {
+    int cur;
+    int stop;
+    func Range(int start, int stop) { this.cur = start; this.stop = stop; }
+    func __next(): int { let v = this.cur; this.cur = this.cur + 1; return v; }
+    func __done(): bool { return this.cur >= this.stop; }
+}
+
+export class Wrapper {
+    Range r;
+    func Wrapper(int n) { this.r = Range(0, n); }
+    func __iter(): Range { return this.r; }
+}

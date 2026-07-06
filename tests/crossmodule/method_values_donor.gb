@@ -1,0 +1,10 @@
+module method_values_donor;
+
+# Donor for method_values_test.gb: Class.staticMethod / instance.method as cross-module values.
+export class Box {
+    static const KIND = "box";
+    int id;
+    func Box(int id) { this.id = id; }
+    static func stamp(int x): int { return x * 3; }
+    func label(): string { return "box-" + (this.id as string); }
+}

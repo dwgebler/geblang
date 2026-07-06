@@ -1,0 +1,8 @@
+module overload_export_donor;
+
+export func over(int v): string { return "int:${v}"; }
+export func over(string s): string { return "str:${s}"; }
+export func over(int a, int b): string { return "two:${a},${b}"; }
+
+export func amb(int v): string { return "a"; }
+export func amb(int|string v): string { return "b"; }

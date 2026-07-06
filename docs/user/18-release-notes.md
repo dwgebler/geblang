@@ -1,5 +1,127 @@
 # Release Notes
 
+## 1.32.0
+
+### Changed
+
+- `instanceof` is now module-exact: the right-hand side resolves to the
+  specific class or interface declaration named in scope, and an instance
+  matches when its actual class is that declaration or a subtype of it. Two
+  same-named classes from different modules no longer match each other.
+  `typeof(x) == SomeClass` comparisons are unchanged (still by name). The
+  types chapter documents the distinction.
+- Deferred calls now evaluate their callee, receiver, and arguments when the
+  `defer` statement executes, on both backends, as the documentation always
+  stated. A variable mutated after the defer statement no longer changes what
+  the deferred call sees; a defer inside a loop captures each iteration's
+  values.
+- Passing arguments to a parent constructor that does not exist is now an error
+  on both backends: `parent(args)` where the base class declares no constructor
+  raises a catchable `RuntimeError`. Previously one runtime silently ignored the
+  arguments. Zero-argument `parent()` to such a base is still a no-op, and a base
+  with a matching constructor is unchanged.
+
+### Added
+
+- Methods are first-class values: `let f = SomeClass.staticMethod` and
+  `let m = instance.method` produce callable values that can be stored,
+  passed, returned, deferred, and used as callbacks (`xs.sortBy(obj.key)`),
+  locally and across modules. A bound method keeps its receiver by reference.
+- `defer f(...xs)` accepts a list spread; the list reference freezes at the
+  defer statement and its elements are expanded when the call fires.
+- Modules can export overloaded functions: `mod.over(5)` and `mod.over("x")`
+  select by argument types across the module boundary, in every form -
+  qualified, from-import, as a stored value, with named arguments, deferred,
+  and as a callback. Previously a module declaring two overloads of an
+  exported function failed to compile on the standard runtime.
+- An overloaded `async` function called through a stored value or an
+  imported overload set returns a `Task` like a direct call does; in a
+  mixed set the selected overload decides (async yields a `Task`, sync
+  returns its value). Previously the body ran synchronously and returned
+  the plain result.
+
+### Fixes
+
+- An error thrown inside a callback passed to a native higher-order function
+  (`sortBy`, `map`, `filter`, `reduce`, and the `collections` equivalents) and
+  caught by a surrounding try/catch no longer corrupts the VM: iteration stops
+  at the throwing element and execution continues cleanly after the catch,
+  matching the evaluator.
+- An uncaught error thrown inside such a callback now keeps the full caller
+  chain in the VM stack trace.
+- A fault raised by a deferred call or a `del`-fired destructor whose body
+  lives in another module is reported once with a clean message on both
+  backends, instead of nesting a fully rendered error inside the failure text.
+- The `==` operator and `assertEquals` now share one canonical equality
+  definition, pinned by guard tests on both backends: comparing native handle
+  values (for example two file-serve descriptors) no longer panics, and
+  `assertEquals` agrees with `==` for complex numbers.
+- `web.http`: a file response built by `serveFile` survives
+  `http.responseFrom(...)`, so builder-style wrapping preserves the streamed
+  file.
+- A typed error thrown inside a callback or a decorated function, method, or
+  constructor is catchable by its class on the VM (`catch (ValueError e)`
+  now matches; previously the class was lost and the error rendered twice).
+- Closures capture outer variables referenced through string interpolation,
+  pipelines, partial application, comprehensions, match-case patterns, and
+  destructuring assignments; on the VM these previously read wrong values or
+  failed with "local is undefined".
+- Named arguments on a decorated function or method bind to the original
+  declared parameter names on both backends; decorators are transparent to
+  callers.
+- A class inheriting `__next`/`__done` or `__iter` from a class in another
+  module iterates with `for-in` on the VM.
+- `defer` accepts module-qualified functions (`defer mod.cleanup()`) and
+  nested-selector static methods on the VM.
+- `del` works on variables whose class is declared in another module.
+- Cross-module interface hierarchies (`Sub extends Base` in another module)
+  match `instanceof Base` on the VM.
+- Running a test file's `test.run` on the VM reports failures with the same
+  clean class-prefixed message and frames as `geblang test`.
+- A spread argument works in any position (`f(1, ...rest, 4)`), combines
+  with named arguments (`f(c: 1, ...rest)`), and multiple spreads expand in
+  source order; previously arguments after a spread were silently dropped
+  and named arguments before a spread were silently treated as positional.
+  Native functions reject named arguments with spread with a clear error.
+- An uncaught error thrown from a callback declared in another module, a
+  capturing closure, or a callable object passed to a native higher-order
+  function now keeps the full caller chain in the stack trace, identical on
+  both backends. The reverse direction is also complete: when a function
+  from another module passes your callback to a higher-order method, that
+  function's own frame appears in the trace and in caught stackTrace()
+  frames.
+- Named arguments work on functions imported from another module
+  (`mod.f(b: 2, a: 1)`), including out-of-order names, mixes with positional
+  and spread arguments, omitted defaults, from-import forms, and deferred
+  calls; previously these were rejected at runtime.
+- Named arguments also work when constructing a class from another module
+  (`mod.Point(y: 2, x: 1)`), including overloaded constructors, from-import
+  and aliased forms, dict spreads, defaults, and deferred construction.
+- A destructor (`func ~ClassName()`) on a class from another module fires at
+  `del` or program exit like a local class does; previously it could fire
+  eagerly right after construction, and `del` never invoked it. Exit-sweep
+  ordering (reverse creation), del-fires-once, and destructors that construct
+  further destructible values behave identically on both backends.
+- An uncaught error thrown from a decorated function, method, or static method
+  renders an identical stack trace on both backends: the wrapper frame is named
+  after the decorated function and the top-level frame keeps its line. A class
+  decorator's uncaught throw also keeps the top-level line.
+- A DECORATED method used as a first-class value runs its decorator wrapper
+  with the receiver bound, on both backends: `let f = s.handle; f(5)` behaves
+  like `s.handle(5)`, including in callbacks and defers. Previously the call
+  failed with a wrong-arity error, and a decorated static method taken as a
+  value silently skipped its decorator.
+- `profile.elapsed` and `metrics.duration` now return the documented
+  milliseconds as a float with sub-millisecond precision (previously raw
+  nanoseconds as an integer). The `now()` token they take is unchanged.
+
+### Performance
+
+- `redis`: the reply reader buffers network chunks in linear time, so large
+  bulk replies no longer copy quadratically (a 16 MB reply drops from roughly
+  885 ms to 41 ms), and `getBytes` returns the raw payload without a
+  decode and re-encode round trip.
+
 ## 1.31.1
 
 ### Debugging

@@ -1,0 +1,53 @@
+/**
+ * @title Closure capture via match-case or-patterns and list-pattern literals (bugfix)
+ * @summary The free-variable scanner gap also missed a `match` case's or-pattern
+ * alternates (`case 1 | f`) and a list-pattern's literal-equality binding
+ * (`case [int x, -f]`): an outer local referenced only there must still be
+ * captured as an upvalue.
+ */
+import test;
+
+class ClosureCaptureViaMatchCaseTest extends test.Test {
+
+    @test
+    func orPatternAlternateOnlyReferenceIsCaptured(): void {
+        let f = 99;
+        let cb = func(int v): string {
+            return match (v) {
+                case 1 | f => "matched";
+                default => "no";
+            };
+        };
+        this.assertEquals("matched", cb(99));
+        this.assertEquals("matched", cb(1));
+        this.assertEquals("no", cb(2));
+    }
+
+    @test
+    func listPatternLiteralOnlyReferenceIsCaptured(): void {
+        let f = 7;
+        let cb = func(list<int> v): string {
+            return match (v) {
+                case [int x, -f] => "hit ${x}";
+                default => "no";
+            };
+        };
+        this.assertEquals("hit 1", cb([1, -7]));
+        this.assertEquals("no", cb([1, 5]));
+    }
+
+    @test
+    func orPatternAlternateAsMatchStatement(): void {
+        let f = 5;
+        let out = [];
+        let cb = func(int v): void {
+            match (v) {
+                case 1 | f => out = out.push("matched");
+                default => out = out.push("no");
+            }
+        };
+        cb(5);
+        cb(2);
+        this.assertEquals(["matched", "no"], out);
+    }
+}

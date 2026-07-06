@@ -304,6 +304,18 @@ The `.type` selector is a shorthand for `typeof` - `expr.type` is equivalent to
 `typeof(expr)`. Primitive type names (`string`, `int`, `bool`, `decimal`, etc.)
 and class names can be used directly as type values in comparisons.
 
+`Type` comparisons match by NAME: `typeof(x) == SomeClass` is true for any
+class named `SomeClass`, even one declared in a different module. `instanceof`,
+by contrast, is module-exact and is the precise runtime check: its right-hand
+side resolves to the specific class or interface declaration in scope and
+matches by identity, walking the value's real parent chain (subclasses and
+interface implementations still match). `x instanceof a.Config` is false for an
+instance of a same-named `b.Config` from another module. Class values are
+likewise module-exact (`a.Config == b.Config` is false for two same-named
+classes), and `reflect.location(SomeClass)` reports the declaring module. When
+two modules declare same-named classes, use `instanceof` (or a class-value
+comparison) rather than `typeof` to distinguish them.
+
 A `Type` is its own value, not a string, so it does not concatenate with
 `+` directly. Compare it to a type or a type-name string (both shown above);
 to build a message from it, convert with `as string` or interpolate it:

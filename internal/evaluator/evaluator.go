@@ -110,6 +110,7 @@ type Evaluator struct {
 	yieldFrames          []*yieldFrame
 	callStack            []evalFrame
 	currentLine          int // most recent statement/call/throw line, for error attribution
+	hofCallLine          int // call-site line of the primitive HOF dispatching a callback, so the caller frame's trace line is the HOF call site, not a stale callback line
 	topLevelLine         int // line of the call that left the top-level frame
 	callDepth            int
 	maxCallDepth         int
@@ -1337,7 +1338,11 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		case "break", "continue":
 			return signal{kind: stmt.Kind}, nil
 		case "defer":
-			e.registerDefer(stmt.Value, env)
+			frozen, err := e.freezeDeferredCall(stmt.Value, env)
+			if err != nil {
+				return signal{}, err
+			}
+			e.registerDefer(frozen, env)
 			return signal{}, nil
 		case "throw":
 			if stmt.Token.Line > 0 {
@@ -1456,6 +1461,11 @@ func (e *Evaluator) evalExpression(expr ast.Expression, env *runtime.Environment
 
 func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *runtime.Environment, expected *ast.TypeRef) (runtime.Value, error) {
 	switch expr := expr.(type) {
+	case *ast.PrecomputedValue:
+		if v, ok := expr.Value.(runtime.Value); ok {
+			return v, nil
+		}
+		return runtime.Null{}, nil
 	case *ast.Identifier:
 		if value, ok := env.Get(expr.Value); ok {
 			return value, nil
@@ -1631,11 +1641,12 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			if err != nil {
 				return nil, err
 			}
+			fromTypeParam := false
 			if bound, ok := env.GetTypeBinding(typeName); ok {
 				typeName = bound
+				fromTypeParam = true
 			} else if base, args, isGeneric := splitGenericTypeName(typeName); isGeneric {
-				// Resolve type-param names inside the argument list too,
-				// so `x instanceof Box<T>` works in a generic frame.
+				// Resolve type-param names in the argument list so `x instanceof Box<T>` works in a generic frame.
 				resolvedAny := false
 				for i, a := range args {
 					if b, ok2 := env.GetTypeBinding(strings.TrimSpace(a)); ok2 {
@@ -1645,6 +1656,12 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 				}
 				if resolvedAny {
 					typeName = base + "<" + strings.Join(args, ",") + ">"
+				}
+			}
+			// `instanceof T` (bound type param) stays name-based to match the VM, which resolves T on the legacy path.
+			if !fromTypeParam {
+				if result, handled := e.instanceofExact(left, typeName, env); handled {
+					return runtime.Bool{Value: result}, nil
 				}
 			}
 			return runtime.Bool{Value: e.valueMatchesType(left, typeName)}, nil
@@ -3031,18 +3048,24 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 		}
 		parentClass := lexicalClass.Parent
 		if parentClass == nil || len(parentClass.Constructors) == 0 {
-			// For builtin error parents, capture the message from the first string arg.
-			if isErrorDerived(this.Class) && len(call.Arguments) > 0 {
-				args, err := e.evalCallArguments(call, env)
-				if err != nil {
-					return nil, err
-				}
-				for _, arg := range args {
-					if s, ok := arg.(runtime.String); ok {
-						this.Fields["__parentMsg"] = s
-						break
+			// A builtin error parent has an implicit message constructor: capture the first string arg.
+			if parentClass != nil && isBuiltinErrorClass(parentClass.Name) {
+				if len(call.Arguments) > 0 {
+					args, err := e.evalCallArguments(call, env)
+					if err != nil {
+						return nil, err
+					}
+					for _, arg := range args {
+						if s, ok := arg.(runtime.String); ok {
+							this.Fields["__parentMsg"] = s
+							break
+						}
 					}
 				}
+				return runtime.Null{}, nil
+			}
+			if parentClass != nil && len(call.Arguments) > 0 {
+				return nil, fmt.Errorf("%s constructor expects no arguments", parentClass.Name)
 			}
 			return runtime.Null{}, nil
 		}
@@ -3344,6 +3367,8 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 		if method, ok := lookupMethod(instance.Class, expr.Name.Value); ok {
 			bound := method
 			bound.Env = bindThis(method.Env, instance)
+			// this is captured on bound.Env; don't also forward the caller's this when this value is invoked inside another method.
+			bound.ForwardThis = false
 			return bound, nil
 		}
 		if method, ok := lookupMethod(instance.Class, "__get"); ok {
@@ -5173,17 +5198,22 @@ func bindEvaluatedFunctionCallArgumentsErr(fn runtime.Function, provided []evalu
 		}
 		return args, 0, nil
 	}
-	paramNames := make([]string, len(fn.Parameters))
-	hasDefault := make([]bool, len(fn.Parameters))
+	// Decorators are transparent to callers: named args bind to the original signature, invoked positionally on the wrapper.
+	params := fn.Parameters
+	if len(fn.OriginalParameters) > 0 {
+		params = fn.OriginalParameters
+	}
+	paramNames := make([]string, len(params))
+	hasDefault := make([]bool, len(params))
 	known := map[string]bool{}
-	for i, p := range fn.Parameters {
+	for i, p := range params {
 		if p.Name != nil {
 			paramNames[i] = p.Name.Value
 			known[strings.ToLower(p.Name.Value)] = true
 		}
 		hasDefault[i] = p.Default != nil
 	}
-	variadic := len(fn.Parameters) > 0 && fn.Parameters[len(fn.Parameters)-1].Variadic
+	variadic := len(params) > 0 && params[len(params)-1].Variadic
 	if variadic {
 		// The variadic slot needs no caller-supplied value.
 		hasDefault[len(hasDefault)-1] = true
@@ -5212,7 +5242,7 @@ func bindEvaluatedFunctionCallArgumentsErr(fn runtime.Function, provided []evalu
 	if err != nil {
 		return nil, 0, err
 	}
-	argsLen := len(fn.Parameters) + len(result.TailArgs)
+	argsLen := len(params) + len(result.TailArgs)
 	args := make([]runtime.Value, argsLen)
 	for i, slot := range result.Slots {
 		if slot != binding.DefaultSlot {
@@ -5220,7 +5250,7 @@ func bindEvaluatedFunctionCallArgumentsErr(fn runtime.Function, provided []evalu
 		}
 	}
 	for i, argIndex := range result.TailArgs {
-		args[len(fn.Parameters)+i] = provided[argIndex].value
+		args[len(params)+i] = provided[argIndex].value
 	}
 	return args, dropped, nil
 }
@@ -5887,6 +5917,87 @@ func (e *Evaluator) registerDefer(expr ast.Expression, env *runtime.Environment)
 	frame.calls = append(frame.calls, deferredCall{expr: expr, env: env})
 }
 
+// freezeDeferredCall freezes a deferred call's arguments and callee to their registration-time values via PrecomputedValue nodes on a shallow copy (the original AST is never mutated so loop bodies re-freeze per iteration); non-call defer expressions pass through.
+func (e *Evaluator) freezeDeferredCall(expr ast.Expression, env *runtime.Environment) (ast.Expression, error) {
+	call, ok := expr.(*ast.CallExpression)
+	if !ok {
+		return expr, nil
+	}
+	frozen := *call
+	calleeValue, frozenCallee, err := e.freezeDeferCallee(call.Callee, env)
+	if err != nil {
+		return nil, err
+	}
+	frozen.Callee = frozenCallee
+	hints := overloadParamTypeHints(overloadsFromValue(calleeValue), len(call.Arguments), nil)
+	frozen.Arguments = make([]ast.CallArgument, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		var hint *ast.TypeRef
+		if hints != nil && i < len(hints) {
+			hint = hints[i]
+		}
+		var value runtime.Value
+		if hint != nil {
+			value, err = e.evalExpressionWithExpectedType(arg.Value, env, hint)
+		} else {
+			value, err = e.evalExpression(arg.Value, env)
+		}
+		if err != nil {
+			return nil, err
+		}
+		newArg := arg
+		newArg.Value = &ast.PrecomputedValue{Token: call.Token, Value: value}
+		frozen.Arguments[i] = newArg
+	}
+	return &frozen, nil
+}
+
+// freezeDeferCallee freezes a deferred method call's receiver, or the whole callable when it resolves to a value; the returned value (non-nil only for whole-callee freezes) drives argument hint fidelity.
+func (e *Evaluator) freezeDeferCallee(callee ast.Expression, env *runtime.Environment) (runtime.Value, ast.Expression, error) {
+	switch c := callee.(type) {
+	case *ast.Identifier:
+		// Freeze a variable-held callable or declared function to the value bound now (a later local can shadow the name).
+		value, ok := env.Get(c.Value)
+		if !ok {
+			return nil, callee, nil
+		}
+		return value, &ast.PrecomputedValue{Token: c.Token, Value: value}, nil
+	case *ast.SelectorExpression:
+		if objIdent, ok := c.Object.(*ast.Identifier); ok {
+			if objVal, found := env.Get(objIdent.Value); found {
+				if _, isInstance := objVal.(*runtime.Instance); isInstance {
+					// Instance receiver: freeze it and keep method dispatch (overload selection) at pop, matching the VM's OpDeferMethodCall.
+					newSel := *c
+					newSel.Object = &ast.PrecomputedValue{Token: objIdent.Token, Value: objVal}
+					return nil, &newSel, nil
+				}
+			}
+		}
+		// Module-qualified, static (Class.method), or nested selector: freeze the whole callable when it resolves to a value; otherwise leave it (a native like io.println is not a first-class value) and rely on frozen arguments.
+		value, err := e.evalExpression(callee, env)
+		if err != nil {
+			return nil, callee, nil
+		}
+		return value, &ast.PrecomputedValue{Token: c.Token, Value: value}, nil
+	default:
+		value, err := e.evalExpression(callee, env)
+		if err != nil {
+			return nil, callee, nil
+		}
+		return value, &ast.PrecomputedValue{Value: value}, nil
+	}
+}
+
+func overloadsFromValue(v runtime.Value) []runtime.Function {
+	switch f := v.(type) {
+	case runtime.Function:
+		return []runtime.Function{f}
+	case runtime.OverloadedFunction:
+		return f.Overloads
+	}
+	return nil
+}
+
 func (e *Evaluator) runAndPopDefers(sig signal) (signal, error) {
 	if len(e.deferFrames) == 0 {
 		return sig, nil
@@ -6309,6 +6420,67 @@ func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, 
 		}
 		return true, nil
 	}
+	// Container recursion routes back through valuesEqual so a nested instance compares exactly as it does at top level (structural, honoring __eq), not by identity.
+	switch leftValue := left.(type) {
+	case *runtime.List:
+		rightValue, ok := right.(*runtime.List)
+		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
+			return false, nil
+		}
+		for i, element := range leftValue.Elements {
+			equal, err := e.valuesEqual(element, rightValue.Elements[i])
+			if err != nil || !equal {
+				return equal, err
+			}
+		}
+		return true, nil
+	case runtime.Dict:
+		rightValue, ok := right.(runtime.Dict)
+		if !ok || leftValue.Len() != rightValue.Len() {
+			return false, nil
+		}
+		equal := true
+		var iterErr error
+		leftValue.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
+			other, ok := rightValue.GetEntry(key)
+			if !ok {
+				equal = false
+				return false
+			}
+			keyEq, err := e.valuesEqual(entry.Key, other.Key)
+			if err != nil {
+				iterErr, equal = err, false
+				return false
+			}
+			valEq, err := e.valuesEqual(entry.Value, other.Value)
+			if err != nil {
+				iterErr, equal = err, false
+				return false
+			}
+			if !keyEq || !valEq {
+				equal = false
+				return false
+			}
+			return true
+		})
+		return equal, iterErr
+	case runtime.Set:
+		rightValue, ok := right.(runtime.Set)
+		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
+			return false, nil
+		}
+		for key, entry := range leftValue.Elements {
+			other, ok := rightValue.Elements[key]
+			if !ok {
+				return false, nil
+			}
+			equal, err := e.valuesEqual(entry.Value, other.Value)
+			if err != nil || !equal {
+				return equal, err
+			}
+		}
+		return true, nil
+	}
 	return primitiveEqual(left, right), nil
 }
 
@@ -6333,89 +6505,6 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 		return eq
 	}
 	switch leftValue := left.(type) {
-	case runtime.Null:
-		_, ok := right.(runtime.Null)
-		return ok
-	case runtime.Bool:
-		rightValue, ok := right.(runtime.Bool)
-		return ok && leftValue.Value == rightValue.Value
-	case runtime.SmallInt:
-		// Cross-comparison with Int for the case where a SmallInt
-		// arrived from a native source (e.g. JSON parser) and the
-		// other side is an evaluator-built Int. Same int value
-		// compares equal regardless of representation.
-		if rightSmall, ok := right.(runtime.SmallInt); ok {
-			return leftValue.Value == rightSmall.Value
-		}
-		if rightBig, ok := right.(runtime.Int); ok {
-			return rightBig.Value.IsInt64() && rightBig.Value.Int64() == leftValue.Value
-		}
-		return false
-	case runtime.Int:
-		if rightValue, ok := right.(runtime.Int); ok {
-			return leftValue.Value.Cmp(rightValue.Value) == 0
-		}
-		if rightSmall, ok := right.(runtime.SmallInt); ok {
-			return leftValue.Value.IsInt64() && leftValue.Value.Int64() == rightSmall.Value
-		}
-		return false
-	case runtime.Decimal:
-		rightValue, ok := right.(runtime.Decimal)
-		return ok && leftValue.Value.Cmp(rightValue.Value) == 0
-	case runtime.Float:
-		rightValue, ok := right.(runtime.Float)
-		return ok && leftValue.Value == rightValue.Value
-	case runtime.String:
-		if rightValue, ok := right.(runtime.String); ok {
-			return leftValue.Value == rightValue.Value
-		}
-		// Symmetry with `typeof(x) == "name"`: a Type compares equal to
-		// the string of its name.
-		if rightType, ok := right.(runtime.Type); ok {
-			return leftValue.Value == rightType.Name
-		}
-		return false
-	case runtime.Bytes:
-		rightValue, ok := right.(runtime.Bytes)
-		return ok && bytes.Equal(leftValue.Value, rightValue.Value)
-	case runtime.DateTimeInstant:
-		rightValue, ok := right.(runtime.DateTimeInstant)
-		return ok && leftValue == rightValue
-	case runtime.DateTimeDuration:
-		rightValue, ok := right.(runtime.DateTimeDuration)
-		return ok && leftValue == rightValue
-	case runtime.DateTimeZone:
-		rightValue, ok := right.(runtime.DateTimeZone)
-		return ok && leftValue == rightValue
-	case runtime.URLValue:
-		rightValue, ok := right.(runtime.URLValue)
-		return ok && leftValue == rightValue
-	case runtime.HTTPHeaders:
-		rightValue, ok := right.(runtime.HTTPHeaders)
-		if !ok || len(leftValue.Values) != len(rightValue.Values) {
-			return false
-		}
-		for key, values := range leftValue.Values {
-			other := rightValue.Values[key]
-			if len(values) != len(other) {
-				return false
-			}
-			for i, value := range values {
-				if value != other[i] {
-					return false
-				}
-			}
-		}
-		return true
-	case runtime.HTTPCookie:
-		rightValue, ok := right.(runtime.HTTPCookie)
-		return ok && leftValue == rightValue
-	case runtime.TemplateValue:
-		rightValue, ok := right.(runtime.TemplateValue)
-		return ok && leftValue == rightValue
-	case runtime.TemplateEngine:
-		rightValue, ok := right.(runtime.TemplateEngine)
-		return ok && leftValue == rightValue
 	case *runtime.List:
 		rightValue, ok := right.(*runtime.List)
 		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
@@ -6454,60 +6543,12 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 			}
 		}
 		return true
-	case runtime.Range:
-		rightValue, ok := right.(runtime.Range)
-		return ok &&
-			leftValue.Exclusive == rightValue.Exclusive &&
-			leftValue.Start.Cmp(rightValue.Start) == 0 &&
-			leftValue.End.Cmp(rightValue.End) == 0 &&
-			leftValue.Step.Cmp(rightValue.Step) == 0
-	case runtime.BytecodeFunction:
-		rightValue, ok := right.(runtime.BytecodeFunction)
-		return ok && leftValue.Module == rightValue.Module && leftValue.Name == rightValue.Name && leftValue.Index == rightValue.Index
-	case runtime.BytecodeClass:
-		rightValue, ok := right.(runtime.BytecodeClass)
-		return ok && leftValue.Module == rightValue.Module && leftValue.Name == rightValue.Name && leftValue.Index == rightValue.Index
-	case runtime.NativeObject:
-		rightValue, ok := right.(runtime.NativeObject)
-		return ok && leftValue == rightValue
-	case runtime.Error:
-		rightValue, ok := right.(runtime.Error)
-		return ok && leftValue.Class == rightValue.Class && leftValue.Message == rightValue.Message
-	case runtime.Type:
-		switch rv := right.(type) {
-		case runtime.Type:
-			return leftValue.Name == rv.Name
-		case *runtime.Class:
-			return leftValue.Name == rv.Name
-		case runtime.BytecodeClass:
-			return leftValue.Name == rv.Name
-		case runtime.String:
-			return leftValue.Name == rv.Value
-		}
-		return false
-	case *runtime.Module:
-		rightValue, ok := right.(*runtime.Module)
-		return ok && leftValue == rightValue
-	case *runtime.Class:
-		switch rv := right.(type) {
-		case *runtime.Class:
-			return leftValue == rv
-		case runtime.Type:
-			return leftValue.Name == rv.Name
-		}
-		return false
-	case *runtime.Interface:
-		rightValue, ok := right.(*runtime.Interface)
-		return ok && leftValue == rightValue
 	case *runtime.Instance:
 		rightValue, ok := right.(*runtime.Instance)
 		return ok && leftValue == rightValue
-	case *runtime.Complex:
-		rightValue, ok := right.(*runtime.Complex)
-		return ok && leftValue.C == rightValue.C
-	default:
-		return false
 	}
+	eq, _ := runtime.LeafValuesEqual(left, right)
+	return eq
 }
 
 func evalBoolInfix(operator string, left runtime.Value, right runtime.Value) (runtime.Value, error) {
@@ -6816,6 +6857,13 @@ func isTruthy(v runtime.Value) bool {
 }
 
 func (e *Evaluator) callValue(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	if e.hofCallLine != 0 {
+		// Stamp the callback frame with the HOF call site; reset for the body so an inner callback does not inherit it, restore for the next element.
+		e.currentLine = e.hofCallLine
+		saved := e.hofCallLine
+		e.hofCallLine = 0
+		defer func() { e.hofCallLine = saved }()
+	}
 	switch f := fn.(type) {
 	case runtime.Function:
 		return e.applyFunction(f, args)

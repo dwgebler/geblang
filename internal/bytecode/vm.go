@@ -112,6 +112,8 @@ type VM struct {
 	// destructors in reverse-creation order. `del x` removes the
 	// corresponding entry and fires the destructor immediately.
 	destructibleInstances []*runtime.Instance
+	// destructMu, when non-nil, guards destructibleInstances so a caller==nil cross-module adoption from another goroutine is race-free; nil (lock-free) on transient worker VMs.
+	destructMu *sync.Mutex
 	// nameLowerCache memoises strings.ToLower(name) by chunk-constant
 	// index. Method names recur every call in a tight loop and the
 	// dispatch path needs the lowercased form to look up entries in
@@ -145,6 +147,12 @@ type VM struct {
 	// function invocation on the same VM without rebuilding the chunk.
 	runEntryIP         int
 	runInlineExitDepth int // -1 = top-level (exit on OpReturn with frames==0); >=0 = inline (exit when frames drops to this)
+	// traceFrameBaseline is the first frame index a stack-trace snapshot may include; set only by cross-module worker re-entry runs so an outer suspended run's frames on the same shared worker don't leak, unlike native-callback inline runs whose caller frames belong to the same chain.
+	traceFrameBaseline int
+	// nativeCallLine is the source line of the native call currently dispatching, so a VM re-entry from a native (the test runner) can attribute the top-level frame to that call site.
+	nativeCallLine int
+	// hofCallLine is the call-site line of the primitive HOF currently dispatching, stamped onto the inline callback frame so the caller frame's trace line is the HOF call site, not line 0.
+	hofCallLine int
 	// runHandlerBaseline is the exception-handler count owned by enclosing executions; a nested direct run (incl. a shared-worker re-entry) must not unwind into handlers below it - a throw with none above propagates out.
 	runHandlerBaseline int
 	// runDeferBaseline is the deferred-group count owned by enclosing executions; an uncaught throw propagating out of this run runs its own frames' defers down to here, not the enclosing run's.
@@ -171,11 +179,25 @@ type ModuleLoader interface {
 	// carries the call site's positional explicit `<TypeArgs>` (nil when
 	// none); the home VM zips them against the class's type parameters.
 	ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string, caller *VM) (runtime.Value, error)
+	// ConstructModuleClassNamed selects the constructor overload and orders named/positional args in the class's home chunk (names[i] pairs with args[i], "" for positional).
+	ConstructModuleClassNamed(class runtime.BytecodeClass, args []runtime.Value, names []string, typeArgs []string, caller *VM) (runtime.Value, error)
+	// CallModuleOverloaded selects a positional overload of an exported overload set in its home chunk and calls it; displayName is the call-site-qualified name for selection errors.
+	CallModuleOverloaded(module string, indices []int64, displayName string, args []runtime.Value, caller *VM) (runtime.Value, error)
+	// CallModuleOverloadedNamed orders named/positional args and selects a matching overload of an exported overload set in its home chunk, then calls it.
+	CallModuleOverloadedNamed(module string, indices []int64, displayName string, args []runtime.Value, names []string, caller *VM) (runtime.Value, error)
 	CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value, caller *VM) (runtime.Value, error)
 	CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *VM) (runtime.Value, error)
+	// CallModuleMethodValue dispatches a bound method/static value pinned to funcIndex (first overload) on its home worker; instance is the receiver, nil for a static. Applies the decorator wrapper with the receiver bound.
+	CallModuleMethodValue(module string, funcIndex int64, instance *runtime.Instance, args []runtime.Value, caller *VM) (runtime.Value, error)
+	// CallModuleDestructor fires a cross-module instance's `func ~Class()` in its home chunk on a home worker; caller adopts any destructibles the destructor builds (re-drain).
+	CallModuleDestructor(module string, className string, instance *runtime.Instance, caller *VM) error
 	// ModuleMethodParamNames exposes a cross-module method's declared
 	// parameter names so dict spread can order named args at the call site.
 	ModuleMethodParamNames(module string, className string, methodName string) ([]string, error)
+	// ModuleFunctionParamNames exposes a cross-module free function's declared parameter names so named args can be ordered at the call site.
+	ModuleFunctionParamNames(module string, index int64) ([]string, error)
+	// ModuleConstructorParamNames exposes the union of a cross-module class's constructor parameter names so dict spread can drop unknown keys before construction.
+	ModuleConstructorParamNames(module string, className string) ([]string, error)
 	// CallParentInModule invokes the parent class's constructor or
 	// method on the supplied instance inside the parent module's chunk.
 	// className is looked up in the target chunk regardless of
@@ -191,6 +213,8 @@ type ModuleLoader interface {
 	// Used by reflect.class so framework code can resolve a user
 	// class regardless of which module declared it.
 	FindClassByName(name string) (runtime.Value, bool)
+	// ClassValueInModule resolves a class by name within one specific module (module-exact, unlike FindClassByName).
+	ClassValueInModule(module, className string) (runtime.Value, bool)
 	// RuntimeClassFor builds + caches the runtime.Class for a class in another module so a cross-module subclass's parent chain is reachable by pointer.
 	RuntimeClassFor(module string, className string) (*runtime.Class, bool)
 	// PersistModuleGlobals writes a worker's dirty module-global slots back to its module record (used when a generator worker finishes outside the normal acquire/release cycle).
@@ -225,6 +249,10 @@ type ModuleLoader interface {
 	// className in module or an ancestor, recursing across further module
 	// boundaries. found=false when no such static method exists.
 	CallModuleStaticMethodByName(module, className, methodName string, args []runtime.Value) (runtime.Value, bool, error)
+	// StaticMethodValueForModuleClass builds a callable value for a static method on className in module or an ancestor, for `Class.staticMethod` used as a value.
+	StaticMethodValueForModuleClass(module, className, name string) (runtime.Value, bool)
+	// MethodFirstOverload resolves the declaring module + function index of the first overload of instance method `name` on className in module or an ancestor.
+	MethodFirstOverload(module, className, name string) (string, int64, bool)
 	// UnimplementedAbstractMethods returns the @abstract methods declared
 	// on className in module or an ancestor with no concrete override in
 	// the cross-module chain, keyed by method name to declaring class.
@@ -309,6 +337,8 @@ type deferredAction struct {
 	funcIdx  int64           // for func
 	receiver runtime.Value   // for method
 	args     []runtime.Value // for native/func/method
+	// spreadMask, when set, parallels args: a true entry is a frozen spread list reference whose current elements are expanded in place at fire time.
+	spreadMask []bool
 	// names parallels args when the deferred call was emitted by an
 	// OpDefer*Named opcode. Empty entries mark positional args;
 	// non-empty entries name the corresponding argument so the
@@ -1971,6 +2001,86 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, names: names, line: int(instruction.Line)})
+		case OpDeferFuncCallSpread:
+			if len(instruction.Operands) < 2 {
+				return vm.fatalError(*instruction, "defer func call-spread instruction has invalid operands")
+			}
+			funcIdx := instruction.Operands[0]
+			argc := int(instruction.Operands[1])
+			if funcIdx < 0 || int(funcIdx) >= len(vm.curMod.Chunk.Functions) {
+				return vm.runtimeError(*instruction, "defer func call function index out of range")
+			}
+			if len(instruction.Operands) != 2+argc {
+				return vm.runtimeError(*instruction, "defer func call-spread argument metadata mismatch")
+			}
+			args, names, mask, err := vm.collectDeferSpreadArgs(*instruction, instruction.Operands[2:])
+			if err != nil {
+				return err
+			}
+			vm.addDefer(deferredAction{kind: deferKindFunc, funcIdx: funcIdx, args: args, names: names, spreadMask: mask, line: int(instruction.Line)})
+		case OpDeferMethodCallSpread:
+			if len(instruction.Operands) < 2 {
+				return vm.fatalError(*instruction, "defer method call-spread instruction has invalid operands")
+			}
+			nameIndex := instruction.Operands[0]
+			argc := int(instruction.Operands[1])
+			if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
+				return vm.runtimeError(*instruction, "defer method call name out of range")
+			}
+			nameConst, ok := vm.constantValue(nameIndex).(runtime.String)
+			if !ok {
+				return vm.runtimeError(*instruction, "defer method call name must be string")
+			}
+			if len(instruction.Operands) != 2+argc {
+				return vm.runtimeError(*instruction, "defer method call-spread argument metadata mismatch")
+			}
+			args, names, mask, err := vm.collectDeferSpreadArgs(*instruction, instruction.Operands[2:])
+			if err != nil {
+				return err
+			}
+			receiver, err := vm.pop()
+			if err != nil {
+				return vm.runtimeError(*instruction, "%s", err.Error())
+			}
+			vm.addDefer(deferredAction{kind: deferKindMethod, name: nameConst.Value, receiver: receiver, args: args, names: names, spreadMask: mask, line: int(instruction.Line)})
+		case OpDeferNativeCallSpread:
+			if len(instruction.Operands) < 2 {
+				return vm.fatalError(*instruction, "defer native call-spread instruction has invalid operands")
+			}
+			nameIndex := instruction.Operands[0]
+			argc := int(instruction.Operands[1])
+			if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
+				return vm.runtimeError(*instruction, "defer native call name out of range")
+			}
+			nameConst, ok := vm.constantValue(nameIndex).(runtime.String)
+			if !ok {
+				return vm.runtimeError(*instruction, "defer native call name must be string")
+			}
+			if len(instruction.Operands) != 2+argc {
+				return vm.runtimeError(*instruction, "defer native call-spread argument metadata mismatch")
+			}
+			args, names, mask, err := vm.collectDeferSpreadArgs(*instruction, instruction.Operands[2:])
+			if err != nil {
+				return err
+			}
+			vm.addDefer(deferredAction{kind: deferKindNative, name: nameConst.Value, args: args, names: names, spreadMask: mask, line: int(instruction.Line)})
+		case OpDeferCallableCallSpread:
+			if len(instruction.Operands) < 1 {
+				return vm.fatalError(*instruction, "defer callable call-spread instruction has invalid operands")
+			}
+			argc := int(instruction.Operands[0])
+			if len(instruction.Operands) != 1+argc {
+				return vm.runtimeError(*instruction, "defer callable call-spread argument metadata mismatch")
+			}
+			args, names, mask, err := vm.collectDeferSpreadArgs(*instruction, instruction.Operands[1:])
+			if err != nil {
+				return err
+			}
+			callable, err := vm.pop()
+			if err != nil {
+				return vm.runtimeError(*instruction, "%s", err.Error())
+			}
+			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, names: names, spreadMask: mask, line: int(instruction.Line)})
 		case OpPrintln:
 			value, err := vm.pop()
 			if err != nil {
@@ -2088,7 +2198,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			if isDestructibleConstructor {
 				if inst, ok := value.(*runtime.Instance); ok {
-					vm.destructibleInstances = append(vm.destructibleInstances, inst)
+					vm.trackDestructible(inst)
 				}
 			}
 			if isErrorClass {
@@ -2184,105 +2294,67 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				ip = int(instruction.Operands[0]) - 1
 			}
 		case OpCallSpread:
-			if len(instruction.Operands) != 2 {
+			if len(instruction.Operands) < 2 {
 				return vm.fatalError(*instruction, "call-spread instruction has invalid operands")
 			}
 			funcIndex := instruction.Operands[0]
-			staticArgCount := int(instruction.Operands[1])
+			argc := int(instruction.Operands[1])
 			if funcIndex < 0 || int(funcIndex) >= len(vm.curMod.Chunk.Functions) {
 				return vm.runtimeError(*instruction, "function index out of range")
 			}
-			spreadVal, err := vm.pop()
-			if err != nil {
-				return vm.runtimeError(*instruction, "%s", err.Error())
+			if len(instruction.Operands) != 2+argc {
+				return vm.runtimeError(*instruction, "call-spread argument metadata mismatch")
 			}
-			spreadList, ok := spreadVal.(*runtime.List)
-			staticArgs := make([]runtime.Value, staticArgCount)
-			for i := staticArgCount - 1; i >= 0; i-- {
-				val, err := vm.pop()
-				if err != nil {
-					return vm.runtimeError(*instruction, "%s", err.Error())
-				}
-				staticArgs[i] = val
-			}
-			if ok {
-				combined := append(staticArgs, spreadList.Elements...)
-				nextIP, err := vm.startFunction(*instruction, ip, &vm.curMod.Chunk.Functions[funcIndex], combined, nil)
-				if err != nil {
-					return err
-				}
-				ip = nextIP
-				continue
-			}
-			spreadDict, ok := spreadVal.(runtime.Dict)
-			if !ok {
-				return vm.runtimeError(*instruction, "spread argument must be a list or dict")
-			}
-			args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, vm.curMod.Chunk.Functions[funcIndex].ParamNames)
-			if err != nil {
-				return vm.runtimeError(*instruction, "%s", err.Error())
-			}
-			ordered, err := vm.orderRuntimeArguments(*instruction, vm.curMod.Chunk.Functions[funcIndex], args, names, 0)
+			args, names, fromSpread, hasNamed, err := vm.collectSpreadCallArgs(*instruction, instruction.Operands[2:], true)
 			if err != nil {
 				return err
 			}
-			nextIP, err := vm.startFunction(*instruction, ip, &vm.curMod.Chunk.Functions[funcIndex], ordered, nil)
+			fn := vm.curMod.Chunk.Functions[funcIndex]
+			if hasNamed {
+				fa, fnames := dropUnknownSpreadNames(args, names, fromSpread, fn.ParamNames)
+				args, err = vm.orderRuntimeArguments(*instruction, fn, fa, fnames, 0)
+				if err != nil {
+					return err
+				}
+			}
+			nextIP, err := vm.startFunction(*instruction, ip, &vm.curMod.Chunk.Functions[funcIndex], args, nil)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpConstructClassSpread:
-			if len(instruction.Operands) != 2 {
+			if len(instruction.Operands) < 2 {
 				return vm.fatalError(*instruction, "construct-class-spread instruction has invalid operands")
 			}
 			classIndex := instruction.Operands[0]
-			staticArgCount := int(instruction.Operands[1])
+			argc := int(instruction.Operands[1])
 			if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 				return vm.runtimeError(*instruction, "class index out of range")
 			}
-			spreadVal, err := vm.pop()
-			if err != nil {
-				return vm.runtimeError(*instruction, "%s", err.Error())
+			if len(instruction.Operands) != 2+argc {
+				return vm.runtimeError(*instruction, "construct-class-spread argument metadata mismatch")
 			}
-			staticArgs := make([]runtime.Value, staticArgCount)
-			for i := staticArgCount - 1; i >= 0; i-- {
-				val, err := vm.pop()
-				if err != nil {
-					return vm.runtimeError(*instruction, "%s", err.Error())
-				}
-				staticArgs[i] = val
-			}
-			if spreadList, ok := spreadVal.(*runtime.List); ok {
-				combined := append(staticArgs, spreadList.Elements...)
-				nextIP, err := vm.constructClassWithArgs(*instruction, ip, classIndex, combined, false)
-				if err != nil {
-					return err
-				}
-				ip = nextIP
-				continue
-			}
-			spreadDict, ok := spreadVal.(runtime.Dict)
-			if !ok {
-				return vm.runtimeError(*instruction, "spread argument must be a list or dict")
-			}
-			classInfo := vm.curMod.Chunk.Classes[classIndex]
-			if len(classInfo.ConstructorIndices) != 1 {
-				return vm.runtimeError(*instruction, "cannot use dict spread without a single constructor on %s", classInfo.Name)
-			}
-			ctor := vm.curMod.Chunk.Functions[classInfo.ConstructorIndices[0]]
-			ctorParams := ctor.ParamNames
-			if len(ctorParams) > 0 {
-				ctorParams = ctorParams[1:] // skip the receiver slot
-			}
-			args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, ctorParams)
-			if err != nil {
-				return vm.runtimeError(*instruction, "%s", err.Error())
-			}
-			ordered, err := vm.orderRuntimeArguments(*instruction, ctor, args, names, 1)
+			args, names, fromSpread, hasNamed, err := vm.collectSpreadCallArgs(*instruction, instruction.Operands[2:], true)
 			if err != nil {
 				return err
 			}
-			nextIP, err := vm.constructClassWithArgs(*instruction, ip, classIndex, ordered, false)
+			if hasNamed {
+				classInfo := vm.curMod.Chunk.Classes[classIndex]
+				if len(classInfo.ConstructorIndices) != 1 {
+					return vm.runtimeError(*instruction, "cannot use named arguments with spread without a single constructor on %s", classInfo.Name)
+				}
+				ctor := vm.curMod.Chunk.Functions[classInfo.ConstructorIndices[0]]
+				ctorParams := ctor.ParamNames
+				if len(ctorParams) > 0 {
+					ctorParams = ctorParams[1:] // skip the receiver slot
+				}
+				fa, fnames := dropUnknownSpreadNames(args, names, fromSpread, ctorParams)
+				args, err = vm.orderRuntimeArguments(*instruction, ctor, fa, fnames, 1)
+				if err != nil {
+					return err
+				}
+			}
+			nextIP, err := vm.constructClassWithArgs(*instruction, ip, classIndex, args, false)
 			if err != nil {
 				return err
 			}
@@ -2641,7 +2713,11 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 	if instance, ok := left.(*runtime.Instance); ok {
 		if instance.Class.Module != vm.moduleName {
 			if len(instance.Class.Methods["__eq"]) == 0 {
-				vm.push(runtime.Bool{Value: valuesEqual(left, right)})
+				eq, err := vm.deepEqual(left, right)
+				if err != nil {
+					return vm.propagateModuleError(instruction, ip, err)
+				}
+				vm.push(runtime.Bool{Value: eq})
 				return ip, nil
 			}
 			if vm.moduleLoader == nil {
@@ -2666,8 +2742,124 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 			return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
 		}
 	}
-	vm.push(runtime.Bool{Value: valuesEqual(left, right)})
+	eq, err := vm.deepEqual(left, right)
+	if err != nil {
+		return vm.propagateModuleError(instruction, ip, err)
+	}
+	vm.push(runtime.Bool{Value: eq})
 	return ip, nil
+}
+
+// deepEqual is the == operator's structural comparison: it recurses through containers and instance fields, dispatching a user __eq at every nesting depth so a nested instance compares exactly as it does at top level.
+func (vm *VM) deepEqual(left runtime.Value, right runtime.Value) (bool, error) {
+	if eq, both := runtime.NumericValuesEqual(left, right); both {
+		return eq, nil
+	}
+	switch leftValue := left.(type) {
+	case *runtime.List:
+		rightValue, ok := right.(*runtime.List)
+		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
+			return false, nil
+		}
+		for i, element := range leftValue.Elements {
+			eq, err := vm.deepEqual(element, rightValue.Elements[i])
+			if err != nil || !eq {
+				return eq, err
+			}
+		}
+		return true, nil
+	case runtime.Dict:
+		rightValue, ok := right.(runtime.Dict)
+		if !ok || leftValue.Len() != rightValue.Len() {
+			return false, nil
+		}
+		equal := true
+		var iterErr error
+		leftValue.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
+			other, ok := rightValue.GetEntry(key)
+			if !ok {
+				equal = false
+				return false
+			}
+			keyEq, err := vm.deepEqual(entry.Key, other.Key)
+			if err != nil {
+				iterErr, equal = err, false
+				return false
+			}
+			valEq, err := vm.deepEqual(entry.Value, other.Value)
+			if err != nil {
+				iterErr, equal = err, false
+				return false
+			}
+			if !keyEq || !valEq {
+				equal = false
+				return false
+			}
+			return true
+		})
+		return equal, iterErr
+	case runtime.Set:
+		rightValue, ok := right.(runtime.Set)
+		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
+			return false, nil
+		}
+		for key, entry := range leftValue.Elements {
+			other, ok := rightValue.Elements[key]
+			if !ok {
+				return false, nil
+			}
+			eq, err := vm.deepEqual(entry.Value, other.Value)
+			if err != nil || !eq {
+				return eq, err
+			}
+		}
+		return true, nil
+	case runtime.EnumVariant:
+		rightValue, ok := right.(runtime.EnumVariant)
+		if !ok || leftValue.Enum != rightValue.Enum || leftValue.Variant != rightValue.Variant || len(leftValue.Fields) != len(rightValue.Fields) {
+			return false, nil
+		}
+		for i, field := range leftValue.Fields {
+			eq, err := vm.deepEqual(field, rightValue.Fields[i])
+			if err != nil || !eq {
+				return eq, err
+			}
+		}
+		return true, nil
+	case *runtime.Instance:
+		return vm.instanceDeepEqual(leftValue, right)
+	}
+	return primitiveEqual(left, right), nil
+}
+
+// instanceDeepEqual dispatches a user __eq if the class declares one, else compares fields structurally.
+func (vm *VM) instanceDeepEqual(instance *runtime.Instance, right runtime.Value) (bool, error) {
+	if instance.Class != nil && len(instance.Class.Methods["__eq"]) > 0 {
+		result, err := vm.CallMethod(instance, "__eq", []runtime.Value{right})
+		if err != nil {
+			return false, err
+		}
+		boolResult, ok := result.(runtime.Bool)
+		if !ok {
+			return false, fmt.Errorf("%s.__eq must return bool", instance.Class.Name)
+		}
+		return boolResult.Value, nil
+	}
+	other, ok := right.(*runtime.Instance)
+	if !ok || !strings.EqualFold(instance.Class.Name, other.Class.Name) || len(instance.Fields) != len(other.Fields) {
+		return false, nil
+	}
+	for name, value := range instance.Fields {
+		otherValue, ok := other.Fields[name]
+		if !ok {
+			return false, nil
+		}
+		eq, err := vm.deepEqual(value, otherValue)
+		if err != nil || !eq {
+			return eq, err
+		}
+	}
+	return true, nil
 }
 
 func (vm *VM) identical(instruction Instruction) error {
@@ -2923,6 +3115,19 @@ func cleanRuntimeFaultMessage(s string) string {
 		s = s[:idx]
 	}
 	return s
+}
+
+// boundaryFaultToError extracts the clean catchable runtime.Error from a sub-VM boundary fault (typed throw or non-typed *vmRuntimeError) so a boundary handler re-raises the clean error instead of the rendered "uncaught ..." blob.
+func boundaryFaultToError(err error) (runtime.Error, bool) {
+	var thrown vmThrownError
+	if errors.As(err, &thrown) {
+		return thrown.err, true
+	}
+	var rt *vmRuntimeError
+	if errors.As(err, &rt) {
+		return rt.toRuntimeError(), true
+	}
+	return runtime.Error{}, false
 }
 
 func (vm *VM) withErrorStackTrace(err runtime.Error, line int) runtime.Error {
@@ -4247,20 +4452,16 @@ func (vm *VM) instanceIteratorHooks(instance *runtime.Instance) (hasIter, hasNex
 	if classInfo, ok := vm.classInfo(instance.Class.Name); ok {
 		_, hasIter = vm.lookupMethod(classInfo, "__iter")
 		_, hasNext = vm.lookupMethod(classInfo, "__next")
+		if !hasIter || !hasNext {
+			// A dunder inherited from a cross-module ancestor is invisible to this-chunk lookupMethod; resolve it via the runtime ancestor chain.
+			if _, _, mok := vm.crossModuleBoundary(classInfo); mok {
+				hasIter = hasIter || classHasMethod(instance.Class, "__iter")
+				hasNext = hasNext || classHasMethod(instance.Class, "__next")
+			}
+		}
 		return hasIter, hasNext
 	}
-	for c := instance.Class; c != nil; c = c.Parent {
-		if len(c.Methods["__iter"]) > 0 {
-			hasIter = true
-		}
-		if len(c.Methods["__next"]) > 0 {
-			hasNext = true
-		}
-		if hasIter && hasNext {
-			break
-		}
-	}
-	return hasIter, hasNext
+	return classHasMethod(instance.Class, "__iter"), classHasMethod(instance.Class, "__next")
 }
 
 func (vm *VM) iterNext(instruction Instruction) (bool, error) {
@@ -4364,7 +4565,7 @@ func (vm *VM) advanceUserIterator(instruction Instruction, iter *runtime.Instanc
 // inheritance work the same way they do for direct method calls.
 func (vm *VM) userIteratorMethodPresence(iter *runtime.Instance, isForeign bool) (bool, bool) {
 	if isForeign {
-		return len(iter.Class.Methods["__done"]) > 0, len(iter.Class.Methods["__next"]) > 0
+		return classHasMethod(iter.Class, "__done"), classHasMethod(iter.Class, "__next")
 	}
 	classInfo, ok := vm.classInfo(iter.Class.Name)
 	if !ok {
@@ -4372,13 +4573,52 @@ func (vm *VM) userIteratorMethodPresence(iter *runtime.Instance, isForeign bool)
 	}
 	_, hasDone := vm.lookupMethod(classInfo, "__done")
 	_, hasNext := vm.lookupMethod(classInfo, "__next")
+	if !hasDone || !hasNext {
+		// A dunder inherited from a cross-module ancestor is invisible to this-chunk lookupMethod; resolve it via the runtime ancestor chain.
+		if _, _, mok := vm.crossModuleBoundary(classInfo); mok {
+			hasDone = hasDone || classHasMethod(iter.Class, "__done")
+			hasNext = hasNext || classHasMethod(iter.Class, "__next")
+		}
+	}
 	return hasDone, hasNext
 }
 
-// withEnter pops the resource from the stack. If the resource is a
-// class instance whose class defines __enter__(), it invokes the
-// method and pushes its return value; otherwise it pushes the
-// resource back so the binding (if any) receives it.
+// callContextDunder invokes the first present of names (a context-manager __enter/__exit pair) on instance, resolving same-chunk, cross-module-direct, and cross-module-inherited. called reports whether a dunder ran; a probe miss for a name is absence, while a fault inside a found body propagates via err.
+func (vm *VM) callContextDunder(instance *runtime.Instance, names [2]string) (result runtime.Value, called bool, err error) {
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		if vm.moduleLoader == nil || instance.Class.Module == vm.moduleName {
+			return nil, false, nil
+		}
+		for _, name := range names {
+			r, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, nil, vm)
+			var notFound *runtime.MethodNotFoundError
+			if errors.As(cerr, &notFound) {
+				continue
+			}
+			return r, cerr == nil, cerr
+		}
+		return nil, false, nil
+	}
+	if indices, name, found := vm.lookupDunder(classInfo, names[0], names[1]); found && len(indices) > 0 {
+		r, cerr := vm.CallMethod(instance, name, nil)
+		return r, cerr == nil, cerr
+	}
+	// A dunder may be inherited from a cross-module ancestor, which lookupDunder (this chunk only) misses; resolve via CallMethod and treat not-found as absence.
+	if _, _, mok := vm.crossModuleBoundary(classInfo); mok {
+		for _, name := range names {
+			r, cerr := vm.CallMethod(instance, name, nil)
+			var notFound *runtime.MethodNotFoundError
+			if errors.As(cerr, &notFound) {
+				continue
+			}
+			return r, cerr == nil, cerr
+		}
+	}
+	return nil, false, nil
+}
+
+// withEnter runs the resource's __enter__ and pushes its result, or pushes the resource itself when there is no context manager.
 func (vm *VM) withEnter(instruction Instruction, ip int) (int, error) {
 	value, err := vm.pop()
 	if err != nil {
@@ -4389,59 +4629,19 @@ func (vm *VM) withEnter(instruction Instruction, ip int) (int, error) {
 		vm.push(value)
 		return ip, nil
 	}
-	classInfo, ok := vm.classInfo(instance.Class.Name)
-	if !ok {
-		// Cross-module instance: dispatch via the module loader.
-		if vm.moduleLoader != nil && instance.Class.Module != vm.moduleName {
-			for _, name := range []string{"__enter", "__enter__"} {
-				result, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, nil, vm)
-				var notFound *runtime.MethodNotFoundError
-				if errors.As(cerr, &notFound) {
-					continue
-				}
-				if cerr != nil {
-					return vm.propagateModuleError(instruction, ip, cerr)
-				}
-				vm.push(result)
-				return ip, nil
-			}
-		}
-		vm.push(value)
-		return ip, nil
+	result, called, err := vm.callContextDunder(instance, [2]string{"__enter", "__enter__"})
+	if err != nil {
+		return vm.propagateModuleError(instruction, ip, err)
 	}
-	indices, name, ok := vm.lookupDunder(classInfo, "__enter", "__enter__")
-	if ok && len(indices) > 0 {
-		result, err := vm.CallMethod(instance, name, nil)
-		if err != nil {
-			return vm.propagateModuleError(instruction, ip, err)
-		}
+	if called {
 		vm.push(result)
-		return ip, nil
+	} else {
+		vm.push(value)
 	}
-	// __enter may be inherited from a cross-module ancestor, which lookupDunder (this chunk only) misses; resolve via CallMethod and treat not-found as no context manager.
-	if _, _, mok := vm.crossModuleBoundary(classInfo); mok {
-		for _, name := range []string{"__enter", "__enter__"} {
-			result, err := vm.CallMethod(instance, name, nil)
-			var notFound *runtime.MethodNotFoundError
-			if errors.As(err, &notFound) {
-				continue
-			}
-			if err != nil {
-				return vm.propagateModuleError(instruction, ip, err)
-			}
-			vm.push(result)
-			return ip, nil
-		}
-	}
-	vm.push(value)
 	return ip, nil
 }
 
-// withExit pops the resource from the stack and invokes
-// __exit__() when the resource is a class instance whose class
-// defines it. Otherwise it is a no-op: destructors are end-of-
-// lifetime hooks, not block-scoped cleanup, and fire later via the
-// program-exit sweep or an explicit `del`.
+// withExit runs the resource's __exit__ when present; otherwise a no-op (destructors are end-of-lifetime hooks, not block-scoped cleanup).
 func (vm *VM) withExit(instruction Instruction, ip int) (int, error) {
 	value, err := vm.pop()
 	if err != nil {
@@ -4451,43 +4651,8 @@ func (vm *VM) withExit(instruction Instruction, ip int) (int, error) {
 	if !ok {
 		return ip, nil
 	}
-	classInfo, ok := vm.classInfo(instance.Class.Name)
-	if !ok {
-		// Cross-module instance: dispatch via the module loader.
-		if vm.moduleLoader != nil && instance.Class.Module != vm.moduleName {
-			for _, name := range []string{"__exit", "__exit__"} {
-				_, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, nil, vm)
-				var notFound *runtime.MethodNotFoundError
-				if errors.As(cerr, &notFound) {
-					continue
-				}
-				if cerr != nil {
-					return vm.propagateModuleError(instruction, ip, cerr)
-				}
-				return ip, nil
-			}
-		}
-		return ip, nil
-	}
-	if indices, name, ok := vm.lookupDunder(classInfo, "__exit", "__exit__"); ok && len(indices) > 0 {
-		if _, err := vm.CallMethod(instance, name, nil); err != nil {
-			return vm.propagateModuleError(instruction, ip, err)
-		}
-		return ip, nil
-	}
-	// __exit may be inherited from a cross-module ancestor, which lookupDunder (this chunk only) misses; resolve via CallMethod and treat not-found as no cleanup.
-	if _, _, mok := vm.crossModuleBoundary(classInfo); mok {
-		for _, name := range []string{"__exit", "__exit__"} {
-			_, err := vm.CallMethod(instance, name, nil)
-			var notFound *runtime.MethodNotFoundError
-			if errors.As(err, &notFound) {
-				continue
-			}
-			if err != nil {
-				return vm.propagateModuleError(instruction, ip, err)
-			}
-			return ip, nil
-		}
+	if _, _, err := vm.callContextDunder(instance, [2]string{"__exit", "__exit__"}); err != nil {
+		return vm.propagateModuleError(instruction, ip, err)
 	}
 	return ip, nil
 }
@@ -4520,16 +4685,22 @@ func (vm *VM) execDel(instruction Instruction) error {
 		return vm.runtimeError(instruction, "del: unknown binding kind %d", kind)
 	}
 	if instance, ok := value.(*runtime.Instance); ok && instance != nil && !instance.Destroyed && instance.Class != nil {
-		classInfo, ok := vm.classInfo(instance.Class.Name)
-		if ok && classInfo.DestructorIndex >= 0 {
+		if instance.Class.Module != vm.moduleName && vm.moduleLoader != nil {
 			instance.Destroyed = true
-			for i, tracked := range vm.destructibleInstances {
-				if tracked == instance {
-					vm.destructibleInstances = append(vm.destructibleInstances[:i], vm.destructibleInstances[i+1:]...)
-					break
+			vm.removeDestructible(instance)
+			if err := vm.moduleLoader.CallModuleDestructor(instance.Class.Module, instance.Class.Name, instance, vm); err != nil {
+				if fault, ok := boundaryFaultToError(err); ok {
+					return vm.uncaughtThrowError(instruction, vm.mergeBoundaryFrames(fault, int(instruction.Line)))
 				}
+				return vm.runtimeError(instruction, "del: destructor: %s", err.Error())
 			}
+		} else if classInfo, ok := vm.classInfo(instance.Class.Name); ok && classInfo.DestructorIndex >= 0 {
+			instance.Destroyed = true
+			vm.removeDestructible(instance)
 			if _, err := vm.CallFunctionRaw(classInfo.DestructorIndex, []runtime.Value{instance}); err != nil {
+				if fault, ok := boundaryFaultToError(err); ok {
+					return vm.uncaughtThrowError(instruction, vm.mergeBoundaryFrames(fault, int(instruction.Line)))
+				}
 				return vm.runtimeError(instruction, "del: destructor: %s", err.Error())
 			}
 		}
@@ -4966,6 +5137,7 @@ func (vm *VM) addDefer(action deferredAction) {
 	vm.defers[current] = append(vm.defers[current], action)
 }
 
+// expandDeferSpread reads the frozen spread reference's CURRENT elements (fire time, not registration time) so an in-place mutation after defer is visible, matching the evaluator.
 // mergeBoundaryFrames splices this VM's frames onto an error thrown in a sub-VM (defer wrapper, module hop), whose trace stops at the boundary; boundaryLine is the call site in this VM.
 func (vm *VM) mergeBoundaryFrames(thrown runtime.Error, boundaryLine int) runtime.Error {
 	outer, outerTop := vm.snapshotContractFrames()
@@ -4979,13 +5151,23 @@ func (vm *VM) mergeBoundaryFrames(thrown runtime.Error, boundaryLine int) runtim
 	return thrown
 }
 
-// wrapDeferError preserves a typed throw from a deferred call (catch class and trace survive); only non-throw faults get the deferred-context wrap.
+// wrapDeferError re-raises a deferred call's typed throw or runtime fault with its clean message (catch class and trace survive); only a non-fault Go error gets the deferred-context wrap.
 func (vm *VM) wrapDeferError(instruction Instruction, deferLine int, err error, format string, args ...any) error {
-	var thrown vmThrownError
-	if errors.As(err, &thrown) {
-		return vm.uncaughtThrowError(instruction, vm.mergeBoundaryFrames(thrown.err, deferLine))
+	if fault, ok := boundaryFaultToError(err); ok {
+		return vm.uncaughtThrowError(instruction, vm.mergeBoundaryFrames(fault, deferLine))
 	}
 	return vm.runtimeError(instruction, format, args...)
+}
+
+// hofCallLine != 0 only while a native HOF dispatches a separate-VM callback, whose uncaught throw drops the host caller frames; splice them back on.
+func (vm *VM) stitchHofCallbackError(err error) error {
+	if err == nil || vm.hofCallLine == 0 {
+		return err
+	}
+	if fault, ok := boundaryFaultToError(err); ok {
+		return vm.uncaughtThrowError(Instruction{Line: int32(vm.hofCallLine)}, vm.mergeBoundaryFrames(fault, vm.hofCallLine))
+	}
+	return err
 }
 
 func (vm *VM) runDefers(instruction Instruction) error {
@@ -5027,15 +5209,43 @@ func (vm *VM) runDefers(instruction Instruction) error {
 				return err
 			}
 		case deferKindNative:
-			if len(action.names) > 0 {
-				if _, err := vm.evalNativeCallWithNames(action.name, action.args, action.names); err != nil {
+			args := action.args
+			if action.spreadMask != nil {
+				expanded, _, hasNamed, err := expandDeferredSpreadArgs(action)
+				if err != nil {
+					return vm.runtimeError(instruction, "deferred call %s: %v", action.name, err)
+				}
+				if hasNamed {
+					// The evaluator rejects named args mixed with spread on natives.
+					err := fmt.Errorf("named arguments are only supported for Geblang functions and methods")
 					return vm.wrapDeferError(instruction, action.line, err, "deferred call %s: %v", action.name, err)
 				}
-			} else if _, err := vm.evalNativeCall(action.name, action.args); err != nil {
+				args = expanded
+			}
+			if len(action.names) > 0 && action.spreadMask == nil {
+				if _, err := vm.evalNativeCallWithNames(action.name, args, action.names); err != nil {
+					return vm.wrapDeferError(instruction, action.line, err, "deferred call %s: %v", action.name, err)
+				}
+			} else if _, err := vm.evalNativeCall(action.name, args); err != nil {
 				return vm.wrapDeferError(instruction, action.line, err, "deferred call %s: %v", action.name, err)
 			}
 		case deferKindFunc:
-			if _, err := vm.CallFunction(action.funcIdx, action.args); err != nil {
+			args := action.args
+			if action.spreadMask != nil {
+				expanded, names, hasNamed, err := expandDeferredSpreadArgs(action)
+				if err != nil {
+					return vm.runtimeError(instruction, "deferred call: %v", err)
+				}
+				if hasNamed {
+					ordered, oerr := vm.orderRuntimeArguments(instruction, vm.curMod.Chunk.Functions[action.funcIdx], expanded, names, 0)
+					if oerr != nil {
+						return oerr
+					}
+					expanded = ordered
+				}
+				args = expanded
+			}
+			if _, err := vm.CallFunction(action.funcIdx, args); err != nil {
 				return vm.wrapDeferError(instruction, action.line, err, "deferred call: %v", err)
 			}
 		case deferKindMethod:
@@ -5044,8 +5254,21 @@ func (vm *VM) runDefers(instruction Instruction) error {
 				return vm.runtimeError(instruction, "deferred method call receiver is not an instance")
 			}
 			args := action.args
-			if len(action.names) > 0 {
-				reordered, err := vm.reorderMethodNamedArgs(instruction, instance, action.name, action.args, action.names)
+			names := action.names
+			if action.spreadMask != nil {
+				expanded, expandedNames, hasNamed, err := expandDeferredSpreadArgs(action)
+				if err != nil {
+					return vm.runtimeError(instruction, "deferred method call %s: %v", action.name, err)
+				}
+				args = expanded
+				if hasNamed {
+					names = expandedNames
+				} else {
+					names = nil
+				}
+			}
+			if len(names) > 0 {
+				reordered, err := vm.reorderMethodNamedArgs(instruction, instance, action.name, args, names)
 				if err != nil {
 					return vm.runtimeError(instruction, "deferred method call %s: %v", action.name, err)
 				}
@@ -5056,8 +5279,21 @@ func (vm *VM) runDefers(instruction Instruction) error {
 			}
 		case deferKindCallable:
 			args := action.args
-			if len(action.names) > 0 {
-				reordered, err := vm.reorderCallableNamedArgs(instruction, action.value, action.args, action.names)
+			names := action.names
+			if action.spreadMask != nil {
+				expanded, expandedNames, hasNamed, err := expandDeferredSpreadArgs(action)
+				if err != nil {
+					return vm.runtimeError(instruction, "deferred callable call: %v", err)
+				}
+				args = expanded
+				if hasNamed {
+					names = expandedNames
+				} else {
+					names = nil
+				}
+			}
+			if len(names) > 0 {
+				reordered, err := vm.reorderCallableNamedArgs(instruction, action.value, args, names)
 				if err != nil {
 					return vm.runtimeError(instruction, "deferred callable call: %v", err)
 				}
@@ -5076,6 +5312,14 @@ func (vm *VM) runDefers(instruction Instruction) error {
 func (vm *VM) Exports() (map[string]runtime.Value, error) {
 	exports := map[string]runtime.Value{}
 	for _, export := range vm.chunk.Exports {
+		if len(export.OverloadIndices) > 0 {
+			ov := vm.overloadedValue(export.OverloadIndices)
+			ov.Name = export.Name
+			ov.Module = vm.moduleName
+			ov.Indices = append([]int64(nil), export.OverloadIndices...)
+			exports[export.Name] = ov
+			continue
+		}
 		if export.FunctionIndex >= 0 {
 			function := runtime.BytecodeFunction{Name: export.Name, Index: export.FunctionIndex, Module: vm.moduleName}
 			if int(export.FunctionIndex) < len(vm.chunk.Functions) {
@@ -5753,12 +5997,7 @@ func (vm *VM) dropInlineRunFrames(baseline int) {
 		idx := len(vm.frames) - 1
 		slot := &vm.frames[idx]
 		vm.popLocalsStackFrame(slot)
-		slot.returnOverride = nil
-		slot.generator = nil
-		slot.generatorDone = nil
-		slot.typeBindings = nil
-		slot.immutableFieldsToLock = nil
-		slot.lockInstance = nil
+		*slot = callFrame{}
 		vm.frames = vm.frames[:idx]
 	}
 }
@@ -5766,8 +6005,8 @@ func (vm *VM) dropInlineRunFrames(baseline int) {
 // Converts outermost-first frame snapshot to innermost-first contract frames; frame i pairs its CallLine with frame i+1's callLine.
 func (vm *VM) snapshotContractFrames() (frames []runtime.StackFrame, topLevelLine int) {
 	n := len(vm.frames)
-	// A synchronous re-entry on a shared worker starts this run's frames at runInlineExitDepth; frames below it belong to the caller's run and must not leak into this run's trace.
-	base := vm.runInlineExitDepth
+	// A synchronous re-entry on a shared worker starts this run's frames at traceFrameBaseline; frames below it belong to the caller's run and must not leak into this run's trace.
+	base := vm.traceFrameBaseline
 	if base < 0 {
 		base = 0
 	}
@@ -5890,6 +6129,14 @@ type wrappedError struct {
 func (e *wrappedError) Error() string { return e.prefix }
 func (e *wrappedError) Unwrap() error { return e.inner }
 
+// boundaryErrorLine stamps a Fast-path worker's zero-frame, zero-line error to the call site so the merged trace's innermost frame still shows a line.
+func boundaryErrorLine(thrown runtime.Error, boundaryLine int) runtime.Error {
+	if thrown.ErrorLine == 0 && len(thrown.TraceFrames) == 0 {
+		thrown.ErrorLine = boundaryLine
+	}
+	return thrown
+}
+
 // propagateModuleError converts a Go error returned by a moduleLoader
 // dispatch into the calling VM's exception state. If the error wraps a
 // vmThrownError, the embedded runtime.Error is set as the calling VM's
@@ -5899,14 +6146,14 @@ func (e *wrappedError) Unwrap() error { return e.inner }
 func (vm *VM) propagateModuleError(instruction Instruction, ip int, err error) (int, error) {
 	var thrown vmThrownError
 	if errors.As(err, &thrown) {
-		captured := vm.mergeBoundaryFrames(thrown.err, int(instruction.Line))
+		captured := vm.mergeBoundaryFrames(boundaryErrorLine(thrown.err, int(instruction.Line)), int(instruction.Line))
 		vm.pendingThrow = &captured
 		return vm.jumpToExceptionHandler(instruction, ip)
 	}
 	// A non-typed fault uncaught in the callee VM returns as *vmRuntimeError; carry it as a throw so a cross-module catch sees the clean message, not the rendered "uncaught ..." blob (parity with typed throws and the evaluator).
 	var rt *vmRuntimeError
 	if errors.As(err, &rt) {
-		captured := vm.mergeBoundaryFrames(rt.toRuntimeError(), int(instruction.Line))
+		captured := vm.mergeBoundaryFrames(boundaryErrorLine(rt.toRuntimeError(), int(instruction.Line)), int(instruction.Line))
 		vm.pendingThrow = &captured
 		return vm.jumpToExceptionHandler(instruction, ip)
 	}

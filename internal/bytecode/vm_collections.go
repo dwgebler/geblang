@@ -10,6 +10,10 @@ import (
 )
 
 func (vm *VM) collectionsNativeCall(fn string, args []runtime.Value) (runtime.Value, error) {
+	// The module-form HOF (collections.map/filter/...) reaches listHigherOrderMethod with a bare instruction; carry the native call site so a throwing callback's caller frame shows it.
+	savedHofLine := vm.hofCallLine
+	vm.hofCallLine = vm.nativeCallLine
+	defer func() { vm.hofCallLine = savedHofLine }()
 	switch fn {
 	case "length":
 		if len(args) != 1 {

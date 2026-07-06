@@ -1,0 +1,59 @@
+module named_ctor_donor;
+
+import named_ctor_base as base;
+
+export class Point {
+    int x;
+    int y;
+
+    func Point(int x, int y = 10) {
+        this.x = x;
+        this.y = y;
+    }
+
+    func show(): string {
+        return "Point(${this.x}, ${this.y})";
+    }
+}
+
+export class Box {
+    int a;
+    string label;
+    int width;
+
+    func Box(int a, string b) {
+        this.a = a;
+        this.label = b;
+        this.width = 0;
+    }
+
+    func Box(int width) {
+        this.a = 0;
+        this.label = "w";
+        this.width = width;
+    }
+
+    func show(): string {
+        return "Box(${this.a}, ${this.label}, ${this.width})";
+    }
+}
+
+export class Sub extends base.Base {
+    int extra;
+
+    func Sub(int bx, int extra) {
+        parent(bx);
+        this.extra = extra;
+    }
+
+    func showsub(): string {
+        return "Sub(${this.bx}, ${this.bz}, ${this.extra})";
+    }
+}
+
+# Zero has no own constructor, so it inherits nothing: named args are an error.
+export class Zero extends base.Base {
+    func showzero(): string {
+        return "Zero(${this.bx}, ${this.bz})";
+    }
+}

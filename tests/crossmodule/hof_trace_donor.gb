@@ -1,0 +1,19 @@
+module hof_trace_donor;
+
+export func keyFn(int x): int {
+    if (x == 1) { throw RuntimeError("donor key boom"); }
+    return x;
+}
+
+export func makeKey(): func {
+    return func(int x): int {
+        if (x == 1) { throw RuntimeError("donor closure boom"); }
+        return x;
+    };
+}
+
+# Reverse direction: the donor's own HOF invokes a foreign (main) callback.
+export func runHof(func cb): any {
+    let s = [3, 1, 2].sortBy(cb);
+    return s;
+}

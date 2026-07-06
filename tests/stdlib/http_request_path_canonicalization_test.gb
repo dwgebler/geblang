@@ -1,0 +1,55 @@
+/**
+ * @title HTTP server request-path canonicalization (2026-07-02)
+ * @summary req.path is canonicalized (leading "//" collapsed, "."/".."
+ * segments resolved) before it reaches a handler, so a raw non-canonical
+ * path cannot slip past a startsWith prefix gate while still routing to the
+ * canonical handler.
+ *
+ * Tagged "integration" (binds a local port).
+ */
+import test;
+import http;
+
+func echoPathHandler(): callable {
+    return func(dict<string, any> req): dict<string, any> {
+        return {"status": 200, "body": req["path"] as string, "headers": {}};
+    };
+}
+
+class HttpRequestPathCanonicalizationTest extends test.Test {
+    @tag("integration")
+    @test
+    func leadingDoubleSlashIsCollapsed(): void {
+        let server = http.listen("127.0.0.1:0", echoPathHandler());
+        let base = "http://" + http.serverAddr(server);
+        # The client sends "//admin/downloads" raw; only the server canonicalizes it.
+        let r = http.get(base + "//admin/downloads");
+        http.close(server);
+        this.assertEquals("/admin/downloads", r.text());
+    }
+
+    @tag("integration")
+    @test
+    func dotDotSegmentsAreResolved(): void {
+        let server = http.listen("127.0.0.1:0", echoPathHandler());
+        let base = "http://" + http.serverAddr(server);
+        let r = http.get(base + "/admin/../secret");
+        http.close(server);
+        this.assertEquals("/secret", r.text());
+    }
+
+    # Pins the fixed vulnerability: a startsWith("/admin") gate must catch a raw "//admin" request.
+    @tag("integration")
+    @test
+    func gateSeesCanonicalPrefixOnRawDoubleSlashRequest(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            let path = req["path"] as string;
+            let gateBlocks = !path.startsWith("/admin");
+            return {"status": 200, "body": gateBlocks as string, "headers": {}};
+        });
+        let base = "http://" + http.serverAddr(server);
+        let r = http.get(base + "//admin/downloads");
+        http.close(server);
+        this.assertEquals("false", r.text());
+    }
+}

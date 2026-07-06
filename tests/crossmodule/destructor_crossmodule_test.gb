@@ -1,0 +1,51 @@
+/**
+ * @title Cross-module destructor lifetime
+ * @summary A cross-module instance's `func ~Class()` fires at `del` (once) or
+ * program exit, never eagerly when the construction worker recycles. Covers
+ * factory-returned instances, a subclass of a foreign class, and a destructor
+ * that itself constructs a destructible (re-drain).
+ */
+import test;
+import destructor_donor as d;
+
+class SubResource extends d.Resource {
+    func SubResource(string name) { parent(name); }
+    func ~SubResource() { d.appendLog("sub:" + this.name); }
+}
+
+class DestructorCrossModuleTest extends test.Test {
+
+    @test
+    func delFiresCrossModuleDestructorOnce(): void {
+        d.resetLog();
+        let r = d.Resource("A");
+        this.assertEquals("", d.names());
+        del r;
+        this.assertEquals("R:A;", d.names());
+    }
+
+    @test
+    func delOnFactoryReturnedInstance(): void {
+        d.resetLog();
+        let r = d.make("F");
+        this.assertEquals("", d.names());
+        del r;
+        this.assertEquals("R:F;", d.names());
+    }
+
+    @test
+    func delOnSubclassOfForeignFiresOwnDestructor(): void {
+        d.resetLog();
+        let s = SubResource("S");
+        del s;
+        this.assertEquals("sub:S;", d.names());
+    }
+
+    @test
+    func delDestructorReDrainsSpawnedAtExitNotDel(): void {
+        d.resetLog();
+        let sp = d.Spawner("X");
+        del sp;
+        this.assertEquals("S:X;", d.names());
+    }
+}

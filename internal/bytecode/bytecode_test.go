@@ -243,6 +243,18 @@ func (l fakeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args
 	return runtime.Null{}, fmt.Errorf("unexpected module class construction %s", class.Name)
 }
 
+func (l fakeModuleLoader) ConstructModuleClassNamed(class runtime.BytecodeClass, args []runtime.Value, names []string, typeArgs []string, caller *bytecode.VM) (runtime.Value, error) {
+	return runtime.Null{}, fmt.Errorf("unexpected named module class construction %s", class.Name)
+}
+
+func (l fakeModuleLoader) CallModuleOverloaded(module string, indices []int64, displayName string, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+	return runtime.Null{}, fmt.Errorf("unexpected module overloaded call %s", displayName)
+}
+
+func (l fakeModuleLoader) CallModuleOverloadedNamed(module string, indices []int64, displayName string, args []runtime.Value, names []string, caller *bytecode.VM) (runtime.Value, error) {
+	return runtime.Null{}, fmt.Errorf("unexpected named module overloaded call %s", displayName)
+}
+
 func (l fakeModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected module static method call %s.%s", class.Name, methodName)
 }
@@ -251,8 +263,24 @@ func (l fakeModuleLoader) ModuleMethodParamNames(module string, className string
 	return nil, fmt.Errorf("fake loader has no module method metadata")
 }
 
+func (l fakeModuleLoader) ModuleFunctionParamNames(module string, index int64) ([]string, error) {
+	return nil, fmt.Errorf("fake loader has no module function metadata")
+}
+
+func (l fakeModuleLoader) ModuleConstructorParamNames(module string, className string) ([]string, error) {
+	return nil, fmt.Errorf("fake loader has no module constructor metadata")
+}
+
 func (l fakeModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected module method call %s.%s", className, methodName)
+}
+
+func (l fakeModuleLoader) CallModuleMethodValue(module string, funcIndex int64, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+	return runtime.Null{}, fmt.Errorf("unexpected module method value call in %s", module)
+}
+
+func (l fakeModuleLoader) CallModuleDestructor(module string, className string, instance *runtime.Instance, caller *bytecode.VM) error {
+	return fmt.Errorf("unexpected module destructor call %s.%s", module, className)
 }
 
 func (l fakeModuleLoader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
@@ -264,6 +292,10 @@ func (l fakeModuleLoader) ImmutableFieldsForModuleClass(module string, className
 }
 
 func (l fakeModuleLoader) FindClassByName(name string) (runtime.Value, bool) {
+	return nil, false
+}
+
+func (l fakeModuleLoader) ClassValueInModule(module, className string) (runtime.Value, bool) {
 	return nil, false
 }
 
@@ -305,6 +337,14 @@ func (l fakeModuleLoader) StaticValueForModuleClass(module, className, name stri
 
 func (l fakeModuleLoader) CallModuleStaticMethodByName(module, className, methodName string, args []runtime.Value) (runtime.Value, bool, error) {
 	return nil, false, nil
+}
+
+func (l fakeModuleLoader) StaticMethodValueForModuleClass(module, className, name string) (runtime.Value, bool) {
+	return nil, false
+}
+
+func (l fakeModuleLoader) MethodFirstOverload(module, className, name string) (string, int64, bool) {
+	return "", 0, false
 }
 
 func (l fakeModuleLoader) UnimplementedAbstractMethods(module, className string) map[string]string {

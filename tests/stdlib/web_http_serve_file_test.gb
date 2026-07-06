@@ -100,4 +100,26 @@ class WebHttpServeFileTest extends test.Test {
         http.shutdown(s["server"]);
         this.assertEquals(404, r["status"]);
     }
+
+    @test
+    func responseFromPreservesMarker(): void {
+        let wrapped = nethttp.responseFrom(nethttp.serveFile(this.tmpPath));
+        let d = wrapped.toDict();
+        this.assertTrue(d.contains("__serveFile"));
+        this.assertEquals(this.tmpPath, web.serveFilePath(d["__serveFile"]));
+    }
+
+    @test
+    func responseFromServesFileWithCookie(): void {
+        let p = this.tmpPath;
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            return nethttp.responseFrom(nethttp.serveFile(p)).cookie("sid", "abc").toDict();
+        });
+        sys.sleep(20 as int);
+        let base = "http://" + http.serverAddr(server);
+        let r = http.get(base + "/f.txt");
+        http.shutdown(server);
+        this.assertEquals(200, r["status"]);
+        this.assertEquals("0123456789abcdef", r["body"] as string);
+    }
 }

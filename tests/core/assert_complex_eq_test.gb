@@ -1,0 +1,17 @@
+import test;
+import complex;
+
+/** assertEquals compares complex values the same way the == operator does. */
+class AssertComplexEqTest extends test.Test {
+    @test
+    func equalComplex(): void {
+        this.assertEquals(complex.of(1.0, 2.0), complex.of(1.0, 2.0));
+        this.assertTrue(complex.of(1.0, 2.0) == complex.of(1.0, 2.0));
+    }
+
+    @test
+    func unequalComplex(): void {
+        this.assertNotEquals(complex.of(1.0, 2.0), complex.of(1.0, 3.0));
+        this.assertFalse(complex.of(1.0, 2.0) == complex.of(1.0, 3.0));
+    }
+}

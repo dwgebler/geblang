@@ -1,0 +1,28 @@
+/**
+ * @title reflect.class is module-exact (1.32.0)
+ * @summary reflect.class(instance) resolves to the instance's declaring-module
+ * class value: it equals that module's own class value and not a same-named
+ * class declared in another module. Two donors (cfgdonor, cfgdonorb) each
+ * declare a Config class; an instance of one never reflects to the other.
+ */
+import test;
+import reflect;
+import cfgdonor;
+import cfgdonorb;
+
+class ReflectClassModuleExactTest extends test.Test {
+
+    @test
+    func classMatchesDeclaringModule(): void {
+        let x = cfgdonorb.makeConfig();
+        this.assertTrue(reflect.class(x) == cfgdonorb.Config);
+        this.assertFalse(reflect.class(x) == cfgdonor.Config);
+    }
+
+    @test
+    func siblingModuleInstanceIsExact(): void {
+        let y = cfgdonor.makeConfig();
+        this.assertTrue(reflect.class(y) == cfgdonor.Config);
+        this.assertFalse(reflect.class(y) == cfgdonorb.Config);
+    }
+}

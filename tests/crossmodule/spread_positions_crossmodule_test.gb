@@ -1,0 +1,36 @@
+/**
+ * @title Spread arguments in any position across a module boundary
+ * @summary A spread argument before trailing positional arguments binds
+ * correctly when the callee is a foreign module's function, constructor,
+ * instance method, or static method. Named args on a foreign instance
+ * method bind by name around a spread.
+ */
+import test;
+import spread_positions_donor as d;
+
+class SpreadPositionsCrossmoduleTest extends test.Test {
+
+    @test
+    func foreignFunctionSpreadNotLast(): void {
+        this.assertEquals("1|10|20|4", d.join4(1, ...[10, 20], 4));
+        this.assertEquals("10|20|3|4", d.join4(...[10, 20], 3, 4));
+    }
+
+    @test
+    func foreignConstructorSpreadNotLast(): void {
+        let j = d.Joiner(1, ...[10], 3);
+        this.assertEquals("1|10|3", j.dump());
+    }
+
+    @test
+    func foreignMethodSpreadNotLast(): void {
+        let j = d.Joiner(0, 0, 0);
+        this.assertEquals("1|10|20", j.m3(1, ...[10, 20]));
+        this.assertEquals("10|20|9", j.m3(c: 9, ...[10, 20]));
+    }
+
+    @test
+    func foreignStaticSpreadNotLast(): void {
+        this.assertEquals("1|10|20", d.Joiner.s3(1, ...[10, 20]));
+    }
+}

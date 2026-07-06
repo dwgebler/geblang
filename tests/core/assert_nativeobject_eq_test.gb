@@ -1,0 +1,21 @@
+import test;
+import web;
+
+/** A native handle carrying an uncomparable payload (the serveFile marker holds a dict) compares by value without crashing the runner. */
+class AssertNativeObjectEqTest extends test.Test {
+    @test
+    func markerEquality(): void {
+        let a = web.serveFileMarker({"path": "/tmp/x"});
+        let b = web.serveFileMarker({"path": "/tmp/x"});
+        this.assertEquals(a, b);
+        this.assertTrue(a == b);
+    }
+
+    @test
+    func markerInequality(): void {
+        let a = web.serveFileMarker({"path": "/tmp/x"});
+        let c = web.serveFileMarker({"path": "/tmp/y"});
+        this.assertNotEquals(a, c);
+        this.assertFalse(a == c);
+    }
+}

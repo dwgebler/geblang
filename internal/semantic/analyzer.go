@@ -1045,9 +1045,8 @@ func (a *Analyzer) analyzeDeclaration(stmt *ast.DeclarationStatement) {
 	} else if stmt.Value != nil {
 		declared = a.expressionTypeName(stmt.Value)
 	}
-	if declared.known {
-		a.declare(stmt.Name.Value, declared)
-	}
+	// Bind even when the initializer type is unknown so later scope lookups (del) resolve it.
+	a.declare(stmt.Name.Value, declared)
 	if stmt.Value != nil {
 		a.analyzeExpression(stmt.Value)
 	}

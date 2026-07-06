@@ -1,0 +1,34 @@
+/**
+ * @title Cross-module class-as-value deserialization (plain and decorated)
+ * @summary A class referenced as a value in json.parseAs, whose parent lives in
+ * another module, hydrates correctly whether the class is plain or carries a
+ * register-style decorator. Guards module stamping of class-as-value constants
+ * (the plain-class and decoratedClasses load-site branches) on both backends.
+ */
+import test;
+import json;
+import deserialize_donor as money;
+
+func tagClass(any cls): any { return cls; }
+
+class PlainChild extends money.Plain {
+    func PlainChild(int amount) { parent(amount); }
+}
+
+@tagClass
+class DecoratedChild extends money.Plain {
+    func DecoratedChild(int amount) { parent(amount); }
+}
+
+class ClassValueDeserializeTest extends test.Test {
+
+    @test
+    func plainChildAsValue(): void {
+        this.assertEquals(7, json.parseAs("{\"amount\": 7}", PlainChild).value());
+    }
+
+    @test
+    func decoratedChildAsValue(): void {
+        this.assertEquals(9, json.parseAs("{\"amount\": 9}", DecoratedChild).value());
+    }
+}

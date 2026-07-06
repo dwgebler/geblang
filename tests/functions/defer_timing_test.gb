@@ -1,0 +1,184 @@
+/**
+ * @title Defer arguments are frozen at registration time
+ * @summary A deferred call captures its argument values, its receiver, and its
+ * callable at the point the `defer` runs, not when the deferred body later
+ * fires. A later reassignment does not change what runs; an in-place mutation
+ * of a captured reference is still visible. Loop defers freeze per iteration.
+ */
+import test;
+
+list<string> deferLog = [];
+func collect(string tag): void { deferLog = deferLog.push(tag); }
+func collectInt(int n): void { deferLog = deferLog.push(n as string); }
+
+class Box {
+    string tag;
+    func Box(string tag) { this.tag = tag; }
+    func emit(): void { collect(this.tag); }
+}
+
+func showA(): void { collect("A"); }
+func showB(): void { collect("B"); }
+
+func reassignedArg(): void {
+    int x = 1;
+    defer collectInt(x);
+    x = 99;
+}
+
+func loopDefers(): void {
+    for (int i = 0; i < 3; i = i + 1) {
+        defer collectInt(i);
+    }
+}
+
+func reassignedReceiver(): void {
+    Box b = Box("first");
+    defer b.emit();
+    b = Box("second");
+}
+
+func inPlaceMutation(): void {
+    Box b = Box("orig");
+    defer b.emit();
+    b.tag = "mutated";
+}
+
+func reassignedCallable(): void {
+    let f = showA;
+    defer f();
+    f = showB;
+}
+
+func showVariadicInts(int ...xs): void { collect("${xs}"); }
+func showLeadAndRest(int lead, int ...rest): void { collect("${lead}:${rest}"); }
+func showThree(int a, int b, int c): void { collect("${a}-${b}-${c}"); }
+
+class Adder {
+    func sum(int a, int b): void { collect((a + b) as string); }
+}
+
+func spreadVariadicMutation(): void {
+    list<int> xs = [1, 2, 3];
+    defer showVariadicInts(...xs);
+    xs.push(9);
+}
+
+func spreadMixedPositionalMutation(): void {
+    list<int> xs = [2, 3];
+    defer showLeadAndRest(1, ...xs);
+    xs.push(99);
+}
+
+func spreadFixedAritySuccess(): void {
+    list<int> xs = [1, 2, 3];
+    defer showThree(...xs);
+}
+
+func spreadReassignment(): void {
+    list<int> xs = [1, 2, 3];
+    defer showVariadicInts(...xs);
+    xs = [7, 8];
+}
+
+func spreadMethodCall(): void {
+    Adder adder = Adder();
+    list<int> xs = [4, 5];
+    defer adder.sum(...xs);
+}
+
+func shadowedFunction(): void {
+    defer showA();
+    let showA = func(): void { collect("shadow"); };
+    collect("body");
+}
+
+class DeferTimingTest extends test.Test {
+    @test
+    func argFrozenAtRegistration(): void {
+        deferLog = [];
+        reassignedArg();
+        this.assertEquals(["1"], deferLog);
+    }
+
+    @test
+    func loopDefersFreezePerIteration(): void {
+        deferLog = [];
+        loopDefers();
+        this.assertEquals(["2", "1", "0"], deferLog);
+    }
+
+    @test
+    func receiverFrozenAtRegistration(): void {
+        deferLog = [];
+        reassignedReceiver();
+        this.assertEquals(["first"], deferLog);
+    }
+
+    @test
+    func inPlaceReceiverMutationVisible(): void {
+        deferLog = [];
+        inPlaceMutation();
+        this.assertEquals(["mutated"], deferLog);
+    }
+
+    @test
+    func callableFrozenAtRegistration(): void {
+        deferLog = [];
+        reassignedCallable();
+        this.assertEquals(["A"], deferLog);
+    }
+
+    @test
+    func functionNameFrozenAgainstLocalShadow(): void {
+        deferLog = [];
+        shadowedFunction();
+        this.assertEquals(["body", "A"], deferLog);
+    }
+
+    @test
+    func argExpressionThrowsAtRegistration(): void {
+        this.assertThrows(func(): void {
+            int before = 0;
+            defer collectInt(riskyArg());
+            before = 1;
+        }, "boom");
+    }
+
+    @test
+    func spreadVariadicFrozenReferenceMutationVisible(): void {
+        deferLog = [];
+        spreadVariadicMutation();
+        this.assertEquals(["[1, 2, 3, 9]"], deferLog);
+    }
+
+    @test
+    func spreadMixedPositionalMutationVisible(): void {
+        deferLog = [];
+        spreadMixedPositionalMutation();
+        this.assertEquals(["1:[2, 3, 99]"], deferLog);
+    }
+
+    @test
+    func spreadFixedAritySucceeds(): void {
+        deferLog = [];
+        spreadFixedAritySuccess();
+        this.assertEquals(["1-2-3"], deferLog);
+    }
+
+    @test
+    func spreadReassignmentNotVisible(): void {
+        deferLog = [];
+        spreadReassignment();
+        this.assertEquals(["[1, 2, 3]"], deferLog);
+    }
+
+    @test
+    func spreadMethodCallExpandsArgs(): void {
+        deferLog = [];
+        spreadMethodCall();
+        this.assertEquals(["9"], deferLog);
+    }
+}
+
+func riskyArg(): int { throw RuntimeError("boom"); }

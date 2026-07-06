@@ -693,3 +693,139 @@ func TestParityCrossModuleClassDecorators(t *testing.T) {
 		t.Errorf("wrong output: got %q, want %q", evOut.String(), want)
 	}
 }
+
+// TestParityCallableMethodDecoratorNamedArgs guards 9.21: named args bind to the ORIGINAL method's parameter names, not the wrapper's.
+func TestParityCallableMethodDecoratorNamedArgs(t *testing.T) {
+	runParity(t, `import io;
+
+func transparent(any next): any {
+    return func(any arg): any {
+        return next(arg);
+    };
+}
+
+class Greeter {
+    @transparent
+    func handle(int x): int {
+        return x + 1;
+    }
+}
+
+let g = Greeter();
+io.println(g.handle(x: 5));
+io.println(g.handle(5));
+`, "6\n6\n")
+}
+
+func TestParityCallableStaticMethodDecoratorNamedArgs(t *testing.T) {
+	runParity(t, `import io;
+
+func transparent(any next): any {
+    return func(any arg): any {
+        return next(arg);
+    };
+}
+
+class Greeter {
+    @transparent
+    static func handle(int x): int {
+        return x + 100;
+    }
+}
+
+io.println(Greeter.handle(x: 5));
+io.println(Greeter.handle(5));
+`, "105\n105\n")
+}
+
+func TestParityCallableFunctionDecoratorNamedArgs(t *testing.T) {
+	runParity(t, `import io;
+
+func transparent(any next): any {
+    return func(any arg): any {
+        return next(arg);
+    };
+}
+
+@transparent
+func handle(int x): int {
+    return x * 2;
+}
+
+io.println(handle(x: 5));
+io.println(handle(5));
+`, "10\n10\n")
+}
+
+// TestParityCallableMethodDecoratorNamedArgsOutOfOrder: wrapper renames every parameter; named args come in reverse declared order.
+func TestParityCallableMethodDecoratorNamedArgsOutOfOrder(t *testing.T) {
+	runParity(t, `import io;
+
+func transparent(any next): any {
+    return func(any a, any b): any {
+        return next(a, b);
+    };
+}
+
+class Calc {
+    @transparent
+    func subtract(int x, int y): int {
+        return x - y;
+    }
+}
+
+let c = Calc();
+io.println(c.subtract(x: 10, y: 3));
+io.println(c.subtract(y: 3, x: 10));
+io.println(c.subtract(10, 3));
+`, "7\n7\n7\n")
+}
+
+// TestParityCallableMethodDecoratorVariadicWrapperNamedArgs: the `func(any ...args)` forwarding idiom must keep working for named calls too.
+func TestParityCallableMethodDecoratorVariadicWrapperNamedArgs(t *testing.T) {
+	runParity(t, `import io;
+
+func transparent(any next): any {
+    return func(any ...args): any {
+        return next(...args);
+    };
+}
+
+class Calc {
+    @transparent
+    func subtract(int x, int y): int {
+        return x - y;
+    }
+}
+
+let c = Calc();
+io.println(c.subtract(x: 10, y: 3));
+io.println(c.subtract(y: 3, x: 10));
+io.println(c.subtract(10, 3));
+`, "7\n7\n7\n")
+}
+
+// TestParityMethodNamedArgumentsUndecorated: plain (undecorated) method named-arg binding must be unaffected by the 9.21 fix.
+func TestParityMethodNamedArgumentsUndecorated(t *testing.T) {
+	runParity(t, `import io;
+
+class Connector {
+    func connect(string host, int port = 80, bool tls = false): string {
+        string result = host + ":" + (port as string);
+        if (tls) { result = result + "s"; }
+        return result;
+    }
+
+    static func label(string host, int port = 80): string {
+        return host + "/" + (port as string);
+    }
+}
+
+let c = Connector();
+io.println(c.connect("example.com"));
+io.println(c.connect("example.com", port: 443, tls: true));
+io.println(c.connect("api.com", tls: true, port: 8443));
+io.println(Connector.label("api.com"));
+io.println(Connector.label(port: 22, host: "ssh.com"));
+`, "example.com:80\nexample.com:443s\napi.com:8443s\napi.com/80\nssh.com/22\n")
+}

@@ -11,19 +11,27 @@ import (
 
 // Select returns the single overload whose signature binds the positional args and whose parameter types accept them; errors mirror the language's direct-call rules (no match / ambiguous).
 func Select(name string, overloads []runtime.Function, args []runtime.Value) (runtime.Function, error) {
-	var matched []runtime.Function
-	for _, fn := range overloads {
+	_, fn, err := SelectWithIndex(name, overloads, args)
+	return fn, err
+}
+
+// SelectWithIndex is Select but also returns the winner's position in overloads, so a caller can map it back to the home-chunk function index (needed to route an async winner through the worker on its own snapshot rather than a vm-capturing wrapper).
+func SelectWithIndex(name string, overloads []runtime.Function, args []runtime.Value) (int, runtime.Function, error) {
+	matchedIdx := -1
+	count := 0
+	for i, fn := range overloads {
 		if bindsPositional(fn, len(args)) && argsMatchParamTypes(fn, args) {
-			matched = append(matched, fn)
+			count++
+			matchedIdx = i
 		}
 	}
-	switch len(matched) {
+	switch count {
 	case 0:
-		return runtime.Function{}, fmt.Errorf("no matching overload for %s", binding.DisplayName(name))
+		return -1, runtime.Function{}, fmt.Errorf("no matching overload for %s", binding.DisplayName(name))
 	case 1:
-		return matched[0], nil
+		return matchedIdx, overloads[matchedIdx], nil
 	default:
-		return runtime.Function{}, fmt.Errorf("ambiguous overload for %s", binding.DisplayName(name))
+		return -1, runtime.Function{}, fmt.Errorf("ambiguous overload for %s", binding.DisplayName(name))
 	}
 }
 

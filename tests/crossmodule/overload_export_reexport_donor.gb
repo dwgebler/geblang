@@ -1,0 +1,5 @@
+module overload_export_reexport_donor;
+
+from overload_export_donor import over;
+
+export func over2(int v): string { return "re:${over(v)}"; }

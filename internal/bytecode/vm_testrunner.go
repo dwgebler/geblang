@@ -8,6 +8,37 @@ import (
 	"strings"
 )
 
+// cleanTestError mirrors the evaluator's thrownError: Error() is the clean Inspect() message, and the carried runtime.Error supplies the full frame trace, so VM-runner failures read the same as the evaluator instead of the rendered "uncaught ..." blob.
+type cleanTestError struct{ err runtime.Error }
+
+func (e cleanTestError) Error() string { return e.err.Inspect() }
+
+// normalizeTestError converts a VM boundary fault (typed throw or plain runtime fault) into a cleanTestError; other errors pass through unchanged. A method entered directly from the runner has no in-VM call instruction, so topLevelLine (the test.run call site) stands in for the otherwise-absent top-level frame line, matching the evaluator.
+func normalizeTestError(err error, topLevelLine int) error {
+	if err == nil {
+		return nil
+	}
+	if fault, ok := boundaryFaultToError(err); ok {
+		if fault.TopLevelLine == 0 {
+			fault.TopLevelLine = topLevelLine
+		}
+		return cleanTestError{err: fault}
+	}
+	return err
+}
+
+// testFailureWithTrace mirrors the evaluator's failureWithTrace: clean message plus the thrown error's full frame trace.
+func testFailureWithTrace(err error) string {
+	msg := err.Error()
+	var clean cleanTestError
+	if errors.As(err, &clean) {
+		if t := clean.err.FramesTrace(); t != "" {
+			return msg + "\n" + t
+		}
+	}
+	return msg
+}
+
 func (vm *VM) hasTestAncestor(classInfo ClassInfo) bool {
 	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
 		return vm.hasTestAncestor(vm.chunk.Classes[classInfo.ParentIndex])
@@ -179,6 +210,9 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 	}
 	classInfo := vm.chunk.Classes[classIndex]
 
+	// The runner is entered from the test.run native, whose call-site line is the top-level frame's line for every failure trace it produces.
+	topLevelLine := vm.nativeCallLine
+
 	tagSet := map[string]bool{}
 	for _, t := range tagFilter {
 		tagSet[strings.ToLower(t)] = true
@@ -311,6 +345,7 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 	setupFailed := false
 	if hasMethod("setupClass") {
 		if err := callHook("setupClass"); err != nil {
+			err = normalizeTestError(err, topLevelLine)
 			setupFailed = true
 			failed = int64(len(testMethods))
 			for _, m := range testMethods {
@@ -348,6 +383,8 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 					continue
 				}
 			}
+			bodyErr = normalizeTestError(bodyErr, topLevelLine)
+			teardownErr = normalizeTestError(teardownErr, topLevelLine)
 			testErr := bodyErr
 			if teardownErr != nil {
 				if testErr != nil {
@@ -358,7 +395,7 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 			}
 			if testErr != nil {
 				failed++
-				failures = append(failures, runtime.String{Value: m.displayName + ": " + testErr.Error()})
+				failures = append(failures, runtime.String{Value: m.displayName + ": " + testFailureWithTrace(testErr)})
 				tests = append(tests, buildTestEntry(m.displayName, false, testErr.Error()))
 			} else {
 				passed++
@@ -369,6 +406,7 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 
 	if hasMethod("teardownClass") {
 		if err := callHook("teardownClass"); err != nil {
+			err = normalizeTestError(err, topLevelLine)
 			failed++
 			failures = append(failures, runtime.String{Value: "teardownClass: " + err.Error()})
 			if passed > 0 {

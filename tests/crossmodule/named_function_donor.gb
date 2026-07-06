@@ -1,0 +1,9 @@
+module named_function_donor;
+
+export func join4(int a, int b, int c, int d): string { return "${a}|${b}|${c}|${d}"; }
+
+export func join3(int a, int b, int c): string { return "${a}|${b}|${c}"; }
+
+export func withDefault(int a, int b, int c = 99): string { return "${a}|${b}|${c}"; }
+
+export func record(list<string> out, string tag): void { out.push(tag); }

@@ -150,13 +150,17 @@ func (e *Evaluator) metricsReset(call *ast.CallExpression, args []runtime.Value)
 	return runtime.Null{}, nil
 }
 
+// metricsMonoStart anchors metrics/profile timestamps to a monotonic reading (UnixNano is wall clock and can go backwards).
+var metricsMonoStart = time.Now()
+
 func metricsNow(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
 	}
-	return runtime.NewInt64(time.Now().UnixNano()), nil
+	return runtime.NewInt64(time.Since(metricsMonoStart).Nanoseconds()), nil
 }
 
+// metricsDuration returns milliseconds (sub-ms precision) since a now() token; now() itself is an opaque monotonic nanosecond reading.
 func metricsDuration(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects start timestamp", call.Callee.String())
@@ -165,7 +169,8 @@ func metricsDuration(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 	if !ok {
 		return nil, fmt.Errorf("%s start timestamp must be int", call.Callee.String())
 	}
-	return runtime.NewInt64(time.Now().UnixNano() - startNs), nil
+	elapsedNs := time.Since(metricsMonoStart).Nanoseconds() - startNs
+	return runtime.Float{Value: float64(elapsedNs) / 1e6}, nil
 }
 
 // metricsEntry is one declared metric in the registry. counter and

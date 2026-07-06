@@ -1,0 +1,119 @@
+/**
+ * @title Cross-module named constructor calls
+ * @summary Named arguments to a cross-module class constructor select the
+ * overload and bind against the constructor's home-module parameters:
+ * out-of-order, positional mix, omitted default, spread, from-import,
+ * aliased import, overload selection, foreign parent, defer, and the loud
+ * binding errors.
+ */
+import test;
+import named_ctor_donor;
+import named_ctor_donor as h;
+from named_ctor_donor import Point;
+
+class NamedCtorCrossModuleTest extends test.Test {
+    @test
+    func plainNamed(): void {
+        this.assertEquals("Point(1, 2)", named_ctor_donor.Point(x: 1, y: 2).show());
+    }
+
+    @test
+    func outOfOrder(): void {
+        this.assertEquals("Point(1, 2)", named_ctor_donor.Point(y: 2, x: 1).show());
+    }
+
+    @test
+    func namedPositionalMix(): void {
+        this.assertEquals("Point(1, 2)", named_ctor_donor.Point(1, y: 2).show());
+    }
+
+    @test
+    func namedDefaultOmitted(): void {
+        this.assertEquals("Point(5, 10)", named_ctor_donor.Point(x: 5).show());
+    }
+
+    @test
+    func fromImportNamed(): void {
+        this.assertEquals("Point(1, 2)", Point(y: 2, x: 1).show());
+    }
+
+    @test
+    func aliasedImportNamed(): void {
+        this.assertEquals("Point(1, 2)", h.Point(y: 2, x: 1).show());
+    }
+
+    @test
+    func overloadTwoArgSelected(): void {
+        this.assertEquals("Box(5, hi, 0)", named_ctor_donor.Box(a: 5, b: "hi").show());
+    }
+
+    @test
+    func overloadTwoArgOutOfOrder(): void {
+        this.assertEquals("Box(5, hi, 0)", named_ctor_donor.Box(b: "hi", a: 5).show());
+    }
+
+    @test
+    func overloadOneArgSelected(): void {
+        this.assertEquals("Box(0, w, 3)", named_ctor_donor.Box(width: 3).show());
+    }
+
+    @test
+    func foreignParentOwnCtor(): void {
+        this.assertEquals("Sub(7, 100, 9)", named_ctor_donor.Sub(bx: 7, extra: 9).showsub());
+    }
+
+    @test
+    func namedWithDictSpread(): void {
+        this.assertEquals("Point(1, 2)", named_ctor_donor.Point(...{"x": 1, "y": 2}).show());
+    }
+
+    @test
+    func namedWithMixedDictSpread(): void {
+        this.assertEquals("Point(1, 2)", named_ctor_donor.Point(x: 1, ...{"y": 2}).show());
+    }
+
+    @test
+    func dictSpreadDropsUnknownKey(): void {
+        this.assertEquals("Point(1, 2)", named_ctor_donor.Point(...{"x": 1, "y": 2, "junk": 9}).show());
+    }
+
+    @test
+    func namedInDefer(): void {
+        list<string> out = [];
+        this.deferHelper(out);
+        this.assertEquals(["done", "Point(1, 2)"], out);
+    }
+
+    func deferHelper(list<string> out): void {
+        defer out.push(named_ctor_donor.Point(y: 2, x: 1).show());
+        out.push("done");
+    }
+
+    @test
+    func unknownParamRejected(): void {
+        this.assertThrows(func(): void {
+            named_ctor_donor.Point(z: 9).show();
+        });
+    }
+
+    @test
+    func duplicateParamRejected(): void {
+        this.assertThrows(func(): void {
+            named_ctor_donor.Point(x: 1, x: 2).show();
+        });
+    }
+
+    @test
+    func missingRequiredRejected(): void {
+        this.assertThrows(func(): void {
+            named_ctor_donor.Point(y: 2).show();
+        });
+    }
+
+    @test
+    func noConstructorRejected(): void {
+        this.assertThrows(func(): void {
+            named_ctor_donor.Zero(bx: 7).showzero();
+        });
+    }
+}

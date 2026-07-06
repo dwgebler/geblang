@@ -1,0 +1,110 @@
+/**
+ * @title Static and bound instance methods as first-class values
+ * @summary A static method (Class.staticMethod) and a bound instance method
+ * (instance.method) can be stored, passed, returned, and used as HOF callbacks.
+ * Overloaded targets pin to the first overload (matching lookupStaticMethod /
+ * lookupMethod methods[0]); a bound method sees receiver mutation by reference.
+ */
+import test;
+
+class Box {
+    static const KIND = "box";
+    int base;
+    func Box(int base) { this.base = base; }
+    static func stamp(int x): int { return x + 100; }
+    func add(int x): int { return this.base + x; }
+}
+
+class Base {
+    static func tag(string s): string { return "base:" + s; }
+    func hello(): string { return "hello"; }
+}
+
+class Sub extends Base {
+    int v;
+    func Sub(int v) { this.v = v; }
+}
+
+class Calc {
+    static func reg(int x): string { return "int:" + (x as string); }
+    static func reg(string x): string { return "str:" + x; }
+    func go(int x): string { return "int:" + (x as string); }
+    func go(string x): string { return "str:" + x; }
+}
+
+class Helper {
+    func key(int x): int { return x; }
+}
+
+func apply1(any f, int v): int { return f(v); }
+func call0(any f): string { return f(); }
+func getStamp(): any { return Box.stamp; }
+
+class MethodValueTest extends test.Test {
+    @test
+    func staticMethodStoredAndCalled(): void {
+        let s = Box.stamp;
+        this.assertEquals(101, s(1));
+    }
+
+    @test
+    func staticMethodPassedAndReturned(): void {
+        this.assertEquals(102, apply1(Box.stamp, 2));
+        let g = getStamp();
+        this.assertEquals(103, g(3));
+    }
+
+    @test
+    func inheritedStaticMethodValue(): void {
+        let f = Sub.tag;
+        this.assertEquals("base:x", f("x"));
+    }
+
+    @test
+    func overloadedStaticValuePinsFirst(): void {
+        let f = Calc.reg;
+        this.assertEquals("int:5", f(5));
+        this.assertThrows(func(): void {
+            let ignored = f("z");
+        }, "expects int");
+    }
+
+    @test
+    func boundInstanceMethodValue(): void {
+        let b = Box(10);
+        let m = b.add;
+        this.assertEquals(15, m(5));
+        this.assertEquals(17, apply1(m, 7));
+    }
+
+    @test
+    func boundMethodSeesReceiverMutation(): void {
+        let b = Box(10);
+        let m = b.add;
+        b.base = 100;
+        this.assertEquals(105, m(5));
+    }
+
+    @test
+    func boundMethodAsHofCallback(): void {
+        let h = Helper();
+        this.assertEquals([1, 2, 3], [3, 1, 2].sortBy(h.key));
+    }
+
+    @test
+    func inheritedInstanceMethodValue(): void {
+        let s = Sub(9);
+        let m = s.hello;
+        this.assertEquals("hello", m());
+    }
+
+    @test
+    func overloadedBoundMethodPinsFirst(): void {
+        let c = Calc();
+        let m = c.go;
+        this.assertEquals("int:5", m(5));
+        this.assertThrows(func(): void {
+            let ignored = m("z");
+        }, "expects int");
+    }
+}

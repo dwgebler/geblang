@@ -1,0 +1,56 @@
+/**
+ * @title Cross-module sub-interface parent chains
+ * @summary A class implementing a foreign `Sub extends Mid extends Base`
+ *          matches every foreign ancestor interface under module-exact
+ *          instanceof, whether the class is foreign or local, and a same-named
+ *          local interface stays distinct from the foreign base (finding 9.17).
+ */
+import test;
+import subinterface_donor;
+
+interface Base { func localBase(): string; }
+
+interface LocalSub extends subinterface_donor.Base { func local(): string; }
+
+class LocalCircle implements subinterface_donor.Sub {
+    func base(): string { return "b"; }
+    func mid(): string { return "m"; }
+    func sub(): string { return "s"; }
+}
+
+class LocalViaLocalSub implements LocalSub {
+    func base(): string { return "b"; }
+    func local(): string { return "l"; }
+}
+
+class CrossModuleSubInterfaceTest extends test.Test {
+    @test
+    func foreignClassMatchesWholeChain(): void {
+        let c = subinterface_donor.makeCircle();
+        this.assertTrue(c instanceof subinterface_donor.Sub);
+        this.assertTrue(c instanceof subinterface_donor.Mid);
+        this.assertTrue(c instanceof subinterface_donor.Base);
+    }
+
+    @test
+    func localClassImplementingForeignSubMatchesWholeChain(): void {
+        let c = LocalCircle();
+        this.assertTrue(c instanceof subinterface_donor.Sub);
+        this.assertTrue(c instanceof subinterface_donor.Mid);
+        this.assertTrue(c instanceof subinterface_donor.Base);
+    }
+
+    @test
+    func localSubInterfaceExtendingForeignBase(): void {
+        let c = LocalViaLocalSub();
+        this.assertTrue(c instanceof LocalSub);
+        this.assertTrue(c instanceof subinterface_donor.Base);
+    }
+
+    @test
+    func sameNameLocalInterfaceStaysDistinct(): void {
+        let c = LocalCircle();
+        this.assertFalse(c instanceof Base);
+        this.assertTrue(c instanceof subinterface_donor.Base);
+    }
+}

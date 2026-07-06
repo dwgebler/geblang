@@ -30,7 +30,9 @@ func registerProfiler(r *Registry) {
 		profilerUpdatePeak(int64(ms.HeapAlloc))
 		user, sys := profilerCPUNanos()
 		return profilerDict(map[string]runtime.Value{
-			"wall_ns":     runtime.NewInt64(time.Now().UnixNano()),
+			"wall_ns": runtime.NewInt64(time.Now().UnixNano()),
+			// mono_ns backs delta()'s elapsed_ms; wall_ns can jump backwards under load.
+			"mono_ns":     runtime.NewInt64(time.Since(monoClockStart).Nanoseconds()),
 			"heap_alloc":  runtime.NewInt64(int64(ms.HeapAlloc)),
 			"peak_alloc":  runtime.NewInt64(atomic.LoadInt64(&profilerPeakAlloc)),
 			"total_alloc": runtime.NewInt64(int64(ms.TotalAlloc)),
@@ -50,17 +52,17 @@ func registerProfiler(r *Registry) {
 		}
 		var ms goruntime.MemStats
 		goruntime.ReadMemStats(&ms)
-		nowNS := time.Now().UnixNano()
+		nowMonoNS := time.Since(monoClockStart).Nanoseconds()
 		user, sys := profilerCPUNanos()
 
-		snapWall := profilerInt64(snap, "wall_ns")
+		snapMono := profilerInt64(snap, "mono_ns")
 		snapHeap := profilerInt64(snap, "heap_alloc")
 		snapTotal := profilerInt64(snap, "total_alloc")
 		snapGC := profilerInt64(snap, "num_gc")
 		snapUser := profilerInt64(snap, "cpu_user_ns")
 		snapSys := profilerInt64(snap, "cpu_sys_ns")
 
-		elapsedNS := nowNS - snapWall
+		elapsedNS := nowMonoNS - snapMono
 		cpuDelta := (user + sys) - (snapUser + snapSys)
 		return profilerDict(map[string]runtime.Value{
 			"elapsed_ms": runtime.Float{Value: float64(elapsedNS) / 1e6},

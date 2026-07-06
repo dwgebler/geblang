@@ -1,0 +1,55 @@
+/**
+ * @title Closure capture via string interpolation (bugfix)
+ * @summary An outer local referenced only inside `${...}` interpolation must
+ * still be captured as an upvalue on both backends, not silently alias a
+ * same-named parameter slot or crash when the closure takes no parameters.
+ */
+import test;
+
+class ClosureCaptureViaInterpolationTest extends test.Test {
+
+    @test
+    func interpolationOnlyReferenceIsCaptured(): void {
+        let f = 10;
+        let cb = func(int x): string {
+            return "${f + x}";
+        };
+        this.assertEquals("13", cb(3));
+    }
+
+    @test
+    func interpolationOnlyReferenceNoParams(): void {
+        let f = 10;
+        let cb = func(): string {
+            return "only ${f}";
+        };
+        this.assertEquals("only 10", cb());
+    }
+
+    @test
+    func nestedClosuresCaptureViaInterpolation(): void {
+        let f = 10;
+        let mk = func(): callable {
+            return func(): string { return "nested ${f}"; };
+        };
+        let inner = mk();
+        this.assertEquals("nested 10", (inner as callable)());
+    }
+
+    @test
+    func formattedInterpolationIsCaptured(): void {
+        let pi = 3.14159;
+        let cb = func(): string { return "${pi:.2f}"; };
+        this.assertEquals("3.14", cb());
+    }
+
+    @test
+    func capturedViaInterpolationSurvivesReturn(): void {
+        let makeGreeter = func(): callable {
+            let name = "World";
+            return func(): string { return "Hello, ${name}!"; };
+        };
+        let g = makeGreeter();
+        this.assertEquals("Hello, World!", (g as callable)());
+    }
+}

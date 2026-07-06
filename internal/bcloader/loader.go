@@ -123,7 +123,11 @@ var _ bytecode.ModuleLoader = (*Loader)(nil)
 func (l *Loader) SetMainChunk(chunk bytecode.Chunk) { l.mainChunk = chunk; l.hasMainChunk = true }
 
 // SetMainVM connects the running entry VM so its globals/interface-defaults read live.
-func (l *Loader) SetMainVM(vm *bytecode.VM) { l.mainVM = vm }
+func (l *Loader) SetMainVM(vm *bytecode.VM) {
+	l.mainVM = vm
+	// The entry VM owns program-lifetime destructibles a caller==nil path may adopt from another goroutine; guard its list.
+	vm.EnableDestructibleLocking()
+}
 
 // SetStateful injects the stateful native caller after construction.
 func (l *Loader) SetStateful(s bytecode.StatefulNativeCaller) { l.stateful = s }
@@ -209,6 +213,10 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 		if class, ok := value.(runtime.BytecodeClass); ok {
 			class.Module = canonical
 			module.Exports[name] = class
+		}
+		if overloaded, ok := value.(runtime.OverloadedFunction); ok {
+			overloaded.Module = canonical
+			module.Exports[name] = overloaded
 		}
 	}
 	l.records.Store(canonical, &moduleRecord{
@@ -316,6 +324,21 @@ func (l *Loader) releaseModuleVM(pool *sync.Pool, vm *bytecode.VM, err error) {
 	}
 }
 
+// adoptDestructibles hands a transient worker's destructor lifetimes up to the caller (or the entry VM when caller==nil), so they fire at that owner's exit sweep, not on worker recycle. A borrowed reuse (pool==nil) keeps them with the in-flight owner.
+func (l *Loader) adoptDestructibles(pool *sync.Pool, worker, caller *bytecode.VM) {
+	if pool == nil {
+		return
+	}
+	target := caller
+	if target == nil {
+		target = l.mainVM
+	}
+	if target == nil || target == worker {
+		return
+	}
+	target.AdoptDestructibles(worker.TakeDestructibles())
+}
+
 func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if function.Module == "" {
@@ -332,6 +355,29 @@ func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []ru
 	}
 	vm, pool := l.moduleVM(function.Module, chunk, caller)
 	result, err := vm.CallFunctionFast(function.Index, args)
+	l.adoptDestructibles(pool, vm, caller)
+	l.releaseModuleVM(pool, vm, err)
+	return result, err
+}
+
+// CallModuleMethodValue dispatches a bound method/static value pinned to funcIndex on its home module worker; instance is the receiver (nil for a static). Applies the method's decorator wrapper with the receiver bound, matching a bound-method value's semantics.
+func (l *Loader) CallModuleMethodValue(module string, funcIndex int64, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script method value invoked without a main chunk")
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunkValue(module)
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	vm, pool := l.moduleVM(module, chunk, caller)
+	result, err := vm.CallBoundMethodValue(instance, funcIndex, args)
+	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
@@ -377,6 +423,7 @@ func (l *Loader) CallModuleClosure(closure runtime.BytecodeClosure, args []runti
 	}
 	vm, pool := l.moduleVM(closure.Module, chunk, caller)
 	result, err := vm.CallClosureFast(closure, args)
+	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
@@ -397,8 +444,64 @@ func (l *Loader) ConstructModuleClass(class runtime.BytecodeClass, args []runtim
 	}
 	vm, pool := l.moduleVM(class.Module, chunk, caller)
 	result, err := vm.ConstructClassFast(class.Index, args, typeArgs)
+	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
+}
+
+func (l *Loader) ConstructModuleClassNamed(class runtime.BytecodeClass, args []runtime.Value, names []string, typeArgs []string, caller *bytecode.VM) (runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if class.Module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("construct %s: main chunk is not registered", class.Name)
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunkValue(class.Module)
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", class.Module)
+		}
+		chunk = c
+	}
+	vm, pool := l.moduleVM(class.Module, chunk, caller)
+	result, err := vm.ConstructClassFastNamed(class.Index, args, names, typeArgs)
+	l.adoptDestructibles(pool, vm, caller)
+	l.releaseModuleVM(pool, vm, err)
+	return result, err
+}
+
+func (l *Loader) CallModuleOverloaded(module string, indices []int64, displayName string, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+	chunk, ok := l.overloadChunk(module)
+	if !ok {
+		return nil, fmt.Errorf("module %s is not loaded", module)
+	}
+	vm, pool := l.moduleVM(module, chunk, caller)
+	result, err := vm.CallOverloadedFast(indices, displayName, args, caller)
+	l.adoptDestructibles(pool, vm, caller)
+	l.releaseModuleVM(pool, vm, err)
+	return result, err
+}
+
+func (l *Loader) CallModuleOverloadedNamed(module string, indices []int64, displayName string, args []runtime.Value, names []string, caller *bytecode.VM) (runtime.Value, error) {
+	chunk, ok := l.overloadChunk(module)
+	if !ok {
+		return nil, fmt.Errorf("module %s is not loaded", module)
+	}
+	vm, pool := l.moduleVM(module, chunk, caller)
+	result, err := vm.CallOverloadedFastNamed(indices, displayName, args, names, caller)
+	l.adoptDestructibles(pool, vm, caller)
+	l.releaseModuleVM(pool, vm, err)
+	return result, err
+}
+
+func (l *Loader) overloadChunk(module string) (bytecode.Chunk, bool) {
+	if module == "" {
+		if !l.hasMainChunk {
+			return bytecode.Chunk{}, false
+		}
+		return l.mainChunk, true
+	}
+	return l.chunkValue(module)
 }
 
 // ConstructorsForModuleClass evaluates `reflect.constructors(class)`
@@ -473,6 +576,7 @@ func (l *Loader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName 
 	}
 	vm, pool := l.moduleVM(class.Module, chunk, caller)
 	result, err := vm.CallStaticMethodFast(class.Index, methodName, args)
+	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
@@ -493,6 +597,7 @@ func (l *Loader) CallParentInModule(module string, className string, methodName 
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
 	result, err := vm.CallMethodAs(className, instance, methodName, args)
+	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
@@ -611,6 +716,61 @@ func (l *Loader) CallModuleStaticMethodByName(module, className, methodName stri
 	return nil, false, nil
 }
 
+func (l *Loader) StaticMethodValueForModuleClass(module, className, name string) (runtime.Value, bool) {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return nil, false
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		for ci := chunk.Classes[i]; ; {
+			if _, present := ci.StaticMethods[strings.ToLower(name)]; present {
+				vm, pool := l.moduleVM(module, chunk, nil)
+				value, found := vm.StaticMethodValueFast(int64(i), name)
+				l.releaseModuleVM(pool, vm, nil)
+				return value, found
+			}
+			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
+				ci = chunk.Classes[ci.ParentIndex]
+				continue
+			}
+			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
+				return l.StaticMethodValueForModuleClass(ci.ParentName[:dot], ci.ParentName[dot+1:], name)
+			}
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+func (l *Loader) MethodFirstOverload(module, className, name string) (string, int64, bool) {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return "", 0, false
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		for ci := chunk.Classes[i]; ; {
+			if indices, present := ci.Methods[strings.ToLower(name)]; present && len(indices) > 0 {
+				return module, indices[0], true
+			}
+			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
+				ci = chunk.Classes[ci.ParentIndex]
+				continue
+			}
+			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
+				return l.MethodFirstOverload(ci.ParentName[:dot], ci.ParentName[dot+1:], name)
+			}
+			return "", 0, false
+		}
+	}
+	return "", 0, false
+}
+
 func (l *Loader) UnimplementedAbstractMethods(module, className string) map[string]string {
 	chunk, ok := l.chunkFor(module)
 	if !ok {
@@ -679,6 +839,40 @@ func (l *Loader) ModuleMethodParamNames(module string, className string, methodN
 	return chunk.MethodParamNames(className, methodName)
 }
 
+func (l *Loader) ModuleConstructorParamNames(module string, className string) ([]string, error) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script class %s referenced without a main chunk", className)
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunkValue(module)
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	return chunk.ConstructorParamNames(className)
+}
+
+func (l *Loader) ModuleFunctionParamNames(module string, index int64) ([]string, error) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script function referenced without a main chunk")
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunkValue(module)
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	return chunk.FunctionParamNames(index)
+}
+
 func (l *Loader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if module == "" {
@@ -707,8 +901,32 @@ func (l *Loader) CallModuleMethod(module string, className string, methodName st
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
 	result, err := vm.CallMethodFast(instance, methodName, args)
+	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
+}
+
+// CallModuleDestructor fires a cross-module instance's `func ~Class()` in its home chunk on a home worker. The worker suppresses its own cleanup, so a destructor that builds more destructibles hands them up to caller for the re-drain.
+func (l *Loader) CallModuleDestructor(module string, className string, instance *runtime.Instance, caller *bytecode.VM) error {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return nil
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		di := chunk.Classes[i].DestructorIndex
+		if di < 0 {
+			return nil
+		}
+		vm, pool := l.moduleVM(module, chunk, caller)
+		_, err := vm.CallFunctionRaw(di, []runtime.Value{instance})
+		l.adoptDestructibles(pool, vm, caller)
+		l.releaseModuleVM(pool, vm, err)
+		return err
+	}
+	return nil
 }
 
 func (l *Loader) ListAllClasses() []runtime.Value {
@@ -828,6 +1046,14 @@ func (l *Loader) FindClassByName(name string) (runtime.Value, bool) {
 		return classFromChunk(l.mainChunk, "", name, key)
 	}
 	return nil, false
+}
+
+func (l *Loader) ClassValueInModule(module, className string) (runtime.Value, bool) {
+	chunk, ok := l.chunkValue(module)
+	if !ok {
+		return nil, false
+	}
+	return classFromChunk(chunk, module, className, strings.ToLower(className))
 }
 
 func (l *Loader) PersistModuleGlobals(vm *bytecode.VM) {

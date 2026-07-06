@@ -915,6 +915,60 @@ io.println(json.parseAs("{\"value\": 7}", Sub).show());
 `, "7\n")
 }
 
+// TestParityHofCaughtCallerLine: a caught structured trace reports the HOF call-site line on the caller frame, identically on both backends.
+func TestParityHofCaughtCallerLine(t *testing.T) {
+	runParity(t, `import io;
+func throwingKey(int x): int {
+    if (x == 1) { throw RuntimeError("key boom"); }
+    return x;
+}
+func run(): void {
+    try {
+        let s = [3, 1, 2].sortBy(throwingKey);
+    } catch (RuntimeError e) {
+        let frames = e.stackTrace().frames();
+        for (f in frames) {
+            io.println("${f.function()}:${f.line()}");
+        }
+    }
+}
+run();
+`, "throwingKey:3\nrun:8\n<top level>:16\n")
+}
+
+// TestParityHofCrossModuleCallerLine: a HOF (sortBy) inside a foreign module invokes that module's own callback which throws; the caught trace attributes the HOF call-site line to the module function's caller frame identically on both backends.
+func TestParityHofCrossModuleCallerLine(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sortdonor.gb"), []byte(`module sortdonor;
+
+func donorKey(int x): int {
+    if (x == 1) { throw RuntimeError("donor key boom"); }
+    return x;
+}
+
+export func doSort(list<int> xs): list<int> {
+    return xs.sortBy(donorKey);
+}
+`), 0o644); err != nil {
+		t.Fatalf("write sortdonor: %v", err)
+	}
+	runParityModulesDir(t, dir, `import io;
+import sortdonor as s;
+
+func caller(): void {
+    try {
+        let r = s.doSort([3, 1, 2]);
+    } catch (RuntimeError e) {
+        let frames = e.stackTrace().frames();
+        for (f in frames) {
+            io.println("${f.function()}:${f.line()}");
+        }
+    }
+}
+caller();
+`, "donorKey:4\ndoSort:9\ncaller:6\n<top level>:14\n")
+}
+
 // TestParityJSONRoundTrip verifies stringify followed by parseAs
 // reconstructs structurally-equal instances on both backends.
 func TestParityJSONRoundTrip(t *testing.T) {

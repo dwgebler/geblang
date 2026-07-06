@@ -1152,23 +1152,39 @@ io.println(n);
 `, "200\n3\n")
 }
 
+// Cross-module dispatch into the llm module, pinned against an in-process HTTP stub so a real completion shape (and the catchable RuntimeError path) is deterministic rather than dialing api.openai.com live.
 func TestParityLLMCrossModuleDispatch(t *testing.T) {
 	runParityWithStdlib(t, `import io;
+import http;
+import sys;
 import llm;
-let c = llm.client({"provider": "openai", "apiKey": "sk"});
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    if ((req["path"] as string) == "/v1/models") {
+        return {"status": 200, "headers": {"Content-Type": "application/json"}, "body":
+            "{\"data\":[{\"id\":\"gpt-5\",\"owned_by\":\"openai\"},{\"id\":\"gpt-4o\",\"owned_by\":\"openai\"}]}"};
+    }
+    return {"status": 200, "headers": {"Content-Type": "application/json"}, "body":
+        "{\"model\":\"gpt-5\",\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"Hi there\"}}]," +
+        "\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3,\"total_tokens\":10}}"};
+});
+sys.sleep(20);
+let port = http.serverAddr(server).split(":")[1] as string;
+let c = llm.client({"provider": "openai", "apiKey": "sk", "endpoint": "http://127.0.0.1:" + port});
+let r = c.chat([{"role": "user", "content": "x"}], {"model": "gpt-5"});
+io.println(r["content"] as string);
+io.println(r["model"] as string);
+io.println(r["stopReason"] as string);
+let ms = c.models();
+io.println(ms.length() as string);
+io.println(ms[0]["id"] as string);
 try {
     c.chat([{"role": "user", "content": "x"}], {});
     io.println("no-throw");
 } catch (RuntimeError e) {
     io.println("threw");
 }
-try {
-    c.models();
-    io.println("no-throw");
-} catch (RuntimeError e) {
-    io.println("default-threw");
-}
-`, "threw\ndefault-threw\n")
+http.shutdown(server);
+`, "Hi there\ngpt-5\nstop\n2\ngpt-5\nthrew\n")
 }
 
 // TestParityLLMStreamingCallback is the dividend of the bcloader extraction: a source-stdlib llm.chatStream re-enters an entry-script callback that mutates an entry global, needing the loader's live entry-chunk globals (mainVM); the pre-extraction harness lacked mainVM and this failed on the VM.

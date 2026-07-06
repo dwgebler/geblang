@@ -1,0 +1,98 @@
+/**
+ * @title Exported overloaded free functions dispatch across a module boundary
+ * @summary A module may export an overloaded free function; a consumer selects
+ * the overload by argument type on a positional member call, a named member
+ * call, a from-imported bare call, or the set taken as a first-class value or
+ * HOF callback. Loud no-match / ambiguous selection carry the qualified name.
+ */
+import test;
+import overload_export_donor;
+import overload_export_donor as aliased;
+from overload_export_donor import over;
+import overload_export_reexport_donor as re;
+
+func firstOf(list<string> xs): string { return xs[0]; }
+
+class OverloadExportTest extends test.Test {
+
+    @test
+    func positionalMemberSelectsByType(): void {
+        this.assertEquals("int:5", overload_export_donor.over(5));
+        this.assertEquals("str:x", overload_export_donor.over("x"));
+        this.assertEquals("two:3,4", overload_export_donor.over(3, 4));
+    }
+
+    @test
+    func namedMemberSelectsAndOrders(): void {
+        this.assertEquals("int:9", overload_export_donor.over(v: 9));
+        this.assertEquals("str:named", overload_export_donor.over(s: "named"));
+        this.assertEquals("two:1,2", overload_export_donor.over(a: 1, b: 2));
+        this.assertEquals("two:1,2", overload_export_donor.over(b: 2, a: 1));
+    }
+
+    @test
+    func fromImportBareCall(): void {
+        this.assertEquals("int:5", over(5));
+        this.assertEquals("str:y", over("y"));
+        this.assertEquals("two:1,2", over(1, 2));
+    }
+
+    @test
+    func firstClassValueSelects(): void {
+        let f = overload_export_donor.over;
+        this.assertEquals("int:5", f(5));
+        this.assertEquals("str:z", f("z"));
+        this.assertEquals("two:7,8", f(7, 8));
+    }
+
+    @test
+    func passedToHofCallback(): void {
+        let xs = [3, 1, 2];
+        let f = overload_export_donor.over;
+        this.assertEquals("int:3", firstOf(xs.map(f)));
+    }
+
+    @test
+    func reexportChainResolves(): void {
+        this.assertEquals("re:int:5", re.over2(5));
+    }
+
+    @test
+    func aliasedImportDispatches(): void {
+        this.assertEquals("str:hi", aliased.over("hi"));
+    }
+
+    @test
+    func noMatchCarriesQualifiedName(): void {
+        let msg = "";
+        try {
+            overload_export_donor.over(true);
+        } catch (Error e) {
+            msg = e.message;
+        }
+        this.assertEquals("no matching overload for overload_export_donor.over", msg);
+    }
+
+    @test
+    func ambiguousCarriesQualifiedName(): void {
+        let msg = "";
+        try {
+            overload_export_donor.amb(5);
+        } catch (Error e) {
+            msg = e.message;
+        }
+        this.assertEquals("ambiguous overload for overload_export_donor.amb", msg);
+    }
+
+    @test
+    func bareValueNoMatchUnqualified(): void {
+        let f = overload_export_donor.over;
+        let msg = "";
+        try {
+            f(true);
+        } catch (Error e) {
+            msg = e.message;
+        }
+        this.assertEquals("no matching overload for over", msg);
+    }
+}

@@ -1,0 +1,59 @@
+/**
+ * @title Closure capture via pipe, partial application, and comprehensions (bugfix)
+ * @summary The free-variable scanner gap that dropped interpolation-only
+ * captures also affected pipe expressions, partial application, and list/set/
+ * dict comprehensions: an outer local referenced only inside one of these
+ * must still be captured as an upvalue.
+ */
+import test;
+
+class ClosureCaptureViaOtherExprKindsTest extends test.Test {
+
+    @test
+    func pipeOnlyReferenceIsCaptured(): void {
+        let double = func(int x): int { return x * 2; };
+        let f = 10;
+        let cb = func(): int {
+            return f |> double;
+        };
+        this.assertEquals(20, cb());
+    }
+
+    @test
+    func partialApplicationOnlyReferenceIsCaptured(): void {
+        let add = func(int a, int b): int { return a + b; };
+        let f = 10;
+        let cb = func(): callable {
+            return add(f, _);
+        };
+        let inc = cb();
+        this.assertEquals(15, (inc as callable)(5));
+    }
+
+    @test
+    func listComprehensionOnlyReferenceIsCaptured(): void {
+        let f = 10;
+        let cb = func(): list<int> {
+            return [f + x for x in range(0, 3)];
+        };
+        this.assertEquals([10, 11, 12, 13], cb());
+    }
+
+    @test
+    func setComprehensionOnlyReferenceIsCaptured(): void {
+        let f = 10;
+        let cb = func(): set<int> {
+            return {f + x for x in range(0, 3)};
+        };
+        this.assertEquals({10, 11, 12, 13}, cb());
+    }
+
+    @test
+    func dictComprehensionOnlyReferenceIsCaptured(): void {
+        let f = 10;
+        let cb = func(): dict<int, int> {
+            return {x: f + x for x in range(0, 3)};
+        };
+        this.assertEquals({0: 10, 1: 11, 2: 12, 3: 13}, cb());
+    }
+}

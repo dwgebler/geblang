@@ -1,0 +1,80 @@
+/**
+ * @title Cross-module named function calls
+ * @summary Named arguments to a cross-module free function bind against the
+ * callee's home-module parameters: out-of-order, positional mix, omitted
+ * default, spread, from-import, defer, and the loud binding errors.
+ */
+import test;
+import named_function_donor;
+from named_function_donor import join4;
+
+class NamedFunctionCrossModuleTest extends test.Test {
+    @test
+    func plainNamedOutOfOrder(): void {
+        this.assertEquals("1|2|3|4", named_function_donor.join4(d: 4, a: 1, b: 2, c: 3));
+    }
+
+    @test
+    func namedPositionalMix(): void {
+        this.assertEquals("1|2|3|4", named_function_donor.join4(1, 2, d: 4, c: 3));
+    }
+
+    @test
+    func namedDefaultOmitted(): void {
+        this.assertEquals("1|2|99", named_function_donor.withDefault(b: 2, a: 1));
+    }
+
+    @test
+    func namedProvidedDefault(): void {
+        this.assertEquals("1|2|7", named_function_donor.withDefault(c: 7, a: 1, b: 2));
+    }
+
+    @test
+    func namedWithListSpread(): void {
+        list<int> rest = [10, 20];
+        this.assertEquals("10|20|1", named_function_donor.join3(c: 1, ...rest));
+    }
+
+    @test
+    func namedWithDictSpread(): void {
+        this.assertEquals("1|2|30|40", named_function_donor.join4(1, 2, ...{"d": 40, "c": 30}));
+    }
+
+    @test
+    func fromImportNamed(): void {
+        this.assertEquals("1|2|3|4", join4(d: 4, a: 1, b: 2, c: 3));
+    }
+
+    @test
+    func namedInDefer(): void {
+        list<string> out = [];
+        this.deferHelper(out);
+        this.assertEquals(["done", "deferred"], out);
+    }
+
+    func deferHelper(list<string> out): void {
+        defer named_function_donor.record(tag: "deferred", out: out);
+        out.push("done");
+    }
+
+    @test
+    func unknownParamRejected(): void {
+        this.assertThrows(func(): void {
+            named_function_donor.join4(z: 4, a: 1, b: 2, c: 3);
+        });
+    }
+
+    @test
+    func duplicateParamRejected(): void {
+        this.assertThrows(func(): void {
+            named_function_donor.join4(1, a: 1, b: 2, c: 3);
+        });
+    }
+
+    @test
+    func missingRequiredRejected(): void {
+        this.assertThrows(func(): void {
+            named_function_donor.join4(a: 1, b: 2);
+        });
+    }
+}

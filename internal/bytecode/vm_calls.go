@@ -169,7 +169,7 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 		}
 		result, err := vm.callCallable(decorated, args)
 		if err != nil {
-			return 0, vm.callPropagate(instruction, err)
+			return vm.propagateDecoratedCallbackError(instruction, ip, err, function.Name)
 		}
 		vm.push(result)
 		return ip, nil
@@ -1074,6 +1074,7 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 			}
 		}
 	}
+	vm.nativeCallLine = int(instruction.Line)
 	result, err := vm.evalNativeCall(name.Value, args)
 	if err != nil {
 		return recoverableNativeError{err: err}
@@ -1083,11 +1084,11 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 }
 
 func (vm *VM) nativeCallSpread(instruction Instruction) error {
-	if len(instruction.Operands) != 2 {
+	if len(instruction.Operands) < 2 {
 		return vm.fatalError(instruction, "native call-spread instruction has invalid operands")
 	}
 	nameIndex := instruction.Operands[0]
-	staticArgCount := int(instruction.Operands[1])
+	argc := int(instruction.Operands[1])
 	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 		return vm.runtimeError(instruction, "native call name out of range")
 	}
@@ -1095,23 +1096,19 @@ func (vm *VM) nativeCallSpread(instruction Instruction) error {
 	if !ok {
 		return vm.runtimeError(instruction, "native call name must be string")
 	}
-	spreadVal, err := vm.pop()
+	if len(instruction.Operands) != 2+argc {
+		return vm.runtimeError(instruction, "native call-spread argument metadata mismatch")
+	}
+	args, _, _, hasNamed, err := vm.collectSpreadCallArgs(instruction, instruction.Operands[2:], false)
 	if err != nil {
-		return vm.callPropagate(instruction, err)
+		return err
 	}
-	spreadList, ok := spreadVal.(*runtime.List)
-	if !ok {
-		return vm.runtimeError(instruction, "spread argument must be a list")
+	if hasNamed {
+		// The evaluator rejects named args mixed with spread on natives.
+		return recoverableNativeError{err: fmt.Errorf("named arguments are only supported for Geblang functions and methods")}
 	}
-	staticArgs := make([]runtime.Value, staticArgCount)
-	for i := staticArgCount - 1; i >= 0; i-- {
-		value, err := vm.pop()
-		if err != nil {
-			return vm.callPropagate(instruction, err)
-		}
-		staticArgs[i] = value
-	}
-	result, err := vm.evalNativeCall(name.Value, append(staticArgs, spreadList.Elements...))
+	vm.nativeCallLine = int(instruction.Line)
+	result, err := vm.evalNativeCall(name.Value, args)
 	if err != nil {
 		return recoverableNativeError{err: err}
 	}
@@ -1151,6 +1148,7 @@ func (vm *VM) nativeCallNamed(instruction Instruction) error {
 		}
 		names[i] = argName
 	}
+	vm.nativeCallLine = int(instruction.Line)
 	result, err := vm.evalNativeCallWithNames(name.Value, args, names)
 	if err != nil {
 		return recoverableNativeError{err: err}
@@ -1285,6 +1283,156 @@ func spreadDictNamedArguments(dict runtime.Dict, positional []runtime.Value, par
 		names = append(names, arg.name)
 	}
 	return args, names, nil
+}
+
+// collectSpreadCallArgs builds the flat ordered (args, names, fromSpread) a spread call's metadata describes, mirroring the evaluator so any mix of positional/named/spread agrees on both backends.
+func (vm *VM) collectSpreadCallArgs(instruction Instruction, meta []int64, allowDict bool) ([]runtime.Value, []string, []bool, bool, error) {
+	argc := len(meta)
+	vals := make([]runtime.Value, argc)
+	for i := argc - 1; i >= 0; i-- {
+		v, err := vm.pop()
+		if err != nil {
+			return nil, nil, nil, false, vm.callPropagate(instruction, err)
+		}
+		vals[i] = v
+	}
+	args := make([]runtime.Value, 0, argc)
+	names := make([]string, 0, argc)
+	fromSpread := make([]bool, 0, argc)
+	hasNamed := false
+	for i, m := range meta {
+		switch {
+		case m == spreadArgMeta:
+			switch sv := vals[i].(type) {
+			case *runtime.List:
+				for _, el := range sv.Elements {
+					args = append(args, el)
+					names = append(names, "")
+					fromSpread = append(fromSpread, false)
+				}
+			case runtime.Dict:
+				if !allowDict {
+					return nil, nil, nil, false, vm.runtimeError(instruction, "spread argument must be a list")
+				}
+				dargs, dnames, err := spreadDictNamedArguments(sv, nil, nil)
+				if err != nil {
+					return nil, nil, nil, false, vm.runtimeError(instruction, "%s", err.Error())
+				}
+				for k := range dargs {
+					args = append(args, dargs[k])
+					names = append(names, dnames[k])
+					fromSpread = append(fromSpread, true)
+					hasNamed = true
+				}
+			default:
+				if allowDict {
+					return nil, nil, nil, false, vm.runtimeError(instruction, "spread argument must be a list or dict")
+				}
+				return nil, nil, nil, false, vm.runtimeError(instruction, "spread argument must be a list")
+			}
+		case m == positionalArgMeta:
+			args = append(args, vals[i])
+			names = append(names, "")
+			fromSpread = append(fromSpread, false)
+		default:
+			nm, ok := vm.constantValue(m).(runtime.String)
+			if !ok {
+				return nil, nil, nil, false, vm.runtimeError(instruction, "argument name constant must be string")
+			}
+			args = append(args, vals[i])
+			names = append(names, nm.Value)
+			fromSpread = append(fromSpread, false)
+			hasNamed = true
+		}
+	}
+	return args, names, fromSpread, hasNamed, nil
+}
+
+// collectDeferSpreadArgs pops a spread defer's registration-time values without expanding spreads (elements are read at fire time, frozen-reference semantics).
+func (vm *VM) collectDeferSpreadArgs(instruction Instruction, meta []int64) ([]runtime.Value, []string, []bool, error) {
+	argc := len(meta)
+	args := make([]runtime.Value, argc)
+	for i := argc - 1; i >= 0; i-- {
+		v, err := vm.pop()
+		if err != nil {
+			return nil, nil, nil, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		args[i] = v
+	}
+	names := make([]string, argc)
+	mask := make([]bool, argc)
+	for i, m := range meta {
+		switch {
+		case m == spreadArgMeta:
+			mask[i] = true
+		case m == positionalArgMeta:
+		default:
+			nm, ok := vm.constantValue(m).(runtime.String)
+			if !ok {
+				return nil, nil, nil, vm.runtimeError(instruction, "argument name constant must be string")
+			}
+			names[i] = nm.Value
+		}
+	}
+	return args, names, mask, nil
+}
+
+// expandDeferredSpreadArgs splices each frozen spread reference's current elements in place, returning the flat (args, names) plus whether any arg is named.
+func expandDeferredSpreadArgs(action deferredAction) ([]runtime.Value, []string, bool, error) {
+	args := make([]runtime.Value, 0, len(action.args))
+	names := make([]string, 0, len(action.args))
+	hasNamed := false
+	for i, v := range action.args {
+		if action.spreadMask[i] {
+			list, ok := v.(*runtime.List)
+			if !ok {
+				return nil, nil, false, fmt.Errorf("spread argument must be a list")
+			}
+			for _, el := range list.Elements {
+				args = append(args, el)
+				names = append(names, "")
+			}
+			continue
+		}
+		args = append(args, v)
+		name := ""
+		if i < len(action.names) {
+			name = action.names[i]
+		}
+		if name != "" {
+			hasNamed = true
+		}
+		names = append(names, name)
+	}
+	return args, names, hasNamed, nil
+}
+
+// dropUnknownSpreadNames removes dict-spread named args whose key is not a declared parameter, matching the evaluator's fromSpread silent drop.
+func dropUnknownSpreadNames(args []runtime.Value, names []string, fromSpread []bool, paramNames []string) ([]runtime.Value, []string) {
+	anyFrom := false
+	for _, f := range fromSpread {
+		if f {
+			anyFrom = true
+			break
+		}
+	}
+	if !anyFrom || len(paramNames) == 0 {
+		return args, names
+	}
+	known := make(map[string]bool, len(paramNames))
+	for _, p := range paramNames {
+		known[strings.ToLower(p)] = true
+	}
+	fa := make([]runtime.Value, 0, len(args))
+	fn := make([]string, 0, len(names))
+	for i := range args {
+		if fromSpread[i] && names[i] != "" && !known[strings.ToLower(names[i])] {
+			continue
+		}
+		fa = append(fa, args[i])
+		fn = append(fn, names[i])
+	}
+	return fa, fn
 }
 
 func (vm *VM) evalNativeCall(name string, args []runtime.Value) (runtime.Value, error) {
@@ -1823,8 +1971,15 @@ func (vm *VM) reorderCallableNamedArgs(instruction Instruction, callee runtime.V
 	var funcIdx int64 = -1
 	switch v := callee.(type) {
 	case runtime.BytecodeFunction:
+		// A cross-module callee's Index indexes its home chunk, not ours.
+		if v.Module != vm.moduleName && vm.moduleLoader != nil {
+			return vm.orderCrossModuleNamedArgs(v.Module, v.Index, v.Name, 0, args, names)
+		}
 		funcIdx = v.Index
 	case runtime.BytecodeClosure:
+		if v.Module != vm.moduleName && vm.moduleLoader != nil {
+			return vm.orderCrossModuleNamedArgs(v.Module, v.FunctionIndex, "<closure>", len(v.Upvalues), args, names)
+		}
 		funcIdx = v.FunctionIndex
 	default:
 		return args, nil
@@ -1875,34 +2030,22 @@ func (vm *VM) callBytecodeInline(funcIndex int64, args []runtime.Value) (runtime
 	for i, a := range args {
 		stackArgs[i] = runtime.VMValueFromValue(a)
 	}
-	// runDefers shrinks vm.defers before iterating its actions, so
-	// when an action lands here the slice is one slot short of the
-	// frame-stack invariant startFunctionVMValue relies on. Restore
-	// it for the inline call and snap back to the caller's expected
-	// length when Run() returns so the parent runDefers iteration
-	// can't read stale slots.
-	savedDefersLen := len(vm.defers)
-	oldEntryIP := vm.runEntryIP
-	oldExitDepth := vm.runInlineExitDepth
 	oldSuppress := vm.runSuppressCleanup
+	// The enclosing primitive HOF's call-site line stamps this callback frame so the caller frame's trace line is the HOF call site; reset it for the body so an inner inline call does not inherit it.
+	hofLine := vm.hofCallLine
+	// Isolate the handler/defer baselines so an uncaught callback throw unwinds out to the native HOF (which aborts), not into an enclosing try; enterDirectRun also drops the callback's leftover frames. traceFrameBaseline stays unset: an inline callback's caller chain belongs in its trace.
+	restore := vm.enterDirectRun()
+	vm.hofCallLine = 0
 	defer func() {
-		if len(vm.defers) > savedDefersLen {
-			for i := savedDefersLen; i < len(vm.defers); i++ {
-				vm.defers[i] = vm.defers[i][:0]
-			}
-			vm.defers = vm.defers[:savedDefersLen]
-		}
-		vm.runEntryIP = oldEntryIP
-		vm.runInlineExitDepth = oldExitDepth
+		restore()
 		vm.runSuppressCleanup = oldSuppress
+		vm.hofCallLine = hofLine
 	}()
-	nextIP, err := vm.startFunctionVMValue(Instruction{}, 0, function, stackArgs, nil)
+	nextIP, err := vm.startFunctionVMValue(Instruction{Line: int32(hofLine)}, 0, function, stackArgs, nil)
 	if err != nil {
 		return nil, err
 	}
-	// startFunctionVMValue returns Entry-1 to compensate for the dispatch
-	// loop's ip++ after the calling instruction. We're entering the loop
-	// fresh, so increment to the actual function entry.
+	// startFunctionVMValue returns Entry-1 to compensate for the dispatch loop's ip++; we enter fresh, so step to the actual entry.
 	vm.runEntryIP = nextIP + 1
 	vm.runInlineExitDepth = baseline
 	vm.runSuppressCleanup = true
@@ -2037,11 +2180,13 @@ func (vm *VM) overloadedValue(indices []int64) runtime.OverloadedFunction {
 			Name:           fi.Name,
 			Parameters:     overloadParams(fi),
 			TypeParameters: fi.TypeParameters,
+			Async:          fi.Async,
 			Native:         native,
 			BridgeInvoke:   bridge,
 		})
 	}
-	return runtime.OverloadedFunction{Name: name, Overloads: overloads}
+	// Module + Indices let an async winner reconstruct its home-chunk BytecodeFunction so the async worker runs it on its own snapshot instead of the vm-capturing wrapper closure.
+	return runtime.OverloadedFunction{Name: name, Overloads: overloads, Module: moduleName, Indices: append([]int64(nil), indices...)}
 }
 
 // overloadParams reconstructs ast parameters from a FunctionInfo so the shared selector sees the same names, types, defaults, and variadic flag as the evaluator's overloads.
@@ -2075,7 +2220,9 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 	case runtime.Function:
 		if f.BridgeInvoke != nil {
 			if host := vm.activeReentryHost(); host != nil {
-				return f.BridgeInvoke(host, args)
+				// A bridged foreign callback's throw carries only the host chain; splice this worker's HOF caller frame back on.
+				res, err := f.BridgeInvoke(host, args)
+				return res, vm.stitchHofCallbackError(err)
 			}
 		}
 		if f.Native == nil {
@@ -2083,9 +2230,14 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 		}
 		return f.Native(nil, args)
 	case runtime.OverloadedFunction:
-		chosen, err := overload.Select(f.Name, f.Overloads, args)
+		pos, chosen, err := overload.SelectWithIndex(f.Name, f.Overloads, args)
 		if err != nil {
 			return nil, err
+		}
+		// An async winner yields a Task; route it through the home-chunk BytecodeFunction so the worker runs on its own snapshot (the wrapper closure captures a shared vm and would race), matching the evaluator's post-selection async check.
+		if chosen.Async && !vm.syncMode && pos >= 0 && pos < len(f.Indices) {
+			bf := runtime.BytecodeFunction{Module: f.Module, Index: f.Indices[pos], Async: true}
+			return vm.startAsyncCallable(bf, args), nil
 		}
 		return vm.callCallableModeHosted(chosen, args, allowInline, reentryHost)
 	case runtime.BytecodeFunction:
@@ -2101,7 +2253,8 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 			if vm.moduleLoader == nil {
 				return nil, fmt.Errorf("bytecode module loader is not configured")
 			}
-			return vm.moduleLoader.CallModuleFunction(f, vm.wrapStatefulNativeArgs("", "", args), vm)
+			res, err := vm.moduleLoader.CallModuleFunction(f, vm.wrapStatefulNativeArgs("", "", args), vm)
+			return res, vm.stitchHofCallbackError(err)
 		}
 		if f.Raw {
 			if vm.methodReceiverFuncs[f.Index] {
@@ -2130,7 +2283,8 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 			if vm.moduleLoader == nil {
 				return nil, fmt.Errorf("bytecode module loader is not configured")
 			}
-			return vm.moduleLoader.CallModuleClosure(f, vm.wrapStatefulNativeArgs("", "", args), vm)
+			res, err := vm.moduleLoader.CallModuleClosure(f, vm.wrapStatefulNativeArgs("", "", args), vm)
+			return res, vm.stitchHofCallbackError(err)
 		}
 		if allowInline && len(f.Upvalues) == 0 && f.TypeBindings == nil && !vm.requiresCallSitePolymorphism {
 			return vm.callBytecodeInline(f.FunctionIndex, args)
@@ -2147,7 +2301,8 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 		}
 		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost, nil)
+		res, err := vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost, nil)
+		return res, vm.stitchHofCallbackError(err)
 	case *runtime.Instance:
 		constants := make([]runtime.Value, 0, len(args)+2)
 		constants = append(constants, f)
@@ -2161,7 +2316,8 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 		}
 		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost, nil)
+		res, err := vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost, nil)
+		return res, vm.stitchHofCallbackError(err)
 	default:
 		return nil, fmt.Errorf("value is not callable")
 	}
@@ -2208,9 +2364,17 @@ func (vm *VM) directEntryEligible(index int64) bool {
 
 // executeFunctionDirect pushes the callee's frame directly on this idle, exclusively-owned worker VM and runs to completion, mirroring callBytecodeInline as the outermost run (cleanup fires once, matching the wrapper-callVM path). startFunction applies arg validation / defaults / variadic.
 // enterDirectRun snapshots the inline-run baselines (entry IP, frame exit depth, exception-handler count) for a nested direct execution and returns a restore closure; the handler baseline keeps a nested re-entry on a shared worker from unwinding into the enclosing execution's exception handlers.
+// suppressWorkerCleanup stops a transient worker run from firing destructors; the worker hands its destructibles up to its caller at the loader boundary instead.
+func (vm *VM) suppressWorkerCleanup() func() {
+	old := vm.runSuppressCleanup
+	vm.runSuppressCleanup = true
+	return func() { vm.runSuppressCleanup = old }
+}
+
 func (vm *VM) enterDirectRun() func() {
 	oldEntryIP := vm.runEntryIP
 	oldExitDepth := vm.runInlineExitDepth
+	oldTraceBaseline := vm.traceFrameBaseline
 	oldHandlerBaseline := vm.runHandlerBaseline
 	oldDeferBaseline := vm.runDeferBaseline
 	entryHandlers := len(vm.exceptionHandlers)
@@ -2221,6 +2385,7 @@ func (vm *VM) enterDirectRun() func() {
 	return func() {
 		vm.runEntryIP = oldEntryIP
 		vm.runInlineExitDepth = oldExitDepth
+		vm.traceFrameBaseline = oldTraceBaseline
 		vm.runHandlerBaseline = oldHandlerBaseline
 		vm.runDeferBaseline = oldDeferBaseline
 		vm.dropInlineRunFrames(entryFrames)
@@ -2237,12 +2402,14 @@ func (vm *VM) executeFunctionDirect(index int64, args []runtime.Value) (runtime.
 	function := &vm.curMod.Chunk.Functions[index]
 	baseline := len(vm.frames)
 	defer vm.enterDirectRun()()
+	defer vm.suppressWorkerCleanup()()
 	nextIP, err := vm.startFunction(Instruction{}, 0, function, args, nil)
 	if err != nil {
 		return nil, err
 	}
 	vm.runEntryIP = nextIP + 1
 	vm.runInlineExitDepth = baseline
+	vm.traceFrameBaseline = baseline
 	if err := vm.Run(); err != nil {
 		return nil, err
 	}
@@ -2281,12 +2448,14 @@ func (vm *VM) closureDirectEligible(closure runtime.BytecodeClosure) bool {
 func (vm *VM) executeClosureDirect(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
 	baseline := len(vm.frames)
 	defer vm.enterDirectRun()()
+	defer vm.suppressWorkerCleanup()()
 	nextIP, err := vm.startClosureFunction(Instruction{}, 0, closure, args)
 	if err != nil {
 		return nil, err
 	}
 	vm.runEntryIP = nextIP + 1
 	vm.runInlineExitDepth = baseline
+	vm.traceFrameBaseline = baseline
 	if err := vm.Run(); err != nil {
 		return nil, err
 	}
@@ -2503,10 +2672,62 @@ func (vm *VM) ConstructClassFast(index int64, args []runtime.Value, typeArgs []s
 	return vm.ConstructClassWithTypeArgs(index, args, typeArgs)
 }
 
+// ConstructClassFastNamed selects the constructor overload and orders named/positional args against the home chunk, then constructs through the shared positional path.
+func (vm *VM) ConstructClassFastNamed(index int64, args []runtime.Value, names []string, typeArgs []string) (runtime.Value, error) {
+	if index < 0 || int(index) >= len(vm.curMod.Chunk.Classes) {
+		return nil, fmt.Errorf("class index out of range")
+	}
+	classInfo := vm.curMod.Chunk.Classes[index]
+	if len(classInfo.ConstructorIndices) == 0 {
+		if len(args) > 0 {
+			return nil, fmt.Errorf("%s constructor expects no arguments", classInfo.Name)
+		}
+		return vm.ConstructClassFast(index, args, typeArgs)
+	}
+	_, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, classInfo.Name, classInfo.ConstructorIndices, args, names, 1)
+	if err != nil {
+		return nil, err
+	}
+	return vm.ConstructClassFast(index, ordered, typeArgs)
+}
+
+// CallOverloadedFast selects a positional overload against the home chunk and calls it; displayName carries the call-site-qualified name for selection errors. An async winner yields a Task unless the caller is already inside an async worker.
+func (vm *VM) CallOverloadedFast(indices []int64, displayName string, args []runtime.Value, caller *VM) (runtime.Value, error) {
+	index, err := vm.selectRuntimeFunction(Instruction{}, displayName, indices, args, 0)
+	if err != nil {
+		return nil, err
+	}
+	if vm.overloadWinnerAsync(index, caller) {
+		return vm.startAsyncFunction(index, args), nil
+	}
+	return vm.CallFunctionFast(index, args)
+}
+
+// CallOverloadedFastNamed orders named/positional args and selects a matching overload against the home chunk, then calls it.
+func (vm *VM) CallOverloadedFastNamed(indices []int64, displayName string, args []runtime.Value, names []string, caller *VM) (runtime.Value, error) {
+	index, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, displayName, indices, args, names, 0)
+	if err != nil {
+		return nil, err
+	}
+	if vm.overloadWinnerAsync(index, caller) {
+		return vm.startAsyncFunction(index, ordered), nil
+	}
+	return vm.CallFunctionFast(index, ordered)
+}
+
+// overloadWinnerAsync reports whether the selected home-chunk overload runs as a Task: async and the caller is not already inside an async worker.
+func (vm *VM) overloadWinnerAsync(index int64, caller *VM) bool {
+	if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) || !vm.curMod.Chunk.Functions[index].Async {
+		return false
+	}
+	return caller == nil || !caller.syncMode
+}
+
 // executeConstructDirect builds the instance + runs its constructor directly on this idle, exclusively-owned worker VM. constructClassWithArgs pushes a constructor frame (run it) or leaves the instance/result on the stack (no-ctor); detect via the frame depth.
 func (vm *VM) executeConstructDirect(index int64, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
 	baseline := len(vm.frames)
 	defer vm.enterDirectRun()()
+	defer vm.suppressWorkerCleanup()()
 	vm.stageTypeArgsAsBindings(index, typeArgs)
 	nextIP, err := vm.constructClassWithArgs(Instruction{}, 0, index, args, false)
 	if err != nil {
@@ -2515,6 +2736,7 @@ func (vm *VM) executeConstructDirect(index int64, args []runtime.Value, typeArgs
 	if len(vm.frames) > baseline {
 		vm.runEntryIP = nextIP + 1
 		vm.runInlineExitDepth = baseline
+		vm.traceFrameBaseline = baseline
 		if err := vm.Run(); err != nil {
 			return nil, err
 		}
@@ -2554,6 +2776,9 @@ func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name st
 		if strings.EqualFold(name, className) {
 			indices = append([]int64(nil), classInfo.ConstructorIndices...)
 			if len(indices) == 0 {
+				if len(args) > 0 {
+					return nil, fmt.Errorf("%s constructor expects no arguments", className)
+				}
 				return runtime.Null{}, nil
 			}
 		} else {
@@ -2629,6 +2854,40 @@ func (vm *VM) CallMethodFast(instance *runtime.Instance, name string, args []run
 		return vm.executeFunctionDirect(idx, callArgs)
 	}
 	return vm.CallMethod(instance, name, args)
+}
+
+// callBoundDecoratedValue applies a bound method/static value's decorator wrapper with the receiver forwarded (nil for a static), so the value runs the decorator like a direct call; an uncaught throw's frames are restamped to match. handled is false when funcIndex is not decorated.
+func (vm *VM) callBoundDecoratedValue(instance *runtime.Instance, funcIndex int64, args []runtime.Value) (runtime.Value, error, bool) {
+	if err := vm.ensureCallableDecorators(); err != nil {
+		return nil, err, true
+	}
+	decorated, ok := vm.decoratedFuncs[funcIndex]
+	if !ok {
+		return nil, nil, false
+	}
+	name := vm.curMod.Chunk.Functions[funcIndex].Name
+	if vm.curMod.Chunk.Functions[funcIndex].Async && !vm.syncMode {
+		return vm.startAsyncCallableWithForwardThis(decorated, args, instance), nil, true
+	}
+	res, err := vm.callCallableWithForwardThis(decorated, args, instance)
+	if err != nil {
+		if fault, ok := boundaryFaultToError(err); ok {
+			restampDecoratedFrames(&fault, name)
+			return nil, vm.uncaughtThrowError(Instruction{Line: int32(fault.ErrorLine)}, fault), true
+		}
+	}
+	return res, err, true
+}
+
+// CallBoundMethodValue dispatches a bound method value pinned to funcIndex (first overload, no re-selection) with the receiver, honoring a decorator wrapper. Run on the home-module worker so a bound-method value stays goroutine-safe.
+func (vm *VM) CallBoundMethodValue(instance *runtime.Instance, funcIndex int64, args []runtime.Value) (runtime.Value, error) {
+	if res, err, handled := vm.callBoundDecoratedValue(instance, funcIndex, args); handled {
+		return res, err
+	}
+	if instance != nil {
+		return vm.CallFunctionFast(funcIndex, append([]runtime.Value{instance}, args...))
+	}
+	return vm.CallFunctionFast(funcIndex, args)
 }
 
 // methodDirectIndex resolves a directly-enterable method to its function index, returning ok=false for anything CallMethod must handle (unknown class/method, overload error, decorated, generator, async).
@@ -2849,10 +3108,15 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	if rawIndex >= 0 {
 		callVM.rawFunctionCalls[rawIndex] = true
 	}
-	if err := callVM.Run(); err != nil {
-		// Errors leave throw/handler state behind; be conservative and
-		// let this VM go to the collector instead of the pool.
-		return nil, err
+	// A transient wrap-bridge run never owns a destructor lifetime; it hands its destructibles up to the caller. The per-request isolated root keeps sweeping its own at request end.
+	callVM.runSuppressCleanup = !isolated
+	runErr := callVM.Run()
+	if !isolated {
+		vm.AdoptDestructibles(callVM.TakeDestructibles())
+	}
+	if runErr != nil {
+		// A run error leaves throw/handler state behind; collect this VM instead of pooling it.
+		return nil, runErr
 	}
 	// Propagate any global-state mutations the callVM produced back to the
 	// caller. Without this, deferred function calls and any other paths that
@@ -2976,7 +3240,7 @@ func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
 
 func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
 	switch instruction.Op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpCallStaticMethodSpread, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpCallStaticMethodSpread, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpCallSpread, OpConstructClassSpread, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpDeferMethodCallSpread, OpDeferNativeCallSpread, OpDeferFuncCallSpread, OpDeferCallableCallSpread, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -3008,24 +3272,34 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 
 func isConstantOperand(op Op, index int) bool {
 	switch op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallSpread, OpGetField, OpSetField, OpMethodCall, OpMethodCallSpread, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst, OpLoadModuleValue:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpGetField, OpSetField, OpMethodCall, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst, OpLoadModuleValue:
 		return index == 0
 	case OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		return index == 1
 	case OpNativeCallNamed:
 		return index == 0 || index >= 2
+	case OpNativeCallSpread, OpMethodCallSpread:
+		return index == 0 || index >= 2
+	case OpCallSpread, OpConstructClassSpread:
+		return index >= 2
 	case OpDeferNativeCallNamed:
 		return index == 0 || index >= 2
 	case OpDeferMethodCallNamed:
 		return index == 0 || index >= 2
-	case OpDeferCallableCallNamed:
+	case OpDeferMethodCallSpread, OpDeferNativeCallSpread:
+		return index == 0 || index >= 2
+	case OpDeferFuncCallSpread:
+		return index >= 2
+	case OpDeferCallableCallNamed, OpDeferCallableCallSpread:
 		return index >= 1
 	case OpCallParentMethod:
 		return index == 1
 	case OpGetStaticValue, OpSetStaticValue:
 		return index == 1
-	case OpCallStaticMethod, OpCallStaticMethodSpread:
+	case OpCallStaticMethod:
 		return index == 1
+	case OpCallStaticMethodSpread:
+		return index == 1 || index >= 3
 	case OpMethodCallNamed:
 		return index == 0 || index >= 2
 	case OpImportModule:

@@ -23,6 +23,46 @@ func down(int n): int {
     return down(n - 1);
 }
 
+func throwingKey(int x): int {
+    if (x == 1) {
+        throw RuntimeError("key boom");
+    }
+    return x;
+}
+
+func sortViaCallback(): void {
+    let s = [3, 1, 2].sortBy(throwingKey);
+}
+
+func nestedInner(int x): int {
+    throw RuntimeError("nested key boom");
+}
+
+func nestedMid(int x): int {
+    let a = [10, 20].map(nestedInner);
+    return x;
+}
+
+# Separate-VM callback shapes: the callback runs on a fresh wrapper VM, so the caller chain must be stitched back onto its trace.
+func sortViaCapturingClosure(): void {
+    let tag = 7;
+    let s = [3, 1, 2].sortBy(func(int x): int {
+        if (x == 1) { throw RuntimeError("cap boom ${tag}"); }
+        return x;
+    });
+}
+
+class TraceKeyer {
+    func __invoke(int x): int {
+        if (x == 1) { throw RuntimeError("invoke boom"); }
+        return x;
+    }
+}
+
+func sortViaCallableInstance(): void {
+    let s = [3, 1, 2].sortBy(TraceKeyer());
+}
+
 class UncaughtTraceTest extends test.Test {
     @test
     func framesReflectThrowAndCallSites(): void {
@@ -84,5 +124,74 @@ class UncaughtTraceTest extends test.Test {
     func freshErrorHasNoTraceUntilThrown(): void {
         let e = errors.new("ValueError", "never thrown");
         this.assertFalse(errors.hasStackTrace(e));
+    }
+
+    @test
+    func nativeCallbackTraceKeepsCallerFrames(): void {
+        try {
+            sortViaCallback();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("throwingKey", frames[0].function());
+            this.assertEquals(28, frames[0].line());
+            # The caller frame's line is the HOF call site, not a stale callback line.
+            this.assertEquals("sortViaCallback", frames[1].function());
+            this.assertEquals(34, frames[1].line());
+            int callerCount = 0;
+            for (f in frames) {
+                if (f.function() == "sortViaCallback") {
+                    callerCount = callerCount + 1;
+                }
+            }
+            this.assertEquals(1, callerCount);
+        }
+    }
+
+    @test
+    func nestedHofTraceCallerLines(): void {
+        try {
+            let m = [1, 2, 3].map(nestedMid);
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            # Each caller frame reports its own HOF call site.
+            this.assertEquals("nestedInner", frames[0].function());
+            this.assertEquals(38, frames[0].line());
+            this.assertEquals("nestedMid", frames[1].function());
+            this.assertEquals(42, frames[1].line());
+        }
+    }
+
+    @test
+    func capturingClosureTraceKeepsCallerFrames(): void {
+        try {
+            sortViaCapturingClosure();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("<closure>", frames[0].function());
+            this.assertEquals(50, frames[0].line());
+            # The stitched caller frame's line is the HOF call site.
+            this.assertEquals("sortViaCapturingClosure", frames[1].function());
+            this.assertEquals(49, frames[1].line());
+            int callerCount = 0;
+            for (f in frames) {
+                if (f.function() == "sortViaCapturingClosure") {
+                    callerCount = callerCount + 1;
+                }
+            }
+            this.assertEquals(1, callerCount);
+        }
+    }
+
+    @test
+    func callableInstanceTraceKeepsCallerFrames(): void {
+        try {
+            sortViaCallableInstance();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("TraceKeyer.__invoke", frames[0].function());
+            this.assertEquals(57, frames[0].line());
+            this.assertEquals("sortViaCallableInstance", frames[1].function());
+            this.assertEquals(63, frames[1].line());
+        }
     }
 }

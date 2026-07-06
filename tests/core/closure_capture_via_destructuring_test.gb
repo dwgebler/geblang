@@ -1,0 +1,45 @@
+/**
+ * @title Closure capture via destructuring statements (bugfix)
+ * @summary The free-variable scanner had no case at all for
+ * DestructuringStatement: an outer local read only via `let [a, b] = ...`,
+ * or written through only via a destructuring/multi-assignment, must still
+ * be captured as an upvalue.
+ */
+import test;
+
+class ClosureCaptureViaDestructuringTest extends test.Test {
+
+    @test
+    func letListDestructureOnlyReferenceIsCaptured(): void {
+        let pair = [1, 2];
+        let cb = func(): int {
+            let [a, b] = pair;
+            return a + b;
+        };
+        this.assertEquals(3, cb());
+    }
+
+    @test
+    func bracketedDestructureAssignWritesThroughCapture(): void {
+        let a = 100;
+        let b = 200;
+        let pair = [1, 2];
+        let cb = func(): void {
+            [a, b] = pair;
+        };
+        cb();
+        this.assertEquals(1, a);
+        this.assertEquals(2, b);
+    }
+
+    @test
+    func bareMultiAssignWritesThroughCapture(): void {
+        let a = 0;
+        let b = 0;
+        let cb = func(): void {
+            a, b = 5, 6;
+        };
+        cb();
+        this.assertEquals(11, a + b);
+    }
+}

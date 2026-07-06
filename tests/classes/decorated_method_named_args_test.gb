@@ -1,0 +1,100 @@
+/**
+ * @title Named arguments on a decorated callable
+ * @summary A callable decorator's wrapper is transparent to callers: named
+ * arguments bind against the ORIGINAL function/method's declared parameter
+ * names, not the wrapper's, then flow positionally into the wrapper.
+ */
+import test;
+
+func transparent(any next): any {
+    return func(any arg): any {
+        return next(arg);
+    };
+}
+
+func spreadTransparent(any next): any {
+    return func(any ...args): any {
+        return next(...args);
+    };
+}
+
+func renamingWrap(any next): any {
+    return func(any a, any b): any {
+        return next(a, b);
+    };
+}
+
+@transparent
+func doubleIt(int x): int {
+    return x * 2;
+}
+
+class Greeter {
+    func plain(int x, int y = 1): int {
+        return x + y;
+    }
+
+    @transparent
+    func handle(int x): int {
+        return x + 1;
+    }
+
+    @transparent
+    static func shandle(int x): int {
+        return x + 100;
+    }
+
+    @renamingWrap
+    func subtract(int x, int y): int {
+        return x - y;
+    }
+
+    @spreadTransparent
+    func subtractSpread(int x, int y): int {
+        return x - y;
+    }
+}
+
+class DecoratedMethodNamedArgsTest extends test.Test {
+    @test
+    func undecoratedMethodNamedArgsAreUnaffected(): void {
+        let g = Greeter();
+        this.assertEquals(6, g.plain(x: 5));
+        this.assertEquals(8, g.plain(y: 3, x: 5));
+    }
+
+    @test
+    func decoratedTopLevelFunctionBindsToOriginalNames(): void {
+        this.assertEquals(10, doubleIt(x: 5));
+        this.assertEquals(10, doubleIt(5));
+    }
+
+    @test
+    func decoratedInstanceMethodBindsToOriginalNames(): void {
+        let g = Greeter();
+        this.assertEquals(6, g.handle(x: 5));
+        this.assertEquals(6, g.handle(5));
+    }
+
+    @test
+    func decoratedStaticMethodBindsToOriginalNames(): void {
+        this.assertEquals(105, Greeter.shandle(x: 5));
+        this.assertEquals(105, Greeter.shandle(5));
+    }
+
+    @test
+    func decoratedMethodNamedArgsOutOfOrder(): void {
+        let g = Greeter();
+        this.assertEquals(7, g.subtract(x: 10, y: 3));
+        this.assertEquals(7, g.subtract(y: 3, x: 10));
+        this.assertEquals(7, g.subtract(10, 3));
+    }
+
+    @test
+    func decoratedMethodVariadicWrapperKeepsWorkingWithNamedArgs(): void {
+        let g = Greeter();
+        this.assertEquals(7, g.subtractSpread(x: 10, y: 3));
+        this.assertEquals(7, g.subtractSpread(y: 3, x: 10));
+        this.assertEquals(7, g.subtractSpread(10, 3));
+    }
+}

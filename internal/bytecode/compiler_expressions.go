@@ -276,6 +276,9 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			if err != nil {
 				return err
 			}
+			if target, ok := c.instanceofExactTarget(expr.RightType); ok {
+				typeName = target
+			}
 			c.emitConstant(runtime.String{Value: typeName}, expr.Token.Line, expr.Token.Column)
 			c.emitAt(OpInstanceOf, expr.Token.Line, expr.Token.Column)
 			return nil
@@ -655,19 +658,16 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					c.emitAt(OpMakeError, expr.Token.Line, expr.Token.Column, classNameIndex, int64(len(expr.Arguments)))
 					return nil
 				}
-				if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+				if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
 					if len(classInfo.ConstructorIndices) > 1 {
 						return fmt.Errorf("cannot use spread with overloaded constructor %s", classInfo.Name)
 					}
-					for _, arg := range expr.Arguments[:spreadIndex] {
-						if err := c.compileExpression(arg.Value); err != nil {
-							return err
-						}
-					}
-					if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+					meta, err := c.compileSpreadCallArguments(expr.Arguments)
+					if err != nil {
 						return err
 					}
-					c.emitAt(OpConstructClassSpread, expr.Token.Line, expr.Token.Column, classIndex, int64(spreadIndex))
+					operands := append([]int64{classIndex, int64(len(expr.Arguments))}, meta...)
+					c.emitAt(OpConstructClassSpread, expr.Token.Line, expr.Token.Column, operands...)
 					return nil
 				}
 				var orderedArgs []ast.Expression
@@ -746,21 +746,15 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				} else {
 					c.emitAt(OpGetGlobal, expr.Token.Line, expr.Token.Column, resolved.slot)
 				}
-				if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
-					for _, arg := range expr.Arguments[:spreadIndex] {
-						if arg.Name != nil {
-							return fmt.Errorf("named arguments are not supported with spread on a callable value")
-						}
-						if err := c.compileExpression(arg.Value); err != nil {
-							return err
-						}
-					}
-					if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+				if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+					meta, err := c.compileSpreadCallArguments(expr.Arguments)
+					if err != nil {
 						return err
 					}
 					nameIndex := int64(len(c.chunk.Constants))
 					c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
-					c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, nameIndex, int64(spreadIndex))
+					operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+					c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
 					return nil
 				}
 				hasNamedArgs := false
@@ -788,20 +782,17 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 				return nil
 			}
-			if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+			if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
 				index, err := c.selectFunctionCallSpread(ident.Value)
 				if err != nil {
 					return err
 				}
-				for _, arg := range expr.Arguments[:spreadIndex] {
-					if err := c.compileExpression(arg.Value); err != nil {
-						return err
-					}
-				}
-				if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+				meta, err := c.compileSpreadCallArguments(expr.Arguments)
+				if err != nil {
 					return err
 				}
-				c.emitAt(OpCallSpread, expr.Token.Line, expr.Token.Column, index, int64(spreadIndex))
+				operands := append([]int64{index, int64(len(expr.Arguments))}, meta...)
+				c.emitAt(OpCallSpread, expr.Token.Line, expr.Token.Column, operands...)
 				return nil
 			}
 			index, orderedArgs, err := c.selectFunctionCall(ident.Value, expr.Arguments, 0)
@@ -820,24 +811,18 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			 * than dispatching as a method call on obj. Compile
 			 * the selector as a value, push args, OpMethodCall
 			 * __invoke. */
-			if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+			if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
 				if err := c.compileExpression(expr.Callee); err != nil {
 					return err
 				}
-				for _, arg := range expr.Arguments[:spreadIndex] {
-					if arg.Name != nil {
-						return fmt.Errorf("named arguments are not supported with spread on a callable value")
-					}
-					if err := c.compileExpression(arg.Value); err != nil {
-						return err
-					}
-				}
-				if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+				meta, err := c.compileSpreadCallArguments(expr.Arguments)
+				if err != nil {
 					return err
 				}
 				nameIndex := int64(len(c.chunk.Constants))
 				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
-				c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, nameIndex, int64(spreadIndex))
+				operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+				c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
 				return nil
 			}
 			if err := c.compileExpression(expr.Callee); err != nil {
@@ -934,21 +919,18 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				if _, resolvedName := c.resolveName(object.Value); !resolvedName {
 					if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok && c.chunk.Classes[classIndex].Name == object.Value {
 						indices, ok := c.lookupStaticMethod(c.chunk.Classes[classIndex], selector.Name.Value)
-						if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+						if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
 							if ok && len(indices) > 1 {
 								return fmt.Errorf("cannot use spread with overloaded static method %s", selector.Name.Value)
 							}
-							for _, arg := range expr.Arguments[:spreadIndex] {
-								if err := c.compileExpression(arg.Value); err != nil {
-									return err
-								}
-							}
-							if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+							meta, err := c.compileSpreadCallArguments(expr.Arguments)
+							if err != nil {
 								return err
 							}
 							nameIndex := int64(len(c.chunk.Constants))
 							c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: selector.Name.Value})
-							c.emitAt(OpCallStaticMethodSpread, expr.Token.Line, expr.Token.Column, classIndex, nameIndex, int64(spreadIndex))
+							operands := append([]int64{classIndex, nameIndex, int64(len(expr.Arguments))}, meta...)
+							c.emitAt(OpCallStaticMethodSpread, expr.Token.Line, expr.Token.Column, operands...)
 							return nil
 						}
 						var orderedArgs []ast.Expression
@@ -1033,21 +1015,15 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			if selector.Optional {
 				optionalJump = c.emitJump(OpOptionalChain, expr.Token.Line, expr.Token.Column)
 			}
-			if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
-				if hasNamedMethodArgs {
-					return fmt.Errorf("named arguments are not supported with spread in a method call")
-				}
-				for _, arg := range expr.Arguments[:spreadIndex] {
-					if err := c.compileExpression(arg.Value); err != nil {
-						return err
-					}
-				}
-				if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+			if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+				meta, err := c.compileSpreadCallArguments(expr.Arguments)
+				if err != nil {
 					return err
 				}
 				nameIndex := int64(len(c.chunk.Constants))
 				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: selector.Name.Value})
-				c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, nameIndex, int64(spreadIndex))
+				operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+				c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
 				if selector.Optional {
 					c.patchJump(optionalJump)
 				}
@@ -1083,24 +1059,18 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			}
 			return nil
 		}
-		if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+		if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
 			if err := c.compileExpression(expr.Callee); err != nil {
 				return err
 			}
-			for _, arg := range expr.Arguments[:spreadIndex] {
-				if arg.Name != nil {
-					return fmt.Errorf("named arguments are not supported with spread on a callable value")
-				}
-				if err := c.compileExpression(arg.Value); err != nil {
-					return err
-				}
-			}
-			if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+			meta, err := c.compileSpreadCallArguments(expr.Arguments)
+			if err != nil {
 				return err
 			}
 			nameIndex := int64(len(c.chunk.Constants))
 			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
-			c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, nameIndex, int64(spreadIndex))
+			operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+			c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
 			return nil
 		}
 		if err := c.compileExpression(expr.Callee); err != nil {
@@ -1278,6 +1248,18 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 		if stmt.Name != nil {
 			s.defined[stmt.Name.Value] = true
 		}
+	case *ast.DestructuringStatement:
+		s.scanExpr(stmt.Value)
+		for _, name := range stmt.Names {
+			if name == nil {
+				continue
+			}
+			if stmt.Define {
+				s.defined[name.Value] = true
+			} else {
+				s.scanExpr(name)
+			}
+		}
 	case *ast.ReturnStatement:
 		if stmt.Value != nil {
 			s.scanExpr(stmt.Value)
@@ -1349,10 +1331,7 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 	case *ast.MatchStatement:
 		s.scanExpr(stmt.Expr)
 		for _, mc := range stmt.Cases {
-			s.scanExpr(mc.Pattern)
-			s.scanExpr(mc.Guard)
-			s.scanExpr(mc.Value)
-			s.scanBlock(mc.Body)
+			s.scanMatchCase(mc)
 		}
 	case *ast.ClassStatement:
 		if stmt.Name != nil {
@@ -1435,10 +1414,7 @@ func (s *freeVarSet) scanExpr(expr ast.Expression) {
 	case *ast.MatchExpression:
 		s.scanExpr(expr.Expr)
 		for _, mc := range expr.Cases {
-			s.scanExpr(mc.Pattern)
-			s.scanExpr(mc.Guard)
-			s.scanExpr(mc.Value)
-			s.scanBlock(mc.Body)
+			s.scanMatchCase(mc)
 		}
 	case *ast.SpreadExpression:
 		s.scanExpr(expr.Value)
@@ -1450,6 +1426,68 @@ func (s *freeVarSet) scanExpr(expr ast.Expression) {
 		s.scanExpr(expr.Condition)
 		s.scanExpr(expr.ThenExpr)
 		s.scanExpr(expr.ElseExpr)
+	case *ast.InterpolatedString:
+		for _, part := range expr.Parts {
+			s.scanExpr(part)
+		}
+	case *ast.FormattedInterpolation:
+		s.scanExpr(expr.Value)
+	case *ast.PipeExpression:
+		s.scanExpr(expr.Left)
+		s.scanExpr(expr.Right)
+	case *ast.PartialExpression:
+		s.scanExpr(expr.Callee)
+		for _, arg := range expr.Arguments {
+			if !arg.Hole {
+				s.scanExpr(arg.Value)
+			}
+		}
+	case *ast.ListComprehension:
+		s.scanComprehensionClauses(expr.Clauses)
+		s.scanExpr(expr.Body)
+	case *ast.SetComprehension:
+		s.scanComprehensionClauses(expr.Clauses)
+		s.scanExpr(expr.Body)
+	case *ast.DictComprehension:
+		s.scanComprehensionClauses(expr.Clauses)
+		s.scanExpr(expr.KeyBody)
+		s.scanExpr(expr.ValueBody)
+	}
+}
+
+// scanComprehensionClauses mirrors the ForStatement case: loop vars are defined before later clauses/body are scanned.
+func (s *freeVarSet) scanComprehensionClauses(clauses []ast.ComprehensionClause) {
+	for _, clause := range clauses {
+		switch c := clause.(type) {
+		case *ast.ComprehensionFor:
+			if c.VarName != nil {
+				s.defined[c.VarName.Value] = true
+			}
+			for _, v := range c.VarNames {
+				if v != nil {
+					s.defined[v.Value] = true
+				}
+			}
+			s.scanExpr(c.Iterable)
+		case *ast.ComprehensionIf:
+			s.scanExpr(c.Filter)
+		}
+	}
+}
+
+// scanMatchCase covers Alternates and list-pattern literal bindings that the Pattern/Guard/Value/Body scan missed.
+func (s *freeVarSet) scanMatchCase(mc ast.MatchCase) {
+	s.scanExpr(mc.Pattern)
+	s.scanExpr(mc.Guard)
+	s.scanExpr(mc.Value)
+	s.scanBlock(mc.Body)
+	for _, alt := range mc.Alternates {
+		s.scanExpr(alt)
+	}
+	if mc.ListPattern != nil {
+		for _, binding := range mc.ListPattern.Bindings {
+			s.scanExpr(binding.Literal)
+		}
 	}
 }
 
@@ -1645,21 +1683,15 @@ func (c *Compiler) compileBuiltinCall(expr *ast.CallExpression, module, name str
 		c.emitAt(OpExit, expr.Token.Line, expr.Token.Column)
 		return nil
 	case native.IsPureBuiltin(module, name), isStatefulBytecodeBuiltin(module, name):
-		if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
-			for _, arg := range expr.Arguments[:spreadIndex] {
-				if arg.Name != nil {
-					return fmt.Errorf("named arguments are not supported with spread on %s.%s", module, name)
-				}
-				if err := c.compileExpression(arg.Value); err != nil {
-					return err
-				}
-			}
-			if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+		if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+			meta, err := c.compileSpreadCallArguments(expr.Arguments)
+			if err != nil {
 				return err
 			}
 			nameIndex := int64(len(c.chunk.Constants))
 			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: module + "." + name})
-			c.emitAt(OpNativeCallSpread, expr.Token.Line, expr.Token.Column, nameIndex, int64(spreadIndex))
+			operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+			c.emitAt(OpNativeCallSpread, expr.Token.Line, expr.Token.Column, operands...)
 			return nil
 		}
 		hasNamedArgs := false
@@ -3415,6 +3447,27 @@ func callSpreadIndex(args []ast.CallArgument) (int, bool) {
 		}
 	}
 	return -1, false
+}
+
+// compileSpreadCallArguments compiles every argument and returns one meta operand each (spread / positional / name index) so trailing and named args survive.
+func (c *Compiler) compileSpreadCallArguments(args []ast.CallArgument) ([]int64, error) {
+	meta := make([]int64, 0, len(args))
+	for _, arg := range args {
+		if err := c.compileExpression(arg.Value); err != nil {
+			return nil, err
+		}
+		switch {
+		case arg.Spread:
+			meta = append(meta, spreadArgMeta)
+		case arg.Name != nil:
+			idx := int64(len(c.chunk.Constants))
+			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: arg.Name.Value})
+			meta = append(meta, idx)
+		default:
+			meta = append(meta, positionalArgMeta)
+		}
+	}
+	return meta, nil
 }
 
 func listHasSpread(elements []ast.Expression) bool {

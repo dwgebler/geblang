@@ -1,0 +1,5 @@
+module ifacedonorb;
+
+export interface Contract {
+    func run(): string;
+}

@@ -1,0 +1,28 @@
+/**
+ * @title del accepts a binding whose inferred type is a cross-module class
+ * @summary A `let r = mod.Class(...)` binding has an uninferable cross-module
+ * type; the analyzer previously rejected `del r` with "del: unknown identifier".
+ * del now retires the binding and fires the cross-module destructor.
+ */
+import test;
+import del_resource_donor as d;
+
+class DelCrossModuleTest extends test.Test {
+
+    @test
+    func delFiresCrossModuleDestructor(): void {
+        d.resetLog();
+        let r = d.Resource("A");
+        this.assertEquals("", d.destroyedNames());
+        del r;
+        this.assertEquals("A;", d.destroyedNames());
+    }
+
+    @test
+    func delFromImportedType(): void {
+        d.resetLog();
+        let r = d.Resource("B");
+        del r;
+        this.assertEquals("B;", d.destroyedNames());
+    }
+}

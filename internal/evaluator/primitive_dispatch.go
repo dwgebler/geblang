@@ -22,6 +22,10 @@ import (
 // evalMethodCall dispatches the primitive methods (list/dict/set/string/
 // bytes/range and friends) for the evaluator backend.
 func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []runtime.Value) (runtime.Value, error) {
+	// currentLine here is the method call site; a primitive HOF invokes its callback via callValue, which stamps this line so the caller frame's trace line stays the HOF call site rather than a previous callback's residue.
+	savedHofLine := e.hofCallLine
+	e.hofCallLine = e.currentLine
+	defer func() { e.hofCallLine = savedHofLine }()
 	if class, ok := receiver.(*runtime.Class); ok {
 		methods := lookupStaticMethodOverloads(class, name)
 		if len(methods) > 0 {

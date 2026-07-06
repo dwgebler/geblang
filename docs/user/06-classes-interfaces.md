@@ -211,6 +211,13 @@ class Square extends Shape {
 
 Both forms give the subclass full access to inherited fields and methods.
 
+`instanceof` is module-exact: its right-hand side resolves to the specific
+class or interface declaration named in scope and matches by identity, walking
+the value's real parent chain, so `x instanceof shapes.Shape` matches instances
+of `Shape` (and its subclasses) declared in `shapes`, but never a same-named
+class or interface from another module. Use `instanceof` rather than `typeof`,
+which matches by name, to distinguish same-named types across modules.
+
 Use inheritance for true specialization. Prefer composition when one object
 merely needs to use another service:
 
@@ -1021,6 +1028,11 @@ class Money {
 let total = Money(500) + Money(250);
 io.println(total == Money(750));
 ```
+
+An instance nested in a list, dict, or set compares the same way it does at top
+level: two containers are equal when their instance elements are equal field by
+field (or by `__eq` when the class defines one), not by object identity. So
+`[Money(500)] == [Money(500)]` is `true`.
 
 Operator methods should return the type users expect from the operator.
 Comparison and equality methods must return `bool`; arithmetic methods should

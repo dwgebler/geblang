@@ -1,0 +1,136 @@
+/**
+ * @title Callback / decorated-call throw preserves class and stays catchable
+ * @summary An uncaught throw crossing a native-callback (dict.search,
+ *          string.search) or decorated-call boundary keeps its thrown class
+ *          and is caught by the matching handler, rather than being restyled
+ *          into a fresh RuntimeError (finding 9.12).
+ */
+import test;
+
+func trace(any next): any {
+    return func(int x): int { return next(x); };
+}
+
+func guard(any cls): any {
+    return func(int x): any { throw ValueError("ctor boom"); };
+}
+
+class Svc {
+    @trace
+    func inst(int x): int { throw ValueError("inst boom"); }
+
+    @trace
+    static func stat(int x): int { throw ValueError("static boom"); }
+}
+
+@guard
+class Box {
+    int v;
+    func Box(int x) { this.v = x; }
+}
+
+@trace
+func fn(int x): int { throw ValueError("fn boom"); }
+
+class CallbackErrorClassPreservedTest extends test.Test {
+    @test
+    func dictSearchCallbackThrowIsCatchableWithClass(): void {
+        let caught = false;
+        try {
+            {"a": 1, "b": 2}.search(func(int v): bool { throw ValueError("dict boom"); });
+        } catch (ValueError e) {
+            caught = true;
+            this.assertEquals("ValueError", e.class);
+            this.assertEquals("dict boom", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func stringSearchCallbackThrowIsCatchableWithClass(): void {
+        let caught = false;
+        try {
+            "hi".search(func(string c): bool { throw ValueError("str boom"); });
+        } catch (ValueError e) {
+            caught = true;
+            this.assertEquals("ValueError", e.class);
+            this.assertEquals("str boom", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func decoratedInstanceMethodThrowIsCatchableWithClass(): void {
+        let s = Svc();
+        let caught = false;
+        try {
+            s.inst(1);
+        } catch (ValueError e) {
+            caught = true;
+            this.assertEquals("ValueError", e.class);
+            this.assertEquals("inst boom", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func decoratedInstanceMethodNamedArgThrowIsCatchableWithClass(): void {
+        let s = Svc();
+        let caught = false;
+        try {
+            s.inst(x: 1);
+        } catch (ValueError e) {
+            caught = true;
+            this.assertEquals("inst boom", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func decoratedStaticMethodThrowIsCatchableWithClass(): void {
+        let caught = false;
+        try {
+            Svc.stat(1);
+        } catch (ValueError e) {
+            caught = true;
+            this.assertEquals("static boom", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func decoratedFunctionThrowIsCatchableWithClass(): void {
+        let caught = false;
+        try {
+            fn(1);
+        } catch (ValueError e) {
+            caught = true;
+            this.assertEquals("fn boom", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func decoratedClassConstructorThrowIsCatchableWithClass(): void {
+        let caught = false;
+        try {
+            let b = Box(5);
+        } catch (ValueError e) {
+            caught = true;
+            this.assertEquals("ctor boom", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func nativeNonCallbackErrorStillRuntimeError(): void {
+        let caught = false;
+        try {
+            {"a": 1}.search(1, 2);
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertContains(e.message, "search");
+        }
+        this.assertTrue(caught);
+    }
+}

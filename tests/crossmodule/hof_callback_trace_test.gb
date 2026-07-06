@@ -1,0 +1,155 @@
+/**
+ * @title Cross-module HOF callback trace stitching
+ * @summary A native higher-order function on a main-module list invokes a
+ * callback that lives in an imported module (a foreign function or a foreign
+ * closure). The callback runs on a separate worker VM, yet the caught error's
+ * structured trace still lists the host caller chain, and the throw stays
+ * catchable by message. Identical on both backends.
+ */
+import test;
+import hof_trace_donor as donor;
+
+func callSortForeignFn(): void {
+    let s = [3, 1, 2].sortBy(donor.keyFn);
+}
+
+func callSortForeignClosure(): void {
+    let kf = donor.makeKey();
+    let s = [3, 1, 2].sortBy(kf);
+}
+
+func revKeyFn(int x): int {
+    if (x == 1) { throw RuntimeError("main key boom rev"); }
+    return x;
+}
+
+func callRunHofNamed(): void {
+    let s = donor.runHof(revKeyFn);
+}
+
+func callRunHofClosure(): void {
+    let tag = 5;
+    let s = donor.runHof(func(int x): int {
+        if (x == 1) { throw RuntimeError("main closure boom rev ${tag}"); }
+        return x;
+    });
+}
+
+class HofCallbackTraceCrossModuleTest extends test.Test {
+    func countFrames(any frames, string name): int {
+        int c = 0;
+        for (f in frames) {
+            if (f.function() == name) {
+                c = c + 1;
+            }
+        }
+        return c;
+    }
+
+    @test
+    func foreignFunctionTraceKeepsCallerFrames(): void {
+        try {
+            callSortForeignFn();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("keyFn", frames[0].function());
+            # The stitched caller frame reports the HOF call site, present once.
+            this.assertEquals("callSortForeignFn", frames[1].function());
+            this.assertEquals(13, frames[1].line());
+            this.assertEquals(1, this.countFrames(frames, "callSortForeignFn"));
+        }
+    }
+
+    @test
+    func foreignClosureTraceKeepsCallerFrames(): void {
+        try {
+            callSortForeignClosure();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("<closure>", frames[0].function());
+            this.assertEquals("callSortForeignClosure", frames[1].function());
+            this.assertEquals(18, frames[1].line());
+            this.assertEquals(1, this.countFrames(frames, "callSortForeignClosure"));
+        }
+    }
+
+    @test
+    func foreignCallbackThrowIsCatchableAndContinues(): void {
+        let fnCaught = false;
+        try {
+            callSortForeignFn();
+        } catch (RuntimeError e) {
+            fnCaught = true;
+            this.assertEquals("donor key boom", e.message);
+        }
+        this.assertTrue(fnCaught);
+
+        let closureCaught = false;
+        try {
+            callSortForeignClosure();
+        } catch (RuntimeError e) {
+            closureCaught = true;
+            this.assertEquals("donor closure boom", e.message);
+        }
+        this.assertTrue(closureCaught);
+
+        # The stack is intact enough to run another HOF after the catches.
+        let ok = [4, 5].map(func(int x): int { return x + 1; });
+        this.assertEquals(2, ok.length());
+        this.assertEquals(5, ok[0]);
+    }
+
+    @test
+    func donorHofNamedCallbackKeepsDonorFrame(): void {
+        try {
+            callRunHofNamed();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("revKeyFn", frames[0].function());
+            this.assertEquals(22, frames[0].line());
+            # The donor's own runHof frame survives at its HOF call site.
+            this.assertEquals("runHof", frames[1].function());
+            this.assertEquals(17, frames[1].line());
+            this.assertEquals(1, this.countFrames(frames, "runHof"));
+            this.assertEquals("callRunHofNamed", frames[2].function());
+            this.assertEquals(27, frames[2].line());
+        }
+    }
+
+    @test
+    func donorHofClosureCallbackKeepsDonorFrame(): void {
+        try {
+            callRunHofClosure();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("<closure>", frames[0].function());
+            this.assertEquals(33, frames[0].line());
+            this.assertEquals("runHof", frames[1].function());
+            this.assertEquals(17, frames[1].line());
+            this.assertEquals(1, this.countFrames(frames, "runHof"));
+            this.assertEquals("callRunHofClosure", frames[2].function());
+            this.assertEquals(32, frames[2].line());
+        }
+    }
+
+    @test
+    func donorHofReverseCallbackIsCatchable(): void {
+        let namedCaught = false;
+        try {
+            callRunHofNamed();
+        } catch (RuntimeError e) {
+            namedCaught = true;
+            this.assertEquals("main key boom rev", e.message);
+        }
+        this.assertTrue(namedCaught);
+
+        let closureCaught = false;
+        try {
+            callRunHofClosure();
+        } catch (RuntimeError e) {
+            closureCaught = true;
+            this.assertEquals("main closure boom rev 5", e.message);
+        }
+        this.assertTrue(closureCaught);
+    }
+}

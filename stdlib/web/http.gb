@@ -411,6 +411,9 @@ export func responseFrom(dict<string, any> data): Response {
     if (data.hasKey("headers") && data["headers"] instanceof dict) {
         wrapped.data["headers"] = data["headers"];
     }
+    if (data.hasKey("__serveFile")) {
+        wrapped.data["__serveFile"] = data["__serveFile"];
+    }
     return wrapped;
 }
 

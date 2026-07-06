@@ -1,0 +1,5 @@
+module cfgdonorb;
+
+export class Config {}
+
+export func makeConfig(): any { return Config(); }

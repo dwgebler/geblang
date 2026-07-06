@@ -231,6 +231,17 @@ let tail = [443, false];
 connect("example.com", ...tail);
 ```
 
+A spread does not have to be last. Arguments after a spread, multiple
+spreads, and named arguments before or after a spread all bind in
+source order (named arguments bind by name, positionals fill the
+remaining slots):
+
+```gb
+let mid = [443];
+connect("example.com", ...mid, false);        # host, port, tls
+connect(tls: false, ...["example.com", 443]); # host, port by position
+```
+
 ### Dict spread to named arguments
 
 A string-keyed dict spread maps each entry's key to the parameter
@@ -505,6 +516,11 @@ Decorators are evaluated at declaration time. A decorator can be used as pure
 metadata for reflection, as a callable wrapper, or both. Framework code can scan
 metadata with `reflect` and register handlers without introducing framework
 syntax into the language.
+
+A callable decorator's wrapper is transparent to callers: `greet(name: "Ada")`
+binds `name` against the original `greet` function's declared parameters, even
+though the wrapper above names its own parameter `name` too (or, for a
+`func(any ...args)` forwarding wrapper, declares no named parameter at all).
 
 ## @memoize
 

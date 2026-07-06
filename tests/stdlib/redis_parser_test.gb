@@ -2,9 +2,12 @@
  * @title redis RESP reply parsing (1.31.1)
  * @summary Byte-level RESP framing via redis.decodeReply: simple string,
  * error, integer, bulk (text, binary, embedded CRLF), arrays, and null
- * replies, plus a multibyte value split across a read boundary. The
- * get / getBytes contract is exercised end-to-end over an in-process TCP
- * mock: binary values raise on the string API and round-trip via getBytes.
+ * replies, plus a multibyte value split across a read boundary, a bulk
+ * reply spanning many chunks, and a large sibling reply surviving
+ * consumed-byte compaction. The get / getBytes contract is exercised
+ * end-to-end over an in-process TCP mock: binary values raise on the
+ * string API, and getBytes round-trips both binary and valid-UTF-8
+ * payloads byte-identically.
  */
 import test;
 import bytes;
@@ -28,6 +31,30 @@ func source1(bytes data): callable {
 
 func frame(string text): bytes {
     return bytes.fromString(text);
+}
+
+# Deterministic non-repeating byte pattern for content-identity checks.
+func patternBytes(int n): bytes {
+    list<int> vals = [];
+    int i = 0;
+    while (i < n) {
+        vals.push((i % 251) + 1);
+        i = i + 1;
+    }
+    return bytes.fromList(vals);
+}
+
+func chunksOf(bytes data, int size): list<bytes> {
+    list<bytes> out = [];
+    int pos = 0;
+    int total = data.length();
+    while (pos < total) {
+        int end = pos + size;
+        if (end > total) { end = total; }
+        out.push(data.slice(pos, end));
+        pos = end;
+    }
+    return out;
 }
 
 # Serve one canned RESP reply over a throwaway loopback socket.
@@ -139,6 +166,29 @@ class RedisRespReaderTest extends test.Test {
         ];
         this.assertEquals("café", redis.decodeReply(sourceFrom(chunks)));
     }
+
+    @test
+    func largeBulkReplySpanningManyChunksReconstructsExactly(): void {
+        int n = 300007;
+        bytes pattern = patternBytes(n);
+        bytes full = bytes.concat(frame("$" + (n as string) + "\r\n"), bytes.concat(pattern, frame("\r\n")));
+        let value = redis.decodeReply(sourceFrom(chunksOf(full, 4001)));
+        bytes got = value as bytes;
+        this.assertEquals(n, got.length());
+        this.assertEquals(bytes.toHex(pattern), bytes.toHex(got));
+    }
+
+    @test
+    func largeBulkFollowedBySiblingValueStaysConsistentAfterCompaction(): void {
+        # pins that compacting the first (large) element leaves the sibling reply intact
+        bytes big = patternBytes(150013);
+        bytes bigFrame = bytes.concat(frame("$" + (big.length() as string) + "\r\n"), bytes.concat(big, frame("\r\n")));
+        bytes reply = bytes.concat(frame("*2\r\n"), bytes.concat(bigFrame, frame("$5\r\nhello\r\n")));
+        let value = redis.decodeReply(sourceFrom(chunksOf(reply, 4096))) as list<any>;
+        this.assertEquals(2, value.length());
+        this.assertEquals(bytes.toHex(big), bytes.toHex(value[0] as bytes));
+        this.assertEquals("hello", value[1] as string);
+    }
 }
 
 class RedisBinaryValueTest extends test.Test {
@@ -178,5 +228,26 @@ class RedisBinaryValueTest extends test.Test {
         let c = redis.connect(serveOnce(frame("$-1\r\n")));
         this.assertNull(c.getBytes("k"));
         c.close();
+    }
+
+    @test
+    func getBytesByteIdenticalOnValidUtf8Payload(): void {
+        # getBytes must not decode/re-encode a valid-UTF-8 value; result must match the wire bytes exactly
+        bytes original = frame("hello world, café résumé");
+        let reply = bytes.concat(frame("$" + (original.length() as string) + "\r\n"), bytes.concat(original, frame("\r\n")));
+        let c = redis.connect(serveOnce(reply));
+        bytes got = c.getBytes("k") as bytes;
+        c.close();
+        this.assertEquals(bytes.toHex(original), bytes.toHex(got));
+    }
+
+    @test
+    func getBytesByteIdenticalOnLargerBinaryPayload(): void {
+        bytes original = patternBytes(50021);
+        let reply = bytes.concat(frame("$" + (original.length() as string) + "\r\n"), bytes.concat(original, frame("\r\n")));
+        let c = redis.connect(serveOnce(reply));
+        bytes got = c.getBytes("k") as bytes;
+        c.close();
+        this.assertEquals(bytes.toHex(original), bytes.toHex(got));
     }
 }

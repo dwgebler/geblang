@@ -1,0 +1,141 @@
+/**
+ * @title Cross-module construction/dispatch error traces keep the caller line
+ * @summary A cross-module construction or call error raised before the callee
+ * ever pushes a frame (overload miss, arity miss, generic type mismatch,
+ * zero-constructor-with-args) still reports the intermediate caller frame's
+ * line, on both backends. Covers positional and named construction, a
+ * generic constructor, a free function, and a static/instance method miss.
+ */
+import test;
+import construct_trace_donor as donor;
+
+func makePositional(): any {
+    return donor.Point(1, 2, 3);
+}
+
+func makeNamed(): any {
+    return donor.Point(z: 9);
+}
+
+func wrapperB(): any {
+    return donor.Point(1, 2, 3);
+}
+
+func wrapperA(): any {
+    return wrapperB();
+}
+
+func makeGenericBox(): any {
+    return donor.Box<int>("nope");
+}
+
+func makeZeroPositional(): any {
+    return donor.Zero(1, 2, 3);
+}
+
+func callStaticMiss(): any {
+    return donor.Widget.sMethod(1, 2, 3);
+}
+
+func callInstanceMiss(): any {
+    let w = donor.Widget();
+    return w.iMethod(1, 2, 3);
+}
+
+func callFunctionMiss(): any {
+    return donor.addTwo(1, 2, 3);
+}
+
+class ConstructTraceCrossModuleTest extends test.Test {
+    @test
+    func positionalMissHasCallerLine(): void {
+        try {
+            makePositional();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("makePositional", frames[0].function());
+            this.assertEquals(13, frames[0].line());
+            this.assertEquals("no matching overload for Point", e.message);
+        }
+    }
+
+    @test
+    func namedMissHasCallerLine(): void {
+        try {
+            makeNamed();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("makeNamed", frames[0].function());
+            this.assertEquals(17, frames[0].line());
+        }
+    }
+
+    @test
+    func twoFrameMissKeepsBothCallerLines(): void {
+        try {
+            wrapperA();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("wrapperB", frames[0].function());
+            this.assertEquals(21, frames[0].line());
+            this.assertEquals("wrapperA", frames[1].function());
+            this.assertEquals(25, frames[1].line());
+        }
+    }
+
+    @test
+    func genericConstructorTypeMismatchHasCallerLine(): void {
+        try {
+            makeGenericBox();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("makeGenericBox", frames[0].function());
+            this.assertEquals(29, frames[0].line());
+        }
+    }
+
+    @test
+    func zeroCtorPositionalWordingAndLine(): void {
+        try {
+            makeZeroPositional();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("makeZeroPositional", frames[0].function());
+            this.assertEquals(33, frames[0].line());
+            this.assertEquals("Zero constructor expects no arguments", e.message);
+        }
+    }
+
+    @test
+    func staticMethodMissHasCallerLine(): void {
+        try {
+            callStaticMiss();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("callStaticMiss", frames[0].function());
+            this.assertEquals(37, frames[0].line());
+        }
+    }
+
+    @test
+    func instanceMethodMissHasCallerLine(): void {
+        try {
+            callInstanceMiss();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("callInstanceMiss", frames[0].function());
+            this.assertEquals(42, frames[0].line());
+        }
+    }
+
+    @test
+    func functionArityMissHasCallerLine(): void {
+        try {
+            callFunctionMiss();
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("callFunctionMiss", frames[0].function());
+            this.assertEquals(46, frames[0].line());
+        }
+    }
+}

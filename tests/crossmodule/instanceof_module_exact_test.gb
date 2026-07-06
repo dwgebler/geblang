@@ -1,0 +1,74 @@
+/**
+ * @title instanceof is module-exact (1.32.0)
+ * @summary The instanceof RHS resolves to the specific class or interface
+ * declaration in scope and matches by declaring-module identity, walking the
+ * instance's real parent chain. A same-named type from another module does
+ * NOT match. Covers qualified, bare from-imported, and aliased RHS forms,
+ * inheritance (local subclass of a foreign parent), cross-module interfaces,
+ * and a bound generic type parameter. cfgdonor and cfgdonorb each declare a
+ * Config class; ifacedonora and ifacedonorb each declare a Contract interface.
+ */
+import test;
+import cfgdonor;
+import cfgdonorb;
+import ifacedonora;
+import ifacedonorb;
+from cfgdonor import Config, makeConfig;
+import cfgdonor as A;
+import cfgdonorb as B;
+
+class LocalConfig extends cfgdonor.Config {}
+
+class Impl implements ifacedonora.Contract {
+    func run(): string { return "ok"; }
+}
+
+class InstanceofModuleExactTest extends test.Test {
+
+    @test
+    func qualifiedRhsIsExact(): void {
+        let x = cfgdonorb.makeConfig();
+        this.assertTrue(x instanceof cfgdonorb.Config);
+        this.assertFalse(x instanceof cfgdonor.Config);
+    }
+
+    @test
+    func bareFromImportRhsIsExact(): void {
+        let a = makeConfig();
+        let b = cfgdonorb.makeConfig();
+        this.assertTrue(a instanceof Config);
+        this.assertFalse(b instanceof Config);
+    }
+
+    @test
+    func aliasedImportRhsIsExact(): void {
+        let x = B.makeConfig();
+        this.assertTrue(x instanceof B.Config);
+        this.assertFalse(x instanceof A.Config);
+    }
+
+    @test
+    func subclassMatchesResolvedParent(): void {
+        let s = LocalConfig();
+        this.assertTrue(s instanceof LocalConfig);
+        this.assertTrue(s instanceof cfgdonor.Config);
+        this.assertFalse(s instanceof cfgdonorb.Config);
+    }
+
+    @test
+    func interfaceRhsIsExact(): void {
+        let impl = Impl();
+        this.assertTrue(impl instanceof ifacedonora.Contract);
+        this.assertFalse(impl instanceof ifacedonorb.Contract);
+    }
+
+    @test
+    func genericTypeParamStillMatches(): void {
+        let x = cfgdonorb.makeConfig();
+        this.assertTrue(this.isType<cfgdonorb.Config>(x));
+    }
+
+    func isType<T>(any v): bool {
+        return v instanceof T;
+    }
+}

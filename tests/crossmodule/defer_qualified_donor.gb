@@ -1,0 +1,10 @@
+module defer_qualified_donor;
+
+let entries = [];
+export func reset(): void { entries = []; }
+export func record(string s): void { entries = entries.push(s); }
+export func dump(): string { let out = ""; for (e in entries) { out = out + e + ";"; } return out; }
+
+export class Marker {
+    static func mark(): void { record("static"); }
+}

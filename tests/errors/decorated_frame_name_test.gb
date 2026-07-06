@@ -1,0 +1,72 @@
+/**
+ * @title Decorated frame name test
+ * @summary A decorated callable's caught stack trace names the wrapper
+ *          frame after the decorated function (qualified for methods) and
+ *          the raw body frame with the simple method name, and keeps the
+ *          caller / top-level lines.
+ */
+import test;
+
+func trace(any next): any {
+    return func(int x): int {
+        return next(x);
+    };
+}
+
+@trace
+func boom(int x): int {
+    throw ValueError("fn boom");
+}
+
+class Svc {
+    @trace
+    func handle(int x): int {
+        throw ValueError("method boom");
+    }
+
+    @trace
+    static func shandle(int x): int {
+        throw ValueError("static boom");
+    }
+}
+
+class DecoratedFrameNameTest extends test.Test {
+    @test
+    func decoratedFunctionFrames(): void {
+        try {
+            boom(5);
+        } catch (ValueError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("boom", frames[0].function());
+            this.assertEquals(18, frames[0].line());
+            this.assertEquals("boom", frames[1].function());
+            this.assertEquals(12, frames[1].line());
+        }
+    }
+
+    @test
+    func decoratedInstanceMethodFrames(): void {
+        try {
+            Svc().handle(5);
+        } catch (ValueError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("handle", frames[0].function());
+            this.assertEquals(24, frames[0].line());
+            this.assertEquals("Svc.handle", frames[1].function());
+            this.assertEquals(12, frames[1].line());
+        }
+    }
+
+    @test
+    func decoratedStaticMethodFrames(): void {
+        try {
+            Svc.shandle(5);
+        } catch (ValueError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("shandle", frames[0].function());
+            this.assertEquals(29, frames[0].line());
+            this.assertEquals("Svc.shandle", frames[1].function());
+            this.assertEquals(12, frames[1].line());
+        }
+    }
+}

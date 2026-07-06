@@ -1,0 +1,76 @@
+/**
+ * @title Nested-instance equality (1.32.0)
+ * @summary An instance nested in a list, dict, or set compares exactly as it
+ * does at top level: structurally, and honoring a user __eq at every depth,
+ * rather than by identity. Frozen instances key a set by value.
+ */
+import test;
+
+class Point {
+    int x;
+    func Point(int x) { this.x = x; }
+}
+
+class Money {
+    int cents;
+    string currency;
+    func Money(int c, string cur) { this.cents = c; this.currency = cur; }
+    func __eq(any other): bool {
+        if (!(other instanceof Money)) { return false; }
+        return this.cents == other.cents;
+    }
+}
+
+@immutable
+class FrozenPoint {
+    int x;
+    func FrozenPoint(int x) { this.x = x; }
+}
+
+class NestedInstanceEqualityTest extends test.Test {
+
+    @test
+    func topLevelStructural(): void {
+        this.assertTrue(Point(1) == Point(1));
+        this.assertFalse(Point(1) == Point(2));
+    }
+
+    @test
+    func listOfInstancesStructural(): void {
+        this.assertTrue([Point(1)] == [Point(1)]);
+        this.assertFalse([Point(1)] == [Point(2)]);
+    }
+
+    @test
+    func nestedListStructural(): void {
+        this.assertTrue([[Point(1)]] == [[Point(1)]]);
+        this.assertFalse([[Point(1)]] == [[Point(2)]]);
+    }
+
+    @test
+    func dictValuesStructural(): void {
+        let a = {"k": Point(1)};
+        let b = {"k": Point(1)};
+        let c = {"k": Point(2)};
+        this.assertTrue(a == b);
+        this.assertFalse(a == c);
+    }
+
+    @test
+    func nestedInstanceMatchesTopLevel(): void {
+        this.assertEquals(Point(1) == Point(1), [Point(1)] == [Point(1)]);
+        this.assertEquals(Point(1) == Point(2), [Point(1)] == [Point(2)]);
+    }
+
+    @test
+    func nestedDunderHonored(): void {
+        this.assertTrue([Money(100, "USD")] == [Money(100, "EUR")]);
+        this.assertFalse([Money(100, "USD")] == [Money(200, "USD")]);
+    }
+
+    @test
+    func frozenSetStructural(): void {
+        this.assertTrue({FrozenPoint(1)} == {FrozenPoint(1)});
+        this.assertFalse({FrozenPoint(1)} == {FrozenPoint(2)});
+    }
+}

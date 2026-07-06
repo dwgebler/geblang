@@ -407,6 +407,12 @@ func (vm *VM) reflectLookupNativeCall(fn string, args []runtime.Value) (runtime.
 			}
 			return runtime.Null{}, nil
 		case *runtime.Instance:
+			// A cross-module instance's class lives in its home chunk, not this VM's; resolve module-exactly so the value equals the declaring module's own class value (two same-named classes in different modules must stay distinct).
+			if value.Class != nil && value.Class.Module != "" && value.Class.Module != vm.moduleName && vm.moduleLoader != nil {
+				if found, ok := vm.moduleLoader.ClassValueInModule(value.Class.Module, value.Class.Name); ok {
+					return found, nil
+				}
+			}
 			classIndex, ok := vm.classIndex[strings.ToLower(value.Class.Name)]
 			if !ok {
 				if metadata, ok := runtimeClassMetadata(value.Class); ok {

@@ -1,0 +1,63 @@
+/**
+ * @title Overloaded async functions as first-class values
+ * @summary An overloaded async function used as a value (or HOF callback) wraps
+ * the selected overload in a Task, exactly like a single async value and a
+ * direct overloaded async call. A mixed async/sync overload set wraps only the
+ * async winner; a selected sync overload returns its plain result.
+ */
+import test;
+import async;
+
+async func af(int v): string { return "int:${v}"; }
+async func af(string s): string { return "str:${s}"; }
+
+async func mf(int v): string { return "async:${v}"; }
+func mf(string s): string { return "sync:${s}"; }
+
+func apply(any cb, int x): any { return cb(x); }
+
+class OverloadedAsyncValueTest extends test.Test {
+
+    @test
+    func directOverloadedAsyncCallIsTask(): void {
+        let a = af(5);
+        this.assertEquals("Task", "${typeof(a)}");
+        this.assertEquals("int:5", async.await(a));
+    }
+
+    @test
+    func valueSelectsAndWrapsInTask(): void {
+        let f = af;
+        let a = f(5);
+        let b = f("hi");
+        this.assertEquals("Task", "${typeof(a)}");
+        this.assertEquals("Task", "${typeof(b)}");
+        this.assertEquals("int:5", async.await(a));
+        this.assertEquals("str:hi", async.await(b));
+    }
+
+    @test
+    func callbackInvocationYieldsTask(): void {
+        let f = af;
+        let r = apply(f, 7);
+        this.assertEquals("Task", "${typeof(r)}");
+        this.assertEquals("int:7", async.await(r));
+    }
+
+    @test
+    func mixedSetWrapsOnlyAsyncWinner(): void {
+        let f = mf;
+        let a = f(5);
+        let b = f("hi");
+        this.assertEquals("Task", "${typeof(a)}");
+        this.assertEquals("string", "${typeof(b)}");
+        this.assertEquals("async:5", async.await(a));
+        this.assertEquals("sync:hi", b);
+    }
+
+    @test
+    func awaitOfInvocationEqualsDirect(): void {
+        let f = af;
+        this.assertEquals(async.await(af(9)), async.await(f(9)));
+    }
+}

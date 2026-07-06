@@ -1,0 +1,40 @@
+/**
+ * @title Cross-module parent(args) to a nonexistent parent constructor errors
+ * @summary parent(args) to a foreign base that declares no constructor is a
+ * caller error on both backends; zero-arg parent() and a matching foreign
+ * constructor are unchanged.
+ */
+import test;
+import parent_zeroarg_donor as donor;
+
+class ZeroCircle extends donor.Shape {
+    int tag;
+    func ZeroCircle() { parent(); this.tag = 2; }
+}
+
+class ArgCircle extends donor.Shape {
+    func ArgCircle() { parent(1, 2, 3); }
+}
+
+class Dot extends donor.Point {
+    func Dot() { parent(7); }
+}
+
+class ParentZeroArgCrossModuleTest extends test.Test {
+    @test
+    func zeroArgNoOpSucceeds(): void {
+        this.assertEquals(2, ZeroCircle().tag);
+    }
+
+    @test
+    func matchingForeignConstructorSucceeds(): void {
+        this.assertEquals(7, Dot().x);
+    }
+
+    @test
+    func argsToNoConstructorForeignBaseThrows(): void {
+        this.assertThrowsOf(func(): void {
+            let c = ArgCircle();
+        }, "RuntimeError", "Shape constructor expects no arguments");
+    }
+}

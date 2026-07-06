@@ -1,0 +1,97 @@
+/**
+ * @title Arguments to a nonexistent parent constructor are a loud error
+ * @summary parent(args) to a base that declares no constructor is a caller
+ * error; zero-arg parent() to such a base stays a silent no-op. A matching
+ * constructor and a builtin error parent (implicit message constructor) are
+ * unchanged.
+ */
+import test;
+
+class Base { }
+
+class ZeroArgSub extends Base {
+    int tag;
+    func ZeroArgSub() { parent(); this.tag = 1; }
+}
+
+class ArgSub extends Base {
+    func ArgSub() { parent(1, 2, 3); }
+}
+
+class Counter {
+    int count = 5;
+}
+
+class DefaultSub extends Counter {
+    func DefaultSub() { parent(); }
+}
+
+class Named {
+    string name;
+    func Named(string n) { this.name = n; }
+}
+
+class NamedSub extends Named {
+    func NamedSub() { parent("hi"); }
+}
+
+class MyErr extends Error {
+    func MyErr() { parent("boom"); }
+}
+
+class UserErrBase extends Error { }
+
+class UserErrSub extends UserErrBase {
+    func UserErrSub() { parent("msg"); }
+}
+
+class A { }
+class B extends A {
+    func B() { parent(1, 2); }
+}
+class C extends B {
+    func C() { parent(); }
+}
+
+class ParentZeroArgTest extends test.Test {
+    @test
+    func zeroArgNoOpSucceeds(): void {
+        this.assertEquals(1, ZeroArgSub().tag);
+    }
+
+    @test
+    func implicitDefaultBaseSucceeds(): void {
+        this.assertEquals(5, DefaultSub().count);
+    }
+
+    @test
+    func matchingConstructorSucceeds(): void {
+        this.assertEquals("hi", NamedSub().name);
+    }
+
+    @test
+    func builtinErrorParentCapturesMessage(): void {
+        this.assertThrowsOf(func(): void { throw MyErr(); }, MyErr, "boom");
+    }
+
+    @test
+    func argsToNoConstructorBaseThrows(): void {
+        this.assertThrowsOf(func(): void {
+            let s = ArgSub();
+        }, "RuntimeError", "Base constructor expects no arguments");
+    }
+
+    @test
+    func multiLevelArgsToNoConstructorGrandparentThrows(): void {
+        this.assertThrowsOf(func(): void {
+            let c = C();
+        }, "RuntimeError", "A constructor expects no arguments");
+    }
+
+    @test
+    func userErrorBaseWithoutConstructorThrows(): void {
+        this.assertThrowsOf(func(): void {
+            let s = UserErrSub();
+        }, "RuntimeError", "UserErrBase constructor expects no arguments");
+    }
+}

@@ -1857,85 +1857,6 @@ func valuesIdentical(left runtime.Value, right runtime.Value) bool {
 
 func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 	switch leftValue := left.(type) {
-	case runtime.Null:
-		_, ok := right.(runtime.Null)
-		return ok
-	case runtime.Bool:
-		rightValue, ok := right.(runtime.Bool)
-		return ok && leftValue.Value == rightValue.Value
-	case runtime.SmallInt:
-		switch rv := right.(type) {
-		case runtime.SmallInt:
-			return leftValue.Value == rv.Value
-		case runtime.Int:
-			return rv.Value.IsInt64() && rv.Value.Int64() == leftValue.Value
-		}
-		return false
-	case runtime.Int:
-		switch rv := right.(type) {
-		case runtime.SmallInt:
-			return leftValue.Value.IsInt64() && leftValue.Value.Int64() == rv.Value
-		case runtime.Int:
-			return leftValue.Value.Cmp(rv.Value) == 0
-		}
-		return false
-	case runtime.Decimal:
-		rightValue, ok := right.(runtime.Decimal)
-		return ok && leftValue.Value.Cmp(rightValue.Value) == 0
-	case runtime.Float:
-		rightValue, ok := right.(runtime.Float)
-		return ok && leftValue.Value == rightValue.Value
-	case runtime.String:
-		if rightValue, ok := right.(runtime.String); ok {
-			return leftValue.Value == rightValue.Value
-		}
-		// Symmetry with `typeof(x) == "name"`: a Type compares equal to
-		// the string of its name.
-		if rightType, ok := right.(runtime.Type); ok {
-			return leftValue.Value == rightType.Name
-		}
-		return false
-	case runtime.Bytes:
-		rightValue, ok := right.(runtime.Bytes)
-		return ok && bytes.Equal(leftValue.Value, rightValue.Value)
-	case runtime.DateTimeInstant:
-		rightValue, ok := right.(runtime.DateTimeInstant)
-		return ok && leftValue == rightValue
-	case runtime.DateTimeDuration:
-		rightValue, ok := right.(runtime.DateTimeDuration)
-		return ok && leftValue == rightValue
-	case runtime.DateTimeZone:
-		rightValue, ok := right.(runtime.DateTimeZone)
-		return ok && leftValue == rightValue
-	case runtime.URLValue:
-		rightValue, ok := right.(runtime.URLValue)
-		return ok && leftValue == rightValue
-	case runtime.HTTPHeaders:
-		rightValue, ok := right.(runtime.HTTPHeaders)
-		if !ok || len(leftValue.Values) != len(rightValue.Values) {
-			return false
-		}
-		for key, values := range leftValue.Values {
-			other := rightValue.Values[key]
-			if len(values) != len(other) {
-				return false
-			}
-			for i, value := range values {
-				if value != other[i] {
-					return false
-				}
-			}
-		}
-		return true
-	case runtime.HTTPCookie:
-		rightValue, ok := right.(runtime.HTTPCookie)
-		return ok && leftValue == rightValue
-	case runtime.TemplateValue:
-		rightValue, ok := right.(runtime.TemplateValue)
-		return ok && leftValue == rightValue
-	case runtime.TemplateEngine:
-		rightValue, ok := right.(runtime.TemplateEngine)
-		return ok && leftValue == rightValue
 	case runtime.Set:
 		rightValue, ok := right.(runtime.Set)
 		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
@@ -1948,65 +1869,12 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 			}
 		}
 		return true
-	case runtime.Range:
-		rightValue, ok := right.(runtime.Range)
-		return ok &&
-			leftValue.Exclusive == rightValue.Exclusive &&
-			leftValue.Start.Cmp(rightValue.Start) == 0 &&
-			leftValue.End.Cmp(rightValue.End) == 0 &&
-			leftValue.Step.Cmp(rightValue.Step) == 0
-	case runtime.BytecodeFunction:
-		rightValue, ok := right.(runtime.BytecodeFunction)
-		return ok && leftValue.Module == rightValue.Module && leftValue.Name == rightValue.Name && leftValue.Index == rightValue.Index
-	case runtime.BytecodeClass:
-		switch rv := right.(type) {
-		case runtime.BytecodeClass:
-			return leftValue.Module == rv.Module && leftValue.Name == rv.Name && leftValue.Index == rv.Index
-		case runtime.Type:
-			return leftValue.Name == rv.Name
-		}
-		return false
-	case runtime.NativeObject:
-		rightValue, ok := right.(runtime.NativeObject)
-		return ok && leftValue == rightValue
-	case runtime.Error:
-		rightValue, ok := right.(runtime.Error)
-		return ok && leftValue.Class == rightValue.Class && leftValue.Message == rightValue.Message
-	case runtime.Type:
-		switch rv := right.(type) {
-		case runtime.Type:
-			return leftValue.Name == rv.Name
-		case runtime.BytecodeClass:
-			return leftValue.Name == rv.Name
-		case *runtime.Class:
-			return leftValue.Name == rv.Name
-		case runtime.String:
-			return leftValue.Name == rv.Value
-		}
-		return false
-	case *runtime.Module:
-		rightValue, ok := right.(*runtime.Module)
-		return ok && leftValue == rightValue
-	case *runtime.Class:
-		switch rv := right.(type) {
-		case *runtime.Class:
-			return leftValue == rv
-		case runtime.Type:
-			return leftValue.Name == rv.Name
-		}
-		return false
-	case *runtime.Interface:
-		rightValue, ok := right.(*runtime.Interface)
-		return ok && leftValue == rightValue
 	case *runtime.Instance:
 		rightValue, ok := right.(*runtime.Instance)
 		return ok && leftValue == rightValue
-	case *runtime.Complex:
-		rightValue, ok := right.(*runtime.Complex)
-		return ok && leftValue.C == rightValue.C
-	default:
-		return false
 	}
+	eq, _ := runtime.LeafValuesEqual(left, right)
+	return eq
 }
 
 func (vm *VM) errorsIs(args []runtime.Value) (runtime.Value, error) {

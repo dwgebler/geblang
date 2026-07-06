@@ -54,8 +54,8 @@ let all = metrics.snapshot();
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `now()` | opaque timestamp | Monotonic timestamp |
-| `duration(start)` | `int` | Milliseconds since `start` |
+| `now()` | opaque timestamp | Monotonic timestamp token for `duration()` |
+| `duration(start)` | `float` | Milliseconds elapsed since `start` (sub-millisecond precision) |
 
 ```gb
 let start = metrics.now();
@@ -246,8 +246,8 @@ Common `memStats` fields include `heapAlloc`, `heapSys`, `heapInuse`,
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `now()` | opaque timestamp | Monotonic timestamp |
-| `elapsed(start)` | `float` | Milliseconds since `start` |
+| `now()` | opaque timestamp | Monotonic timestamp token for `elapsed()` |
+| `elapsed(start)` | `float` | Milliseconds elapsed since `start` (sub-millisecond precision) |
 
 ```gb
 let start = profile.now();

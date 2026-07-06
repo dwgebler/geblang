@@ -1,0 +1,104 @@
+/**
+ * @title Decorated methods as first-class values
+ * @summary A bound value of a decorated instance or static method applies the
+ * decorator wrapper when called, with the receiver forwarded, in every context:
+ * call, store, pass, return, HOF callback. The wrapper runs (its transform is
+ * visible), the receiver binds by reference, an overloaded target pins the first
+ * overload, and a throwing body surfaces the real domain error.
+ */
+import test;
+
+func doubler(any next): any {
+    return func(int x): int { return next(x) * 2; };
+}
+
+func boomer(any next): any {
+    return func(int x): int { throw ValueError("wrapped boom"); };
+}
+
+class Svc {
+    int base;
+    func Svc(int base) { this.base = base; }
+    @doubler
+    func add(int x): int { return this.base + x; }
+    @doubler
+    static func triple(int x): int { return x * 3; }
+    @boomer
+    func explode(int x): int { return x; }
+    @doubler
+    func over(int x): int { return x; }
+    @doubler
+    func over(string s): int { return 0; }
+}
+
+func apply1(any f, int v): int { return f(v); }
+func getAdd(Svc s): any { return s.add; }
+
+class Neg {
+    @doubler
+    func key(int x): int { return 0 - x; }
+}
+
+class DecoratedMethodValueTest extends test.Test {
+    @test
+    func boundDecoratedValueCall(): void {
+        let s = Svc(100);
+        let f = s.add;
+        this.assertEquals(210, f(5));
+    }
+
+    @test
+    func boundDecoratedValueStored(): void {
+        let s = Svc(100);
+        let xs = [s.add];
+        this.assertEquals(214, xs[0](7));
+    }
+
+    @test
+    func boundDecoratedValuePassedAndReturned(): void {
+        let s = Svc(100);
+        this.assertEquals(210, apply1(s.add, 5));
+        let f = getAdd(s);
+        this.assertEquals(218, f(9));
+    }
+
+    @test
+    func boundDecoratedValueSeesReceiverMutation(): void {
+        let s = Svc(100);
+        let f = s.add;
+        this.assertEquals(202, f(1));
+        s.base = 200;
+        this.assertEquals(402, f(1));
+    }
+
+    @test
+    func staticDecoratedValue(): void {
+        let g = Svc.triple;
+        this.assertEquals(24, g(4));
+    }
+
+    @test
+    func decoratedValueAsHofCallback(): void {
+        let n = Neg();
+        this.assertEquals([3, 2, 1], [3, 1, 2].sortBy(n.key));
+    }
+
+    @test
+    func overloadedDecoratedValuePinsFirst(): void {
+        let s = Svc(0);
+        let f = s.over;
+        this.assertEquals(10, f(5));
+        this.assertThrows(func(): void {
+            let ignored = f("z");
+        }, "expects int");
+    }
+
+    @test
+    func throwingDecoratedValueSurfacesDomainError(): void {
+        let s = Svc(1);
+        let f = s.explode;
+        this.assertThrows(func(): void {
+            let ignored = f(5);
+        }, "wrapped boom");
+    }
+}

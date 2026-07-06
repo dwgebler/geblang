@@ -1,0 +1,7 @@
+module boundary_fault_donor;
+
+/* Cross-module class whose instance method faults non-typed. */
+export class BoundaryHelper {
+    func BoundaryHelper() {}
+    func blow(): void { int z = 0; let q = 4 // z; }
+}

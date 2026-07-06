@@ -16,7 +16,13 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(76)
+	Version = uint16(78)
+)
+
+// Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
+const (
+	spreadArgMeta     int64 = -2
+	positionalArgMeta int64 = -1
 )
 
 type Op byte
@@ -319,6 +325,14 @@ const (
 	OpZRange
 	// OpMakeOverloaded builds a runtime.OverloadedFunction value from its operand function indices, so an overloaded function used as a value keeps every overload for call-time selection.
 	OpMakeOverloaded
+	// OpDeferFuncCallSpread {funcIdx, argc, meta...}: spread-aware OpDeferFuncCall; stack [args...], spread lists read at fire time.
+	OpDeferFuncCallSpread
+	// OpDeferMethodCallSpread {nameIndex, argc, meta...}: spread-aware OpDeferMethodCall; stack [receiver, args...].
+	OpDeferMethodCallSpread
+	// OpDeferNativeCallSpread {nameIndex, argc, meta...}: spread-aware OpDeferNativeCall; list spread only, matching OpNativeCallSpread.
+	OpDeferNativeCallSpread
+	// OpDeferCallableCallSpread {argc, meta...}: spread-aware OpDeferCallableCall; stack [callable, args...].
+	OpDeferCallableCallSpread
 )
 
 type Instruction struct {
@@ -490,6 +504,8 @@ type ExportInfo struct {
 	FunctionIndex  int64
 	ClassIndex     int64
 	InterfaceIndex int64
+	// Set (with FunctionIndex -1) when the export names an overloaded free function; carries every overload's chunk index.
+	OverloadIndices []int64
 }
 
 func SourceHash(source []byte) [32]byte {
@@ -761,6 +777,10 @@ func Encode(chunk Chunk) ([]byte, error) {
 		out = binary.BigEndian.AppendUint64(out, uint64(export.FunctionIndex))
 		out = binary.BigEndian.AppendUint64(out, uint64(export.ClassIndex))
 		out = binary.BigEndian.AppendUint64(out, uint64(export.InterfaceIndex))
+		out = binary.BigEndian.AppendUint16(out, uint16(len(export.OverloadIndices)))
+		for _, idx := range export.OverloadIndices {
+			out = binary.BigEndian.AppendUint64(out, uint64(idx))
+		}
 	}
 	return out, nil
 }
@@ -997,13 +1017,20 @@ func Decode(data []byte) (Chunk, error) {
 	exportCount := int(reader.u16())
 	chunk.Exports = make([]ExportInfo, 0, exportCount)
 	for i := 0; i < exportCount; i++ {
-		chunk.Exports = append(chunk.Exports, ExportInfo{
+		export := ExportInfo{
 			Name:           string(reader.read(int(reader.u16()))),
 			Slot:           int64(reader.u64()),
 			FunctionIndex:  int64(reader.u64()),
 			ClassIndex:     int64(reader.u64()),
 			InterfaceIndex: int64(reader.u64()),
-		})
+		}
+		if overloadCount := int(reader.u16()); overloadCount > 0 {
+			export.OverloadIndices = make([]int64, overloadCount)
+			for j := range export.OverloadIndices {
+				export.OverloadIndices[j] = int64(reader.u64())
+			}
+		}
+		chunk.Exports = append(chunk.Exports, export)
 	}
 	if reader.err != nil {
 		return Chunk{}, reader.err
@@ -1688,4 +1715,41 @@ func (c *Chunk) MethodParamNames(className, methodName string) ([]string, error)
 		}
 	}
 	return nil, fmt.Errorf("unknown class %s", className)
+}
+
+// ConstructorParamNames returns the union of a class's own constructor overloads' parameter names (receiver slot dropped) for dict-spread key dropping; constructors are not inherited, so parents are not walked.
+func (c *Chunk) ConstructorParamNames(className string) ([]string, error) {
+	lowerClass := strings.ToLower(className)
+	for i := range c.Classes {
+		if strings.ToLower(c.Classes[i].Name) != lowerClass {
+			continue
+		}
+		seen := map[string]bool{}
+		names := []string{}
+		for _, idx := range c.Classes[i].ConstructorIndices {
+			if idx < 0 || int(idx) >= len(c.Functions) {
+				continue
+			}
+			params := c.Functions[idx].ParamNames
+			if len(params) > 0 {
+				params = params[1:]
+			}
+			for _, name := range params {
+				if !seen[name] {
+					seen[name] = true
+					names = append(names, name)
+				}
+			}
+		}
+		return names, nil
+	}
+	return nil, fmt.Errorf("unknown class %s", className)
+}
+
+// FunctionParamNames returns a free function's declared parameter names, so the loader can order named args for a cross-module function call.
+func (c *Chunk) FunctionParamNames(index int64) ([]string, error) {
+	if index < 0 || int(index) >= len(c.Functions) {
+		return nil, fmt.Errorf("function index out of range")
+	}
+	return c.Functions[index].ParamNames, nil
 }

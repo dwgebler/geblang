@@ -1,0 +1,8 @@
+module parent_zeroarg_donor;
+
+export class Shape { }
+
+export class Point {
+    int x;
+    func Point(int x) { this.x = x; }
+}

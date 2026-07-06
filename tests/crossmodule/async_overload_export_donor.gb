@@ -1,0 +1,7 @@
+module async_overload_export_donor;
+
+export async func af(int v): string { return "int:${v}"; }
+export async func af(string s): string { return "str:${s}"; }
+
+export async func mx(int v): string { return "async:${v}"; }
+export func mx(string s): string { return "sync:${s}"; }

@@ -737,6 +737,22 @@ func TestAnalyzerRejectsDelOfUnknownIdentifier(t *testing.T) {
 	}
 }
 
+// TestAnalyzerAcceptsDelOfInferredUnknownTypeBinding: del on a binding whose initializer type is uninferable (cross-module ctor, non-class call) must be accepted, not "unknown identifier".
+func TestAnalyzerAcceptsDelOfInferredUnknownTypeBinding(t *testing.T) {
+	inputs := []string{
+		"func makeIt(): any { return 5; }\nlet r = makeIt();\ndel r;\n",
+		"import res as m;\nlet r = m.Resource(\"A\");\ndel r;\n",
+		"from res import Resource;\nlet r = Resource(\"A\");\ndel r;\n",
+	}
+	for _, input := range inputs {
+		for _, d := range analyzeInput(t, input) {
+			if strings.Contains(d.Message, "del: unknown identifier") {
+				t.Fatalf("del wrongly rejected for inferred binding:\n%s\ngot: %v", input, d.Message)
+			}
+		}
+	}
+}
+
 // TestAnalyzerRejectsInvariantGenericAssignment verifies that the analyzer
 // treats user-defined generic classes as INVARIANT in their type parameters.
 // Even when Sub extends Base, Container<Sub> is not assignable to

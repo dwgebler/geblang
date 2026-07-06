@@ -537,17 +537,6 @@ func (c *Compiler) lastFunctionIndex(name string) (int64, error) {
 	return indices[len(indices)-1], nil
 }
 
-func (c *Compiler) singleFunctionIndex(name string) (int64, error) {
-	indices := c.funcs[strings.ToLower(name)]
-	if len(indices) == 0 {
-		return 0, fmt.Errorf("unknown bytecode function %s", name)
-	}
-	if len(indices) > 1 {
-		return 0, parityErrorf("bytecode compiler does not support exporting overloaded function %s yet", name)
-	}
-	return indices[0], nil
-}
-
 func (c *Compiler) resolveTypeRef(ref *ast.TypeRef) *ast.TypeRef {
 	if ref == nil {
 		return nil

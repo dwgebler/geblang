@@ -1,0 +1,37 @@
+/**
+ * @title Test-runner failure format (1.32.0)
+ * @summary A failing @test method's failure line carries a clean class-prefixed
+ * message and the full frame chain, with no "uncaught" blob prefix, so the VM
+ * runner (test.run under geblang run) reads the same as the evaluator runner.
+ * The subject class throws only when the gate flag is set, so it passes during
+ * normal suite discovery and fails only for the inspected test.run below.
+ */
+import test;
+
+let __gebRunnerShouldFail = false;
+
+class RunnerFailureSubject extends test.Test {
+    @test
+    func maybeThrows(): void {
+        if (__gebRunnerShouldFail) {
+            throw ValueError("boom value");
+        }
+    }
+}
+
+class TestRunnerFailureFormatTest extends test.Test {
+
+    @test
+    func failureIsCleanAndFullyTraced(): void {
+        __gebRunnerShouldFail = true;
+        let r = test.run(RunnerFailureSubject);
+        __gebRunnerShouldFail = false;
+
+        this.assertEquals(1, r["failed"] as int);
+        let failures = r["failures"] as list<any>;
+        let message = failures[0] as string;
+        this.assertTrue(message.contains("maybeThrows: ValueError: boom value"));
+        this.assertFalse(message.contains("uncaught"));
+        this.assertTrue(message.contains("at RunnerFailureSubject.maybeThrows"));
+    }
+}

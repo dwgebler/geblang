@@ -244,7 +244,9 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 	for _, ifaceRef := range stmt.Implements {
 		if _, ok := c.interfaces[strings.ToLower(ifaceRef.Name)]; !ok {
 			if strings.Contains(ifaceRef.Name, ".") {
-				// dotted cross-module interface: pass through as-is
+				// Canonicalize the alias so module-exact instanceof agrees with the RHS's declaring module.
+				class.Implements = append(class.Implements, c.resolveQualifiedClassName(ifaceRef.Name))
+				continue
 			} else if qual, ok := c.fromImports[ifaceRef.Name]; ok {
 				class.Implements = append(class.Implements, qual)
 				continue

@@ -42,11 +42,17 @@ class RespReader {
     any source;
     bytes buf;
     int pos;
+    list<bytes> pending;
+    int pendingLen;
+    bool rawBulk;
 
     func RespReader(any source) {
         this.source = source;
         this.buf = bytes.fromString("");
         this.pos = 0;
+        this.pending = [];
+        this.pendingLen = 0;
+        this.rawBulk = false;
     }
 
     func fill(): bool {
@@ -55,33 +61,47 @@ class RespReader {
         if (chunk.isEmpty()) {
             return false;
         }
-        this.buf = bytes.concat(this.buf, chunk);
+        this.pending.push(chunk);
+        this.pendingLen = this.pendingLen + chunk.length();
         return true;
     }
 
+    # Drops consumed bytes and folds queued chunks in one concat: linear, not per-chunk quadratic copying.
+    func materialize(): void {
+        if (this.pendingLen == 0) {
+            return;
+        }
+        this.buf = bytes.concat(this.buf.slice(this.pos, this.buf.length()), ...this.pending);
+        this.pos = 0;
+        this.pending = [];
+        this.pendingLen = 0;
+    }
+
     func ensure(int n): void {
-        while ((this.buf.length() - this.pos) < n) {
+        while (((this.buf.length() - this.pos) + this.pendingLen) < n) {
             if (!this.fill()) {
                 throw RuntimeError("redis: connection closed before a full reply arrived");
             }
         }
+        this.materialize();
     }
 
     func readLine(): bytes {
-        int i = this.pos;
+        int off = 0;  # relative to this.pos, since materialize() can reset this.pos to 0
         while (true) {
-            if ((i + 1) >= this.buf.length()) {
+            if ((this.pos + off + 1) >= this.buf.length()) {
                 if (!this.fill()) {
                     throw RuntimeError("redis: connection closed before end of line");
                 }
+                this.materialize();
                 continue;
             }
-            if (this.buf.get(i) == 13 && this.buf.get(i + 1) == 10) {
-                let line = this.buf.slice(this.pos, i);
-                this.pos = i + 2;
+            if (this.buf.get(this.pos + off) == 13 && this.buf.get(this.pos + off + 1) == 10) {
+                let line = this.buf.slice(this.pos, this.pos + off);
+                this.pos = this.pos + off + 2;
                 return line;
             }
-            i = i + 1;
+            off = off + 1;
         }
     }
 
@@ -110,6 +130,9 @@ class RespReader {
             this.ensure(len + 2);
             let payload = this.buf.slice(this.pos, this.pos + len);
             this.pos = this.pos + len + 2;
+            if (this.rawBulk) {
+                return payload;
+            }
             return decodeBulk(payload);
         }
         if (kind == 42) {                              # '*' array
@@ -136,12 +159,15 @@ export class Client {
         net.setDeadline(this.conn, 5000);
     }
 
-    func command(list<string> parts): any {
+    # raw skips bulk-string UTF-8 decode/re-encode, for callers that want the payload as bytes.
+    func command(list<string> parts, bool raw = false): any {
         net.write(this.conn, encodeCommand(parts));
         let conn = this.conn;
-        return decodeReply(func(): bytes {
+        let reader = RespReader(func(): bytes {
             return net.read(conn, 65536) as bytes;
         });
+        reader.rawBulk = raw;
+        return reader.readReply();
     }
 
     func ping(): bool {
@@ -162,7 +188,7 @@ export class Client {
 
     ## Fetches a key as raw bytes; use for binary values that are not valid UTF-8.
     func getBytes(string key): ?bytes {
-        let value = this.command(["GET", key]);
+        let value = this.command(["GET", key], true);
         if (value == null) {
             return null;
         }

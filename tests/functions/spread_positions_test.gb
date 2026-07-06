@@ -1,0 +1,111 @@
+/**
+ * @title Spread arguments in any position, mixed with named arguments
+ * @summary A spread argument does not have to be last: arguments after
+ * the spread and multiple spreads bind in source order, and named
+ * arguments before or after a spread bind by name. Dict spread drops
+ * unknown keys silently; natives reject named-with-spread loudly.
+ */
+import test;
+import math;
+
+func show3(int a, int b, int c): string { return "${a}|${b}|${c}"; }
+func show5(int a, int b, int c, int d, int e): string { return "${a}|${b}|${c}|${d}|${e}"; }
+func lead(int a, int ...rest): string { return "${a}:${rest}"; }
+
+class Carrier {
+    int x; int y; int z;
+    func Carrier(int x, int y, int z) { this.x = x; this.y = y; this.z = z; }
+    func m3(int a, int b, int c): string { return "${a}|${b}|${c}"; }
+    static func s3(int a, int b, int c): string { return "${a}|${b}|${c}"; }
+}
+
+list<string> deferLog = [];
+func collect(string tag): void { deferLog = deferLog.push(tag); }
+func logThree(int a, int b, int c): void { collect("${a}|${b}|${c}"); }
+func logFour(int a, int b, int c, int d): void { collect("${a}|${b}|${c}|${d}"); }
+
+class SpreadPositionsTest extends test.Test {
+
+    @test
+    func spreadNotLastFunction(): void {
+        this.assertEquals("1|10|20", show3(1, ...[10, 20]));
+        this.assertEquals("1|10|20|30|4", show5(1, ...[10, 20, 30], 4));
+        this.assertEquals("10|20|3|4|5", show5(...[10, 20], 3, 4, 5));
+    }
+
+    @test
+    func multipleSpreads(): void {
+        this.assertEquals("1|10|20|30|40", show5(1, ...[10, 20], ...[30, 40]));
+        this.assertEquals("10|20|30|40|5", show5(...[10, 20], ...[30, 40], 5));
+    }
+
+    @test
+    func namedBeforeSpread(): void {
+        this.assertEquals("10|20|1", show3(c: 1, ...[10, 20]));
+        this.assertEquals("10|20|1", show3(...[10, 20], c: 1));
+    }
+
+    @test
+    func namedAroundSpreadMethodStaticCtor(): void {
+        let c = Carrier(0, 0, 0);
+        this.assertEquals("10|20|9", c.m3(c: 9, ...[10, 20]));
+        this.assertEquals("10|20|9", Carrier.s3(c: 9, ...[10, 20]));
+        let p = Carrier(z: 3, ...[10, 20]);
+        this.assertEquals("${p.x}|${p.y}|${p.z}", "10|20|3");
+        let q = Carrier(1, ...[10], 3);
+        this.assertEquals("${q.x}|${q.y}|${q.z}", "1|10|3");
+    }
+
+    @test
+    func spreadNotLastCallableValue(): void {
+        let f = func(int a, int b, int c): string { return "${a}|${b}|${c}"; };
+        this.assertEquals("1|2|3", f(1, ...[2], 3));
+        this.assertEquals("7|8|9", f(c: 9, ...[7, 8]));
+    }
+
+    @test
+    func spreadNotLastVariadic(): void {
+        this.assertEquals("1:[2, 3, 4]", lead(1, ...[2, 3], 4));
+        this.assertEquals("5:[6, 7]", lead(...[5], 6, 7));
+    }
+
+    @test
+    func dictSpreadMixedWithTrailingNamed(): void {
+        this.assertEquals("1|2|3|40|50", show5(1, 2, 3, ...{"e": 50, "d": 40}));
+        this.assertEquals("1|2|3|40|50", show5(1, 2, 3, ...{"d": 40, "e": 50, "junk": 9}));
+    }
+
+    @test
+    func namedSpreadMissingArgThrows(): void {
+        this.assertThrows(func(): void { show5(e: 5, ...[10, 20]); });
+    }
+
+    @test
+    func namedSpreadDuplicateParamThrows(): void {
+        this.assertThrows(func(): void { show3(a: 1, ...[10, 20], c: 3); });
+    }
+
+    @test
+    func nativeSpreadNotLast(): void {
+        this.assertEquals(9, math.max(1, ...[5], 9));
+    }
+
+    @test
+    func nativeNamedWithSpreadThrows(): void {
+        this.assertThrows(func(): void { math.max(c: 1, ...[2, 3]); });
+    }
+
+    @test
+    func deferSpreadNotLastAndNamed(): void {
+        deferLog = [];
+        func work(): void {
+            let rest = [10, 20];
+            defer logThree(1, ...[2], 3);
+            defer logThree(c: 9, ...[7, 8]);
+            defer logFour(0, ...rest, 4);
+            rest[0] = 77;   # in-place mutation is visible at fire time
+        }
+        work();
+        this.assertEquals(["0|77|20|4", "7|8|9", "1|2|3"], deferLog);
+    }
+}

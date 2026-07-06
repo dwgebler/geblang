@@ -1,0 +1,11 @@
+module del_resource_donor;
+
+let destroyed = [];
+export func resetLog(): void { destroyed = []; }
+export func destroyedNames(): string { let out = ""; for (n in destroyed) { out = out + n + ";"; } return out; }
+
+export class Resource {
+    string name;
+    func Resource(string name) { this.name = name; }
+    func ~Resource() { destroyed = destroyed.push(this.name); }
+}

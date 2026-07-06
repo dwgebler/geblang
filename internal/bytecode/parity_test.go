@@ -312,7 +312,26 @@ with (p) {
 io.println(p.report().hasKey("elapsed_ms"));
 io.println(p.report().hasKey("cpu_ms"));
 io.println(p.report().hasKey("heap_alloc"));
-io.println(p.elapsedMs() >= 0.0f);
+io.println(p.elapsedMs() > 0.0f);
+`, "true\ntrue\ntrue\ntrue\n")
+}
+
+// TestParityMetricsProfileDurationMs pins metrics.duration / profile.elapsed to a float millisecond scale on both backends (9.38). A wide bound avoids timing flakiness while still catching a nanosecond regression.
+func TestParityMetricsProfileDurationMs(t *testing.T) {
+	runParityStateful(t, `import metrics;
+import profile;
+import time;
+import io;
+let m0 = metrics.now();
+time.sleep(30);
+let md = metrics.duration(m0);
+io.println(typeof(md) == float);
+io.println(md >= 10.0f && md <= 5000.0f);
+let p0 = profile.now();
+time.sleep(30);
+let pe = profile.elapsed(p0);
+io.println(typeof(pe) == float);
+io.println(pe >= 10.0f && pe <= 5000.0f);
 `, "true\ntrue\ntrue\ntrue\n")
 }
 
@@ -3995,4 +4014,229 @@ io.println(unicode.length());
 io.println(unicode[201] == string.fromCodePoint(20013));
 io.println(unicode.substring(200, 202) == pair);
 `, "256\na\n257\nbbb\n400\ntrue\ntrue\n")
+}
+
+// TestParityClosureCaptureViaInterpolation: an outer local used only inside ${...} must still be captured.
+func TestParityClosureCaptureViaInterpolation(t *testing.T) {
+	// Referenced only via ${f}, closure has a parameter (was silently reading the param slot).
+	runParity(t, `import io;
+func outer() {
+    let f = 10;
+    let cb = func(int x): void {
+        io.println("only ${f}");
+        io.println("${f + x}");
+    };
+    cb(3);
+}
+outer();
+`, "only 10\n13\n")
+
+	// Referenced only via ${f}, closure has no parameters (was "local is undefined").
+	runParity(t, `import io;
+func outer() {
+    let f = 10;
+    let cb = func(): void {
+        io.println("only ${f}");
+    };
+    cb();
+}
+outer();
+`, "only 10\n")
+
+	// Nested closures: each level captures the same outer local only through interpolation.
+	runParity(t, `import io;
+func outer() {
+    let f = 10;
+    let mk = func(): callable {
+        return func(): void { io.println("nested ${f}"); };
+    };
+    let inner = mk();
+    inner();
+}
+outer();
+`, "nested 10\n")
+
+	// FormattedInterpolation (${expr:spec}) form.
+	runParity(t, `import io;
+func outer() {
+    let pi = 3.14159;
+    let cb = func(): void { io.println("${pi:.2f}"); };
+    cb();
+}
+outer();
+`, "3.14\n")
+
+	// Closure stored and invoked later: the capture must survive past the defining call's return.
+	runParity(t, `import io;
+func makeGreeter(): callable {
+    let name = "World";
+    return func(): void { io.println("Hello, ${name}!"); };
+}
+let g = makeGreeter();
+g();
+`, "Hello, World!\n")
+}
+
+// TestParityClosureCaptureViaOtherExprKinds: same scanExpr gap for pipe, partial, and comprehension nodes.
+func TestParityClosureCaptureViaOtherExprKinds(t *testing.T) {
+	// Pipe: outer local only used as the pipe's left operand.
+	runParity(t, `import io;
+func double(int x): int { return x * 2; }
+func outer() {
+    let f = 10;
+    let cb = func(): int {
+        return f |> double;
+    };
+    io.println(cb());
+}
+outer();
+`, "20\n")
+
+	// Partial application: outer local only used as a bound argument.
+	runParity(t, `import io;
+func add(int a, int b): int { return a + b; }
+func outer() {
+    let f = 10;
+    let cb = func(): callable {
+        return add(f, _);
+    };
+    let inc = cb();
+    io.println(inc(5));
+}
+outer();
+`, "15\n")
+
+	// List comprehension: outer local only used in the body expression.
+	runParity(t, `import io;
+func outer() {
+    let f = 10;
+    let cb = func(): list<int> {
+        return [f + x for x in range(0, 3)];
+    };
+    io.println(cb());
+}
+outer();
+`, "[10, 11, 12, 13]\n")
+
+	// Set comprehension.
+	runParity(t, `import io;
+func outer() {
+    let f = 10;
+    let cb = func(): set<int> {
+        return {f + x for x in range(0, 3)};
+    };
+    io.println(cb());
+}
+outer();
+`, "set{10, 11, 12, 13}\n")
+
+	// Dict comprehension: outer local only used in the value body.
+	runParity(t, `import io;
+func outer() {
+    let f = 10;
+    let cb = func(): dict<int, int> {
+        return {x: f + x for x in range(0, 3)};
+    };
+    io.println(cb());
+}
+outer();
+`, "{0: 10, 1: 11, 2: 12, 3: 13}\n")
+}
+
+// TestParityClosureCaptureViaMatchCaseFields: same scanExpr gap in or-pattern Alternates and list-pattern Literal bindings.
+func TestParityClosureCaptureViaMatchCaseFields(t *testing.T) {
+	// Or-pattern alternate: outer local only used as a `|` alternate.
+	runParity(t, `import io;
+func outer() {
+    let f = 99;
+    let cb = func(int v): string {
+        return match (v) {
+            case 1 | f => "matched";
+            default => "no";
+        };
+    };
+    io.println(cb(99));
+    io.println(cb(1));
+    io.println(cb(2));
+}
+outer();
+`, "matched\nmatched\nno\n")
+
+	// List-pattern literal-equality binding: outer local only used inside a positional literal expression.
+	runParity(t, `import io;
+func outer() {
+    let f = 7;
+    let cb = func(list<int> v): string {
+        return match (v) {
+            case [int x, -f] => "hit ${x}";
+            default => "no";
+        };
+    };
+    io.println(cb([1, -7]));
+    io.println(cb([1, 5]));
+}
+outer();
+`, "hit 1\nno\n")
+
+	// Same or-pattern alternate case, but as a match statement (not an expression).
+	runParity(t, `import io;
+func outer() {
+    let f = 5;
+    let cb = func(int v): void {
+        match (v) {
+            case 1 | f => io.println("matched");
+            default => io.println("no");
+        }
+    };
+    cb(5);
+    cb(2);
+}
+outer();
+`, "matched\nno\n")
+}
+
+// TestParityClosureCaptureViaDestructuring: scanStatement had no case for DestructuringStatement at all.
+func TestParityClosureCaptureViaDestructuring(t *testing.T) {
+	// `let` list-destructuring: outer local read only as the RHS value.
+	runParity(t, `import io;
+func outer() {
+    let pair = [1, 2];
+    let cb = func(): int {
+        let [a, b] = pair;
+        return a + b;
+    };
+    io.println(cb());
+}
+outer();
+`, "3\n")
+
+	// Bracketed destructuring assignment: outer locals written through only inside the closure.
+	runParity(t, `import io;
+func outer() {
+    let a = 100;
+    let b = 200;
+    let pair = [1, 2];
+    let cb = func(): void {
+        [a, b] = pair;
+    };
+    cb();
+    io.println(a);
+    io.println(b);
+}
+outer();
+`, "1\n2\n")
+
+	// Bare multi-assignment (no brackets): outer locals written through only inside the closure.
+	runParity(t, `import io;
+func outer() {
+    let a = 0;
+    let b = 0;
+    let cb = func(): void {
+        a, b = 5, 6;
+    };
+    cb();
+    io.println(a + b);
+}
+outer();
+`, "11\n")
 }

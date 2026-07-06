@@ -35,6 +35,38 @@ func (e *Evaluator) valueMatchesType(value runtime.Value, typeName string) bool 
 	return valueMatchesType(value, typeName)
 }
 
+// instanceofExact does module-exact matching for the instanceof operator when the RHS resolves to a user class or interface; handled=false falls back to name-based matching.
+func (e *Evaluator) instanceofExact(value runtime.Value, typeName string, env *runtime.Environment) (bool, bool) {
+	instance, ok := value.(*runtime.Instance)
+	if !ok {
+		return false, false
+	}
+	if runtime.IsBuiltinTypeName(typeName) || strings.ContainsAny(typeName, "<|&") {
+		return false, false
+	}
+	resolved, ok, err := e.reflectLookupValue(typeName, env)
+	if err != nil || !ok {
+		return false, false
+	}
+	var module, name string
+	switch decl := resolved.(type) {
+	case *runtime.Class:
+		module, name = decl.DeclaringModule(), decl.Name
+	case *runtime.Interface:
+		module, name = decl.Module, decl.Name
+	default:
+		return false, false
+	}
+	matched := runtime.InstanceClassMatchesExact(instance.Class, module, name)
+	for _, extra := range instance.ExtraTypeNames {
+		if matched {
+			break
+		}
+		matched = strings.EqualFold(simpleTypeName(extra), name)
+	}
+	return matched, true
+}
+
 func valueMatchesType(value runtime.Value, typeName string) bool {
 	if typeName == "any" || typeName == "?any" {
 		return true

@@ -1,0 +1,21 @@
+module destructor_donor;
+
+let entries = [];
+export func resetLog(): void { entries = []; }
+export func appendLog(string s): void { entries = entries.push(s); }
+export func names(): string { let out = ""; for (n in entries) { out = out + n + ";"; } return out; }
+
+export class Resource {
+    string name;
+    func Resource(string name) { this.name = name; }
+    func tag(): string { return this.name; }
+    func ~Resource() { entries = entries.push("R:" + this.name); }
+}
+
+export func make(string n): Resource { return Resource(n); }
+
+export class Spawner {
+    string name;
+    func Spawner(string name) { this.name = name; }
+    func ~Spawner() { entries = entries.push("S:" + this.name); Resource("spawned-" + this.name); }
+}

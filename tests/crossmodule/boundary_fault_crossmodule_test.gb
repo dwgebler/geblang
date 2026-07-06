@@ -1,0 +1,52 @@
+/**
+ * @title Cross-module boundary faults normalize to a clean catchable error
+ * @summary A non-typed runtime fault (integer division by zero) raised in a
+ * cross-module method reached through a deferred call, or through a `del`-fired
+ * destructor whose body calls one, is caught with the clean message on both
+ * backends. Before the fix the VM caught the rendered "uncaught ..." blob
+ * ("deferred method call ...: uncaught RuntimeError: ..." / "del: destructor:
+ * uncaught RuntimeError: ...").
+ */
+import test;
+import boundary_fault_donor as bf;
+
+class LocalRes {
+    func LocalRes() {}
+    func ~LocalRes() {
+        let h = bf.BoundaryHelper();
+        h.blow();
+    }
+}
+
+class BoundaryFaultTest extends test.Test {
+
+    func runDeferred(): void {
+        let h = bf.BoundaryHelper();
+        defer h.blow();
+    }
+
+    @test
+    func deferredCrossModuleFaultCaughtClean(): void {
+        bool caught = false;
+        try {
+            this.runDeferred();
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertEquals("integer division by zero", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func delDestructorCrossModuleFaultCaughtClean(): void {
+        bool caught = false;
+        try {
+            let r = LocalRes();
+            del r;
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertEquals("integer division by zero", e.message);
+        }
+        this.assertTrue(caught);
+    }
+}

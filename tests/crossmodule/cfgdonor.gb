@@ -1,0 +1,7 @@
+module cfgdonor;
+
+export class Config {}
+
+export func makeConfig(): any { return Config(); }
+
+export func configClass(): any { return Config; }

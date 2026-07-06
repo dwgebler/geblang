@@ -1,0 +1,15 @@
+module subinterface_donor;
+
+export interface Base { func base(): string; }
+
+export interface Mid extends Base { func mid(): string; }
+
+export interface Sub extends Mid { func sub(): string; }
+
+export class Circle implements Sub {
+    func base(): string { return "b"; }
+    func mid(): string { return "m"; }
+    func sub(): string { return "s"; }
+}
+
+export func makeCircle(): any { return Circle(); }

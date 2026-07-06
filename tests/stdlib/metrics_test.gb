@@ -6,6 +6,8 @@
  */
 import test;
 import metrics;
+import profile;
+import time;
 
 class MetricsTest extends test.Test {
     func setUp(): void {
@@ -101,5 +103,23 @@ class MetricsTest extends test.Test {
         this.assertTrue(text.contains("declared 4"));
         this.assertTrue(text.contains("# TYPE legacy_only untyped"));
         this.assertTrue(text.contains("legacy_only 7"));
+    }
+
+    @test
+    func durationReturnsFloatMilliseconds(): void {
+        let start = metrics.now();
+        time.sleep(30);
+        let ms = metrics.duration(start);
+        this.assertTrue(typeof(ms) == float);
+        this.assertTrue(ms >= 10.0f && ms <= 5000.0f);
+    }
+
+    @test
+    func profileElapsedReturnsFloatMilliseconds(): void {
+        let start = profile.now();
+        time.sleep(30);
+        let ms = profile.elapsed(start);
+        this.assertTrue(typeof(ms) == float);
+        this.assertTrue(ms >= 10.0f && ms <= 5000.0f);
     }
 }

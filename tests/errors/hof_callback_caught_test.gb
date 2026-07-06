@@ -1,0 +1,140 @@
+/**
+ * @title HOF callback caught-throw test
+ * @summary A throw from a native higher-order-function callback aborts the
+ *          iteration at the throwing element, is caught by the enclosing
+ *          handler, and leaves execution able to continue and reuse the HOFs.
+ */
+import test;
+
+class HofCallbackCaughtTest extends test.Test {
+    @test
+    func mapAbortsAndIsCaught(): void {
+        let calls = [];
+        let caught = false;
+        try {
+            let out = [1, 2, 3].map(func(any x): any {
+                calls.push(x);
+                if (x == 2) { throw RuntimeError("boom"); }
+                return x * 2;
+            });
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertEquals("boom", e.message);
+        }
+        this.assertTrue(caught);
+        # Aborted at the throwing element: 1 and 2 seen, 3 never reached.
+        this.assertEquals(2, calls.length());
+        this.assertEquals(1, calls[0]);
+        this.assertEquals(2, calls[1]);
+    }
+
+    @test
+    func continuesAndReusesHofsAfterCatch(): void {
+        try {
+            let a = [1, 2, 3].map(func(any x): any {
+                if (x == 2) { throw RuntimeError("boom"); }
+                return x;
+            });
+        } catch (RuntimeError e) {
+            this.assertEquals("boom", e.message);
+        }
+        # The stack is intact: another HOF runs to completion after the catch.
+        let b = [4, 5].map(func(any x): any { return x + 1; });
+        this.assertEquals(2, b.length());
+        this.assertEquals(5, b[0]);
+        this.assertEquals(6, b[1]);
+    }
+
+    @test
+    func sortByReduceFilterAllAbortAndCatch(): void {
+        let sortCaught = false;
+        try {
+            let s = [3, 1, 2].sortBy(func(any x): any {
+                if (x == 2) { throw RuntimeError("s"); }
+                return x;
+            });
+        } catch (RuntimeError e) {
+            sortCaught = true;
+            this.assertEquals("s", e.message);
+        }
+        this.assertTrue(sortCaught);
+
+        let reduceCaught = false;
+        try {
+            let r = [1, 2, 3].reduce(func(any acc, any x): any {
+                if (x == 2) { throw RuntimeError("r"); }
+                return acc + x;
+            }, 0);
+        } catch (RuntimeError e) {
+            reduceCaught = true;
+            this.assertEquals("r", e.message);
+        }
+        this.assertTrue(reduceCaught);
+
+        let filterCaught = false;
+        try {
+            let f = [1, 2, 3].filter(func(any x): bool {
+                if (x == 2) { throw RuntimeError("f"); }
+                return true;
+            });
+        } catch (RuntimeError e) {
+            filterCaught = true;
+            this.assertEquals("f", e.message);
+        }
+        this.assertTrue(filterCaught);
+    }
+
+    @test
+    func innerCatchInCallbackContinuesIteration(): void {
+        let m = [1, 2, 3].map(func(any x): any {
+            try {
+                if (x == 2) { throw RuntimeError("inner"); }
+                return x;
+            } catch (RuntimeError e) {
+                return -1;
+            }
+        });
+        this.assertEquals(3, m.length());
+        this.assertEquals(1, m[0]);
+        this.assertEquals(-1, m[1]);
+        this.assertEquals(3, m[2]);
+    }
+
+    @test
+    func capturingClosureCallbackIsCaughtWithMessage(): void {
+        let tag = 42;
+        let caught = false;
+        try {
+            let s = [3, 1, 2].sortBy(func(int x): int {
+                if (x == 1) { throw RuntimeError("cap ${tag}"); }
+                return x;
+            });
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertEquals("cap 42", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func callableInstanceCallbackIsCaughtWithMessage(): void {
+        let caught = false;
+        try {
+            let s = [3, 1, 2].sortBy(CaughtKeyer());
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertEquals("keyer boom", e.message);
+        }
+        this.assertTrue(caught);
+        # Continuation after catch.
+        let b = [4, 5].map(func(any x): any { return x + 1; });
+        this.assertEquals(5, b[0]);
+    }
+}
+
+class CaughtKeyer {
+    func __invoke(int x): int {
+        if (x == 1) { throw RuntimeError("keyer boom"); }
+        return x;
+    }
+}

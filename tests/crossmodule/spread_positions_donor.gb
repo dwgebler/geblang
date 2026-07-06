@@ -1,0 +1,13 @@
+module spread_positions_donor;
+
+export func join4(int a, int b, int c, int d): string {
+    return "${a}|${b}|${c}|${d}";
+}
+
+export class Joiner {
+    int x; int y; int z;
+    func Joiner(int x, int y, int z) { this.x = x; this.y = y; this.z = z; }
+    func dump(): string { return "${this.x}|${this.y}|${this.z}"; }
+    func m3(int a, int b, int c): string { return "${a}|${b}|${c}"; }
+    static func s3(int a, int b, int c): string { return "${a}|${b}|${c}"; }
+}

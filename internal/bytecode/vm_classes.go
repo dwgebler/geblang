@@ -45,7 +45,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 			default:
 				result, err := vm.callCallable(decorated, args)
 				if err != nil {
-					return 0, vm.callPropagate(instruction, err)
+					return vm.propagateDecoratedClassError(instruction, ip, err)
 				}
 				classInfo := vm.curMod.Chunk.Classes[classIndex]
 				if instance, ok := result.(*runtime.Instance); ok && instance != nil && instance.Class != nil && instance.Class.Name != classInfo.Name {
@@ -97,7 +97,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 	}
 	if len(classInfo.ConstructorIndices) == 0 {
 		if len(args) != 0 {
-			return 0, vm.runtimeError(instruction, "%s expects no constructor arguments", classInfo.Name)
+			return 0, vm.runtimeError(instruction, "%s constructor expects no arguments", classInfo.Name)
 		}
 		if vm.classExtendsBuiltinError(classInfo) {
 			var fields map[string]runtime.Value
@@ -113,7 +113,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 				instance.LockField(f)
 			}
 			if classInfo.DestructorIndex >= 0 {
-				vm.destructibleInstances = append(vm.destructibleInstances, instance)
+				vm.trackDestructible(instance)
 			}
 			vm.push(instance)
 		}
@@ -404,6 +404,29 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 			}
 			return 0, vm.runtimeError(instruction, "%s has no static member %s", typeVal.Name, name)
 		}
+		if class, ok := receiver.(runtime.BytecodeClass); ok {
+			if class.Module == vm.moduleName && int(class.Index) >= 0 && int(class.Index) < len(vm.curMod.Chunk.Classes) {
+				classInfo := vm.curMod.Chunk.Classes[class.Index]
+				if value, found, rerr := vm.resolveStaticMember(classInfo, name); rerr != nil {
+					return 0, vm.runtimeError(instruction, "%s", rerr.Error())
+				} else if found {
+					vm.push(value)
+					return ip, nil
+				}
+				return 0, vm.runtimeError(instruction, "unknown static member %s.%s", class.Name, name)
+			}
+			if vm.moduleLoader != nil {
+				if value, found := vm.moduleLoader.StaticValueForModuleClass(class.Module, class.Name, name); found {
+					vm.push(value)
+					return ip, nil
+				}
+				if value, found := vm.moduleLoader.StaticMethodValueForModuleClass(class.Module, class.Name, name); found {
+					vm.push(value)
+					return ip, nil
+				}
+			}
+			return 0, vm.runtimeError(instruction, "unknown static member %s.%s", class.Name, name)
+		}
 		if errValue, ok := receiver.(runtime.Error); ok {
 			switch name {
 			case "class", "name":
@@ -495,14 +518,22 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 		vm.push(value)
 		return ip, nil
 	}
-	if vm.fieldLookupValid && vm.fieldLookupClass == instance.Class && vm.fieldLookupName == name {
-		if !vm.fieldLookupHasGetMag {
-			return 0, vm.runtimeError(instruction, "%s has no field %s", instance.Class.Name, name)
+	classInfo, classOk := vm.classInfo(instance.Class.Name)
+	if !classOk {
+		// Cross-module instance: bind a method value if one exists.
+		if bound, ok := vm.bindCrossModuleMethod(instance, name); ok {
+			vm.push(bound)
+			return ip, nil
 		}
+		return 0, vm.runtimeError(instruction, "%s has no field %s", instance.Class.Name, name)
 	}
-	classInfo, ok := vm.classInfo(instance.Class.Name)
-	if !ok {
-		return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
+	// A method resolves to a bound-method value, taking priority over __get to match the evaluator.
+	if bound, ok := vm.bindLocalMethod(instance, classInfo, name); ok {
+		vm.push(bound)
+		return ip, nil
+	}
+	if vm.fieldLookupValid && vm.fieldLookupClass == instance.Class && vm.fieldLookupName == name && !vm.fieldLookupHasGetMag {
+		return 0, vm.runtimeError(instruction, "%s has no field %s", instance.Class.Name, name)
 	}
 	indices, hasGet := vm.lookupMethod(classInfo, "__get")
 	vm.cacheFieldShapeFull(instance.Class, name, false, hasGet, classInfo)
@@ -659,7 +690,7 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 	}
 	if len(parent.ConstructorIndices) == 0 {
 		if argc != 0 {
-			return 0, vm.runtimeError(instruction, "%s expects no constructor arguments", parent.Name)
+			return 0, vm.runtimeError(instruction, "%s constructor expects no arguments", parent.Name)
 		}
 		for _, f := range parent.ImmutableFields {
 			instance.LockField(f)
@@ -817,29 +848,145 @@ func (vm *VM) getStaticValue(instruction Instruction, ip int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	constantIndex, ok := vm.lookupStaticValue(vm.curMod.Chunk.Classes[classIndex], name)
+	classInfo := vm.curMod.Chunk.Classes[classIndex]
+	if value, found, rerr := vm.resolveStaticMember(classInfo, name); rerr != nil {
+		return 0, vm.runtimeError(instruction, "%s", rerr.Error())
+	} else if found {
+		vm.push(value)
+		return ip, nil
+	}
+	if indices, ok := vm.lookupStaticMethod(classInfo, "__getStatic"); ok {
+		functionIndex, err := vm.selectRuntimeFunction(instruction, "__getStatic", indices, []runtime.Value{runtime.String{Value: name}}, 0)
+		if err != nil {
+			return 0, err
+		}
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}}, nil)
+	}
+	return 0, vm.runtimeError(instruction, "unknown static member %s.%s", classInfo.Name, name)
+}
+
+// resolveStaticMember resolves a static const/let value or static-method value on classInfo or an ancestor; consts win over methods to match the evaluator's ordering (__getStatic is control flow, left to the caller).
+func (vm *VM) resolveStaticMember(classInfo ClassInfo, name string) (runtime.Value, bool, error) {
+	if constIndex, ok := vm.lookupStaticValue(classInfo, name); ok {
+		if constIndex < 0 || int(constIndex) >= vm.constantsLen() {
+			return nil, false, fmt.Errorf("static value constant out of range")
+		}
+		return vm.staticValueAt(constIndex), true, nil
+	}
+	module, parentClass, boundary := vm.crossModuleBoundary(classInfo)
+	if boundary && vm.moduleLoader != nil {
+		if value, found := vm.moduleLoader.StaticValueForModuleClass(module, parentClass, name); found {
+			return value, true, nil
+		}
+	}
+	if indices, ok := vm.lookupStaticMethod(classInfo, name); ok {
+		return vm.staticMethodValue(indices), true, nil
+	}
+	if boundary && vm.moduleLoader != nil {
+		if value, found := vm.moduleLoader.StaticMethodValueForModuleClass(module, parentClass, name); found {
+			return value, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// staticMethodValue pins to the first overload, matching the evaluator's lookupStaticMethod (methods[0]) value semantics; unlike a free-function value it does not carry the whole overload set.
+func (vm *VM) staticMethodValue(indices []int64) runtime.Value {
+	funcIndex := indices[0]
+	name := ""
+	if int(funcIndex) >= 0 && int(funcIndex) < len(vm.curMod.Chunk.Functions) {
+		name = vm.curMod.Chunk.Functions[funcIndex].Name
+	}
+	if err := vm.ensureCallableDecorators(); err == nil {
+		if _, ok := vm.decoratedFuncs[funcIndex]; ok {
+			return vm.decoratedStaticValue(funcIndex, name)
+		}
+	}
+	return runtime.BytecodeClosure{FunctionIndex: funcIndex, Name: name, Module: vm.moduleName}
+}
+
+// decoratedStaticValue wraps a decorated static method as a callable value that applies the decorator; with a loader each call routes to a fresh home-module worker (goroutine-safe), otherwise it captures this VM.
+func (vm *VM) decoratedStaticValue(funcIndex int64, name string) runtime.Value {
+	loader := vm.moduleLoader
+	module := vm.moduleName
+	if loader == nil {
+		vm.noteEscape()
+		return runtime.Function{
+			Name: name,
+			Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				res, err, _ := vm.callBoundDecoratedValue(nil, funcIndex, args)
+				return res, err
+			},
+		}
+	}
+	return runtime.Function{
+		Name: name,
+		Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+			return loader.CallModuleMethodValue(module, funcIndex, nil, args, nil)
+		},
+		BridgeInvoke: func(host any, args []runtime.Value) (runtime.Value, error) {
+			return loader.CallModuleMethodValue(module, funcIndex, nil, args, host.(*VM))
+		},
+	}
+}
+
+// StaticMethodValueFast builds a static-method callable value on this module's own VM so the loader can serve a cross-module `Class.staticMethod` value.
+func (vm *VM) StaticMethodValueFast(classIndex int64, name string) (runtime.Value, bool) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
+		return nil, false
+	}
+	indices, ok := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], name)
 	if !ok {
-		// Same-chunk walk exhausted: the static may live on a cross-module ancestor.
-		if module, parentClass, boundary := vm.crossModuleBoundary(vm.curMod.Chunk.Classes[classIndex]); boundary && vm.moduleLoader != nil {
-			if value, found := vm.moduleLoader.StaticValueForModuleClass(module, parentClass, name); found {
-				vm.push(value)
-				return ip, nil
-			}
-		}
-		if indices, ok := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], "__getStatic"); ok {
-			functionIndex, err := vm.selectRuntimeFunction(instruction, "__getStatic", indices, []runtime.Value{runtime.String{Value: name}}, 0)
-			if err != nil {
-				return 0, err
-			}
-			return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}}, nil)
-		}
-		return 0, vm.runtimeError(instruction, "unknown static member %s.%s", vm.curMod.Chunk.Classes[classIndex].Name, name)
+		return nil, false
 	}
-	if constantIndex < 0 || int(constantIndex) >= vm.constantsLen() {
-		return 0, vm.runtimeError(instruction, "static value constant out of range")
+	return vm.staticMethodValue(indices), true
+}
+
+// bindLocalMethod binds a same-chunk instance method's first overload to the receiver, pinning that overload to match the evaluator's methods[0] value semantics.
+func (vm *VM) bindLocalMethod(instance *runtime.Instance, classInfo ClassInfo, name string) (runtime.Value, bool) {
+	indices, ok := vm.lookupMethod(classInfo, name)
+	if !ok || len(indices) == 0 {
+		return nil, false
 	}
-	vm.push(vm.staticValueAt(constantIndex))
-	return ip, nil
+	return vm.bindMethodValue(instance, vm.moduleName, indices[0], name), true
+}
+
+// bindCrossModuleMethod binds an instance method whose class lives in another chunk, resolving the first overload through the loader.
+func (vm *VM) bindCrossModuleMethod(instance *runtime.Instance, name string) (runtime.Value, bool) {
+	if vm.moduleLoader == nil || instance.Class == nil {
+		return nil, false
+	}
+	module, funcIndex, ok := vm.moduleLoader.MethodFirstOverload(instance.Class.Module, instance.Class.Name, name)
+	if !ok {
+		return nil, false
+	}
+	return vm.bindMethodValue(instance, module, funcIndex, name), true
+}
+
+// bindMethodValue wraps a specific method function bound to a receiver as a callable value. With a loader each call routes to a fresh worker (goroutine-safe); without one it captures this VM, so the VM must stay out of the pool.
+func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcIndex int64, name string) runtime.Value {
+	loader := vm.moduleLoader
+	if loader == nil {
+		vm.noteEscape()
+		return runtime.Function{
+			Name: name,
+			Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				if res, err, handled := vm.callBoundDecoratedValue(instance, funcIndex, args); handled {
+					return res, err
+				}
+				return vm.CallFunctionRaw(funcIndex, append([]runtime.Value{instance}, args...))
+			},
+		}
+	}
+	return runtime.Function{
+		Name: name,
+		Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+			return loader.CallModuleMethodValue(module, funcIndex, instance, args, nil)
+		},
+		BridgeInvoke: func(host any, args []runtime.Value) (runtime.Value, error) {
+			return loader.CallModuleMethodValue(module, funcIndex, instance, args, host.(*VM))
+		},
+	}
 }
 
 func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
@@ -906,53 +1053,39 @@ func (vm *VM) callStaticMethod(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) callStaticMethodSpread(instruction Instruction, ip int) (int, error) {
-	if len(instruction.Operands) != 3 {
+	if len(instruction.Operands) < 3 {
 		return 0, vm.fatalError(instruction, "static method spread instruction has invalid operands")
 	}
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
-	staticArgCount := int(instruction.Operands[2])
+	argc := int(instruction.Operands[2])
 	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return 0, vm.runtimeError(instruction, "class index out of range")
+	}
+	if len(instruction.Operands) != 3+argc {
+		return 0, vm.runtimeError(instruction, "static method spread argument metadata mismatch")
 	}
 	name, err := vm.constantStringAt(instruction, nameIndex, "static method name must be string")
 	if err != nil {
 		return 0, err
 	}
-	spreadVal, err := vm.pop()
-	if err != nil {
-		return 0, vm.callPropagate(instruction, err)
-	}
-	staticArgs := make([]runtime.Value, staticArgCount)
-	for i := staticArgCount - 1; i >= 0; i-- {
-		value, err := vm.pop()
-		if err != nil {
-			return 0, vm.callPropagate(instruction, err)
-		}
-		staticArgs[i] = value
-	}
-	if spreadList, ok := spreadVal.(*runtime.List); ok {
-		combined := append(staticArgs, spreadList.Elements...)
-		return vm.callStaticMethodWithArgs(instruction, ip, classIndex, name, combined)
-	}
-	spreadDict, ok := spreadVal.(runtime.Dict)
-	if !ok {
-		return 0, vm.runtimeError(instruction, "spread argument must be a list or dict")
-	}
-	indices, found := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], name)
-	if !found || len(indices) != 1 {
-		return 0, vm.runtimeError(instruction, "cannot use dict spread with static method %s.%s", vm.curMod.Chunk.Classes[classIndex].Name, name)
-	}
-	fn := vm.curMod.Chunk.Functions[indices[0]]
-	args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, fn.ParamNames)
-	if err != nil {
-		return 0, vm.callPropagate(instruction, err)
-	}
-	ordered, err := vm.orderRuntimeArguments(instruction, fn, args, names, 0)
+	args, names, fromSpread, hasNamed, err := vm.collectSpreadCallArgs(instruction, instruction.Operands[3:], true)
 	if err != nil {
 		return 0, err
 	}
-	return vm.callStaticMethodWithArgs(instruction, ip, classIndex, name, ordered)
+	if hasNamed {
+		indices, found := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], name)
+		if !found || len(indices) != 1 {
+			return 0, vm.runtimeError(instruction, "cannot use named arguments with spread on static method %s.%s", vm.curMod.Chunk.Classes[classIndex].Name, name)
+		}
+		fn := vm.curMod.Chunk.Functions[indices[0]]
+		fa, fnames := dropUnknownSpreadNames(args, names, fromSpread, fn.ParamNames)
+		args, err = vm.orderRuntimeArguments(instruction, fn, fa, fnames, 0)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return vm.callStaticMethodWithArgs(instruction, ip, classIndex, name, args)
 }
 
 func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classIndex int64, name string, args []runtime.Value) (int, error) {
@@ -988,7 +1121,7 @@ func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classInd
 		}
 		result, err := vm.callCallable(decorated, args)
 		if err != nil {
-			return 0, vm.callPropagate(instruction, err)
+			return vm.propagateDecoratedCallbackError(instruction, ip, err, vm.curMod.Chunk.Functions[functionIndex].Name)
 		}
 		vm.push(result)
 		return ip, nil
@@ -1354,11 +1487,33 @@ func (vm *VM) buildRuntimeInterface(name string, seen map[string]bool) *runtime.
 		return nil
 	}
 	seen[strings.ToLower(name)] = true
-	iface := &runtime.Interface{Name: name}
+	module := vm.moduleName
+	bareName := name
+	if mod, bare, ok := splitQualifiedClassName(name); ok {
+		module = mod
+		bareName = bare
+	}
+	iface := &runtime.Interface{Name: name, Module: module}
 	if info, ok := vm.lookupInterfaceInfo(name); ok {
 		for _, parentName := range info.Parents {
 			if p := vm.buildRuntimeInterface(parentName, seen); p != nil {
 				iface.Parents = append(iface.Parents, p)
+			}
+		}
+		return iface
+	}
+	// A foreign interface's parent chain lives in its declaring chunk, so resolve it through the loader; bare parents are same-module, qualify them (finding 9.17).
+	if module != vm.moduleName && vm.moduleLoader != nil {
+		if _, err := vm.moduleLoader.LoadModule(module, module); err == nil {
+			if info, ok := vm.moduleLoader.LookupModuleInterface(module, bareName); ok {
+				for _, parentName := range info.Parents {
+					if !strings.Contains(parentName, ".") {
+						parentName = module + "." + parentName
+					}
+					if p := vm.buildRuntimeInterface(parentName, seen); p != nil {
+						iface.Parents = append(iface.Parents, p)
+					}
+				}
 			}
 		}
 	}

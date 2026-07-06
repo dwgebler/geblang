@@ -1,0 +1,51 @@
+/**
+ * @title A local subclass of a cross-module iterator is iterable
+ * @summary A class extending a cross-module class that defines __next()/__done()
+ * (or __iter()) iterates in a for-in loop. On the VM the hook lookup previously
+ * missed the cross-module parent and errored "not iterable".
+ */
+import test;
+import iterator_donor as it;
+
+class MyRange extends it.Range {
+    func MyRange(int n) { parent(0, n); }
+}
+
+class MyRange2 extends MyRange {
+    func MyRange2(int n) { parent(n); }
+}
+
+class MyWrap extends it.Wrapper {
+    func MyWrap(int n) { parent(n); }
+}
+
+class IteratorCrossModuleTest extends test.Test {
+
+    @test
+    func inheritedNextDone(): void {
+        let sum = 0;
+        for (x in MyRange(4)) { sum = sum + x; }
+        this.assertEquals(6, sum);
+    }
+
+    @test
+    func inheritedNextDoneTwoLevels(): void {
+        let sum = 0;
+        for (x in MyRange2(4)) { sum = sum + x; }
+        this.assertEquals(6, sum);
+    }
+
+    @test
+    func inheritedIter(): void {
+        let sum = 0;
+        for (x in MyWrap(4)) { sum = sum + x; }
+        this.assertEquals(6, sum);
+    }
+
+    @test
+    func directForeignIteration(): void {
+        let sum = 0;
+        for (x in it.Range(0, 4)) { sum = sum + x; }
+        this.assertEquals(6, sum);
+    }
+}

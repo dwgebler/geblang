@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 )
 
 func NewVM(chunk Chunk, stdout io.Writer) *VM {
@@ -276,14 +277,20 @@ func loaderClassDeserializer(loader ModuleLoader) native.ClassDeserializerFunc {
 func (vm *VM) Cleanup() error {
 	const maxDepth = 4
 	for depth := 0; depth < maxDepth; depth++ {
-		if len(vm.destructibleInstances) == 0 {
+		batch := vm.TakeDestructibles()
+		if len(batch) == 0 {
 			return nil
 		}
-		batch := vm.destructibleInstances
-		vm.destructibleInstances = nil
 		for i := len(batch) - 1; i >= 0; i-- {
 			inst := batch[i]
 			if inst == nil || inst.Destroyed || inst.Class == nil {
+				continue
+			}
+			if inst.Class.Module != vm.moduleName && vm.moduleLoader != nil {
+				inst.Destroyed = true
+				if err := vm.moduleLoader.CallModuleDestructor(inst.Class.Module, inst.Class.Name, inst, vm); err != nil {
+					fmt.Fprintln(vm.destructorStderr(), runtime.RenderDestructorFailure(inst.Class.Name, destructorFailure(err)))
+				}
 				continue
 			}
 			classInfo, ok := vm.classInfo(inst.Class.Name)
@@ -297,6 +304,59 @@ func (vm *VM) Cleanup() error {
 		}
 	}
 	return nil
+}
+
+// EnableDestructibleLocking guards this VM's destructible list so a caller==nil cross-module adoption from another goroutine is race-free; used on the entry VM.
+func (vm *VM) EnableDestructibleLocking() { vm.destructMu = &sync.Mutex{} }
+
+func (vm *VM) lockDestruct() {
+	if vm.destructMu != nil {
+		vm.destructMu.Lock()
+	}
+}
+
+func (vm *VM) unlockDestruct() {
+	if vm.destructMu != nil {
+		vm.destructMu.Unlock()
+	}
+}
+
+// TakeDestructibles returns and clears the tracked destructibles so a transient worker hands its destructor lifetimes up to a non-transient owner.
+func (vm *VM) TakeDestructibles() []*runtime.Instance {
+	vm.lockDestruct()
+	defer vm.unlockDestruct()
+	list := vm.destructibleInstances
+	vm.destructibleInstances = nil
+	return list
+}
+
+// AdoptDestructibles appends destructibles handed up from a transient worker so they fire at this VM's program-exit sweep.
+func (vm *VM) AdoptDestructibles(list []*runtime.Instance) {
+	if len(list) == 0 {
+		return
+	}
+	vm.lockDestruct()
+	defer vm.unlockDestruct()
+	vm.destructibleInstances = append(vm.destructibleInstances, list...)
+}
+
+// trackDestructible registers a freshly constructed destructor-bearing instance under the destructible-list guard.
+func (vm *VM) trackDestructible(inst *runtime.Instance) {
+	vm.lockDestruct()
+	vm.destructibleInstances = append(vm.destructibleInstances, inst)
+	vm.unlockDestruct()
+}
+
+// removeDestructible unregisters an instance from the exit sweep so `del` does not double-fire it.
+func (vm *VM) removeDestructible(instance *runtime.Instance) {
+	vm.lockDestruct()
+	defer vm.unlockDestruct()
+	for i, tracked := range vm.destructibleInstances {
+		if tracked == instance {
+			vm.destructibleInstances = append(vm.destructibleInstances[:i], vm.destructibleInstances[i+1:]...)
+			return
+		}
+	}
 }
 
 func (vm *VM) destructorStderr() io.Writer {
@@ -474,6 +534,7 @@ func (vm *VM) resetForReuse() {
 	vm.staticsLocalOnly = false
 	vm.runEntryIP = 0
 	vm.runInlineExitDepth = -1
+	vm.traceFrameBaseline = 0
 	vm.inDispatchLoop = false
 	vm.destructibleInstances = nil
 	vm.pendingTypeBindings = nil

@@ -1,0 +1,70 @@
+/**
+ * @title Cross-module exported overloaded async functions yield Tasks
+ * @summary An exported overloaded async set wraps the selected overload in a
+ * Task across the module boundary on every call convention: positional member,
+ * named member, from-imported bare call, first-class value, and HOF callback.
+ * A mixed async/sync set wraps only the async winner.
+ */
+import test;
+import async;
+import async_overload_export_donor;
+from async_overload_export_donor import af;
+
+class AsyncOverloadExportTest extends test.Test {
+
+    @test
+    func positionalMemberYieldsTask(): void {
+        let a = async_overload_export_donor.af(5);
+        let b = async_overload_export_donor.af("x");
+        this.assertEquals("Task", "${typeof(a)}");
+        this.assertEquals("Task", "${typeof(b)}");
+        this.assertEquals("int:5", async.await(a));
+        this.assertEquals("str:x", async.await(b));
+    }
+
+    @test
+    func namedMemberYieldsTask(): void {
+        let a = async_overload_export_donor.af(v: 9);
+        this.assertEquals("Task", "${typeof(a)}");
+        this.assertEquals("int:9", async.await(a));
+    }
+
+    @test
+    func fromImportBareCallYieldsTask(): void {
+        let a = af(5);
+        this.assertEquals("Task", "${typeof(a)}");
+        this.assertEquals("int:5", async.await(a));
+    }
+
+    @test
+    func firstClassValueYieldsTask(): void {
+        let f = async_overload_export_donor.af;
+        let a = f(5);
+        let b = f("z");
+        this.assertEquals("Task", "${typeof(a)}");
+        this.assertEquals("Task", "${typeof(b)}");
+        this.assertEquals("int:5", async.await(a));
+        this.assertEquals("str:z", async.await(b));
+    }
+
+    @test
+    func mixedSetWrapsOnlyAsyncWinner(): void {
+        let a = async_overload_export_donor.mx(5);
+        let b = async_overload_export_donor.mx("x");
+        this.assertEquals("Task", "${typeof(a)}");
+        this.assertEquals("string", "${typeof(b)}");
+        this.assertEquals("async:5", async.await(a));
+        this.assertEquals("sync:x", b);
+    }
+
+    @test
+    func mixedValueWrapsOnlyAsyncWinner(): void {
+        let f = async_overload_export_donor.mx;
+        let a = f(5);
+        let b = f("y");
+        this.assertEquals("Task", "${typeof(a)}");
+        this.assertEquals("string", "${typeof(b)}");
+        this.assertEquals("async:5", async.await(a));
+        this.assertEquals("sync:y", b);
+    }
+}

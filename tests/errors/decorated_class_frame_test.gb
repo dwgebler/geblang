@@ -1,0 +1,51 @@
+/**
+ * @title Decorated class-constructor frame trace
+ * @summary A class-constructor decorator's throw names the wrapper frame
+ *          anonymously (<closure>, unlike a decorated function/method which is
+ *          named after the decorated callable) and keeps the caller frame.
+ */
+import test;
+
+func guard(any cls): any {
+    return func(any... a): any {
+        throw ValueError("blocked");
+    };
+}
+
+@guard
+class Box {
+    int v;
+    func Box(int v) { this.v = v; }
+}
+
+@guard
+class Bare {
+    int v;
+}
+
+class DecoratedClassFrameTest extends test.Test {
+    @test
+    func classDecoratorWrapperFrameAnonymous(): void {
+        try {
+            let b = Box(5);
+        } catch (ValueError e) {
+            this.assertEquals("blocked", e.message);
+            let frames = e.stackTrace().frames();
+            this.assertEquals("<closure>", frames[0].function());
+            this.assertEquals(11, frames[0].line());
+            this.assertEquals("DecoratedClassFrameTest.classDecoratorWrapperFrameAnonymous", frames[1].function());
+        }
+    }
+
+    @test
+    func classDecoratorNoConstructorFrame(): void {
+        try {
+            let b = Bare();
+        } catch (ValueError e) {
+            this.assertEquals("blocked", e.message);
+            let frames = e.stackTrace().frames();
+            this.assertEquals("<closure>", frames[0].function());
+            this.assertEquals(11, frames[0].line());
+        }
+    }
+}

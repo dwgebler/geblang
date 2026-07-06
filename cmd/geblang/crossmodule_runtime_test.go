@@ -481,3 +481,285 @@ func TestCrossModuleBothBackendsIdenticalOutput(t *testing.T) {
 		t.Fatalf("expected %q, got %q", cmrExpected, outputs[0])
 	}
 }
+
+const cmNamedDonorGb = "module donor;\n" +
+	"import io;\n" +
+	"export func show4(int a, int b, int c, int d): void { io.println(\"${a} ${b} ${c} ${d}\"); }\n"
+
+const cmNamedMainGb = "import donor;\n" +
+	"donor.show4(d: 4, a: 1, b: 2, c: 3);\n"
+
+const cmNamedExpected = "1 2 3 4\n"
+
+// A cross-module named function call binds identically across the cold VM, the .gbc cache-hit, and the evaluator.
+func TestCrossModuleNamedCallAcrossRuntimePaths(t *testing.T) {
+	bin := buildCMBinary(t)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "donor.gb"), []byte(cmNamedDonorGb), 0644)
+	os.WriteFile(filepath.Join(dir, "main.gb"), []byte(cmNamedMainGb), 0644)
+
+	run := func(args ...string) string {
+		cmd := exec.Command(bin, append(args, "main.gb")...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("run %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	cold := run()
+	if cold != cmNamedExpected {
+		t.Fatalf("cold VM: expected %q, got %q", cmNamedExpected, cold)
+	}
+	warm := run()
+	if warm != cold {
+		t.Fatalf(".gbc cache-hit differs from cold run:\ncold: %q\nwarm: %q", cold, warm)
+	}
+	eval := run("--disable-vm")
+	if eval != cold {
+		t.Fatalf("evaluator differs from VM:\nvm:   %q\neval: %q", cold, eval)
+	}
+}
+
+const cmNamedCtorBaseGb = "module base;\n" +
+	"export class Base {\n" +
+	"    int bx;\n" +
+	"    int bz;\n" +
+	"    func Base(int bx, int bz = 100) { this.bx = bx; this.bz = bz; }\n" +
+	"}\n"
+
+const cmNamedCtorDonorGb = "module donor;\n" +
+	"import base;\n" +
+	"export class Point {\n" +
+	"    int x;\n" +
+	"    int y;\n" +
+	"    func Point(int x, int y = 10) { this.x = x; this.y = y; }\n" +
+	"    func show(): string { return \"Point(${this.x}, ${this.y})\"; }\n" +
+	"}\n" +
+	"export class Box {\n" +
+	"    int a;\n" +
+	"    string label;\n" +
+	"    int width;\n" +
+	"    func Box(int a, string b) { this.a = a; this.label = b; this.width = 0; }\n" +
+	"    func Box(int width) { this.a = 0; this.label = \"w\"; this.width = width; }\n" +
+	"    func show(): string { return \"Box(${this.a},${this.label},${this.width})\"; }\n" +
+	"}\n" +
+	"export class Sub extends base.Base {\n" +
+	"    int extra;\n" +
+	"    func Sub(int bx, int extra) { parent(bx); this.extra = extra; }\n" +
+	"    func showsub(): string { return \"Sub(${this.bx},${this.bz},${this.extra})\"; }\n" +
+	"}\n"
+
+const cmNamedCtorMainGb = "import donor;\n" +
+	"import io;\n" +
+	"io.println(donor.Point(y: 2, x: 1).show());\n" +
+	"io.println(donor.Point(x: 5).show());\n" +
+	"io.println(donor.Box(a: 5, b: \"hi\").show());\n" +
+	"io.println(donor.Box(width: 3).show());\n" +
+	"io.println(donor.Sub(extra: 9, bx: 7).showsub());\n"
+
+const cmNamedCtorExpected = "Point(1, 2)\nPoint(5, 10)\nBox(5,hi,0)\nBox(0,w,3)\nSub(7,100,9)\n"
+
+// A cross-module named constructor call binds and selects the overload identically across the cold VM, the .gbc cache-hit, and the evaluator.
+func TestCrossModuleNamedCtorAcrossRuntimePaths(t *testing.T) {
+	bin := buildCMBinary(t)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "base.gb"), []byte(cmNamedCtorBaseGb), 0644)
+	os.WriteFile(filepath.Join(dir, "donor.gb"), []byte(cmNamedCtorDonorGb), 0644)
+	os.WriteFile(filepath.Join(dir, "main.gb"), []byte(cmNamedCtorMainGb), 0644)
+
+	run := func(args ...string) string {
+		cmd := exec.Command(bin, append(args, "main.gb")...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("run %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	cold := run()
+	if cold != cmNamedCtorExpected {
+		t.Fatalf("cold VM: expected %q, got %q", cmNamedCtorExpected, cold)
+	}
+	warm := run()
+	if warm != cold {
+		t.Fatalf(".gbc cache-hit differs from cold run:\ncold: %q\nwarm: %q", cold, warm)
+	}
+	eval := run("--disable-vm")
+	if eval != cold {
+		t.Fatalf("evaluator differs from VM:\nvm:   %q\neval: %q", cold, eval)
+	}
+}
+
+// A cross-module named constructor call in a built binary matches a direct run.
+func TestCrossModuleNamedCtorBuildBinary(t *testing.T) {
+	bin := buildCMBinary(t)
+	pkgDir := t.TempDir()
+	srcDir := filepath.Join(pkgDir, "src")
+	os.MkdirAll(srcDir, 0755)
+
+	os.WriteFile(filepath.Join(pkgDir, "geblang.yaml"), []byte("name: cmnamedctor\nversion: 0.1.0\nsource: src\n"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "base.gb"), []byte(
+		"module cmnamedctor.base;\n"+
+			"export class Base {\n"+
+			"    int bx;\n"+
+			"    int bz;\n"+
+			"    func Base(int bx, int bz = 100) { this.bx = bx; this.bz = bz; }\n"+
+			"}\n"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "donor.gb"), []byte(
+		"module cmnamedctor.donor;\n"+
+			"import cmnamedctor.base as base;\n"+
+			"export class Point {\n"+
+			"    int x;\n"+
+			"    int y;\n"+
+			"    func Point(int x, int y = 10) { this.x = x; this.y = y; }\n"+
+			"    func show(): string { return \"Point(${this.x}, ${this.y})\"; }\n"+
+			"}\n"+
+			"export class Sub extends base.Base {\n"+
+			"    int extra;\n"+
+			"    func Sub(int bx, int extra) { parent(bx); this.extra = extra; }\n"+
+			"    func showsub(): string { return \"Sub(${this.bx},${this.bz},${this.extra})\"; }\n"+
+			"}\n"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "main.gb"), []byte(
+		"module cmnamedctor.main;\n"+
+			"import cmnamedctor.donor as donor;\n"+
+			"import io;\n"+
+			"export func main(list<string> args): void {\n"+
+			"    io.println(donor.Point(y: 2, x: 1).show());\n"+
+			"    io.println(donor.Sub(extra: 9, bx: 7).showsub());\n"+
+			"}\n"), 0644)
+
+	outBin := filepath.Join(pkgDir, "cmnamedctor")
+	if buildOut, err := exec.Command(bin, "build", "--entry", "cmnamedctor.main", "--out", outBin, pkgDir).CombinedOutput(); err != nil {
+		t.Fatalf("geblang build failed: %v\n%s", err, buildOut)
+	}
+	builtOut, err := exec.Command(outBin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("built binary failed: %v\n%s", err, builtOut)
+	}
+	const want = "Point(1, 2)\nSub(7,100,9)\n"
+	if string(builtOut) != want {
+		t.Fatalf("built binary: expected %q, got %q", want, builtOut)
+	}
+}
+
+const cmOverloadDonorGb = "module donor;\n" +
+	"export func over(int v): string { return \"int:${v}\"; }\n" +
+	"export func over(string s): string { return \"str:${s}\"; }\n" +
+	"export func over(int a, int b): string { return \"two:${a},${b}\"; }\n"
+
+const cmOverloadMainGb = "import donor;\n" +
+	"import io;\n" +
+	"from donor import over;\n" +
+	"io.println(donor.over(5));\n" +
+	"io.println(donor.over(\"x\"));\n" +
+	"io.println(donor.over(a: 1, b: 2));\n" +
+	"io.println(over(9));\n" +
+	"let f = donor.over;\n" +
+	"io.println(f(\"val\"));\n"
+
+const cmOverloadExpected = "int:5\nstr:x\ntwo:1,2\nint:9\nstr:val\n"
+
+// A cross-module exported overload set selects the overload identically across the cold VM, the .gbc cache-hit, and the evaluator.
+func TestCrossModuleOverloadAcrossRuntimePaths(t *testing.T) {
+	bin := buildCMBinary(t)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "donor.gb"), []byte(cmOverloadDonorGb), 0644)
+	os.WriteFile(filepath.Join(dir, "main.gb"), []byte(cmOverloadMainGb), 0644)
+
+	run := func(args ...string) string {
+		cmd := exec.Command(bin, append(args, "main.gb")...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("run %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	cold := run()
+	if cold != cmOverloadExpected {
+		t.Fatalf("cold VM: expected %q, got %q", cmOverloadExpected, cold)
+	}
+	warm := run()
+	if warm != cold {
+		t.Fatalf(".gbc cache-hit differs from cold run:\ncold: %q\nwarm: %q", cold, warm)
+	}
+	eval := run("--disable-vm")
+	if eval != cold {
+		t.Fatalf("evaluator differs from VM:\nvm:   %q\neval: %q", cold, eval)
+	}
+}
+
+// A cross-module exported overload set resolves in a built binary matching a direct run.
+func TestCrossModuleOverloadBuildBinary(t *testing.T) {
+	bin := buildCMBinary(t)
+	pkgDir := t.TempDir()
+	srcDir := filepath.Join(pkgDir, "src")
+	os.MkdirAll(srcDir, 0755)
+
+	os.WriteFile(filepath.Join(pkgDir, "geblang.yaml"), []byte("name: cmoverload\nversion: 0.1.0\nsource: src\n"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "donor.gb"), []byte(
+		"module cmoverload.donor;\n"+
+			"export func over(int v): string { return \"int:${v}\"; }\n"+
+			"export func over(string s): string { return \"str:${s}\"; }\n"+
+			"export func over(int a, int b): string { return \"two:${a},${b}\"; }\n"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "main.gb"), []byte(
+		"module cmoverload.main;\n"+
+			"import cmoverload.donor as donor;\n"+
+			"import io;\n"+
+			"export func main(list<string> args): void {\n"+
+			"    io.println(donor.over(5));\n"+
+			"    io.println(donor.over(\"x\"));\n"+
+			"    io.println(donor.over(a: 1, b: 2));\n"+
+			"    let f = donor.over;\n"+
+			"    io.println(f(\"val\"));\n"+
+			"}\n"), 0644)
+
+	outBin := filepath.Join(pkgDir, "cmoverload")
+	if buildOut, err := exec.Command(bin, "build", "--entry", "cmoverload.main", "--out", outBin, pkgDir).CombinedOutput(); err != nil {
+		t.Fatalf("geblang build failed: %v\n%s", err, buildOut)
+	}
+	builtOut, err := exec.Command(outBin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("built binary failed: %v\n%s", err, builtOut)
+	}
+	const want = "int:5\nstr:x\ntwo:1,2\nstr:val\n"
+	if string(builtOut) != want {
+		t.Fatalf("built binary: expected %q, got %q", want, builtOut)
+	}
+}
+
+// A cross-module named function call in a built binary matches a direct run.
+func TestCrossModuleNamedCallBuildBinary(t *testing.T) {
+	bin := buildCMBinary(t)
+	pkgDir := t.TempDir()
+	srcDir := filepath.Join(pkgDir, "src")
+	os.MkdirAll(srcDir, 0755)
+
+	os.WriteFile(filepath.Join(pkgDir, "geblang.yaml"), []byte("name: cmnamed\nversion: 0.1.0\nsource: src\n"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "donor.gb"), []byte(
+		"module cmnamed.donor;\n"+
+			"import io;\n"+
+			"export func show4(int a, int b, int c, int d): void { io.println(\"${a} ${b} ${c} ${d}\"); }\n"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "main.gb"), []byte(
+		"module cmnamed.main;\n"+
+			"import cmnamed.donor as donor;\n"+
+			"export func main(list<string> args): void {\n"+
+			"    donor.show4(d: 4, a: 1, b: 2, c: 3);\n"+
+			"}\n"), 0644)
+
+	outBin := filepath.Join(pkgDir, "cmnamed")
+	if buildOut, err := exec.Command(bin, "build", "--entry", "cmnamed.main", "--out", outBin, pkgDir).CombinedOutput(); err != nil {
+		t.Fatalf("geblang build failed: %v\n%s", err, buildOut)
+	}
+	builtOut, err := exec.Command(outBin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("built binary failed: %v\n%s", err, builtOut)
+	}
+	if string(builtOut) != cmNamedExpected {
+		t.Fatalf("built binary: expected %q, got %q", cmNamedExpected, builtOut)
+	}
+}

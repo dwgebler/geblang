@@ -34,7 +34,8 @@ class ProfilerTimerTest extends test.Test {
             let xs = [];
             for (i in range(0, 50000)) { xs = xs.push(i); }
         }
-        this.assertTrue(p.elapsedMs() >= 0.0f);
+        /* strictly positive proves __exit ran (a 50k-item build is never 0 ns) */
+        this.assertTrue(p.elapsedMs() > 0.0f);
         this.assertTrue(p.cpuMs() >= 0.0f);
         let r = p.report();
         this.assertTrue(r.hasKey("elapsed_ms"));

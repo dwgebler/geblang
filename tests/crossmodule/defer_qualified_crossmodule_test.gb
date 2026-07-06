@@ -1,0 +1,46 @@
+/**
+ * @title Deferring a module-qualified function fires it on return
+ * @summary A `defer alias.func()` (module-qualified function), a
+ * `defer alias.Class.staticMethod()`, and their LIFO ordering all run when the
+ * deferring function returns. On the VM these previously errored with
+ * "deferred method call receiver is not an instance".
+ */
+import test;
+import defer_qualified_donor as d;
+
+class DeferQualifiedTest extends test.Test {
+
+    func deferModuleFunc(): void {
+        defer d.record("cleanup");
+    }
+
+    func deferStatic(): void {
+        defer d.Marker.mark();
+    }
+
+    func deferBoth(): void {
+        defer d.record("first");
+        defer d.record("second");
+    }
+
+    @test
+    func moduleFunctionDeferFires(): void {
+        d.reset();
+        this.deferModuleFunc();
+        this.assertEquals("cleanup;", d.dump());
+    }
+
+    @test
+    func staticMethodDeferFires(): void {
+        d.reset();
+        this.deferStatic();
+        this.assertEquals("static;", d.dump());
+    }
+
+    @test
+    func deferOrderingLIFO(): void {
+        d.reset();
+        this.deferBoth();
+        this.assertEquals("second;first;", d.dump());
+    }
+}

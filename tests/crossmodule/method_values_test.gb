@@ -1,0 +1,52 @@
+/**
+ * @title Cross-module static and bound instance methods as values
+ * @summary A static method / static const on a class in another module, and a
+ * bound instance method on a cross-module instance, resolve as first-class
+ * values (call, pass, mutation-after-binding) across the module boundary.
+ */
+import test;
+import method_values_donor;
+
+class Square extends method_values_donor.Box {
+    func Square() { parent(1); }
+}
+
+func apply1(any f, int v): int { return f(v); }
+func call0(any f): string { return f(); }
+
+class CrossModuleMethodValueTest extends test.Test {
+    @test
+    func crossModuleStaticMethodValue(): void {
+        let f = method_values_donor.Box.stamp;
+        this.assertEquals(30, f(10));
+        this.assertEquals(12, apply1(method_values_donor.Box.stamp, 4));
+    }
+
+    @test
+    func crossModuleStaticConstValue(): void {
+        this.assertEquals("box", method_values_donor.Box.KIND);
+    }
+
+    @test
+    func crossModuleInheritedStaticValue(): void {
+        let f = Square.stamp;
+        this.assertEquals(9, f(3));
+        this.assertEquals("box", Square.KIND);
+    }
+
+    @test
+    func crossModuleBoundInstanceMethodValue(): void {
+        let b = method_values_donor.Box(42);
+        let m = b.label;
+        this.assertEquals("box-42", m());
+        this.assertEquals("box-42", call0(b.label));
+    }
+
+    @test
+    func crossModuleBoundMethodSeesMutation(): void {
+        let b = method_values_donor.Box(42);
+        let m = b.label;
+        b.id = 7;
+        this.assertEquals("box-7", m());
+    }
+}

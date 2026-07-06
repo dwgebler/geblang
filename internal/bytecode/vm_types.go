@@ -28,6 +28,24 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 			}
 		}
 	}
+	if module, name, isExact := parseExactInstanceofTarget(target); isExact {
+		if module == "" {
+			module = vm.moduleName
+		}
+		if instance, ok := value.(*runtime.Instance); ok {
+			matched := runtime.InstanceClassMatchesExact(instance.Class, module, name)
+			for _, extra := range instance.ExtraTypeNames {
+				if matched {
+					break
+				}
+				matched = strings.EqualFold(stripModulePrefix(extra), name)
+			}
+			vm.push(runtime.Bool{Value: matched})
+			return nil
+		}
+		// Non-instance values keep the legacy name-based match on the bare name.
+		target = name
+	}
 	if arms, ok := vmSplitTopLevelUnion(target); ok {
 		for _, arm := range arms {
 			vm.push(value)

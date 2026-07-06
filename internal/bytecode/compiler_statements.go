@@ -74,11 +74,15 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: decl.Name.Value, Slot: c.globalSlot(decl.Name.Value), FunctionIndex: -1, ClassIndex: -1, InterfaceIndex: -1})
 		}
 		if fn, ok := stmt.Statement.(*ast.FunctionStatement); ok && fn.Name != nil {
-			functionIndex, err := c.singleFunctionIndex(fn.Name.Value)
-			if err != nil {
-				return err
+			indices := c.funcs[strings.ToLower(fn.Name.Value)]
+			if len(indices) == 0 {
+				return c.withStatementLocation(stmt, fmt.Errorf("unknown bytecode function %s", fn.Name.Value))
 			}
-			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: fn.Name.Value, Slot: -1, FunctionIndex: functionIndex, ClassIndex: -1, InterfaceIndex: -1})
+			if len(indices) == 1 {
+				c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: fn.Name.Value, Slot: -1, FunctionIndex: indices[0], ClassIndex: -1, InterfaceIndex: -1})
+			} else {
+				c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: fn.Name.Value, Slot: -1, FunctionIndex: -1, ClassIndex: -1, InterfaceIndex: -1, OverloadIndices: append([]int64(nil), indices...)})
+			}
 		}
 		if class, ok := stmt.Statement.(*ast.ClassStatement); ok && class.Name != nil {
 			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: class.Name.Value, Slot: -1, FunctionIndex: -1, ClassIndex: c.classes[strings.ToLower(class.Name.Value)], InterfaceIndex: -1})
@@ -918,6 +922,9 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 	}
 	// Plain identifier call: defer someFunc(args)
 	if ident, ok := call.Callee.(*ast.Identifier); ok {
+		if _, hasSpread := callSpreadIndex(call.Arguments); hasSpread {
+			return c.compileDeferIdentifierSpread(stmt, call, ident)
+		}
 		index, orderedArgs, err := c.selectFunctionCall(ident.Value, call.Arguments, 0)
 		if err == nil {
 			if err := c.compileOrderedArguments(c.chunk.Functions[index], orderedArgs, 0, stmt.Token.Line, stmt.Token.Column); err != nil {
@@ -957,7 +964,12 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 	}
 	module, name, ok := selectorName(call.Callee)
 	if !ok {
-		return fmt.Errorf("bytecode compiler only supports deferring function and module calls; use --disable-vm to run with the tree-walking evaluator")
+		// Nested selector (e.g. m.Class.staticMethod): defer via a thunk that runs the call verbatim.
+		return c.compileDeferThunk(stmt, call)
+	}
+	// A user-module-qualified call (m.func / cross-module static) is not an instance method; defer it through the regular cross-module call path via a thunk.
+	if c.sourceModuleAliases[module] {
+		return c.compileDeferThunk(stmt, call)
 	}
 	// If the selector object resolves to a variable it's a method call, not a module call.
 	if resolved, isVar := c.resolveName(module); isVar {
@@ -965,6 +977,17 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 			c.emitAt(OpGetLocal, stmt.Token.Line, stmt.Token.Column, resolved.slot)
 		} else {
 			c.emitAt(OpGetGlobal, stmt.Token.Line, stmt.Token.Column, resolved.slot)
+		}
+		if _, hasSpread := callSpreadIndex(call.Arguments); hasSpread {
+			meta, err := c.compileSpreadCallArguments(call.Arguments)
+			if err != nil {
+				return err
+			}
+			nameIndex := int64(len(c.chunk.Constants))
+			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: name})
+			operands := append([]int64{nameIndex, int64(len(call.Arguments))}, meta...)
+			c.emitAt(OpDeferMethodCallSpread, stmt.Token.Line, stmt.Token.Column, operands...)
+			return nil
 		}
 		hasNamedArgs := false
 		for _, arg := range call.Arguments {
@@ -988,11 +1011,10 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 		c.emitAt(OpDeferMethodCallNamed, stmt.Token.Line, stmt.Token.Column, operands...)
 		return nil
 	}
-	// Resolve any `import path as natpath` alias to its canonical name
-	// before dispatching. Unaliased calls map to themselves.
+	// Resolve any `import path as natpath` alias to its canonical name before dispatching (unaliased calls map to themselves).
 	canonical := c.canonicalModule(module)
 	// Keep dedicated opcodes for io.print/println (they write to stdout directly).
-	if canonical == "io" && len(call.Arguments) == 1 && call.Arguments[0].Name == nil {
+	if canonical == "io" && len(call.Arguments) == 1 && call.Arguments[0].Name == nil && !call.Arguments[0].Spread {
 		if err := c.compileExpression(call.Arguments[0].Value); err != nil {
 			return err
 		}
@@ -1006,7 +1028,19 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 		}
 	}
 	if !isBytecodeCallableModule(canonical) {
-		return fmt.Errorf("bytecode compiler cannot defer calls to module %q", module)
+		// Local static (Class.method) or any other module-qualified call the native path can't record: defer via a thunk.
+		return c.compileDeferThunk(stmt, call)
+	}
+	if _, hasSpread := callSpreadIndex(call.Arguments); hasSpread {
+		meta, err := c.compileSpreadCallArguments(call.Arguments)
+		if err != nil {
+			return err
+		}
+		nameIndex := int64(len(c.chunk.Constants))
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: canonical + "." + name})
+		operands := append([]int64{nameIndex, int64(len(call.Arguments))}, meta...)
+		c.emitAt(OpDeferNativeCallSpread, stmt.Token.Line, stmt.Token.Column, operands...)
+		return nil
 	}
 	hasNamedArgs := false
 	for _, arg := range call.Arguments {
@@ -1029,6 +1063,70 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 	}
 	c.emitAt(OpDeferNativeCallNamed, stmt.Token.Line, stmt.Token.Column, operands...)
 	return nil
+}
+
+// compileDeferThunk defers a module-qualified / nested-selector / local-static call by freezing the callee value and its arguments at registration time (a closure thunk would instead capture them by execution-time reference).
+func (c *Compiler) compileDeferThunk(stmt *ast.SimpleStatement, call *ast.CallExpression) error {
+	if err := c.compileExpression(call.Callee); err != nil {
+		return err
+	}
+	if _, hasSpread := callSpreadIndex(call.Arguments); hasSpread {
+		meta, err := c.compileSpreadCallArguments(call.Arguments)
+		if err != nil {
+			return err
+		}
+		operands := append([]int64{int64(len(call.Arguments))}, meta...)
+		c.emitAt(OpDeferCallableCallSpread, stmt.Token.Line, stmt.Token.Column, operands...)
+		return nil
+	}
+	hasNamedArgs := false
+	for _, arg := range call.Arguments {
+		if arg.Name != nil {
+			hasNamedArgs = true
+		}
+		if err := c.compileExpression(arg.Value); err != nil {
+			return err
+		}
+	}
+	if !hasNamedArgs {
+		c.emitAt(OpDeferCallableCall, stmt.Token.Line, stmt.Token.Column, int64(len(call.Arguments)))
+		return nil
+	}
+	operands := []int64{int64(len(call.Arguments))}
+	for _, arg := range call.Arguments {
+		operands = append(operands, c.argNameIndex(arg))
+	}
+	c.emitAt(OpDeferCallableCallNamed, stmt.Token.Line, stmt.Token.Column, operands...)
+	return nil
+}
+
+// compileDeferIdentifierSpread handles `defer someFunc(...xs)`: a compile-time-resolved function uses OpDeferFuncCallSpread; a variable holding a callable falls back to OpDeferCallableCallSpread, matching the non-spread branch's precedence.
+func (c *Compiler) compileDeferIdentifierSpread(stmt *ast.SimpleStatement, call *ast.CallExpression, ident *ast.Identifier) error {
+	funcIdx, err := c.selectFunctionCallSpread(ident.Value)
+	if err == nil {
+		meta, compileErr := c.compileSpreadCallArguments(call.Arguments)
+		if compileErr != nil {
+			return compileErr
+		}
+		operands := append([]int64{funcIdx, int64(len(call.Arguments))}, meta...)
+		c.emitAt(OpDeferFuncCallSpread, stmt.Token.Line, stmt.Token.Column, operands...)
+		return nil
+	}
+	if resolved, isVar := c.resolveName(ident.Value); isVar {
+		if resolved.kind == "local" {
+			c.emitAt(OpGetLocal, stmt.Token.Line, stmt.Token.Column, resolved.slot)
+		} else {
+			c.emitAt(OpGetGlobal, stmt.Token.Line, stmt.Token.Column, resolved.slot)
+		}
+		meta, compileErr := c.compileSpreadCallArguments(call.Arguments)
+		if compileErr != nil {
+			return compileErr
+		}
+		operands := append([]int64{int64(len(call.Arguments))}, meta...)
+		c.emitAt(OpDeferCallableCallSpread, stmt.Token.Line, stmt.Token.Column, operands...)
+		return nil
+	}
+	return fmt.Errorf("defer: %w", err)
 }
 
 // argNameIndex returns the constant-pool index of a String holding the

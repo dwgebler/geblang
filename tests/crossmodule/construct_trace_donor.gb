@@ -1,0 +1,36 @@
+module construct_trace_donor;
+
+export class Point {
+    int x;
+    int y;
+
+    func Point(int x, int y = 10) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+export class Zero {
+}
+
+export class Widget {
+    static func sMethod(int a, int b): int {
+        return a + b;
+    }
+
+    func iMethod(int a, int b): int {
+        return a + b;
+    }
+}
+
+export class Box<T> {
+    T value;
+
+    func Box(T value) {
+        this.value = value;
+    }
+}
+
+export func addTwo(int a, int b): int {
+    return a + b;
+}
