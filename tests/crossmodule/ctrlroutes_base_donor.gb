@@ -1,0 +1,7 @@
+module ctrlroutes_base_donor;
+
+# Foreign parent (mirrors a framework controller base) in its own module.
+export class BaseCtl {
+    func BaseCtl() {}
+    func shared(): string { return "s"; }
+}

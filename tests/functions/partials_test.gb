@@ -2,6 +2,7 @@
  * @title Partial application
  * @summary Native _ placeholder partials across every dispatch context.
  */
+# @vm-divergence: partial-overload-resolution
 import test;
 import math;
 

@@ -570,7 +570,7 @@ func (l *Loader) DeserializeModuleClass(class runtime.BytecodeClass, value runti
 }
 
 func (l *Loader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
-	chunk, ok := l.chunkValue(class.Module)
+	chunk, ok := l.chunkFor(class.Module)
 	if !ok {
 		return nil, fmt.Errorf("module %s is not loaded", class.Module)
 	}
@@ -906,6 +906,31 @@ func (l *Loader) CallModuleMethod(module string, className string, methodName st
 	return result, err
 }
 
+// CallModuleMethodNamed dispatches a cross-module instance method with named-argument metadata, binding names in the home chunk so declared defaults engage (including for an omitted middle parameter).
+func (l *Loader) CallModuleMethodNamed(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, names []string, caller *bytecode.VM) (runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script instance method %s.%s called without a main chunk", className, methodName)
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunkValue(module)
+		if !ok {
+			if native.IsNativeModule(module) {
+				return nil, &runtime.MethodNotFoundError{Class: className, Method: methodName}
+			}
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	vm, pool := l.moduleVM(module, chunk, caller)
+	result, err := vm.CallMethodFastNamed(instance, methodName, args, names)
+	l.adoptDestructibles(pool, vm, caller)
+	l.releaseModuleVM(pool, vm, err)
+	return result, err
+}
+
 // CallModuleDestructor fires a cross-module instance's `func ~Class()` in its home chunk on a home worker. The worker suppresses its own cleanup, so a destructor that builds more destructibles hands them up to caller for the re-drain.
 func (l *Loader) CallModuleDestructor(module string, className string, instance *runtime.Instance, caller *bytecode.VM) error {
 	chunk, ok := l.chunkFor(module)
@@ -933,18 +958,7 @@ func (l *Loader) ListAllClasses() []runtime.Value {
 	out := []runtime.Value{}
 	appendChunkClasses := func(module string, chunk bytecode.Chunk) {
 		for i, classInfo := range chunk.Classes {
-			out = append(out, runtime.BytecodeClass{
-				Name:             classInfo.Name,
-				Doc:              classInfo.Doc,
-				Index:            int64(i),
-				Module:           module,
-				Parent:           classInfo.ParentName,
-				Fields:           append([]string(nil), classInfo.FieldNames...),
-				Interfaces:       append([]string(nil), classInfo.Implements...),
-				Decorators:       classInfo.Decorators,
-				MethodDecorators: classInfo.MethodDecorators,
-				StaticDecorators: classInfo.StaticDecorators,
-			})
+			out = append(out, bytecode.BuildBytecodeClass(chunk, classInfo, int64(i), module))
 		}
 	}
 	l.records.Range(func(k, v any) bool {
@@ -1009,20 +1023,7 @@ func (l *Loader) FindFunctionByName(name string) (runtime.Value, bool) {
 func classFromChunk(chunk bytecode.Chunk, module, name, key string) (runtime.Value, bool) {
 	for idx, classInfo := range chunk.Classes {
 		if strings.EqualFold(classInfo.Name, name) || strings.ToLower(classInfo.Name) == key {
-			return runtime.BytecodeClass{
-				Name:             classInfo.Name,
-				Doc:              classInfo.Doc,
-				Index:            int64(idx),
-				Module:           module,
-				Parent:           classInfo.ParentName,
-				Fields:           append([]string(nil), classInfo.FieldNames...),
-				Interfaces:       append([]string(nil), classInfo.Implements...),
-				Decorators:       classInfo.Decorators,
-				MethodDecorators: classInfo.MethodDecorators,
-				StaticDecorators: classInfo.StaticDecorators,
-				DefLine:          classInfo.DefLine,
-				DefColumn:        classInfo.DefColumn,
-			}, true
+			return bytecode.BuildBytecodeClass(chunk, classInfo, int64(idx), module), true
 		}
 	}
 	return nil, false
@@ -1030,6 +1031,12 @@ func classFromChunk(chunk bytecode.Chunk, module, name, key string) (runtime.Val
 
 func (l *Loader) FindClassByName(name string) (runtime.Value, bool) {
 	key := strings.ToLower(name)
+	// Prefer the entry chunk so a bare-name lookup resolves the user's class over a same-named stdlib/module class, matching the evaluator's scope-chain resolution.
+	if l.hasMainChunk {
+		if r, found := classFromChunk(l.mainChunk, "", name, key); found {
+			return r, true
+		}
+	}
 	var result runtime.Value
 	var ok bool
 	l.records.Range(func(k, v any) bool {
@@ -1039,17 +1046,11 @@ func (l *Loader) FindClassByName(name string) (runtime.Value, bool) {
 		}
 		return true
 	})
-	if ok {
-		return result, true
-	}
-	if l.hasMainChunk {
-		return classFromChunk(l.mainChunk, "", name, key)
-	}
-	return nil, false
+	return result, ok
 }
 
 func (l *Loader) ClassValueInModule(module, className string) (runtime.Value, bool) {
-	chunk, ok := l.chunkValue(module)
+	chunk, ok := l.chunkFor(module)
 	if !ok {
 		return nil, false
 	}

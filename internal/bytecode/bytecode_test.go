@@ -275,6 +275,10 @@ func (l fakeModuleLoader) CallModuleMethod(module string, className string, meth
 	return runtime.Null{}, fmt.Errorf("unexpected module method call %s.%s", className, methodName)
 }
 
+func (l fakeModuleLoader) CallModuleMethodNamed(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, names []string, caller *bytecode.VM) (runtime.Value, error) {
+	return runtime.Null{}, fmt.Errorf("unexpected module named method call %s.%s", className, methodName)
+}
+
 func (l fakeModuleLoader) CallModuleMethodValue(module string, funcIndex int64, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected module method value call in %s", module)
 }

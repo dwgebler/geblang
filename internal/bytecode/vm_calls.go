@@ -779,7 +779,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 				break
 			}
 			if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
-				return 0, vm.runtimeError(instruction, "%s missing argument %s", function.Name, function.ParamNames[i])
+				return 0, vm.runtimeError(instruction, "%s missing argument %s", function.Name, function.displayParamName(i))
 			}
 		}
 		return 0, vm.runtimeError(instruction, "%s missing argument %d", function.Name, argc+1)
@@ -801,7 +801,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			}
 			if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
 				if i < len(function.ParamNames) {
-					return 0, vm.runtimeError(instruction, "%s missing argument %s", function.Name, function.ParamNames[i])
+					return 0, vm.runtimeError(instruction, "%s missing argument %s", function.Name, function.displayParamName(i))
 				}
 				return 0, vm.runtimeError(instruction, "%s missing argument %d", function.Name, i+1)
 			}
@@ -834,7 +834,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			if !vm.matchValueToTypeSpec(typeParams, arg, vm.typeSpec(bound)) {
 				paramName := ""
 				if i < len(function.ParamNames) {
-					paramName = function.ParamNames[i]
+					paramName = function.displayParamName(i)
 				}
 				suffix := vm.collectionMismatchSuffixStr(arg, function.ParamTypes[i])
 				gotName := vm.descriptiveRuntimeTypeName(arg)
@@ -866,7 +866,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			if !matches {
 				paramName := ""
 				if i < len(function.ParamNames) {
-					paramName = function.ParamNames[i]
+					paramName = function.displayParamName(i)
 				}
 				suffix := vm.collectionMismatchSuffixStr(arg, function.ParamTypes[i])
 				gotName := vm.descriptiveRuntimeTypeName(arg)
@@ -1821,8 +1821,10 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 		vm.bridgeActive.Store(true)
 		vm.noteEscape()
 		return runtime.Function{
-			Name:       callable.Name,
-			Parameters: bridgedParameters(callable.Parameters),
+			Name:        callable.Name,
+			Parameters:  bridgedParameters(callable.Parameters),
+			Metadata:    vm.bridgedFunctionMetadata(callable),
+			NativeNamed: vm.bridgeNamedInvoker(callable, isolated),
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				if isolated {
 					return vm.callCallableIsolated(callable, args)
@@ -1841,8 +1843,10 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 		vm.bridgeActive.Store(true)
 		vm.noteEscape()
 		return runtime.Function{
-			Name:       callable.Name,
-			Parameters: bridgedParameters(vm.closureParameters(callable)),
+			Name:        callable.Name,
+			Parameters:  bridgedParameters(vm.closureParameters(callable)),
+			Metadata:    vm.bridgedFunctionMetadata(callable),
+			NativeNamed: vm.bridgeNamedInvoker(callable, isolated),
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				if isolated {
 					return vm.callCallableIsolated(callable, args)
@@ -1901,6 +1905,56 @@ func (vm *VM) closureParameters(closure runtime.BytecodeClosure) []runtime.Param
 		return nil
 	}
 	return parameterMetadataFromFunctionInfo(vm.chunk.Functions[idx], 0)
+}
+
+// bridgedFunctionMetadata resolves the reflection metadata of a bytecode function value at the module boundary so reflect.parameters/returnType survive the native-wrapper bridge; nil when the home chunk is a different module.
+func (vm *VM) bridgedFunctionMetadata(value runtime.Value) *runtime.FunctionMetadata {
+	switch callable := value.(type) {
+	case runtime.BytecodeFunction:
+		if callable.Module == "" || callable.Module == vm.moduleName {
+			return bytecodeFunctionMetadata(vm.bytecodeFunctionValue(callable.Index, false))
+		}
+		return bytecodeFunctionMetadata(callable)
+	case runtime.BytecodeClosure:
+		if callable.Module == "" || callable.Module == vm.moduleName {
+			return bytecodeFunctionMetadata(vm.bytecodeFunctionValue(callable.FunctionIndex, false))
+		}
+	}
+	return nil
+}
+
+// bridgeLocalFunctionInfo returns the home FunctionInfo and receiver offset for a bridge callable declared in this VM's own chunk; ok is false for a foreign-chunk callable whose defaults this VM cannot resolve.
+func (vm *VM) bridgeLocalFunctionInfo(callable runtime.Value) (FunctionInfo, int, bool) {
+	switch c := callable.(type) {
+	case runtime.BytecodeFunction:
+		if (c.Module == "" || c.Module == vm.moduleName) && int(c.Index) >= 0 && int(c.Index) < len(vm.curMod.Chunk.Functions) {
+			return vm.curMod.Chunk.Functions[c.Index], 0, true
+		}
+	case runtime.BytecodeClosure:
+		if (c.Module == "" || c.Module == vm.moduleName) && int(c.FunctionIndex) >= 0 && int(c.FunctionIndex) < len(vm.curMod.Chunk.Functions) {
+			info := vm.curMod.Chunk.Functions[c.FunctionIndex]
+			return info, int(info.UpvalueCount), true
+		}
+	}
+	return FunctionInfo{}, 0, false
+}
+
+// bridgeNamedInvoker builds the named-argument entry for a bridge wrapper over a home-chunk callable: it orders named args against the real signature (engaging declared defaults, including for an omitted middle parameter) then invokes positionally; nil for a foreign-chunk callable.
+func (vm *VM) bridgeNamedInvoker(callable runtime.Value, isolated bool) func(*runtime.Instance, []runtime.Value, []string) (runtime.Value, error) {
+	info, offset, ok := vm.bridgeLocalFunctionInfo(callable)
+	if !ok {
+		return nil
+	}
+	return func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
+		ordered, oerr := vm.orderRuntimeArguments(Instruction{}, info, args, names, offset)
+		if oerr != nil {
+			return nil, oerr
+		}
+		if isolated {
+			return vm.callCallableIsolated(callable, ordered)
+		}
+		return vm.callCallableSlow(callable, ordered)
+	}
 }
 
 // bridgedParameters reconstructs ast.Parameter entries (with a type name)
@@ -2854,6 +2908,21 @@ func (vm *VM) CallMethodFast(instance *runtime.Instance, name string, args []run
 		return vm.executeFunctionDirect(idx, callArgs)
 	}
 	return vm.CallMethod(instance, name, args)
+}
+
+// CallMethodFastNamed binds named arguments against the method's home signature (engaging declared defaults, including for an omitted middle parameter) then dispatches positionally through CallMethodFast; the caller runs it on the method's home-module VM.
+func (vm *VM) CallMethodFastNamed(instance *runtime.Instance, name string, args []runtime.Value, names []string) (runtime.Value, error) {
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if ok {
+		if indices, found := vm.lookupMethod(classInfo, name); found {
+			if _, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, name, indices, args, names, 1); err == nil {
+				return vm.CallMethodFast(instance, name, ordered)
+			} else {
+				return nil, err
+			}
+		}
+	}
+	return vm.CallMethodFast(instance, name, args)
 }
 
 // callBoundDecoratedValue applies a bound method/static value's decorator wrapper with the receiver forwarded (nil for a static), so the value runs the decorator like a direct call; an uncaught throw's frames are restamped to match. handled is false when funcIndex is not decorated.

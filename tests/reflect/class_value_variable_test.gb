@@ -1,0 +1,100 @@
+/**
+ * @title reflect on a class value held in a variable (1.32.1)
+ * @summary reflect.methods/staticMethods/interfaces/parent/location on a
+ * class value reached through a variable, a function return, or a function
+ * argument agree with a direct class identifier. A class identifier that is
+ * the direct argument of a reflect call compiles to a metadata-rich
+ * constant; via a variable it previously carried only a name+index
+ * constant, so the VM returned empty/null while the evaluator (which reads
+ * the live class declaration) returned the real members.
+ */
+import test;
+import reflect;
+
+interface Greeter {
+    func greet(): string;
+}
+
+/** Base doc. */
+@Deprecated
+class Base implements Greeter {
+    string name;
+    func Base(string name) { this.name = name; }
+    func greet(): string { return "hi"; }
+    static func make(): Base { return Base("made"); }
+}
+
+class Mid extends Base {
+    func Mid(string name) { parent(name); }
+    func extra(): string { return "extra"; }
+    static func makeMid(): Mid { return Mid("mid"); }
+}
+
+func identity(any c): any { return c; }
+func takesClass(any k): any { return k; }
+
+class ClassValueVariableTest extends test.Test {
+    @test
+    func methodsViaVariable(): void {
+        let c = Mid;
+        this.assertEquals("[\"extra\"]", "${reflect.methods(c)}");
+    }
+
+    @test
+    func staticMethodsViaVariable(): void {
+        let c = Mid;
+        this.assertEquals("[\"makeMid\"]", "${reflect.staticMethods(c)}");
+    }
+
+    @test
+    func parentViaVariable(): void {
+        let c = Mid;
+        this.assertEquals("Base", reflect.parent(c));
+    }
+
+    @test
+    func interfacesViaVariableOnBase(): void {
+        let c = Base;
+        this.assertEquals("[\"Greeter\"]", "${reflect.interfaces(c)}");
+    }
+
+    @test
+    func locationViaVariable(): void {
+        let c = Mid;
+        this.assertTrue(reflect.location(c) != null);
+    }
+
+    @test
+    func methodsViaFunctionReturn(): void {
+        this.assertEquals("[\"extra\"]", "${reflect.methods(identity(Mid))}");
+    }
+
+    @test
+    func methodsViaFunctionArgument(): void {
+        this.assertEquals("[\"extra\"]", "${reflect.methods(takesClass(Mid))}");
+    }
+
+    @test
+    func staticMethodViaVariableIsCallable(): void {
+        let c = Mid;
+        let m = reflect.staticMethod(c, "makeMid");
+        this.assertTrue(m != null);
+        let made = m();
+        this.assertEquals("mid", made.name);
+    }
+
+    @test
+    func decoratorsAndDocsAlreadyWorkedViaVariable(): void {
+        let c = Base;
+        this.assertEquals(1, reflect.decorators(c).length());
+        this.assertTrue(reflect.docs(c) != null);
+    }
+
+    @test
+    func twoVariablesOfSameClassBothRehydrate(): void {
+        let a = Mid;
+        let b = Mid;
+        this.assertEquals("${reflect.methods(a)}", "${reflect.methods(b)}");
+        this.assertEquals("[\"extra\"]", "${reflect.methods(b)}");
+    }
+}

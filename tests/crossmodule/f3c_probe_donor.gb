@@ -1,0 +1,15 @@
+module f3c_probe_donor;
+
+import reflect;
+import f3c_profilecollide_donor;
+
+# Resolves "Profile" by bare name from a module that imports a same-named class.
+export func profileFields(): string {
+    let cls = reflect.class("Profile");
+    let out = "";
+    for (f in reflect.fields(cls)) {
+        let fd = f as dict<string, any>;
+        out = out + "${fd["name"]} ";
+    }
+    return out;
+}

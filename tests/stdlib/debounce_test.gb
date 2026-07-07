@@ -17,7 +17,10 @@ class DebounceTest extends test.Test {
             lastValue = x;
             return x;
         };
-        let debounced = rate.debounce(work, 30);
+        # A wide quiet window makes this deterministic: the three synchronous
+        # calls below all register before the first task's timer can elapse,
+        # even under heavy CPU load, so only the last generation survives.
+        let debounced = rate.debounce(work, 500);
 
         # Fire three calls in quick succession; only the last should run.
         let t1 = debounced(1);

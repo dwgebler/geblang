@@ -1,0 +1,52 @@
+/**
+ * @title Cross-module reflect.methods drives route registration
+ * @summary A controller-shaped class declared in one module, reflected from
+ * another via reflect.class(instance), exposes its methods, static methods,
+ * constructors, and per-method decorators. A framework that walks
+ * reflect.methods to build routes gets the full set. The 1.32.0 regression made
+ * reflect.methods empty on the VM for cross-module class values, so every route
+ * built this way was silently dropped; the evaluator was unaffected.
+ */
+import test;
+import reflect;
+import ctrlroutes_ctl_donor as ctl;
+
+class CrossModuleReflectRoutesTest extends test.Test {
+
+    func routeCount(any controller): int {
+        let cls = reflect.class(controller);
+        int routes = 0;
+        for (name in reflect.methods(cls)) {
+            let handler = reflect.method(controller, name as string);
+            for (decoratorValue in reflect.decorators(handler)) {
+                let decorator = decoratorValue as dict<string, any>;
+                if ((decorator["name"] as string).endsWith("Get")) {
+                    routes = routes + 1;
+                }
+            }
+        }
+        return routes;
+    }
+
+    @test
+    func reflectMethodsListsOwnMethods(): void {
+        let c = ctl.Home();
+        let methods = reflect.methods(reflect.class(c)).sorted();
+        this.assertEquals(2, methods.length());
+        this.assertTrue(methods.contains("index"));
+        this.assertTrue(methods.contains("about"));
+    }
+
+    @test
+    func reflectStaticMethodsAndConstructors(): void {
+        let cls = reflect.class(ctl.Home());
+        let statics = reflect.staticMethods(cls);
+        this.assertTrue(statics.contains("mk"));
+        this.assertEquals(1, reflect.constructors(cls).length());
+    }
+
+    @test
+    func decoratedRoutesAreDiscovered(): void {
+        this.assertEquals(2, this.routeCount(ctl.Home()));
+    }
+}

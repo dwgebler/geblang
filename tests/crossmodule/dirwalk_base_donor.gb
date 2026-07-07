@@ -1,0 +1,14 @@
+module dirwalk_base_donor;
+
+# Foreign parent with an interface, a static const, methods and a static method.
+export interface Greeter {
+    func greet(): string;
+}
+
+export class BaseCtl implements Greeter {
+    static const KIND = "base";
+    func BaseCtl() {}
+    func greet(): string { return "hi"; }
+    func shared(): string { return "s"; }
+    static func mkBase(): BaseCtl { return BaseCtl(); }
+}

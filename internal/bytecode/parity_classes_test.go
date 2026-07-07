@@ -780,6 +780,20 @@ io.println("after del");
 `, "before del\nrel a\nafter del\n")
 }
 
+func TestParityDelDestructorStaticWritePersists(t *testing.T) {
+	runParity(t, `import io;
+class Counter {
+    static int destroyed = 0;
+    func ~Counter() { Counter.destroyed = Counter.destroyed + 1; }
+}
+Counter.destroyed = 0;
+let c = Counter();
+io.println(Counter.destroyed);
+del c;
+io.println(Counter.destroyed);
+`, "0\n1\n")
+}
+
 // TestParityWithDoesNotInvokeDestructor verifies that a class
 // destructor does NOT fire at with-block exit (only __exit__
 // does). The destructor fires later via the program-exit sweep,

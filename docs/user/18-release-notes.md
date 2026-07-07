@@ -4,6 +4,14 @@
 
 ### Changed
 
+- `geblang test` now executes on the bytecode VM by default, the same backend
+  release builds ship, so a test that passes only on the tree-walking evaluator
+  no longer hides a VM-path regression. A test file the VM cannot run fails
+  loudly, naming the file, instead of silently falling back. `--runtime=evaluator`
+  (alias `--disable-vm`) runs the whole suite on the evaluator. A file covering a
+  documented, temporarily-accepted divergence may carry a `# @vm-divergence: <key>`
+  comment plus a matching `KNOWN_DIVERGENCES.md` row to run on the evaluator; the
+  runner cross-validates the two and reports how many files ran that way.
 - `instanceof` is now module-exact: the right-hand side resolves to the
   specific class or interface declaration named in scope, and an instance
   matches when its actual class is that declaration or a subtype of it. Two
@@ -114,6 +122,26 @@
 - `profile.elapsed` and `metrics.duration` now return the documented
   milliseconds as a float with sub-millisecond precision (previously raw
   nanoseconds as an integer). The `now()` token they take is unchanged.
+- Variables mutated inside a `try` body keep their values when an exception
+  unwinds to the handler, and `finally` effects always run; previously the
+  standard runtime rolled the frame's locals back to their try-entry values.
+- A `select` statement inside a closure captures its channels; previously a
+  worker running such a closure could read an undefined value and block
+  forever.
+- Calling a method on an instance whose class is exported and overridden in
+  another module dispatches to the override; previously a statically
+  resolved call could run the base method.
+- A cross-module named-argument call may omit a defaulted parameter between
+  two supplied ones (`f(a: 1, c: 3)` with `b` defaulted).
+- `reflect.parameters` and `reflect.returnType` work on function values,
+  including functions passed across module boundaries; `reflect.fields`
+  reports declared field types and lossless decorator arguments (floats and
+  lists included) for cross-module instances; `reflect.interfaces` returns
+  bare interface names on both backends.
+- `reflect.class(name)` prefers the program's own classes over a same-named
+  class exported by a standard-library module.
+- `test.mock` patches apply inside test methods on the standard runtime and
+  restore automatically between methods.
 
 ### Performance
 

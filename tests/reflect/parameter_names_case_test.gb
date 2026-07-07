@@ -1,0 +1,67 @@
+/**
+ * @title reflect preserves declared parameter-name case
+ * @summary reflect.constructors / reflect.parameters / reflect.method /
+ * reflect.staticMethod report a parameter's name in the case it was
+ * declared (camelCase stays camelCase). The bytecode VM stores a
+ * lowercased matching key for named-argument binding; that key must not
+ * leak into the public reflection metadata.
+ */
+import test;
+import reflect;
+
+class Widget {
+    int extraField;
+    func Widget(int extraField, string labelText = "x") {
+        this.extraField = extraField;
+    }
+    func doThing(int firstArg, decimal secondArg): void {}
+    static func makeIt(int seedValue): Widget { return Widget(seedValue); }
+}
+
+func topFn(int outerName, bool flagOn): void {}
+
+class ParameterNameCaseTest extends test.Test {
+    func namesOf(any fn): list<string> {
+        list<string> out = [];
+        for (p in reflect.parameters(fn)) {
+            out = out.push((p as dict<string, any>)["name"] as string);
+        }
+        return out;
+    }
+
+    @test
+    func constructorParamNamesKeepCase(): void {
+        let ctors = reflect.constructors(Widget);
+        this.assertEquals(1, ctors.length());
+        list<string> names = [];
+        for (p in ctors[0] as list<any>) {
+            names = names.push((p as dict<string, any>)["name"] as string);
+        }
+        this.assertEquals("[\"extraField\", \"labelText\"]", "${names}");
+    }
+
+    @test
+    func methodParamNamesKeepCase(): void {
+        let names = this.namesOf(reflect.method(Widget, "doThing"));
+        this.assertEquals("[\"firstArg\", \"secondArg\"]", "${names}");
+    }
+
+    @test
+    func freeFunctionParamNamesKeepCase(): void {
+        let names = this.namesOf(topFn);
+        this.assertEquals("[\"outerName\", \"flagOn\"]", "${names}");
+    }
+
+    @test
+    func staticMethodParamNamesKeepCase(): void {
+        let names = this.namesOf(reflect.staticMethod(Widget, "makeIt"));
+        this.assertEquals("[\"seedValue\"]", "${names}");
+    }
+
+    @test
+    func namedArgMatchingStaysCaseInsensitive(): void {
+        # The lowercased matching key still binds regardless of case.
+        let w = Widget(extrafield: 3, LABELTEXT: "y");
+        this.assertEquals(3, w.extraField);
+    }
+}

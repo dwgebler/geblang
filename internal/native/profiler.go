@@ -120,8 +120,8 @@ func profilerInt64(d runtime.Dict, key string) int64 {
 	if !ok {
 		return 0
 	}
-	if iv, ok := e.Value.(runtime.Int); ok {
-		return iv.Value.Int64()
+	if n, ok := AsInt64(e.Value); ok {
+		return n
 	}
 	return 0
 }

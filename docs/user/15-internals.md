@@ -728,9 +728,10 @@ model.
 ## Evaluator: `internal/evaluator`
 
 The evaluator is a tree-walking interpreter that executes the AST directly
-without compilation. It is the runtime for `geblang test`, the `--disable-vm`
-mode, and the fallback when the bytecode compiler does not yet support a
-construct. The evaluator and VM are held to strict output parity (enforced by
+without compilation. It is the runtime for the `--disable-vm` mode, the
+`geblang test --runtime=evaluator` lane, and the fallback when the bytecode
+compiler does not yet support a construct. (`geblang test` runs on the bytecode
+VM by default.) The evaluator and VM are held to strict output parity (enforced by
 the parity and fuzz suites in `internal/bytecode`); a language feature is not
 considered done until both backends implement it and parity tests pass.
 

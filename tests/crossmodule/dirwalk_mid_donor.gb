@@ -1,0 +1,12 @@
+module dirwalk_mid_donor;
+import dirwalk_base_donor as base;
+
+export interface Named {
+    func name(): string;
+}
+
+export class MyCtl extends base.BaseCtl implements Named {
+    func MyCtl() { parent(); }
+    func extra(): string { return "e"; }
+    func name(): string { return "n"; }
+}

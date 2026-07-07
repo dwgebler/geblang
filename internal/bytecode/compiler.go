@@ -33,6 +33,8 @@ type Compiler struct {
 	funcs           map[string][]int64
 	functionCursors map[string]int
 	classes         map[string]int64
+	// exportedClasses holds lowercased names of classes exported from this chunk; such a class may be subclassed and its methods overridden by an unseen importing module, so the compiler must not devirtualize its method calls.
+	exportedClasses map[string]bool
 	interfaces      map[string]int64
 	interfaceAST    map[string]*ast.InterfaceStatement
 	enums           map[string]int64
@@ -129,6 +131,7 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 		funcs:               map[string][]int64{},
 		functionCursors:     map[string]int{},
 		classes:             map[string]int64{},
+		exportedClasses:     map[string]bool{},
 		interfaces:          map[string]int64{},
 		interfaceAST:        map[string]*ast.InterfaceStatement{},
 		enums:               map[string]int64{},
@@ -151,8 +154,15 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 		}
 	}
 	for _, stmt := range program.Statements {
+		exported := false
 		if export, ok := stmt.(*ast.ExportStatement); ok {
 			stmt = export.Statement
+			exported = true
+		}
+		if exported {
+			if class, ok := stmt.(*ast.ClassStatement); ok && class.Name != nil {
+				c.exportedClasses[strings.ToLower(class.Name.Value)] = true
+			}
 		}
 		if alias, ok := stmt.(*ast.TypeAliasStatement); ok {
 			c.declareTypeAlias(alias)

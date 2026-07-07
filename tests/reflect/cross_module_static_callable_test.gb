@@ -1,0 +1,44 @@
+/**
+ * @title reflect.staticMethod on a cross-module class is invocable
+ * @summary A static method reflected off a class declared in another
+ * module returns a callable that runs (it previously threw "reflect
+ * target is not callable" on the bytecode VM because the callable indexed
+ * the caller's class table instead of routing through the module loader).
+ * Overload selection, a missing name, and inherited statics all match the
+ * evaluator.
+ */
+import test;
+import reflect;
+import static_callable_donor as sd;
+
+class CrossModuleStaticCallableTest extends test.Test {
+    @test
+    func crossModuleStaticIsCallable(): void {
+        let m = reflect.staticMethod(sd.Gadget, "build");
+        this.assertTrue(m != null);
+        this.assertEquals(30, m(3).v);
+    }
+
+    @test
+    func crossModuleStaticViaVariable(): void {
+        let c = sd.Gadget;
+        let m = reflect.staticMethod(c, "build");
+        this.assertEquals(40, m(4).v);
+    }
+
+    @test
+    func crossModuleStaticSelectsOverloadByArity(): void {
+        let m = reflect.staticMethod(sd.Gadget, "build");
+        this.assertEquals(47, m(4, 7).v);
+    }
+
+    @test
+    func missingCrossModuleStaticIsNull(): void {
+        this.assertTrue(reflect.staticMethod(sd.Gadget, "nope") == null);
+    }
+
+    @test
+    func inheritedCrossModuleStaticIsNull(): void {
+        this.assertTrue(reflect.staticMethod(sd.SubGadget, "build") == null);
+    }
+}

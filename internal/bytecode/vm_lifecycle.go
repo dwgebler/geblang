@@ -600,24 +600,6 @@ func (vm *VM) prepareFunctionTypeMetadata() {
 	}
 }
 
-func (vm *VM) snapshotCurrentFrameLocals() (snapshot []runtime.VMValue, base int) {
-	if len(vm.frames) == 0 {
-		return nil, 0
-	}
-	frame := vm.frames[len(vm.frames)-1]
-	count := frame.localCount
-	if count == 0 || frame.basePointer >= len(vm.localsStack) {
-		return nil, frame.basePointer
-	}
-	end := frame.basePointer + count
-	if end > len(vm.localsStack) {
-		end = len(vm.localsStack)
-	}
-	snap := make([]runtime.VMValue, end-frame.basePointer)
-	copy(snap, vm.localsStack[frame.basePointer:end])
-	return snap, frame.basePointer
-}
-
 // takeCallArgsBuffer returns a []runtime.Value of length size, reusing
 // a previously released slice from the per-VM free list when one with
 // sufficient capacity is available. Pair every call with

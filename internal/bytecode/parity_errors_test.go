@@ -93,6 +93,52 @@ io.println(withFinally());
 `, "finally\n7\n")
 }
 
+func TestParityFinallyRunsDuringExceptionUnwind(t *testing.T) {
+	runParity(t, `import io;
+func boom(): int { throw RuntimeError("kaboom"); }
+int order = 0;
+try {
+    try {
+        boom();
+    } finally {
+        order = 1;
+    }
+} catch (RuntimeError e) {
+    order = order + 10;
+}
+io.println(order);
+`, "11\n")
+}
+
+func TestParityTryBodyMutationPersistsInCatch(t *testing.T) {
+	runParity(t, `import io;
+func boom(): int { throw RuntimeError("e"); }
+int x = 0;
+try {
+    x = 5;
+    boom();
+} catch (RuntimeError e) {
+    io.println(x);
+}
+`, "5\n")
+}
+
+// A closure's mutation of a captured outer variable persists after the exception it throws is caught (the drain-on-body-error shape).
+func TestParityClosureMutationPersistsAcrossCaughtThrow(t *testing.T) {
+	runParity(t, `import io;
+func run(): void {
+    any captured = null;
+    func body(): void {
+        captured = "set";
+        throw RuntimeError("boom");
+    }
+    try { body(); } catch (RuntimeError e) {}
+    io.println("${captured}");
+}
+run();
+`, "set\n")
+}
+
 func TestParityDefer(t *testing.T) {
 	runParity(t, `import io;
 func run(): void {
@@ -128,6 +174,24 @@ func run(bool early): void {
 run(true);
 run(false);
 `, "early\ndeferred\nnormal\ndeferred\n")
+}
+
+// A deferred call to a nested function that shares its parent's frame (closes over an outer local) resolves that local when it runs during the parent's return.
+func TestParityDeferSharedFrameClosure(t *testing.T) {
+	runParity(t, `import io;
+func run(): void {
+    list<string> order = [];
+    func record(string label): void { order = order.push(label); }
+    func wrapper(): void {
+        defer record("a");
+        defer record("b");
+        record("body");
+    }
+    wrapper();
+    io.println("${order}");
+}
+run();
+`, "[\"body\", \"b\", \"a\"]\n")
 }
 
 func TestParityDeferUserFunc(t *testing.T) {
@@ -187,6 +251,19 @@ func run(bool early): void {
 run(true);
 run(false);
 `, "early\ncleanup\nnormal\ncleanup\n")
+}
+
+// A deferred method call on a primitive receiver (list/dict/set), not just a class instance.
+func TestParityDeferPrimitiveMethodCall(t *testing.T) {
+	runParity(t, `import io;
+func h(): void {
+    list<string> out = [];
+    defer out.push("deferred");
+    out.push("done");
+    io.println("${out}");
+}
+h();
+`, "[\"done\"]\n")
 }
 
 func TestParityDeferMethodCall(t *testing.T) {

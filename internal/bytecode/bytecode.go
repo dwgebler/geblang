@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(78)
+	Version = uint16(79)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -412,6 +412,7 @@ type FunctionInfo struct {
 	TypeParamConstraintExprs []string // parallel to TypeParameters; "" if no constraint
 	Entry                    int64
 	ParamNames               []string
+	ParamDisplayNames        []string // original-case names for reflection/error display; ParamNames stays lowercased for matching
 	ParamSlots               []int64
 	ParamTypes               []string
 	ParamDecorators          [][]runtime.DecoratorMetadata
@@ -438,6 +439,17 @@ type FunctionInfo struct {
 	// False when every ParamTypes entry is "" or "any"; lets call
 	// entry skip the validation walk for dynamically-typed funcs.
 	requiresParamValidation bool
+}
+
+// displayParamName returns the original-case name, falling back to the lowercased matching name.
+func (fi FunctionInfo) displayParamName(i int) string {
+	if i >= 0 && i < len(fi.ParamDisplayNames) {
+		return fi.ParamDisplayNames[i]
+	}
+	if i >= 0 && i < len(fi.ParamNames) {
+		return fi.ParamNames[i]
+	}
+	return ""
 }
 
 type ClassInfo struct {
@@ -557,6 +569,11 @@ func Encode(chunk Chunk) ([]byte, error) {
 		out = binary.BigEndian.AppendUint64(out, uint64(function.Entry))
 		out = binary.BigEndian.AppendUint16(out, uint16(len(function.ParamNames)))
 		for _, name := range function.ParamNames {
+			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
+			out = append(out, []byte(name)...)
+		}
+		out = binary.BigEndian.AppendUint16(out, uint16(len(function.ParamDisplayNames)))
+		for _, name := range function.ParamDisplayNames {
 			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
 			out = append(out, []byte(name)...)
 		}
@@ -843,6 +860,11 @@ func Decode(data []byte) (Chunk, error) {
 		function.ParamNames = make([]string, 0, nameCount)
 		for j := 0; j < nameCount; j++ {
 			function.ParamNames = append(function.ParamNames, strings.ToLower(string(reader.read(int(reader.u16())))))
+		}
+		displayCount := int(reader.u16())
+		function.ParamDisplayNames = make([]string, 0, displayCount)
+		for j := 0; j < displayCount; j++ {
+			function.ParamDisplayNames = append(function.ParamDisplayNames, string(reader.read(int(reader.u16()))))
 		}
 		paramCount := int(reader.u16())
 		function.ParamSlots = make([]int64, 0, paramCount)

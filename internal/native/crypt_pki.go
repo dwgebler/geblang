@@ -729,8 +729,8 @@ func dictInt(d runtime.Dict, key string, defaultVal int) int {
 	if !ok {
 		return defaultVal
 	}
-	if v, ok := e.Value.(runtime.Int); ok && v.Value != nil {
-		return int(v.Value.Int64())
+	if n, ok := AsInt64(e.Value); ok {
+		return int(n)
 	}
 	return defaultVal
 }

@@ -1,0 +1,3 @@
+module ctrlroutes_deco_donor;
+
+export func Get(string path): dict<string, any> { return {"__route": true, "path": path}; }

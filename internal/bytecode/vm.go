@@ -187,6 +187,8 @@ type ModuleLoader interface {
 	CallModuleOverloadedNamed(module string, indices []int64, displayName string, args []runtime.Value, names []string, caller *VM) (runtime.Value, error)
 	CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value, caller *VM) (runtime.Value, error)
 	CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *VM) (runtime.Value, error)
+	// CallModuleMethodNamed dispatches a cross-module instance method with named-argument metadata, binding names in the home chunk so declared defaults engage.
+	CallModuleMethodNamed(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, names []string, caller *VM) (runtime.Value, error)
 	// CallModuleMethodValue dispatches a bound method/static value pinned to funcIndex (first overload) on its home worker; instance is the receiver, nil for a static. Applies the decorator wrapper with the receiver bound.
 	CallModuleMethodValue(module string, funcIndex int64, instance *runtime.Instance, args []runtime.Value, caller *VM) (runtime.Value, error)
 	// CallModuleDestructor fires a cross-module instance's `func ~Class()` in its home chunk on a home worker; caller adopts any destructibles the destructor builds (re-drain).
@@ -355,8 +357,6 @@ type exceptionHandler struct {
 	frameDepth       int
 	stackDepth       int
 	localsStackDepth int
-	snapshot         []runtime.VMValue
-	snapshotBase     int
 }
 
 type iteratorValue struct {
@@ -1441,7 +1441,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			vm.push(vmDirValue(vmv.ToValue()))
+			vm.push(vm.vmDirValue(vmv.ToValue()))
 		case OpDump:
 			vmv, err := vm.popVM()
 			if err != nil {
@@ -1766,14 +1766,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if len(instruction.Operands) != 1 {
 				return vm.fatalError(*instruction, "exception handler instruction has invalid operands")
 			}
-			snap, snapBase := vm.snapshotCurrentFrameLocals()
 			vm.exceptionHandlers = append(vm.exceptionHandlers, exceptionHandler{
 				handlerIP:        int(instruction.Operands[0]),
 				frameDepth:       len(vm.frames),
 				stackDepth:       len(vm.stack),
 				localsStackDepth: len(vm.localsStack),
-				snapshot:         snap,
-				snapshotBase:     snapBase,
 			})
 		case OpPopExceptionHandler:
 			if len(vm.exceptionHandlers) == 0 {
@@ -2436,7 +2433,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					if instance.TypeBindings == nil {
 						instance.TypeBindings = map[string]string{}
 					}
-					instance.TypeBindings[paramName.Value] = typeName.Value
+					instance.TypeBindings[paramName.Value] = vm.resolveFrameTypeName(typeName.Value)
 				}
 			}
 		case OpPlantCallTypeBindings:
@@ -2468,7 +2465,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				if !pOK || !tOK {
 					return vm.runtimeError(*instruction, "OpPlantCallTypeBindings: constants must be strings")
 				}
-				vm.pendingTypeBindings[paramName.Value] = typeName.Value
+				vm.pendingTypeBindings[paramName.Value] = vm.resolveFrameTypeName(typeName.Value)
 			}
 		case OpPlantCallTypeArgs:
 			if len(instruction.Operands) < 1 {
@@ -3184,9 +3181,6 @@ func (vm *VM) jumpToExceptionHandler(instruction Instruction, ip int) (int, erro
 	}
 	if len(vm.localsStack) > handler.localsStackDepth {
 		vm.localsStack = vm.localsStack[:handler.localsStackDepth]
-	}
-	if len(handler.snapshot) > 0 && handler.snapshotBase+len(handler.snapshot) <= len(vm.localsStack) {
-		copy(vm.localsStack[handler.snapshotBase:handler.snapshotBase+len(handler.snapshot)], handler.snapshot)
 	}
 	if len(vm.frames) > 0 {
 		vm.currentFrameBP = vm.frames[len(vm.frames)-1].basePointer
@@ -4697,7 +4691,8 @@ func (vm *VM) execDel(instruction Instruction) error {
 		} else if classInfo, ok := vm.classInfo(instance.Class.Name); ok && classInfo.DestructorIndex >= 0 {
 			instance.Destroyed = true
 			vm.removeDestructible(instance)
-			if _, err := vm.CallFunctionRaw(classInfo.DestructorIndex, []runtime.Value{instance}); err != nil {
+			// Run inline on the host VM so the destructor's static-field writes persist; the wrapper path keeps static writes call-local.
+			if _, err := vm.callBytecodeInline(classInfo.DestructorIndex, []runtime.Value{instance}); err != nil {
 				if fault, ok := boundaryFaultToError(err); ok {
 					return vm.uncaughtThrowError(instruction, vm.mergeBoundaryFrames(fault, int(instruction.Line)))
 				}
@@ -5245,14 +5240,16 @@ func (vm *VM) runDefers(instruction Instruction) error {
 				}
 				args = expanded
 			}
-			if _, err := vm.CallFunction(action.funcIdx, args); err != nil {
+			// A nested function that shares its parent's frame resolves outer locals against currentFrameBP, so it must run inline on the still-live parent frame, not through CallFunction's wrapper VM.
+			deferFn := &vm.curMod.Chunk.Functions[action.funcIdx]
+			if deferFn.SharesParentFrame && !deferFn.IsGenerator && !deferFn.Async {
+				if _, err := vm.callBytecodeInline(action.funcIdx, args); err != nil {
+					return vm.wrapDeferError(instruction, action.line, err, "deferred call: %v", err)
+				}
+			} else if _, err := vm.CallFunction(action.funcIdx, args); err != nil {
 				return vm.wrapDeferError(instruction, action.line, err, "deferred call: %v", err)
 			}
 		case deferKindMethod:
-			instance, ok := action.receiver.(*runtime.Instance)
-			if !ok {
-				return vm.runtimeError(instruction, "deferred method call receiver is not an instance")
-			}
 			args := action.args
 			names := action.names
 			if action.spreadMask != nil {
@@ -5267,14 +5264,18 @@ func (vm *VM) runDefers(instruction Instruction) error {
 					names = nil
 				}
 			}
-			if len(names) > 0 {
-				reordered, err := vm.reorderMethodNamedArgs(instruction, instance, action.name, args, names)
-				if err != nil {
-					return vm.runtimeError(instruction, "deferred method call %s: %v", action.name, err)
+			if instance, ok := action.receiver.(*runtime.Instance); ok {
+				if len(names) > 0 {
+					reordered, err := vm.reorderMethodNamedArgs(instruction, instance, action.name, args, names)
+					if err != nil {
+						return vm.runtimeError(instruction, "deferred method call %s: %v", action.name, err)
+					}
+					args = reordered
 				}
-				args = reordered
-			}
-			if _, err := vm.CallMethod(instance, action.name, args); err != nil {
+				if _, err := vm.CallMethod(instance, action.name, args); err != nil {
+					return vm.wrapDeferError(instruction, action.line, err, "deferred method call %s: %v", action.name, err)
+				}
+			} else if _, err := vm.callDeferredValueMethod(instruction, action.receiver, action.name, args); err != nil {
 				return vm.wrapDeferError(instruction, action.line, err, "deferred method call %s: %v", action.name, err)
 			}
 		case deferKindCallable:

@@ -464,11 +464,14 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 			}
 		}
 	}
+	// A callable-typed cast accepts any invocable value as-is (mirrors the evaluator); reflect targets carry their bound callable here.
+	if vmCallableTypeName(stripped) && runtime.IsCallableValue(value) {
+		vm.push(value)
+		return ip, nil
+	}
 	cast, err := castValue(value, target)
 	if err != nil {
-		/* Cast failures are user-catchable via `try / catch (RuntimeError e)`.
-		 * Matches the evaluator, where castValue's error bubbles into the
-		 * try frame as a thrown RuntimeError. */
+		// Cast failures are user-catchable as a thrown RuntimeError, matching the evaluator.
 		return vm.throwTyped(instruction, ip, "RuntimeError", err.Error())
 	}
 	vm.push(cast)
@@ -1137,7 +1140,8 @@ func checkCastDunderReturn(target string, value runtime.Value) error {
 }
 
 func castValue(value runtime.Value, target string) (runtime.Value, error) {
-	if value.TypeName() == target {
+	// A native value's TypeName is unqualified, so a module-qualified target (streams.IOStream) matches on its stripped name, mirroring the evaluator.
+	if value.TypeName() == target || value.TypeName() == stripModulePrefix(target) {
 		return value, nil
 	}
 	/* Nullable targets accept null directly; non-null values fall

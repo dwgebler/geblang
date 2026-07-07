@@ -608,11 +608,13 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	paramSlots := make([]int64, 0, len(stmt.Parameters))
 	var constSlots []int64
 	paramNames := make([]string, 0, len(stmt.Parameters))
+	paramDisplayNames := make([]string, 0, len(stmt.Parameters))
 	paramTypes := make([]string, 0, len(stmt.Parameters))
 	paramDecorators := make([][]runtime.DecoratorMetadata, 0, len(stmt.Parameters))
 	defaultConstants := make([]int64, 0, len(stmt.Parameters))
 	if receiverName != "" {
 		paramNames = append(paramNames, strings.ToLower(receiverName))
+		paramDisplayNames = append(paramDisplayNames, receiverName)
 		paramSlots = append(paramSlots, c.defineLocalWithType(receiverName, ""))
 		paramTypes = append(paramTypes, "")
 		paramDecorators = append(paramDecorators, nil)
@@ -629,6 +631,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 			return fmt.Errorf("function parameter has no name")
 		}
 		paramNames = append(paramNames, strings.ToLower(param.Name.Value))
+		paramDisplayNames = append(paramDisplayNames, param.Name.Value)
 		paramType := c.bytecodeTypeNameForParam(param.Type, allTypeParams)
 		paramSlot := c.defineLocalWithType(param.Name.Value, c.bytecodeTypeName(param.Type))
 		paramSlots = append(paramSlots, paramSlot)
@@ -667,6 +670,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	c.chunk.Functions[index].DefLine = int64(stmt.Token.Line)
 	c.chunk.Functions[index].DefColumn = int64(stmt.Token.Column)
 	c.chunk.Functions[index].ParamNames = paramNames
+	c.chunk.Functions[index].ParamDisplayNames = paramDisplayNames
 	c.chunk.Functions[index].ParamSlots = paramSlots
 	c.chunk.Functions[index].ParamTypes = paramTypes
 	c.chunk.Functions[index].ParamDecorators = paramDecorators

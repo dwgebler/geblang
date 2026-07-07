@@ -1,0 +1,47 @@
+module f3c_reflect_donor;
+
+import reflect;
+
+# Reflection/dispatch helpers; a value reaching them has crossed a module boundary.
+
+export func describe(any fn): string {
+    let ps = reflect.parameters(fn);
+    let out = "count=${ps.length()} ret=${reflect.returnType(fn)}";
+    for (p in ps) {
+        let d = p as dict<string, any>;
+        out = out + " |${d["name"]}:${d["type"]}:${d["hasDefault"]}";
+    }
+    return out;
+}
+
+export func fieldTypes(any instance): string {
+    let out = "";
+    for (field in reflect.fields(instance)) {
+        let f = field as dict<string, any>;
+        out = out + "${f["name"]}:${f["type"]} ";
+    }
+    return out;
+}
+
+export func decoratorArgs(any instance): string {
+    let out = "";
+    for (field in reflect.fields(instance)) {
+        let f = field as dict<string, any>;
+        if (f.contains("decorators")) {
+            for (d in f["decorators"] as list<any>) {
+                let dd = d as dict<string, any>;
+                out = out + "${dd["name"]}=${dd["args"]} ";
+            }
+        }
+    }
+    return out;
+}
+
+export func invokeNamed(any handler, dict<string, any> named): any {
+    return handler(...named);
+}
+
+export func invokeMethodNamed(any instance, string name, dict<string, any> named): any {
+    let m = reflect.method(instance, name);
+    return m(...named);
+}

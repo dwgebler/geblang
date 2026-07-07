@@ -468,10 +468,14 @@ func printHelp(writer io.Writer, topic string) bool {
 		return true
 	case "test":
 		fmt.Fprintln(writer, "usage: geblang test [--tag name] [--class ClassName] [--method methodName]")
-		fmt.Fprintln(writer, "                    [--verbose|-v|--format <summary|verbose|teamcity>]")
+		fmt.Fprintln(writer, "                    [--runtime vm|evaluator] [--verbose|-v|--format <summary|verbose|teamcity>]")
 		fmt.Fprintln(writer, "                    [--allow-ffi <glob>] [--allow-process-control] [--allow-onnx] [--allow-browser] <file-or-dir>")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Runs Geblang test files. Directory paths discover *_test.gb files recursively.")
+		fmt.Fprintln(writer, "Tests run on the bytecode VM by default; a file the VM cannot compile fails loudly.")
+		fmt.Fprintln(writer, "--runtime evaluator (alias --disable-vm) runs the whole suite on the tree-walking evaluator.")
+		fmt.Fprintln(writer, "A file with a '# @vm-divergence: <key>' comment and a matching KNOWN_DIVERGENCES.md row")
+		fmt.Fprintln(writer, "runs on the evaluator as an accepted divergence and is reported in the summary.")
 		fmt.Fprintln(writer, "--tag name runs only tests decorated with the given tag. Repeat to include multiple tags.")
 		fmt.Fprintln(writer, "--class ClassName restricts the run to that test class.")
 		fmt.Fprintln(writer, "--method methodName restricts the run to that method (repeat for multiple methods).")
@@ -1473,8 +1477,28 @@ func runTests(args []string) {
 	paths := []string{}
 	format := "summary"
 	allowFFI := []string{}
+	evaluatorLane := false
 	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "--runtime=") {
+			if err := selectTestRuntime(strings.TrimPrefix(args[i], "--runtime="), &evaluatorLane); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			continue
+		}
 		switch args[i] {
+		case "--runtime":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "geblang test --runtime expects vm or evaluator")
+				os.Exit(2)
+			}
+			if err := selectTestRuntime(args[i+1], &evaluatorLane); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			i++
+		case "--disable-vm":
+			evaluatorLane = true
 		case "--tag":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "geblang test --tag expects a name")
@@ -1541,11 +1565,34 @@ func runTests(args []string) {
 		fmt.Fprintln(os.Stderr, "no test files found")
 		os.Exit(1)
 	}
+	ledger, err := loadDivergenceLedger(paths[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	annotations := map[string]string{}
+	for _, file := range files {
+		key, err := scanVMDivergence(file)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		annotations[file] = key
+	}
+	if err := validateDivergences(files, annotations, ledger); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	total := int64(0)
 	failed := int64(0)
 	skipped := int64(0)
+	divergences := 0
 	for _, file := range files {
-		fileTotal, fileFailed, fileSkipped, err := runTestFile(file, tags, classFilter, methodFilters, format, allowFFI)
+		useEval := evaluatorLane || annotations[file] != ""
+		if !evaluatorLane && annotations[file] != "" {
+			divergences++
+		}
+		fileTotal, fileFailed, fileSkipped, err := runTestFile(file, tags, classFilter, methodFilters, format, allowFFI, useEval)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
 			os.Exit(1)
@@ -1555,6 +1602,13 @@ func runTests(args []string) {
 		skipped += fileSkipped
 	}
 	passed := total - failed - skipped
+	if divergences > 0 {
+		if format == "teamcity" {
+			fmt.Printf("##teamcity[message text='accepted divergences: %d file(s) ran on the evaluator' status='NORMAL']\n", divergences)
+		} else {
+			fmt.Printf("accepted divergences: %d file(s) ran on the evaluator (see %s)\n", divergences, ledgerFileName)
+		}
+	}
 	if format == "teamcity" {
 		fmt.Printf("##teamcity[message text='tests: total=%d failed=%d passed=%d skipped=%d' status='NORMAL']\n", total, failed, passed, skipped)
 	} else {
@@ -1563,6 +1617,18 @@ func runTests(args []string) {
 	if failed > 0 {
 		os.Exit(1)
 	}
+}
+
+func selectTestRuntime(value string, evaluatorLane *bool) error {
+	switch value {
+	case "vm":
+		*evaluatorLane = false
+	case "evaluator", "eval":
+		*evaluatorLane = true
+	default:
+		return fmt.Errorf("geblang test --runtime must be one of vm, evaluator (got %q)", value)
+	}
+	return nil
 }
 
 func discoverTestFiles(path string) ([]string, error) {
@@ -1589,69 +1655,19 @@ func discoverTestFiles(path string) ([]string, error) {
 	return files, err
 }
 
-func runTestFile(path string, tags []string, classFilter string, methodFilters []string, format string, allowFFI []string) (int64, int64, int64, error) {
-	source, err := os.ReadFile(path)
+// runTestFile runs one file on the VM (default) or the evaluator when useEval is set (whole-run evaluator lane or an accepted per-file divergence).
+func runTestFile(path string, tags []string, classFilter string, methodFilters []string, format string, allowFFI []string, useEval bool) (int64, int64, int64, error) {
+	prep, err := prepareTestProgram(path, tags, classFilter, methodFilters, format)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	parsed, err := parseOnly(string(source))
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	resolver := modules.NewResolver([]string{filepath.Dir(path)})
-	// A test file declaring `module X;` merges with X's source so its
-	// tests reach X's private members (check.SameModuleTestProgram).
-	base, sameModule := check.SameModuleTestProgram(path, parsed, resolver)
-	if !sameModule {
-		if declared := check.DeclaredModuleName(parsed); declared != "" {
-			return 0, 0, 0, fmt.Errorf("%s declares module %s but no module source resolves to that name; a same-module test file must sit alongside the module it tests", path, declared)
-		}
-		base = parsed
-	}
-	if err := analyzeCrossModule(path, base, resolver); err != nil {
-		return 0, 0, 0, err
-	}
-	classes := testClasses(parsed)
-	if classFilter != "" {
-		filtered := classes[:0]
-		for _, name := range classes {
-			if name == classFilter {
-				filtered = append(filtered, name)
-			}
-		}
-		classes = filtered
-	}
-	if len(classes) == 0 {
+	if prep == nil {
 		return 0, 0, 0, nil
 	}
-	runnerProgram, err := parseOnly(buildTestRunner(classes, tags, methodFilters, format))
-	if err != nil {
-		return 0, 0, 0, err
+	if useEval {
+		return runTestFileEvaluator(prep, allowFFI)
 	}
-	program := &ast.Program{Statements: append(append([]ast.Statement{}, base.Statements...), runnerProgram.Statements...)}
-	if err := analyzeCrossModule(path, program, resolver); err != nil {
-		return 0, 0, 0, err
-	}
-	var out strings.Builder
-	// Pass the script's directory as a module path so the resolver
-	// can walk up to find a project's geblang.yaml when the test
-	// lives inside a non-stdlib package (e.g. gebweb/tests/).
-	ev := evaluator.NewWithArgsAndModulePaths(&out, nil, []string{filepath.Dir(path)})
-	applyManifestCapabilities(filepath.Dir(path))
-	if policy, perr := ev.BuildFFIPolicy(filepath.Dir(path), allowFFI); perr == nil {
-		ev.SetFFIPolicy(policy)
-	} else {
-		return 0, 0, 0, perr
-	}
-	result, err := ev.Eval(program)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	if result.Exited && result.ExitCode != 0 {
-		return 0, 0, 0, fmt.Errorf("test runner exited with %d", result.ExitCode)
-	}
-	printTestOutput(out.String())
-	return parseTestSummary(out.String())
+	return runTestFileVM(prep, path, allowFFI)
 }
 
 // analyzeCrossModule runs the cross-module static checks (unknown members,

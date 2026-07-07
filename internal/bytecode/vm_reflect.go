@@ -2,11 +2,9 @@ package bytecode
 
 import (
 	"fmt"
-	"geblang/internal/ast"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -119,7 +117,7 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.parameters expects value")
 		}
-		metadata, ok := reflectFunctionMetadata(args[0])
+		metadata, ok := vm.reflectFunctionMetadataValue(args[0])
 		if !ok {
 			return nil, fmt.Errorf("reflect.parameters expects function or method, got %s", args[0].TypeName())
 		}
@@ -132,7 +130,7 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.returnType expects value")
 		}
-		metadata, ok := reflectFunctionMetadata(args[0])
+		metadata, ok := vm.reflectFunctionMetadataValue(args[0])
 		if !ok {
 			return nil, fmt.Errorf("reflect.returnType expects function or method, got %s", args[0].TypeName())
 		}
@@ -199,7 +197,7 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.%s expects class", fn)
 		}
-		metadata, ok := reflectClassMetadata(args[0])
+		metadata, ok := vm.reflectClassMetadata(args[0])
 		if !ok {
 			// Fall back to built-in primitive metadata so
 			// `reflect.methods([1,2,3])` and the rest of the
@@ -232,14 +230,20 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 			if metadata.Parent == "" {
 				return runtime.Null{}, nil
 			}
-			return runtime.String{Value: metadata.Parent}, nil
+			// Bare name matches the evaluator; the qualifier lives only in metadata for cross-module dispatch.
+			return runtime.String{Value: bareClassName(metadata.Parent)}, nil
 		case "className":
 			if metadata.Name == "" {
 				return runtime.Null{}, nil
 			}
 			return runtime.String{Value: metadata.Name}, nil
 		case "interfaces":
-			return bytecodeStringList(metadata.Interfaces), nil
+			// Bare names match the evaluator; the module qualifier lives only in metadata for cross-module dispatch.
+			bare := make([]string, len(metadata.Interfaces))
+			for i, name := range metadata.Interfaces {
+				bare[i] = bareClassName(name)
+			}
+			return bytecodeStringList(bare), nil
 		}
 		return nil, fmt.Errorf("unsupported native call reflect.%s", fn)
 	case "constructors":
@@ -315,10 +319,10 @@ func (vm *VM) reflectInterfaceInfo(value runtime.Value) (InterfaceInfo, bool) {
 }
 
 func (vm *VM) reflectDoc(value runtime.Value) (string, bool) {
-	if metadata, ok := reflectFunctionMetadata(value); ok {
+	if metadata, ok := vm.reflectFunctionMetadataValue(value); ok {
 		return metadata.Doc, true
 	}
-	if metadata, ok := reflectClassMetadata(value); ok {
+	if metadata, ok := vm.reflectClassMetadata(value); ok {
 		return metadata.Doc, true
 	}
 	if iface, ok := vm.reflectInterfaceInfo(value); ok {
@@ -455,12 +459,12 @@ func (vm *VM) reflectMethodNativeCall(fn string, args []runtime.Value) (runtime.
 	var instance *runtime.Instance
 	switch value := args[0].(type) {
 	case runtime.BytecodeClass:
-		class = value
+		class = vm.canonicalClassValue(value)
 	case *runtime.Instance:
 		instance = value
 		classIndex, ok := vm.classIndex[strings.ToLower(value.Class.Name)]
 		if !ok {
-			if target, ok := reflectedRuntimeInstanceMethod(fn, key, value); ok {
+			if target, ok := vm.reflectedRuntimeInstanceMethod(fn, key, value); ok {
 				return target, nil
 			}
 			if value.Class.Module != vm.moduleName {
@@ -496,15 +500,6 @@ func (vm *VM) reflectMethodNativeCall(fn string, args []runtime.Value) (runtime.
 		}
 	}
 	metadata := classMethodMetadata(class, key, fn == "staticMethod")
-	if metadata == nil && class.Index >= 0 && int(class.Index) < len(vm.chunk.Classes) {
-		classInfo := vm.chunk.Classes[class.Index]
-		if fn == "staticMethod" {
-			class.StaticMetadata = vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0)
-		} else {
-			class.MethodMetadata = vm.classFunctionMetadata(classInfo.Methods, "method", 1)
-		}
-		metadata = classMethodMetadata(class, key, fn == "staticMethod")
-	}
 	if decorators == nil && metadata == nil && callable == nil {
 		return runtime.Null{}, nil
 	}
@@ -542,7 +537,7 @@ func (vm *VM) reflectBoundMethodCallable(class runtime.BytecodeClass, key string
 	}
 }
 
-func reflectedRuntimeInstanceMethod(fn, key string, instance *runtime.Instance) (runtime.Value, bool) {
+func (vm *VM) reflectedRuntimeInstanceMethod(fn, key string, instance *runtime.Instance) (runtime.Value, bool) {
 	if fn == "staticMethod" || instance == nil || instance.Class == nil {
 		return runtime.Null{}, false
 	}
@@ -558,6 +553,7 @@ func reflectedRuntimeInstanceMethod(fn, key string, instance *runtime.Instance) 
 	var callable runtime.Value
 	if len(methods) > 0 {
 		method := methods[0]
+		loader := vm.moduleLoader
 		callable = runtime.Function{
 			Name: metadata.Name,
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -565,6 +561,15 @@ func reflectedRuntimeInstanceMethod(fn, key string, instance *runtime.Instance) 
 					return nil, fmt.Errorf("reflected method is not callable")
 				}
 				return method.Native(instance, args)
+			},
+			NativeNamed: func(this *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
+				if loader == nil || instance.Class == nil {
+					if method.Native == nil {
+						return nil, fmt.Errorf("reflected method is not callable")
+					}
+					return method.Native(instance, args)
+				}
+				return loader.CallModuleMethodNamed(instance.Class.Module, instance.Class.Name, key, instance, args, names, nil)
 			},
 		}
 	}
@@ -575,6 +580,19 @@ func reflectedRuntimeInstanceMethod(fn, key string, instance *runtime.Instance) 
 }
 
 func (vm *VM) reflectStaticMethodCallable(class runtime.BytecodeClass, key string) runtime.Value {
+	// A "" module is the entry chunk; foreign whenever this VM is an imported module, so route through the loader (which resolves "" to the main chunk).
+	if class.Module != vm.moduleName {
+		if vm.moduleLoader == nil || len(class.StaticMetadata[key]) == 0 {
+			return nil
+		}
+		vm.noteEscape()
+		return runtime.Function{
+			Name: key,
+			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				return vm.moduleLoader.CallModuleStaticMethod(class, key, vm.wrapStatefulNativeArgs("", "", args), vm)
+			},
+		}
+	}
 	if class.Index < 0 || int(class.Index) >= len(vm.chunk.Classes) {
 		return nil
 	}
@@ -634,6 +652,7 @@ func (vm *VM) reflectLocation(value runtime.Value) (runtime.Value, error) {
 		}
 		return makeLocationDict(v.Module, info.DefLine, info.DefColumn), nil
 	case runtime.BytecodeClass:
+		v = vm.canonicalClassValue(v)
 		if v.DefLine == 0 && v.DefColumn == 0 {
 			return runtime.Null{}, nil
 		}
@@ -669,6 +688,14 @@ func makeLocationDict(module string, line, column int64) runtime.Dict {
 	return runtime.Dict{Entries: entries}
 }
 
+// reflectFunctionMetadataValue resolves a same-module BytecodeClosure (a free function passed by value through an `any` binding) to its populated function metadata before delegating.
+func (vm *VM) reflectFunctionMetadataValue(value runtime.Value) (runtime.FunctionMetadata, bool) {
+	if closure, ok := value.(runtime.BytecodeClosure); ok && (closure.Module == "" || closure.Module == vm.moduleName) {
+		value = vm.bytecodeFunctionValue(closure.FunctionIndex, false)
+	}
+	return reflectFunctionMetadata(value)
+}
+
 func reflectFunctionMetadata(value runtime.Value) (runtime.FunctionMetadata, bool) {
 	switch value := value.(type) {
 	case runtime.DecoratorTarget:
@@ -681,8 +708,10 @@ func reflectFunctionMetadata(value runtime.Value) (runtime.FunctionMetadata, boo
 			return *metadata, true
 		}
 	case runtime.Function:
-		// Native-wrapped functions carry no source structure; degrade to
-		// empty metadata like the evaluator.
+		// A module-boundary bridge wrapper carries the source function's full metadata; genuine natives degrade to empty like the evaluator.
+		if value.Metadata != nil {
+			return *value.Metadata, true
+		}
 		metadata := runtime.FunctionMetadata{Name: value.Name, ReturnType: "void"}
 		if value.ReturnType != nil {
 			metadata.ReturnType = value.ReturnType.String()
@@ -697,8 +726,13 @@ func reflectFunctionMetadata(value runtime.Value) (runtime.FunctionMetadata, boo
 // the produced value matches the one users get from passing the class
 // reference directly.
 func (vm *VM) bytecodeClassFromInfo(classInfo ClassInfo, index int64) runtime.BytecodeClass {
+	return BuildBytecodeClass(vm.chunk, classInfo, index, vm.moduleName)
+}
+
+// Canonical reflectable-class builder shared with the loader so a cross-module class value carries the same method/static/constructor metadata as the declaring VM's.
+func BuildBytecodeClass(chunk Chunk, classInfo ClassInfo, index int64, module string) runtime.BytecodeClass {
 	return runtime.BytecodeClass{
-		Module:              vm.moduleName,
+		Module:              module,
 		Name:                classInfo.Name,
 		Doc:                 classInfo.Doc,
 		Index:               index,
@@ -708,22 +742,24 @@ func (vm *VM) bytecodeClassFromInfo(classInfo ClassInfo, index int64) runtime.By
 		Decorators:          classInfo.Decorators,
 		MethodDecorators:    classInfo.MethodDecorators,
 		StaticDecorators:    classInfo.StaticDecorators,
-		MethodMetadata:      vm.classFunctionMetadata(classInfo.Methods, "method", 1),
-		StaticMetadata:      vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0),
-		ConstructorMetadata: vm.constructorFunctionMetadata(classInfo.ConstructorIndices),
+		MethodMetadata:      classFunctionMetadataForChunk(chunk, module, classInfo.Methods, "method", 1),
+		StaticMetadata:      classFunctionMetadataForChunk(chunk, module, classInfo.StaticMethods, "staticMethod", 0),
+		StaticConsts:        staticConstNames(classInfo.StaticValues),
+		ConstructorMetadata: constructorFunctionMetadataForChunk(chunk, module, classInfo.ConstructorIndices),
 		DefLine:             classInfo.DefLine,
 		DefColumn:           classInfo.DefColumn,
 	}
 }
 
-func reflectClassMetadata(value runtime.Value) (runtime.ClassMetadata, bool) {
+// reflectClassMetadata rehydrates a metadata-poor BytecodeClass (one that arrived via a variable, not a direct identifier) before reading its metadata.
+func (vm *VM) reflectClassMetadata(value runtime.Value) (runtime.ClassMetadata, bool) {
 	switch value := value.(type) {
 	case runtime.DecoratorTarget:
 		if value.Class != nil {
 			return *value.Class, true
 		}
 	case runtime.BytecodeClass:
-		return bytecodeClassMetadata(value), true
+		return bytecodeClassMetadata(vm.canonicalClassValue(value)), true
 	case *runtime.Class:
 		return runtimeClassMetadata(value)
 	case *runtime.Instance:
@@ -770,13 +806,15 @@ func vmPrimitiveTypeMetadata(value runtime.Value) (runtime.ClassMetadata, bool) 
 // callable on a value. The numeric/bool lists and the collection lists
 // (via vmPrimitiveMethodNamesFor) are kept identical to the evaluator so
 // dir(value) produces byte-identical output on both backends.
-func vmDirValue(value runtime.Value) runtime.Value {
+func (vm *VM) vmDirValue(value runtime.Value) runtime.Value {
 	var names []string
 	switch v := value.(type) {
 	case *runtime.Module:
 		for name := range v.Exports {
 			names = append(names, name)
 		}
+	case runtime.BytecodeClass:
+		names = vm.dirClassNames(v)
 	case *runtime.Class:
 		seen := map[string]bool{}
 		for class := v; class != nil; class = class.Parent {
@@ -871,6 +909,112 @@ func vmDirValue(value runtime.Value) runtime.Value {
 
 func vmPrimitiveMethodNamesFor(typeName string) []string {
 	return append([]string(nil), native.PrimitiveMethods[typeName]...)
+}
+
+func staticConstNames(values map[string]int64) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	return names
+}
+
+// dirClassNames gathers a class's deduped member surface up the parent chain, matching the evaluator's dir().
+func (vm *VM) dirClassNames(class runtime.BytecodeClass) []string {
+	seen := map[string]bool{}
+	visited := map[string]bool{}
+	current := vm.canonicalClassValue(class)
+	for {
+		key := current.Module + "." + current.Name
+		if visited[key] {
+			break
+		}
+		visited[key] = true
+		for _, field := range current.Fields {
+			seen[field] = true
+		}
+		for name := range current.MethodMetadata {
+			seen[name] = true
+		}
+		for name := range current.StaticMetadata {
+			seen[name] = true
+		}
+		for _, name := range current.StaticConsts {
+			seen[name] = true
+		}
+		parent, ok := vm.resolveParentClassValue(current)
+		if !ok {
+			break
+		}
+		current = parent
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	return names
+}
+
+// canonicalClassValue rehydrates full metadata for a bare class identifier, which compiles to a name+index-only constant.
+func (vm *VM) canonicalClassValue(class runtime.BytecodeClass) runtime.BytecodeClass {
+	if len(class.MethodMetadata) > 0 || len(class.StaticMetadata) > 0 || len(class.Fields) > 0 || len(class.StaticConsts) > 0 {
+		return class
+	}
+	if class.Module == "" || class.Module == vm.moduleName {
+		if class.Index >= 0 && int(class.Index) < len(vm.chunk.Classes) && strings.EqualFold(vm.chunk.Classes[class.Index].Name, class.Name) {
+			return BuildBytecodeClass(vm.chunk, vm.chunk.Classes[class.Index], class.Index, vm.moduleName)
+		}
+	}
+	// Foreign class (including the "" entry chunk viewed from an imported VM): resolve through the loader.
+	if class.Module != vm.moduleName && vm.moduleLoader != nil {
+		if resolved, ok := vm.moduleLoader.ClassValueInModule(class.Module, class.Name); ok {
+			if bc, ok := resolved.(runtime.BytecodeClass); ok {
+				return bc
+			}
+		}
+	}
+	return class
+}
+
+// resolveParentClassValue resolves a class's parent to a full class value, hopping modules for a qualified or home-module parent.
+func (vm *VM) resolveParentClassValue(class runtime.BytecodeClass) (runtime.BytecodeClass, bool) {
+	if class.Parent == "" {
+		return runtime.BytecodeClass{}, false
+	}
+	if module, parentName, ok := splitQualifiedClassName(class.Parent); ok {
+		if vm.moduleLoader != nil {
+			if resolved, found := vm.moduleLoader.ClassValueInModule(module, parentName); found {
+				if bc, ok := resolved.(runtime.BytecodeClass); ok {
+					return bc, true
+				}
+			}
+		}
+		return runtime.BytecodeClass{}, false
+	}
+	home := class.Module
+	if home == "" || home == vm.moduleName {
+		if idx, ok := vm.classIndex[strings.ToLower(class.Parent)]; ok {
+			return vm.bytecodeClassFromInfo(vm.chunk.Classes[idx], int64(idx)), true
+		}
+	}
+	if vm.moduleLoader != nil {
+		if home != "" {
+			if resolved, found := vm.moduleLoader.ClassValueInModule(home, class.Parent); found {
+				if bc, ok := resolved.(runtime.BytecodeClass); ok {
+					return bc, true
+				}
+			}
+		}
+		if resolved, found := vm.moduleLoader.FindClassByName(class.Parent); found {
+			if bc, ok := resolved.(runtime.BytecodeClass); ok {
+				return bc, true
+			}
+		}
+	}
+	return runtime.BytecodeClass{}, false
 }
 
 func runtimeClassMetadata(value *runtime.Class) (runtime.ClassMetadata, bool) {
@@ -993,65 +1137,6 @@ func classMethodMetadata(class runtime.BytecodeClass, key string, static bool) *
 	return &metadata
 }
 
-// decoratorMetadataDictFromAST mirrors decoratorMetadataDict for AST-
-// shaped decorators carried on runtime.Class.Fields. Used by the
-// cross-chunk reflect.fields path where the field's decorators were
-// rebuilt from ast nodes (see decoratorsToAST). Only literal-shape
-// args are reproduced; the named-args map is preserved for parity.
-func decoratorMetadataDictFromAST(decorator ast.Decorator) runtime.Dict {
-	entries := map[string]runtime.DictEntry{}
-	name := ""
-	if decorator.Name != nil {
-		name = decorator.Name.Value
-	}
-	putBytecodeDict(entries, "name", runtime.String{Value: name})
-	putBytecodeDict(entries, "target", runtime.String{Value: "field"})
-	args := []runtime.Value{}
-	named := map[string]runtime.DictEntry{}
-	for _, arg := range decorator.Arguments {
-		v := literalValueForExpression(arg.Value)
-		if arg.Name != nil {
-			putBytecodeDict(named, arg.Name.Value, v)
-		} else {
-			args = append(args, v)
-		}
-	}
-	putBytecodeDict(entries, "args", &runtime.List{Elements: args})
-	putBytecodeDict(entries, "namedArgs", runtime.Dict{Entries: named})
-	return runtime.Dict{Entries: entries}
-}
-
-// literalValueForExpression is the inverse of literalExpressionForValue
-// (used during decoratorsToAST). For decorator-arg AST nodes we know
-// were rebuilt from literal values, recover the runtime value.
-func literalValueForExpression(expr ast.Expression) runtime.Value {
-	switch e := expr.(type) {
-	case *ast.StringLiteral:
-		return runtime.String{Value: e.Value}
-	case *ast.IntegerLiteral:
-		n, err := runtime.NewIntLiteral(e.Value)
-		if err == nil && n.Value.IsInt64() {
-			return runtime.SmallInt{Value: n.Value.Int64()}
-		}
-		if err == nil {
-			return n
-		}
-	case *ast.FloatLiteral:
-		f, err := strconv.ParseFloat(e.Value, 64)
-		if err == nil {
-			return runtime.Float{Value: f}
-		}
-	case *ast.Literal:
-		switch v := e.Value.(type) {
-		case bool:
-			return runtime.Bool{Value: v}
-		case nil:
-			return runtime.Null{}
-		}
-	}
-	return runtime.Null{}
-}
-
 func decoratorMetadataDict(decorator runtime.DecoratorMetadata) runtime.Dict {
 	entries := map[string]runtime.DictEntry{}
 	putBytecodeDict(entries, "name", runtime.String{Value: decorator.Name})
@@ -1135,12 +1220,16 @@ func putBytecodeDict(entries map[string]runtime.DictEntry, key string, value run
 }
 
 func (vm *VM) constructorFunctionMetadata(indices []int64) []runtime.FunctionMetadata {
+	return constructorFunctionMetadataForChunk(vm.chunk, vm.moduleName, indices)
+}
+
+func constructorFunctionMetadataForChunk(chunk Chunk, module string, indices []int64) []runtime.FunctionMetadata {
 	result := make([]runtime.FunctionMetadata, 0, len(indices))
 	for _, index := range indices {
-		if index < 0 || int(index) >= len(vm.chunk.Functions) {
+		if index < 0 || int(index) >= len(chunk.Functions) {
 			continue
 		}
-		info := vm.chunk.Functions[index]
+		info := chunk.Functions[index]
 		result = append(result, runtime.FunctionMetadata{
 			Name:       info.Name,
 			Target:     "constructor",
@@ -1150,7 +1239,7 @@ func (vm *VM) constructorFunctionMetadata(indices []int64) []runtime.FunctionMet
 			Async:      info.Async,
 			Variadic:   info.Variadic,
 			Decorators: append([]runtime.DecoratorMetadata(nil), info.Decorators...),
-			Module:     vm.moduleName,
+			Module:     module,
 			DefLine:    info.DefLine,
 			DefColumn:  info.DefColumn,
 		})
@@ -1159,13 +1248,17 @@ func (vm *VM) constructorFunctionMetadata(indices []int64) []runtime.FunctionMet
 }
 
 func (vm *VM) classFunctionMetadata(methods map[string][]int64, target string, paramOffset int) map[string][]runtime.FunctionMetadata {
+	return classFunctionMetadataForChunk(vm.chunk, vm.moduleName, methods, target, paramOffset)
+}
+
+func classFunctionMetadataForChunk(chunk Chunk, module string, methods map[string][]int64, target string, paramOffset int) map[string][]runtime.FunctionMetadata {
 	metadata := map[string][]runtime.FunctionMetadata{}
 	for name, indices := range methods {
 		for _, index := range indices {
-			if index < 0 || int(index) >= len(vm.chunk.Functions) {
+			if index < 0 || int(index) >= len(chunk.Functions) {
 				continue
 			}
-			info := vm.chunk.Functions[index]
+			info := chunk.Functions[index]
 			metadata[name] = append(metadata[name], runtime.FunctionMetadata{
 				Name:           info.Name,
 				Target:         target,
@@ -1176,7 +1269,7 @@ func (vm *VM) classFunctionMetadata(methods map[string][]int64, target string, p
 				Async:          info.Async,
 				Variadic:       info.Variadic,
 				Decorators:     append([]runtime.DecoratorMetadata(nil), info.Decorators...),
-				Module:         vm.moduleName,
+				Module:         module,
 				DefLine:        info.DefLine,
 				DefColumn:      info.DefColumn,
 			})
@@ -1245,7 +1338,7 @@ func parameterMetadataFromFunctionInfo(info FunctionInfo, paramOffset int) []run
 			decs = info.ParamDecorators[i]
 		}
 		parameters = append(parameters, runtime.ParameterMetadata{
-			Name:       info.ParamNames[i],
+			Name:       info.displayParamName(i),
 			Type:       typ,
 			Variadic:   info.Variadic && i == len(info.ParamNames)-1,
 			HasDefault: hasDefault,
@@ -1260,6 +1353,19 @@ func parameterMetadataFromFunctionInfo(info FunctionInfo, paramOffset int) []run
 // Pulls type info from the chunk's class table when available, falling
 // back to "any" for builtin classes or compile-time targets without
 // type info.
+// loaderClassValue resolves a cross-chunk instance's class to its home-chunk BytecodeClass so reflection reads full metadata from the declaring module.
+func (vm *VM) loaderClassValue(module, className string) (runtime.BytecodeClass, bool) {
+	if vm.moduleLoader == nil {
+		return runtime.BytecodeClass{}, false
+	}
+	value, ok := vm.moduleLoader.ClassValueInModule(module, className)
+	if !ok {
+		return runtime.BytecodeClass{}, false
+	}
+	bc, ok := value.(runtime.BytecodeClass)
+	return bc, ok
+}
+
 func (vm *VM) reflectFieldsResult(target runtime.Value, metadata runtime.ClassMetadata) runtime.Value {
 	if bc, ok := target.(runtime.BytecodeClass); ok && vm.moduleLoader != nil && bc.Module != vm.moduleName {
 		if result, err := vm.moduleLoader.FieldsForModuleClass(bc); err == nil {
@@ -1276,6 +1382,12 @@ func (vm *VM) reflectFieldsResult(target runtime.Value, metadata runtime.ClassMe
 		// across module boundaries.
 		if idx, ok := vm.classIndex[strings.ToLower(instance.Class.Name)]; ok && int(idx) < len(vm.chunk.Classes) {
 			target = vm.bytecodeClassFromInfo(vm.chunk.Classes[idx], int64(idx))
+		} else if bc, bok := vm.loaderClassValue(instance.Class.Module, instance.Class.Name); bok {
+			// Route through the class's home chunk so the field type strings match the class-value path (the runtime.Class.Fields fallback below loses them).
+			if result, ferr := vm.moduleLoader.FieldsForModuleClass(bc); ferr == nil {
+				return result
+			}
+			target = bc
 		} else if len(instance.Class.Fields) > 0 {
 			entries := make([]runtime.Value, 0, len(instance.Class.Fields))
 			for _, field := range instance.Class.Fields {
@@ -1291,15 +1403,11 @@ func (vm *VM) reflectFieldsResult(target runtime.Value, metadata runtime.ClassMe
 					native.DictKey(runtime.String{Value: "nullable"}):   {Key: runtime.String{Value: "nullable"}, Value: runtime.Bool{Value: nullable}},
 					native.DictKey(runtime.String{Value: "hasDefault"}): {Key: runtime.String{Value: "hasDefault"}, Value: runtime.Bool{Value: field.Default != nil}},
 				}
-				/* Cross-chunk reflection: the field decorators come
-				 * from the originating chunk's ClassInfo and were
-				 * persisted onto runtime.Class.Fields at instance
-				 * construction time. Surface them on the same shape
-				 * as the bytecode-class path. */
-				if len(field.Decorators) > 0 {
-					decValues := make([]runtime.Value, 0, len(field.Decorators))
-					for _, dec := range field.Decorators {
-						decValues = append(decValues, decoratorMetadataDictFromAST(dec))
+				// Cross-chunk reflection: decorators ride along as runtime metadata persisted at construction; render on the same shape as the bytecode-class path.
+				if len(field.DecoratorMeta) > 0 {
+					decValues := make([]runtime.Value, 0, len(field.DecoratorMeta))
+					for _, dec := range field.DecoratorMeta {
+						decValues = append(decValues, decoratorMetadataDict(dec))
 					}
 					key := runtime.String{Value: "decorators"}
 					dictEntries[native.DictKey(key)] = runtime.DictEntry{Key: key, Value: &runtime.List{Elements: decValues}}

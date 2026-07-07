@@ -6,6 +6,11 @@ and mark methods with the `@test` decorator. The CLI command `geblang test`
 discovers `*_test.gb` files, instantiates each test class, and runs every
 `@test` method.
 
+Tests run on the bytecode VM by default, the same backend `geblang build`
+ships, so a test that passes cannot hide a VM-only regression. See "Which
+backend runs your tests" below for the runtime flag and the escape hatch for
+a documented, temporarily-accepted divergence.
+
 ## A first test
 
 ```gb
@@ -328,17 +333,63 @@ lower-level `io.redirectStdout(stream)` / `redirectStderr` /
 See `docs/user/stdlib/01-io.md` (Streams And Capture) for the
 complete API and a worked memory-stream example.
 
+## Which backend runs your tests
+
+Geblang has two execution backends: the bytecode VM (used by `geblang run` and
+`geblang build`) and the tree-walking evaluator. `geblang test` runs the VM by
+default, so the tests gate the same backend a release ships.
+
+A test file the VM cannot run fails loudly, naming the file and the gap, instead
+of silently falling back to the evaluator. This is deliberate: a green test run
+must mean the code works on the backend it ships on.
+
+To run the whole suite on the evaluator instead, pass `--runtime=evaluator`
+(the alias `--disable-vm` also works):
+
+```sh
+geblang test --runtime=evaluator tests/
+```
+
+### Accepted divergences (escape hatch)
+
+A few constructs behave differently on the two backends by design, or hit a VM
+gap that is documented and temporarily accepted. Such a file may opt out of the
+VM lane with a comment naming a key:
+
+```gb
+# @vm-divergence: partial-overload-resolution
+import test;
+# ...
+```
+
+and a matching row in a `KNOWN_DIVERGENCES.md` ledger placed alongside the tests:
+
+```text
+| key | file | reason | date |
+|-----|------|--------|------|
+| partial-overload-resolution | functions/partials_test.gb | reason, one line | 2026-07-06 |
+```
+
+An annotated, ledgered file runs on the evaluator (it still runs; it is not
+skipped) and the summary reports how many files did so. The runner
+cross-validates both directions: an annotation with no ledger row, or a ledger
+row whose file lacks the annotation, is an error. Keep the ledger empty whenever
+possible; an entry is a promise to fix the gap, not a permanent waiver.
+
 ## Running the suite from `make`
 
 If your project uses a Makefile, add:
 
 ```makefile
 test-lang: build
-	./geblang test tests/
+	./geblang test tests/                       # VM (default, authoritative)
+
+test-lang-eval: build
+	./geblang test --runtime=evaluator tests/   # evaluator lane
 ```
 
-and depend `make test` on both `test-lang` and the Go test target. The
-Geblang reference repo's own `Makefile` is a working example.
+and depend `make test` on both lanes plus the Go test target. The Geblang
+reference repo's own `Makefile` is a working example.
 
 ## Running tests in CI
 
@@ -346,7 +397,10 @@ Geblang reference repo's own `Makefile` is a working example.
 fails, and 2 on usage errors. The summary line prints
 `tests: total=<N> failed=<M> passed=<P> skipped=<S>` on stdout, so CI
 scripts can both rely on the exit code and parse the summary if they
-need it. Skipped tests do not cause a non-zero exit.
+need it. Skipped tests do not cause a non-zero exit. When one or more
+files ran on the evaluator via an accepted divergence, an
+`accepted divergences: <N> file(s) ran on the evaluator` line precedes
+the summary.
 
 For JetBrains IDE test runners, `--format teamcity` emits
 `##teamcity[...]` service messages instead of the plain summary.

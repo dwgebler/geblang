@@ -733,6 +733,10 @@ type Function struct {
 	DefinitionColumn int
 	// BridgeInvoke (host typed any to avoid a runtime->bytecode import cycle) runs a bridged callback threading the invoking worker as a synchronous re-entry host; nil for non-bridged functions.
 	BridgeInvoke func(host any, args []Value) (Value, error)
+	// Metadata carries the source bytecode function's reflection metadata when this is a module-boundary bridge wrapper; nil for genuine native functions.
+	Metadata *FunctionMetadata
+	// NativeNamed invokes a bridge wrapper with named-argument metadata so the home function's declared defaults engage; nil for genuine natives.
+	NativeNamed func(this *Instance, args []Value, names []string) (Value, error)
 }
 
 func (v Function) TypeName() string { return "func" }
@@ -916,6 +920,7 @@ type BytecodeClass struct {
 	StaticDecorators    map[string][]DecoratorMetadata
 	MethodMetadata      map[string][]FunctionMetadata
 	StaticMetadata      map[string][]FunctionMetadata
+	StaticConsts        []string
 	ConstructorMetadata []FunctionMetadata
 	Immutable           bool
 	// True for the class value passed to a class decorator so
@@ -1295,6 +1300,8 @@ type Field struct {
 	// frameworks read them via `reflect.fields(cls)` to drive
 	// validation, serialization, etc.
 	Decorators []ast.Decorator
+	// DecoratorMeta carries field annotations as VM runtime metadata, preserving literal arg values an AST round-trip would drop cross-module.
+	DecoratorMeta []DecoratorMetadata
 }
 
 type Class struct {

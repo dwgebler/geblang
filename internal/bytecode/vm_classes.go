@@ -3,7 +3,6 @@ package bytecode
 import (
 	"errors"
 	"fmt"
-	"geblang/internal/ast"
 	"geblang/internal/runtime"
 	"math/big"
 	"strconv"
@@ -136,7 +135,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 			if !vm.matchValueToTypeSpecWith(fn.typeParamSet, explicitBindings, arg, vm.typeSpec(fn.ParamTypes[pi])) {
 				paramName := ""
 				if pi < len(fn.ParamNames) {
-					paramName = fn.ParamNames[pi]
+					paramName = fn.displayParamName(pi)
 				}
 				suffix := vm.collectionMismatchSuffixStr(arg, fn.ParamTypes[pi])
 				gotName := vm.descriptiveRuntimeTypeName(arg)
@@ -203,55 +202,11 @@ func (vm *VM) runtimeFieldsForClass(classInfo ClassInfo) []runtime.Field {
 	for i, name := range classInfo.FieldNames {
 		field := runtime.Field{Name: name}
 		if i < len(classInfo.FieldDecorators) && len(classInfo.FieldDecorators[i]) > 0 {
-			field.Decorators = decoratorsToAST(classInfo.FieldDecorators[i])
+			field.DecoratorMeta = append([]runtime.DecoratorMetadata(nil), classInfo.FieldDecorators[i]...)
 		}
 		fields = append(fields, field)
 	}
 	return fields
-}
-
-// decoratorsToAST converts persisted DecoratorMetadata (chunk-format)
-// back into ast.Decorator values for the reflection surface. Used when
-// populating runtime.Class.Fields from the bytecode ClassInfo.
-func decoratorsToAST(metas []runtime.DecoratorMetadata) []ast.Decorator {
-	out := make([]ast.Decorator, 0, len(metas))
-	for _, m := range metas {
-		dec := ast.Decorator{Name: &ast.Identifier{Value: m.Name}}
-		for _, arg := range m.Args {
-			dec.Arguments = append(dec.Arguments, ast.CallArgument{Value: literalExpressionForValue(arg)})
-		}
-		for k, v := range m.NamedArgs {
-			dec.Arguments = append(dec.Arguments, ast.CallArgument{
-				Name:  &ast.Identifier{Value: k},
-				Value: literalExpressionForValue(v),
-			})
-		}
-		out = append(out, dec)
-	}
-	return out
-}
-
-// literalExpressionForValue is a thin shim that returns an AST node
-// wrapping a runtime value. Only used for decorator arg reconstruction
-// where the user previously passed a literal (string / int / etc.).
-// Returns nil for anything more elaborate - the decorator-reading
-// helpers know to fall back to the raw metadata in that case.
-func literalExpressionForValue(v runtime.Value) ast.Expression {
-	switch x := v.(type) {
-	case runtime.String:
-		return &ast.StringLiteral{Value: x.Value}
-	case runtime.SmallInt:
-		return &ast.IntegerLiteral{Value: fmt.Sprintf("%d", x.Value)}
-	case runtime.Int:
-		return &ast.IntegerLiteral{Value: x.Value.String()}
-	case runtime.Float:
-		return &ast.FloatLiteral{Value: fmt.Sprintf("%g", x.Value)}
-	case runtime.Bool:
-		return &ast.Literal{Value: x.Value}
-	case runtime.Null:
-		return &ast.Literal{Value: nil}
-	}
-	return nil
 }
 
 func (vm *VM) runtimeMethodWrappers(classIndex int64) map[string][]runtime.Function {
@@ -811,6 +766,13 @@ func splitQualifiedClassName(qualified string) (string, string, bool) {
 	return qualified[:dot], qualified[dot+1:], true
 }
 
+func bareClassName(name string) string {
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		return name[dot+1:]
+	}
+	return name
+}
+
 // crossModuleBoundary finds the module+class to hop to when a cross-module
 // ancestor sits above one or more local intermediates, not just the direct parent.
 func (vm *VM) crossModuleBoundary(classInfo ClassInfo) (string, string, bool) {
@@ -1144,6 +1106,32 @@ func (vm *VM) inheritInstanceTypeBindings(instance *runtime.Instance) {
 			frame.typeBindings[name] = typeName
 		}
 	}
+}
+
+// explicitTypeArgBindings zips positional `<TypeArgs>` against a callee's declared type parameters, resolving each name through the caller's frame bindings.
+func (vm *VM) explicitTypeArgBindings(fn *FunctionInfo, typeArgs []string) map[string]string {
+	if len(typeArgs) == 0 || len(fn.TypeParameters) == 0 {
+		return nil
+	}
+	bindings := map[string]string{}
+	for i, name := range typeArgs {
+		if i >= len(fn.TypeParameters) {
+			break
+		}
+		bindings[fn.TypeParameters[i]] = vm.resolveFrameTypeName(name)
+	}
+	return bindings
+}
+
+// resolveFrameTypeName maps an explicit type argument that names an enclosing generic scope's type parameter to its concrete binding (e.g. `Box<T>` inside `wrap<T>` where T is bound to string); a concrete type name passes through unchanged.
+func (vm *VM) resolveFrameTypeName(name string) string {
+	if len(vm.frames) == 0 {
+		return name
+	}
+	if bound, ok := vm.frames[len(vm.frames)-1].typeBindings[name]; ok {
+		return bound
+	}
+	return name
 }
 
 func (vm *VM) classInfo(name string) (ClassInfo, bool) {

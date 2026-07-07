@@ -214,6 +214,33 @@ func (vm *VM) receiverParamNames(instruction Instruction, receiver runtime.Value
 	return nil, vm.runtimeError(instruction, "dict spread is not supported for this callable")
 }
 
+// callDeferredValueMethod dispatches a deferred method call on a non-instance receiver (list/dict HOFs, native objects, string search, primitive methods), mirroring the non-instance tail of methodCall.
+func (vm *VM) callDeferredValueMethod(instruction Instruction, receiver runtime.Value, name string, args []runtime.Value) (runtime.Value, error) {
+	if list, ok := receiver.(*runtime.List); ok {
+		if result, handled, err := vm.listHigherOrderMethod(instruction, list, name, args); handled {
+			return result, err
+		}
+	}
+	if dict, ok := receiver.(runtime.Dict); ok {
+		if result, handled, err := vm.dictCollectionsMethod(dict, name, args); handled {
+			return result, err
+		}
+	}
+	if nativeObject, ok := receiver.(runtime.NativeObject); ok {
+		caller, ok := vm.statefulNative.(nativeObjectMethodCaller)
+		if !ok {
+			return nil, native.UnknownMethodError(nativeObject.TypeName(), name)
+		}
+		return caller.NativeObjectMethod(nativeObject, name, args)
+	}
+	if str, ok := receiver.(runtime.String); ok {
+		if handled, result, err := vm.stringSearchMethod(str, name, args); handled {
+			return result, err
+		}
+	}
+	return primitiveMethod(receiver, name, args)
+}
+
 // callResolvedMethod skips classInfo/methodLookup/overload-selection
 // when the compiler proved the receiver's class statically.
 func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
@@ -509,6 +536,10 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		if vm.curMod.Chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
 			vm.push(vm.lazyGenerator(functionIndex, slots))
 			return ip, nil
+		}
+		// Explicit `<TypeArgs>` on a dynamically-dispatched method call (e.g. `this.m<T>()`) seed the method frame's bindings, matching the statically-resolved path.
+		if b := vm.explicitTypeArgBindings(&vm.curMod.Chunk.Functions[functionIndex], callTypeArgs); len(b) > 0 {
+			vm.pendingTypeBindings = b
 		}
 		nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], slots, nil)
 		if err != nil {
@@ -1054,6 +1085,17 @@ func (vm *VM) dispatchCrossModuleNamedConstruct(instruction Instruction, ip int,
 // dispatchNamedCall invokes a callable receiver with named/positional argument metadata. Shared by OpMethodCallNamed and the dict-spread path of OpMethodCallSpread.
 func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtime.Value, methodName string, args []runtime.Value, names []string) (int, error) {
 	if target, ok := receiver.(runtime.DecoratorTarget); ok && target.Callable != nil {
+		if methodName == "__invoke" {
+			// A reflected method callable binds names against its home signature, engaging a default for an omitted middle parameter that positional ordering cannot express.
+			if fn, isFn := target.Callable.(runtime.Function); isFn && fn.NativeNamed != nil {
+				result, cerr := fn.NativeNamed(nil, args, names)
+				if cerr != nil {
+					return vm.propagateModuleError(instruction, ip, cerr)
+				}
+				vm.push(result)
+				return ip, nil
+			}
+		}
 		if methodName == "__invoke" && target.Function != nil && len(target.Function.Parameters) > 0 {
 			// The reflect metadata is the only carrier of the wrapped
 			// callable's parameter names; order here before it is lost.
@@ -1165,6 +1207,15 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		// order by declared parameter names and dispatch positionally;
 		// the callee's own binding fills trailing defaults.
 		if methodName == "__invoke" {
+			// A bridge wrapper over a home-chunk function binds names against the real signature, engaging a default for an omitted middle parameter that positional ordering cannot express.
+			if bridged, isFn := receiver.(runtime.Function); isFn && bridged.NativeNamed != nil {
+				result, cerr := bridged.NativeNamed(nil, args, names)
+				if cerr != nil {
+					return vm.propagateModuleError(instruction, ip, cerr)
+				}
+				vm.push(result)
+				return ip, nil
+			}
 			paramNames, perr := vm.receiverParamNames(instruction, receiver, methodName)
 			if perr == nil {
 				ordered, oerr := orderNamedByParamNames(methodName, args, names, paramNames)
@@ -1182,15 +1233,8 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		return 0, vm.runtimeError(instruction, "named method arguments are only supported for class instances")
 	}
 	if instance.Class != nil && instance.Class.Module != vm.moduleName && vm.moduleLoader != nil {
-		paramNames, perr := vm.moduleLoader.ModuleMethodParamNames(instance.Class.Module, instance.Class.Name, methodName)
-		if perr != nil {
-			return 0, vm.runtimeError(instruction, "%s", perr.Error())
-		}
-		ordered, oerr := orderNamedByParamNames(instance.Class.Name+"."+methodName, args, names, paramNames)
-		if oerr != nil {
-			return 0, vm.runtimeError(instruction, "%s", oerr.Error())
-		}
-		result, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, ordered, vm)
+		// Bind names in the home chunk so declared defaults engage, including for an omitted middle parameter that positional ordering cannot express.
+		result, cerr := vm.moduleLoader.CallModuleMethodNamed(instance.Class.Module, instance.Class.Name, methodName, instance, args, names, vm)
 		if cerr != nil {
 			return vm.propagateModuleError(instruction, ip, cerr)
 		}

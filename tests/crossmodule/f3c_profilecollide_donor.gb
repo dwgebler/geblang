@@ -1,0 +1,8 @@
+module f3c_profilecollide_donor;
+
+# A same-named class in a loaded module must not shadow the user's entry class
+# when reflect.class("Profile") is resolved by bare name.
+export class Profile {
+    any _snap;
+    dict<string, any> _delta;
+}

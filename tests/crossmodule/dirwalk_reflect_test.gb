@@ -1,0 +1,59 @@
+/**
+ * @title Cross-module parent-chain walk via reflect.parent + reflect.class (1.32.1)
+ * @summary reflect.parent returns the bare parent name, so walking a class up its
+ * parent chain (reflect.parent -> reflect.class) crosses a module boundary and
+ * collects the foreign parent's interfaces. The VM previously returned a
+ * module-qualified parent name, and reflect.class could not resolve it, so the
+ * walk stopped at the cross-module parent and dropped its interfaces. dir on the
+ * cross-module class value likewise includes the inherited foreign members.
+ */
+import test;
+import reflect;
+import dirwalk_mid_donor as mid;
+
+class CrossModuleDirWalkTest extends test.Test {
+
+    func collectInterfaces(any cls): list<string> {
+        let acc = [];
+        let cur = cls;
+        let done = false;
+        while (!done) {
+            for (i in reflect.interfaces(cur)) { acc.push(i as string); }
+            let p = reflect.parent(cur);
+            if (p == null) { done = true; }
+            else {
+                let nxt = reflect.class(p as string);
+                if (nxt == null) { done = true; } else { cur = nxt; }
+            }
+        }
+        return acc;
+    }
+
+    @test
+    func parentNameIsBare(): void {
+        let cls = reflect.class(mid.MyCtl());
+        this.assertEquals("BaseCtl", reflect.parent(cls));
+    }
+
+    @test
+    func crossModuleParentResolvesByBareName(): void {
+        let cls = reflect.class(mid.MyCtl());
+        let base = reflect.class(reflect.parent(cls) as string);
+        this.assertEquals("BaseCtl", reflect.className(base));
+    }
+
+    @test
+    func walkCollectsInterfacesFromBothModules(): void {
+        let cls = reflect.class(mid.MyCtl());
+        let ifaces = this.collectInterfaces(cls);
+        this.assertContains(ifaces, "Named");
+        this.assertContains(ifaces, "Greeter");
+        this.assertEquals(2, ifaces.length());
+    }
+
+    @test
+    func dirIncludesInheritedCrossModuleMembers(): void {
+        let cls = reflect.class(mid.MyCtl());
+        this.assertEquals("[\"KIND\", \"extra\", \"greet\", \"mkbase\", \"name\", \"shared\"]", "${dir(cls)}");
+    }
+}

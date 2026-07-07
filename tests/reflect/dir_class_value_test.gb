@@ -1,0 +1,77 @@
+/**
+ * @title dir() on class values (1.32.1)
+ * @summary dir(Class) lists the class member surface: fields, method and
+ * static-method names (lowercased map keys), and static const names, gathered
+ * up the parent chain. Interface names are not members. dir(instance) keeps its
+ * fields-plus-methods surface (no statics). Previously empty on the bytecode VM.
+ */
+import test;
+
+interface Greeter {
+    func greet(): string;
+}
+
+class Base implements Greeter {
+    static const VERSION = "1.0";
+    int value;
+    string label;
+    func Base() { this.value = 0; this.label = "b"; }
+    func greetUser(): string { return "hi"; }
+    func greet(): string { return "g"; }
+    static func makeBase(): Base { return Base(); }
+}
+
+class Sub extends Base {
+    int extra;
+    func Sub() { parent(); this.extra = 1; }
+    func doBonus(): int { return this.extra; }
+    static func buildSub(): Sub { return Sub(); }
+}
+
+class DirClassValueTest extends test.Test {
+
+    @test
+    func baseClassListsFieldsMethodsStaticsConsts(): void {
+        this.assertEquals("[\"VERSION\", \"greet\", \"greetuser\", \"label\", \"makebase\", \"value\"]", "${dir(Base)}");
+    }
+
+    @test
+    func staticAndMethodNamesAreLowercased(): void {
+        let members = dir(Base);
+        this.assertContains(members, "makebase");
+        this.assertContains(members, "greetuser");
+        this.assertNotContains(members, "makeBase");
+        this.assertNotContains(members, "greetUser");
+    }
+
+    @test
+    func fieldsAndConstsKeepOriginalCase(): void {
+        let members = dir(Base);
+        this.assertContains(members, "VERSION");
+        this.assertContains(members, "value");
+        this.assertContains(members, "label");
+    }
+
+    @test
+    func interfaceNameIsNotAMember(): void {
+        this.assertNotContains(dir(Base), "Greeter");
+    }
+
+    @test
+    func subclassIncludesInheritedAndOwn(): void {
+        this.assertEquals("[\"VERSION\", \"buildsub\", \"dobonus\", \"extra\", \"greet\", \"greetuser\", \"label\", \"makebase\", \"value\"]", "${dir(Sub)}");
+    }
+
+    @test
+    func classValueViaVariableRehydrates(): void {
+        let alias = Base;
+        this.assertContains(dir(alias), "makebase");
+        this.assertContains(dir(alias), "VERSION");
+    }
+
+    @test
+    func instanceKeepsFieldsAndMethodsOnly(): void {
+        let s = Sub();
+        this.assertEquals("[\"dobonus\", \"extra\", \"greet\", \"greetuser\", \"label\", \"value\"]", "${dir(s)}");
+    }
+}

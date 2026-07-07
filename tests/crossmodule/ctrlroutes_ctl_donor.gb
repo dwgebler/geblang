@@ -1,0 +1,15 @@
+module ctrlroutes_ctl_donor;
+import ctrlroutes_base_donor as base;
+import ctrlroutes_deco_donor as deco;
+
+export class Home extends base.BaseCtl {
+    func Home() { parent(); }
+
+    @deco.Get("/")
+    func index(): string { return "i"; }
+
+    @deco.Get("/about")
+    func about(): string { return "a"; }
+
+    static func mk(): Home { return Home(); }
+}

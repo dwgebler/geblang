@@ -728,6 +728,15 @@ func (e *Evaluator) SetMethodDispatcher(d MethodDispatcher) {
 	e.vmDispatcher = d
 }
 
+// NativeSnapshot / RestoreNatives expose the bridge registry's test.mock patches so the VM test runner can roll them back per @test method (stateful natives dispatch through this evaluator).
+func (e *Evaluator) NativeSnapshot() map[string]native.Function {
+	return e.natives.Snapshot()
+}
+
+func (e *Evaluator) RestoreNatives(snapshot map[string]native.Function) {
+	e.natives.Restore(snapshot)
+}
+
 func (e *Evaluator) HandleDirectPrint() bool {
 	return true
 }

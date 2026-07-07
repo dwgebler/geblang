@@ -1,0 +1,12 @@
+module f3c_base_donor;
+
+# Exported base: a subclass in another module can override subject(), so the
+# compiler must not devirtualize readSubject's call to the base method.
+export class Mailable {
+    func Mailable() {}
+    func subject(): string { return "base"; }
+}
+
+export func readSubject(Mailable mail): string {
+    return mail.subject();
+}

@@ -1333,6 +1333,29 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 		for _, mc := range stmt.Cases {
 			s.scanMatchCase(mc)
 		}
+	case *ast.SelectStatement:
+		for _, sc := range stmt.Cases {
+			s.scanExpr(sc.Channel)
+			if sc.Kind == "send" {
+				s.scanExpr(sc.Value)
+			}
+			// A recv binding is a fresh local scoped to its case body.
+			if sc.Kind == "recv" && sc.Binding != "" {
+				inner := &freeVarSet{defined: map[string]bool{sc.Binding: true}, free: map[string]bool{}}
+				for k := range s.defined {
+					inner.defined[k] = true
+				}
+				inner.scanBlock(sc.Body)
+				for name := range inner.free {
+					if !s.defined[name] {
+						s.free[name] = true
+					}
+				}
+			} else {
+				s.scanBlock(sc.Body)
+			}
+		}
+		s.scanBlock(stmt.Default)
 	case *ast.ClassStatement:
 		if stmt.Name != nil {
 			s.defined[stmt.Name.Value] = true
@@ -1527,6 +1550,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	upvalueCount := int64(len(captures))
 	paramSlots := make([]int64, 0, upvalueCount+int64(len(expr.Parameters)))
 	paramNames := make([]string, 0, cap(paramSlots))
+	paramDisplayNames := make([]string, 0, cap(paramSlots))
 	paramTypes := make([]string, 0, cap(paramSlots))
 	defaultConstants := make([]int64, 0, cap(paramSlots))
 
@@ -1534,6 +1558,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 		slot := c.defineLocalWithType(cap.name, "")
 		paramSlots = append(paramSlots, slot)
 		paramNames = append(paramNames, cap.name)
+		paramDisplayNames = append(paramDisplayNames, cap.name)
 		paramTypes = append(paramTypes, "")
 		defaultConstants = append(defaultConstants, -1)
 	}
@@ -1549,6 +1574,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 		slot := c.defineLocalWithType(param.Name.Value, paramType)
 		paramSlots = append(paramSlots, slot)
 		paramNames = append(paramNames, strings.ToLower(param.Name.Value))
+		paramDisplayNames = append(paramDisplayNames, param.Name.Value)
 		paramTypes = append(paramTypes, paramType)
 		if param.Default == nil {
 			defaultConstants = append(defaultConstants, -1)
@@ -1567,6 +1593,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	fn := &c.chunk.Functions[index]
 	fn.Entry = entry
 	fn.ParamNames = paramNames
+	fn.ParamDisplayNames = paramDisplayNames
 	fn.ParamSlots = paramSlots
 	fn.ParamTypes = paramTypes
 	fn.ReturnType = c.bytecodeReturnType(expr.ReturnType)
@@ -2825,6 +2852,10 @@ func (c *Compiler) staticallyResolveMethodCall(selector *ast.SelectorExpression,
 	}
 	classIndex, ok := c.classes[strings.ToLower(typeName)]
 	if !ok {
+		return 0, false
+	}
+	// An exported class may be subclassed and its method overridden by an unseen importing module, so devirtualizing its call is unsound.
+	if c.exportedClasses[strings.ToLower(typeName)] {
 		return 0, false
 	}
 	classInfo := c.chunk.Classes[classIndex]

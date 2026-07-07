@@ -48,6 +48,26 @@ io.println("${(r["input_ids"] as list<any>)[1]}");
 `)
 }
 
+// TestParityTransformersMaxLength pins that an int option value (a VM SmallInt) reaches the native option reader so truncation applies on both backends.
+func TestParityTransformersMaxLength(t *testing.T) {
+	runParity(t, `import transformers;
+import io;
+let tjson = "{\"model\":{\"unk_token\":\"[UNK]\",\"continuing_subword_prefix\":\"##\",\"vocab\":{\"[PAD]\":0,\"[UNK]\":1,\"[CLS]\":2,\"[SEP]\":3,\"hello\":4,\"world\":5,\"play\":6}}}";
+let r = transformers.tokenize(tjson, ["hello world play"], {"maxLength": 4});
+io.println("${(r["input_ids"] as list<any>)[0]}");
+`, "[2, 4, 5, 3]\n")
+}
+
+// TestParityNativeModuleQualifiedCast pins that a native value (unqualified TypeName) casts to a module-qualified target on both backends.
+func TestParityNativeModuleQualifiedCast(t *testing.T) {
+	runParityWithStdlib(t, `import streams;
+import io;
+let m = streams.memory("hi");
+let s = m as streams.IOStream;
+io.println(typeof(s));
+`, "IOStream\n")
+}
+
 // TestParityBrowserGate pins the --allow-browser gate (PermissionError when absent) on both backends.
 func TestParityBrowserGate(t *testing.T) {
 	runParityStateful(t, `import browser;

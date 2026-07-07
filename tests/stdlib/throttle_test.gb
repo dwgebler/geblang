@@ -14,10 +14,11 @@ class ThrottleTest extends test.Test {
             calls = calls + 1;
             return x * 2;
         };
-        let throttled = rate.throttle(work, 200);
+        # A large window makes the within-window assertion deterministic: the
+        # three synchronous calls below cannot span it under any CPU load.
+        let throttled = rate.throttle(work, 600000);
 
-        # Three rapid calls within 200ms should all run the underlying
-        # function at most once.
+        # Three rapid calls within the window run the underlying function once.
         let a = throttled(5);
         let b = throttled(7);
         let c = throttled(9);

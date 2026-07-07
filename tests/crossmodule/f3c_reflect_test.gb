@@ -1,0 +1,105 @@
+/**
+ * @title Cross-module reflection and dispatch parity (F3c)
+ * @summary A function value, an instance, and a subclass declared here but
+ * reflected or dispatched from another module keep full metadata and virtual
+ * dispatch: parameter metadata survives the bridge, named calls engage a middle
+ * default, instance field types and non-scalar decorator args are preserved, an
+ * exported base method stays virtual, a cross-module interface reflects by bare
+ * name, and a bare-name class lookup resolves the user's class over a same-named
+ * module class.
+ */
+import test;
+import reflect;
+import f3c_reflect_donor as donor;
+import f3c_base_donor as basemod;
+import f3c_contracts_donor as contracts;
+import f3c_probe_donor as probe;
+
+func greet(string name, int times = 1): string { return name; }
+
+func handler(string q = "dq", string product = "dp", string tail = "dt"): string {
+    return "q=${q} product=${product} tail=${tail}";
+}
+
+class Tag { string name; }
+
+class Profile {
+    string handle;
+    list<Tag> tags;
+}
+
+class Model {
+    @Assert.greaterThan(18.0)
+    ?int value;
+    @Assert.choice(["a", "b", "c"])
+    ?string other;
+}
+
+class WelcomeMail extends basemod.Mailable {
+    string name;
+    func WelcomeMail(string name) { parent(); this.name = name; }
+    func subject(): string { return "Welcome, " + this.name; }
+}
+
+class User { string id = ""; }
+
+class UserRepo implements contracts.Repository<User> {
+    func find(string id): ?User { return null; }
+}
+
+class Ctrl {
+    func run(string q = "dq", string product = "dp"): string { return "q=${q} product=${product}"; }
+}
+
+class F3cCrossModuleReflectTest extends test.Test {
+
+    @test
+    func functionValueMetadataSurvivesBridge(): void {
+        this.assertEquals(
+            "count=2 ret=string |name:string:false |times:int:true",
+            donor.describe(greet));
+    }
+
+    @test
+    func namedCallEngagesMiddleDefault(): void {
+        this.assertEquals("q=dq product=x tail=dt",
+            donor.invokeNamed(handler, {"product": "x"}) as string);
+        this.assertEquals("q=A product=dp tail=T",
+            donor.invokeNamed(handler, {"q": "A", "tail": "T"}) as string);
+    }
+
+    @test
+    func reflectMethodNamedCallEngagesMiddleDefault(): void {
+        this.assertEquals("q=dq product=x",
+            donor.invokeMethodNamed(Ctrl(), "run", {"product": "x"}) as string);
+    }
+
+    @test
+    func instanceFieldTypesPreserved(): void {
+        this.assertEquals("handle:string tags:list<Tag> ", donor.fieldTypes(Profile()));
+    }
+
+    @test
+    func decoratorArgsPreserved(): void {
+        this.assertEquals(
+            "Assert.choice=[[\"a\", \"b\", \"c\"]] Assert.greaterThan=[18.0000000000] ",
+            donor.decoratorArgs(Model()));
+    }
+
+    @test
+    func exportedBaseMethodStaysVirtual(): void {
+        this.assertEquals("Welcome, Ada", basemod.readSubject(WelcomeMail("Ada")));
+    }
+
+    @test
+    func crossModuleInterfaceReflectsBareName(): void {
+        let interfaces = reflect.interfaces(UserRepo);
+        this.assertEquals(1, interfaces.length());
+        this.assertEquals("Repository", interfaces[0] as string);
+    }
+
+    @test
+    func bareNameClassLookupPrefersEntry(): void {
+        this.assertEquals("handle tags ", probe.profileFields());
+    }
+}

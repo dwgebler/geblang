@@ -38,6 +38,34 @@ io.println(reflect.typeBindings(n)["T"]);
 `, "string\nint\n")
 }
 
+// An explicit constructor type arg naming an enclosing generic function's type parameter resolves through to the concrete binding.
+func TestParityExplicitCtorTypeArgResolvesThroughT(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+class Box<T> {
+    T item;
+    func Box(T item) { this.item = item; }
+}
+func wrap<T>(T v): Box<T> {
+    return Box<T>(v);
+}
+io.println(reflect.typeBindings(wrap("x"))["T"]);
+io.println(reflect.typeBindings(wrap(42))["T"]);
+`, "string\nint\n")
+}
+
+// An explicit type arg on a dynamically-dispatched generic method (`this.m<T>()`) binds T so `v instanceof T` resolves on both backends.
+func TestParityGenericMethodExplicitTypeArgInstanceof(t *testing.T) {
+	runParity(t, `import io;
+class Config {}
+class Checker {
+    func isType<T>(any v): bool { return v instanceof T; }
+    func check(): bool { return this.isType<Config>(Config()); }
+}
+io.println(Checker().check());
+`, "true\n")
+}
+
 func TestParityGenericGeneratorKeepsTypeBindings(t *testing.T) {
 	runParity(t, `import io;
 func checks<T>(T value): generator<bool> {

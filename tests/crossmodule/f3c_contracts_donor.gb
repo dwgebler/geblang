@@ -1,0 +1,5 @@
+module f3c_contracts_donor;
+
+export interface Repository<T> {
+    func find(string id): ?T;
+}

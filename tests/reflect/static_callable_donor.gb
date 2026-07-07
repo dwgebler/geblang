@@ -1,0 +1,12 @@
+module static_callable_donor;
+
+export class Gadget {
+    int v;
+    func Gadget(int v) { this.v = v; }
+    static func build(int seedValue): Gadget { return Gadget(seedValue * 10); }
+    static func build(int seedValue, int bump): Gadget { return Gadget(seedValue * 10 + bump); }
+}
+
+export class SubGadget extends Gadget {
+    func SubGadget(int v) { parent(v); }
+}

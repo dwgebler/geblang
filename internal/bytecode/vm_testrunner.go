@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+// nativePatchController is implemented by the bridge evaluator so the runner can roll back test.mock patches on the stateful registry (stateful natives dispatch through it) alongside the VM's own.
+type nativePatchController interface {
+	NativeSnapshot() map[string]native.Function
+	RestoreNatives(snapshot map[string]native.Function)
+}
+
 // cleanTestError mirrors the evaluator's thrownError: Error() is the clean Inspect() message, and the carried runtime.Error supplies the full frame trace, so VM-runner failures read the same as the evaluator instead of the rendered "uncaught ..." blob.
 type cleanTestError struct{ err runtime.Error }
 
@@ -186,11 +192,13 @@ func (vm *VM) CallInstanceMethod(instance *runtime.Instance, name string, args [
 // @test method boundaries.
 func (vm *VM) PatchNative(module, name string, fn native.Function) {
 	vm.natives.Patch(module, name, fn)
+	vm.invalidateNativeCache()
 }
 
 // UnpatchNative removes a single patch.
 func (vm *VM) UnpatchNative(module, name string) {
 	vm.natives.Unpatch(module, name)
+	vm.invalidateNativeCache()
 }
 
 // NativeSnapshot returns the active patch map.
@@ -198,10 +206,17 @@ func (vm *VM) NativeSnapshot() map[string]native.Function {
 	return vm.natives.Snapshot()
 }
 
-// RestoreNatives replaces the active patch map with `snapshot`.
-// Pass nil to clear every patch.
+// RestoreNatives replaces the active patch map; nil clears every patch.
 func (vm *VM) RestoreNatives(snapshot map[string]native.Function) {
 	vm.natives.Restore(snapshot)
+	vm.invalidateNativeCache()
+}
+
+// invalidateNativeCache drops the per-name fast path so a patch change is not bypassed by a stale entry.
+func (vm *VM) invalidateNativeCache() {
+	for i := range vm.nativeCache {
+		vm.nativeCache[i] = nil
+	}
 }
 
 func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value, error) {
@@ -304,9 +319,25 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 	hasMethod := func(name string) bool {
 		return vm.HasInstanceMethod(instance, name)
 	}
+	// Enter test methods directly on this VM (not a runWrapper callVM) so they observe normal top-level state: async functions used as values wrap in a Task (the wrapper VM forces syncMode), and test.mock patches on this VM's registry are visible to the body.
 	callHook := func(name string) error {
-		_, err := vm.CallMethod(instance, name, nil)
+		_, err := vm.CallMethodFast(instance, name, nil)
 		return err
+	}
+	bridge, _ := vm.statefulNative.(nativePatchController)
+	// snapshotPatches captures the test.mock overlay on both the VM registry and the bridge evaluator so a method's mocks roll back before the next, matching the evaluator runner.
+	snapshotPatches := func() func() {
+		vmSnap := vm.NativeSnapshot()
+		var bridgeSnap map[string]native.Function
+		if bridge != nil {
+			bridgeSnap = bridge.NativeSnapshot()
+		}
+		return func() {
+			vm.RestoreNatives(vmSnap)
+			if bridge != nil {
+				bridge.RestoreNatives(bridgeSnap)
+			}
+		}
 	}
 
 	total := int64(0)
@@ -364,17 +395,19 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 				tests = append(tests, buildSkippedEntry(m.displayName, m.skipReason))
 				continue
 			}
+			restorePatches := snapshotPatches()
 			var bodyErr error
 			if hasMethod("setup") {
 				bodyErr = callHook("setup")
 			}
 			if bodyErr == nil {
-				_, bodyErr = vm.CallMethod(instance, m.callKey, nil)
+				_, bodyErr = vm.CallMethodFast(instance, m.callKey, nil)
 			}
 			var teardownErr error
 			if hasMethod("teardown") {
 				teardownErr = callHook("teardown")
 			}
+			restorePatches()
 			if bodyErr != nil && teardownErr == nil {
 				var thrown vmThrownError
 				if errors.As(bodyErr, &thrown) && thrown.err.Class == "TestSkip" {
