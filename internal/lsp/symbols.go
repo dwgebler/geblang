@@ -32,6 +32,7 @@ type userSymbol struct {
 	kind   int
 	line   int // 1-based
 	detail string
+	params []string // function parameter labels, nil for non-functions
 }
 
 // extractSymbols parses source and returns top-level user-defined symbols.
@@ -51,8 +52,7 @@ func symbolsFromStatement(stmt ast.Statement) []userSymbol {
 		if s.Name == nil {
 			return nil
 		}
-		detail := buildFuncDetail(s)
-		return []userSymbol{{name: s.Name.Value, kind: symbolKindFunction, line: s.Token.Line, detail: detail}}
+		return []userSymbol{{name: s.Name.Value, kind: symbolKindFunction, line: s.Token.Line, detail: buildFuncDetail(s), params: funcParamLabels(s)}}
 
 	case *ast.ClassStatement:
 		if s.Name == nil {
@@ -98,10 +98,19 @@ func buildFuncDetail(s *ast.FunctionStatement) string {
 	sb.WriteString("func ")
 	sb.WriteString(s.Name.Value)
 	sb.WriteByte('(')
-	for i, p := range s.Parameters {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
+	sb.WriteString(strings.Join(funcParamLabels(s), ", "))
+	sb.WriteByte(')')
+	if s.ReturnType != nil {
+		sb.WriteString(": ")
+		sb.WriteString(s.ReturnType.String())
+	}
+	return sb.String()
+}
+
+func funcParamLabels(s *ast.FunctionStatement) []string {
+	labels := make([]string, 0, len(s.Parameters))
+	for _, p := range s.Parameters {
+		var sb strings.Builder
 		if p.Variadic {
 			sb.WriteString("...")
 		}
@@ -112,13 +121,9 @@ func buildFuncDetail(s *ast.FunctionStatement) string {
 			sb.WriteString(": ")
 			sb.WriteString(p.Type.String())
 		}
+		labels = append(labels, sb.String())
 	}
-	sb.WriteByte(')')
-	if s.ReturnType != nil {
-		sb.WriteString(": ")
-		sb.WriteString(s.ReturnType.String())
-	}
-	return sb.String()
+	return labels
 }
 
 // documentSymbols converts user symbols to LSP DocumentSymbol format.

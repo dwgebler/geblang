@@ -30,6 +30,11 @@ func (s *server) completions(params CompletionParams) []CompletionItem {
 	if mod, ok := moduleMemberContext(prefix); ok {
 		return moduleCompletionItems(mod)
 	}
+	if alias, ok := selectorReceiver(prefix); ok {
+		if items, ok := s.userModuleCompletionItems(uriToPath(params.TextDocument.URI), source, alias); ok {
+			return items
+		}
+	}
 	enumInfos := fileEnumInfos(source)
 	if enumName, ok := enumStaticContext(prefix, enumInfos); ok {
 		return enumStaticCompletionItems(enumInfos[enumName])
@@ -131,6 +136,9 @@ func (s *server) signatureHelp(params SignatureHelpParams) SignatureHelp {
 			ActiveSignature: 0,
 			ActiveParameter: activeParameter(argPrefix, len(fn.Params)),
 		}
+	}
+	if help, ok := s.userModuleSignatureHelp(uriToPath(params.TextDocument.URI), source, module, name, argPrefix); ok {
+		return help
 	}
 	fn, ok := lookupFunction(module, name)
 	if !ok {

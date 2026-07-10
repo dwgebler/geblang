@@ -1,5 +1,19 @@
 # Release Notes
 
+## 1.32.1
+
+### Tooling
+
+- The language server now resolves exports from imported project modules.
+  With `import app.foo`, go-to-definition and hover on `foo.bar` jump to
+  and describe `bar` in the module's source file, `foo.` completion lists
+  the module's members with their signatures, and signature help covers
+  calls to imported functions. Aliased imports (`import app.foo as f`)
+  and selective imports (`from app.foo import bar`) resolve the same way,
+  including go-to-definition on a bare from-imported name; go-to-definition
+  on the module alias itself opens the module file. Native and stdlib
+  modules keep their catalog documentation.
+
 ## 1.32.0
 
 ### Changed

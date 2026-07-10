@@ -111,6 +111,24 @@ The language server exposes the bundled standard library to VS Code:
 Completion metadata is provided by the `geblang lsp` process, so it works with
 the same executable configured for diagnostics and debugging.
 
+### Project Module Navigation
+
+The same features work for your own modules. With `import app.foo` in scope:
+
+- **Go to Definition** (F12) on `foo.bar` opens the module's source file at
+  `bar`'s declaration. F12 on the `foo` alias itself opens the module file.
+- Hovering `foo.bar` shows `bar`'s full signature and the module it is
+  defined in.
+- Typing `foo.` completes the module's members with their signatures;
+  names starting with `_` are private and not offered.
+- Typing `foo.bar(` shows signature help for the imported function.
+
+Aliased imports (`import app.foo as f`) and selective imports
+(`from app.foo import bar`) resolve the same way. Modules are located with
+the regular resolver, so anything importable from the workspace (including
+manifest `paths` and installed dependencies) is navigable. Unsaved editor
+buffers take precedence over the on-disk file.
+
 ### Step Debugging
 
 #### Quick start

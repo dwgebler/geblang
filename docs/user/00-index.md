@@ -400,7 +400,7 @@ chapter covers the full surface.
 
 ## Status
 
-Geblang is at version 1.32.0 and under active development, with
+Geblang is at version 1.32.1 and under active development, with
 regular minor releases since 1.0 (see the release notes chapter for
 the full history). The bytecode VM is the default execution path; the
 tree-walking evaluator backs the test runner and acts as a

@@ -404,7 +404,10 @@ func (s *server) hover(params TextDocumentPositionParams) any {
 	if !ok {
 		return nil
 	}
-	content := hoverContent(source, params.Position.Line, params.Position.Character)
+	content := s.moduleHover(uriToPath(params.TextDocument.URI), source, params.Position.Line, params.Position.Character)
+	if content == "" {
+		content = hoverContent(source, params.Position.Line, params.Position.Character)
+	}
 	if content == "" {
 		return nil
 	}
@@ -427,23 +430,38 @@ func (s *server) definition(params TextDocumentPositionParams) any {
 	if word == "" {
 		return nil
 	}
-	defLine := findDefinition(source, word)
-	if defLine < 0 {
-		return nil
-	}
-	lines := strings.Split(source, "\n")
-	col := 0
-	if defLine < len(lines) {
-		col = strings.Index(lines[defLine], word)
-		if col < 0 {
-			col = 0
+	file := uriToPath(params.TextDocument.URI)
+	qualifier := selectorQualifier(source, params.Position.Line, params.Position.Character)
+	if qualifier != "" {
+		if hit, ok := s.moduleSymbol(file, source, qualifier, word); ok {
+			return moduleSymbolLocation(hit)
 		}
 	}
-	r := Range{
-		Start: Position{Line: defLine, Character: col},
-		End:   Position{Line: defLine, Character: col + len(word)},
+	defLine := findDefinition(source, word)
+	if defLine >= 0 {
+		lines := strings.Split(source, "\n")
+		col := 0
+		if defLine < len(lines) {
+			col = strings.Index(lines[defLine], word)
+			if col < 0 {
+				col = 0
+			}
+		}
+		r := Range{
+			Start: Position{Line: defLine, Character: col},
+			End:   Position{Line: defLine, Character: col + len(word)},
+		}
+		return Location{URI: params.TextDocument.URI, Range: r}
 	}
-	return Location{URI: params.TextDocument.URI, Range: r}
+	if qualifier == "" {
+		if hit, ok := s.moduleSymbol(file, source, "", word); ok {
+			return moduleSymbolLocation(hit)
+		}
+		if path, _, ok := s.moduleAliasTarget(file, source, word); ok {
+			return Location{URI: pathToURI(path), Range: Range{}}
+		}
+	}
+	return nil
 }
 
 // ---- formatting ----
