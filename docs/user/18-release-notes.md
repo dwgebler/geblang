@@ -1,5 +1,20 @@
 # Release Notes
 
+## 1.32.2
+
+### Tooling
+
+- The language server now resolves document and workspace URIs sent by a
+  Windows-hosted editor for WSL files (`\\wsl.localhost\<distro>\...` and
+  legacy `\\wsl$\...` forms, plus `C:\` drive paths). Project imports no
+  longer produce spurious "cannot resolve import" diagnostics in that
+  setup, and hover, completion, and go-to-definition see the real files.
+- The VS Code extension translates WSL UNC paths when VS Code runs on the
+  Windows host: language-server URIs convert both ways (returned locations
+  open correctly), and Run File and the test runner pass in-WSL paths to
+  the toolchain. Executable paths using the legacy `\\wsl$\` form are now
+  recognized.
+
 ## 1.32.1
 
 ### Tooling

@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode"
 
 	gevruntime "geblang/internal/runtime"
 
@@ -22,6 +21,7 @@ import (
 	"geblang/internal/lexer"
 	"geblang/internal/parser"
 	"geblang/internal/semantic"
+	"geblang/internal/wslpath"
 )
 
 // stepMode controls what the evaluator pauses on next.
@@ -1297,15 +1297,15 @@ func normalizePath(path, fallbackName, cwd string) (string, error) {
 		return "", fmt.Errorf("missing source path")
 	}
 	if runtime.GOOS != "windows" {
-		if linuxPath, ok := wslUNCToLinuxPath(path); ok {
+		if linuxPath, ok := wslpath.UNCToLinux(path); ok {
 			path = linuxPath
-		} else if linuxPath, ok := windowsDriveToWSLPath(path); ok {
+		} else if linuxPath, ok := wslpath.DriveToWSL(path); ok {
 			path = linuxPath
 		}
 	}
 	if strings.HasPrefix(path, "file://") {
 		trimmed := strings.TrimPrefix(path, "file://")
-		if strings.HasPrefix(trimmed, "/") && looksLikeWindowsDrive(trimmed[1:]) {
+		if strings.HasPrefix(trimmed, "/") && wslpath.LooksLikeWindowsDrive(trimmed[1:]) {
 			trimmed = trimmed[1:]
 		}
 		path = trimmed
@@ -1319,40 +1319,6 @@ func normalizePath(path, fallbackName, cwd string) (string, error) {
 		return "", err
 	}
 	return filepath.Clean(abs), nil
-}
-
-func looksLikeWindowsDrive(path string) bool {
-	return len(path) >= 2 && unicode.IsLetter(rune(path[0])) && path[1] == ':'
-}
-
-func wslUNCToLinuxPath(path string) (string, bool) {
-	normalized := strings.ReplaceAll(path, "/", "\\")
-	for _, prefix := range []string{`\\wsl.localhost\`, `\\wsl$\`, `\\wsl\`} {
-		if !strings.HasPrefix(strings.ToLower(normalized), strings.ToLower(prefix)) {
-			continue
-		}
-		rest := normalized[len(prefix):]
-		parts := strings.SplitN(rest, `\`, 2)
-		if len(parts) != 2 || parts[1] == "" {
-			return "", false
-		}
-		return "/" + strings.ReplaceAll(parts[1], `\`, "/"), true
-	}
-	return "", false
-}
-
-func windowsDriveToWSLPath(path string) (string, bool) {
-	if !looksLikeWindowsDrive(path) {
-		return "", false
-	}
-	drive := unicode.ToLower(rune(path[0]))
-	rest := path[2:]
-	rest = strings.TrimLeft(rest, `\/`)
-	rest = strings.ReplaceAll(rest, `\`, "/")
-	if rest == "" {
-		return "/mnt/" + string(drive), true
-	}
-	return "/mnt/" + string(drive) + "/" + rest, true
 }
 
 // DebugLocation aliases the evaluator type for internal use.

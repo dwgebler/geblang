@@ -140,14 +140,14 @@ func TestNormalizePathHandlesWSLDollarUNC(t *testing.T) {
 	}
 }
 
-func TestWindowsDriveToWSLPath(t *testing.T) {
-	got, ok := windowsDriveToWSLPath(`C:\Users\dave\project\main.gb`)
-	if !ok {
-		t.Fatal("expected Windows drive path to be recognized")
+func TestNormalizePathHandlesWindowsDrive(t *testing.T) {
+	got, err := normalizePath(`C:\Users\dave\project\main.gb`, "", "")
+	if err != nil {
+		t.Fatal(err)
 	}
 	want := "/mnt/c/Users/dave/project/main.gb"
 	if got != want {
-		t.Fatalf("windowsDriveToWSLPath = %q, want %q", got, want)
+		t.Fatalf("normalizePath = %q, want %q", got, want)
 	}
 }
 

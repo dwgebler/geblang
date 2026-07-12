@@ -10,6 +10,7 @@ import (
 	"net"
 	neturl "net/url"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"geblang/internal/check"
 	"geblang/internal/formatter"
 	"geblang/internal/modules"
+	"geblang/internal/wslpath"
 )
 
 // diagnosticDebounce is how long the server waits after the last document
@@ -636,18 +638,46 @@ func (s *server) recordWorkspaceRoots(params InitializeParams) {
 	}
 }
 
-// uriToPath converts a `file://` URI to a filesystem path. Returns an
-// empty string for non-file URIs (the LSP analyse path handles that
-// case gracefully).
+// uriToPath converts a `file://` URI to a filesystem path; empty for non-file URIs.
 func uriToPath(uri string) string {
-	if uri == "" {
+	host, path, ok := splitFileURI(uri)
+	if !ok {
 		return ""
 	}
-	parsed, err := neturl.Parse(uri)
-	if err != nil || parsed.Scheme != "file" {
-		return ""
+	// A Windows-hosted client editing WSL files sends file://wsl.localhost/<distro>/...
+	if runtime.GOOS != "windows" {
+		if host != "" {
+			if linux, ok := wslpath.UNCToLinux(`\\` + host + strings.ReplaceAll(path, "/", `\`)); ok {
+				return linux
+			}
+		}
+		if strings.HasPrefix(path, "/") && wslpath.LooksLikeWindowsDrive(path[1:]) {
+			if linux, ok := wslpath.DriveToWSL(path[1:]); ok {
+				return linux
+			}
+		}
 	}
-	return parsed.Path
+	return path
+}
+
+// splitFileURI splits a file:// URI by hand: net/url rejects the %24 in the legacy \\wsl$ authority form.
+func splitFileURI(uri string) (host, path string, ok bool) {
+	rest, ok := strings.CutPrefix(uri, "file://")
+	if !ok {
+		return "", "", false
+	}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		host, path = rest[:i], rest[i:]
+	} else {
+		host = rest
+	}
+	if unescaped, err := neturl.PathUnescape(host); err == nil {
+		host = unescaped
+	}
+	if unescaped, err := neturl.PathUnescape(path); err == nil {
+		path = unescaped
+	}
+	return host, path, true
 }
 
 // lineColRange converts 1-based line/col to an LSP Range (0-based).

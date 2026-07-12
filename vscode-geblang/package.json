@@ -2,7 +2,7 @@
   "name": "vscode-geblang",
   "displayName": "Geblang",
   "description": "Geblang language support for Visual Studio Code",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "publisher": "geblang",
   "engines": {
     "vscode": "^1.80.0"

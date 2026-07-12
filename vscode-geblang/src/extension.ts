@@ -31,16 +31,51 @@ function executionMode(): string {
     return vscode.workspace.getConfiguration('geblang').get<string>('executionMode', 'auto');
 }
 
-// On Linux (WSL remote host), settings edited via the Windows VS Code UI may
-// arrive as Windows UNC paths: \\wsl.localhost\<distro>\home\...
-// Strip the UNC prefix so Node.js can spawn the binary normally.
+// \\wsl.localhost\<distro>\home\... (or legacy \\wsl$\) -> /home/...
+function wslUncToPosix(p: string): string | undefined {
+    const match = /^\\\\wsl(?:\$|\.localhost)?\\[^\\]+\\(.+)$/.exec(p);
+    return match ? '/' + match[1].replace(/\\/g, '/') : undefined;
+}
+
 function resolveExecutablePath(raw: string): string {
-    const wslUncPattern = /^\\\\wsl(?:\.localhost)?\\[^\\]+\\(.+)$/;
-    const match = wslUncPattern.exec(raw);
-    if (match) {
-        return '/' + match[1].replace(/\\/g, '/');
+    return wslUncToPosix(raw) ?? raw;
+}
+
+// Windows-side file path (WSL UNC or C:\ drive) to its in-WSL form, for arguments passed into wsl.exe.
+function toWslPath(p: string): string {
+    const unc = wslUncToPosix(p);
+    if (unc) {
+        return unc;
     }
-    return raw;
+    const drive = /^([a-zA-Z]):[\\/]?(.*)$/.exec(p);
+    if (drive) {
+        const rest = drive[2].replace(/\\/g, '/');
+        const mount = `/mnt/${drive[1].toLowerCase()}`;
+        return rest ? `${mount}/${rest}` : mount;
+    }
+    return p;
+}
+
+// LSP runs inside WSL: strip the wsl authority+distro URI prefix outbound, restore it inbound so returned locations open on the Windows host.
+let wslUriPrefix: { authority: string; distro: string } | undefined;
+
+function code2ProtocolUri(uri: vscode.Uri): string {
+    if (/^wsl(\$|\.localhost)$/i.test(uri.authority)) {
+        const match = /^\/([^/]+)(\/.*)$/.exec(uri.path);
+        if (match) {
+            wslUriPrefix = { authority: uri.authority, distro: match[1] };
+            return uri.with({ authority: '', path: match[2] }).toString();
+        }
+    }
+    return uri.toString();
+}
+
+function protocol2CodeUri(value: string): vscode.Uri {
+    const uri = vscode.Uri.parse(value);
+    if (wslUriPrefix && uri.scheme === 'file' && !uri.authority) {
+        return uri.with({ authority: wslUriPrefix.authority, path: `/${wslUriPrefix.distro}${uri.path}` });
+    }
+    return uri;
 }
 
 function shouldUseWsl(exe: string): boolean {
@@ -122,6 +157,10 @@ async function startClient(): Promise<LanguageClient> {
         documentSelector: [{ scheme: 'file', language: 'geblang' }],
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.gb'),
+        },
+        uriConverters: {
+            code2Protocol: code2ProtocolUri,
+            protocol2Code: protocol2CodeUri,
         },
         outputChannel,
         traceOutputChannel: outputChannel,
@@ -286,7 +325,7 @@ function runCurrentFile(): void {
     const terminal = vscode.window.createTerminal('Geblang: Run');
     const exe = geblangExecutablePath();
     if (shouldUseWsl(exe)) {
-        terminal.sendText(`wsl.exe -e ${exe} ${quote(filePath)}`);
+        terminal.sendText(`wsl.exe -e ${exe} ${quote(toWslPath(filePath))}`);
     } else {
         terminal.sendText(`${quote(exe)} ${quote(filePath)}`);
     }
@@ -512,7 +551,7 @@ async function runGeblangTestFile(filePath: string): Promise<TestFileResult> {
         const exe = geblangExecutablePath();
         const useWsl = shouldUseWsl(exe);
         const command = useWsl ? 'wsl.exe' : exe;
-        const args = useWsl ? ['-e', exe, 'test', '--verbose', filePath] : ['test', '--verbose', filePath];
+        const args = useWsl ? ['-e', exe, 'test', '--verbose', toWslPath(filePath)] : ['test', '--verbose', filePath];
         const proc = cp.spawn(command, args);
         let stdout = '';
         proc.stdout.on('data', chunk => { stdout += chunk.toString(); });
