@@ -1,5 +1,23 @@
 # Release Notes
 
+## 1.33.0
+
+### Language and stdlib
+
+- Regex match results now carry position information. The dicts returned
+  by `re.match` / `re.matchAll`, `pcre.match` / `pcre.matchAll`, and the
+  `match` / `matchAll` methods on both compiled `Pattern` classes gain
+  three fields: `span` (`[start, end]` of the whole match), `spans`
+  (one `[start, end]` per capture group, aligned with `groups`, `null`
+  for a group that did not participate), and `namedSpans` (the same for
+  named groups). Offsets are character positions, end-exclusive, so
+  `text.substring(span[0], span[1])` is exactly the matched text and
+  multibyte characters count as one position. Existing fields keep
+  their values, but match dicts now iterate and print in a fixed
+  field order (text, span, groups, spans, named, namedSpans, with
+  named entries in pattern order) where they previously rendered in
+  sorted-key order.
+
 ## 1.32.2
 
 ### Tooling

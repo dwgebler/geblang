@@ -5,6 +5,11 @@ import (
 	"testing"
 )
 
+func (d *OrderedDict[K, V]) mustGet(key K) V {
+	v, _ := d.Get(key)
+	return v
+}
+
 func TestStringRegexMethods(t *testing.T) {
 	if !StringMatchesRegex("abc123", "[0-9]+") {
 		t.Error("matchesRegex: expected true")
@@ -55,13 +60,14 @@ func TestRePatternFindEmptyMatch(t *testing.T) {
 	}
 }
 
-func TestRePatternMatchSortedKeys(t *testing.T) {
+func TestRePatternMatchDict(t *testing.T) {
 	p := ReCompile("(?P<first>\\w+)-(?P<second>\\w+)")
 	m := p.Match("alpha-beta")
 	if m == nil {
 		t.Fatal("expected a match")
 	}
-	if got := Show(m); got != `{"groups": ["alpha-beta", "alpha", "beta"], "named": {"first": "alpha", "second": "beta"}, "text": "alpha-beta"}` {
+	want := `{"text": "alpha-beta", "span": [0, 10], "groups": ["alpha-beta", "alpha", "beta"], "spans": [[0, 10], [0, 5], [6, 10]], "named": {"first": "alpha", "second": "beta"}, "namedSpans": {"first": [0, 5], "second": [6, 10]}}`
+	if got := Show(m); got != want {
 		t.Errorf("Match render: %s", got)
 	}
 	if p.Match("nodash") != nil {
@@ -70,6 +76,39 @@ func TestRePatternMatchSortedKeys(t *testing.T) {
 	all := p.MatchAll("a-b c-d")
 	if len(all) != 2 {
 		t.Fatalf("MatchAll: got %d", len(all))
+	}
+	if got := Show(all[1].mustGet("span")); got != "[4, 7]" {
+		t.Errorf("MatchAll span: %s", got)
+	}
+}
+
+// Spans are rune offsets: the two-byte o-umlaut must count as one character.
+func TestRePatternMatchSpansMultibyte(t *testing.T) {
+	p := ReCompile("w\\S+")
+	all := p.MatchAll("héllo wörld wörld")
+	if len(all) != 2 {
+		t.Fatalf("MatchAll: got %d", len(all))
+	}
+	if got := Show(all[0].mustGet("span")); got != "[6, 11]" {
+		t.Errorf("first span: %s", got)
+	}
+	if got := Show(all[1].mustGet("span")); got != "[12, 17]" {
+		t.Errorf("second span: %s", got)
+	}
+}
+
+// An unmatched optional group keeps "" in groups and null in spans.
+func TestRePatternMatchUnmatchedGroupSpans(t *testing.T) {
+	p := ReCompile("(a)(b)?")
+	m := p.Match("ac")
+	if m == nil {
+		t.Fatal("expected a match")
+	}
+	if got := Show(m.mustGet("spans")); got != "[[0, 1], [0, 1], null]" {
+		t.Errorf("spans: %s", got)
+	}
+	if got := Show(m.mustGet("groups")); got != `["a", "a", ""]` {
+		t.Errorf("groups: %s", got)
 	}
 }
 

@@ -23,3 +23,9 @@ let none = word.match("nodash");
 io.println("no-match=${none}");
 
 io.println(word.matchAll("a-b c-d"));
+
+# spans are rune offsets, end-exclusive; unmatched groups span null.
+let wm = re.compile("w\\S+").matchAll("héllo wörld wörld");
+io.println("${wm[0]["span"]} ${wm[1]["span"]}");
+let opt = re.compile("(a)(b)?").match("ac");
+io.println("${opt["spans"]} ${opt["namedSpans"]}");

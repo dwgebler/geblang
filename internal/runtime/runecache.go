@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -34,6 +35,18 @@ func (ri *RuneInfo) RuneAt(s string, i int) string {
 		return strings.Clone(s[i : i+1])
 	}
 	return strings.Clone(s[ri.offsets[i]:ri.offsets[i+1]])
+}
+
+// RuneIndexOfByte maps a byte offset on a rune boundary to its rune index.
+func (ri *RuneInfo) RuneIndexOfByte(s string, b int) int {
+	if ri.offsets != nil {
+		return sort.Search(len(ri.offsets), func(i int) bool { return int(ri.offsets[i]) >= b })
+	}
+	if ri.ascii {
+		return b
+	}
+	// offsets-less fallback (only strings too large for int32 offsets); linear prefix count.
+	return utf8.RuneCountInString(s[:b])
 }
 
 // Substring returns runes [i,j). Caller guarantees 0 <= i <= j <= RuneCount.
@@ -132,7 +145,14 @@ func buildRuneInfo(s string) (*RuneInfo, int) {
 			if !valid {
 				// invalid UTF-8: match old string([]rune(s)) semantics (U+FFFD replacement)
 				runes := []rune(s)
-				return &RuneInfo{runes: runes}, cap(runes) * int(unsafe.Sizeof(rune(0)))
+				// offsets too: range advances 1 byte per invalid byte, matching []rune(s) element-for-element.
+				offsets := make([]int32, 0, len(runes)+1)
+				for b := range s {
+					offsets = append(offsets, int32(b))
+				}
+				offsets = append(offsets, int32(len(s)))
+				return &RuneInfo{runes: runes, offsets: offsets},
+					cap(runes)*int(unsafe.Sizeof(rune(0))) + cap(offsets)*int(unsafe.Sizeof(int32(0)))
 			}
 			offsets := make([]int32, 0, runeCount+1)
 			for b := range s {

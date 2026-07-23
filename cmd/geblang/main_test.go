@@ -580,7 +580,7 @@ func TestRunREPLPrintsFinalExpressionAfterStatementsAndAllowsRepeatedImports(t *
 		t.Fatalf("exit code: got %d, stderr=%q", code, errOut.String())
 	}
 	output := out.String()
-	expected := "{\"groups\": [\"123\"], \"named\": {}, \"text\": \"123\"}\n"
+	expected := "{\n  \"groups\": [\"123\"],\n  \"named\": {},\n  \"namedSpans\": {},\n  \"span\": [0, 3],\n  \"spans\": [[0, 3]],\n  \"text\": \"123\"\n}\n"
 	if got := strings.Count(output, expected); got != 2 {
 		t.Fatalf("output match count: got %d, want 2 in %q", got, output)
 	}

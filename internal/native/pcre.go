@@ -122,38 +122,51 @@ func pcreArgs(args []runtime.Value, label string, minN, maxN int) (string, strin
 	return pattern.Value, text.Value, flags, nil
 }
 
-// pcreMatchToDict converts a regexp2.Match into the same dict
-// shape re.match returns: { text, groups, named }.
+// pcreMatchToDict builds the match dict (text/span/groups/spans/named/namedSpans); regexp2 indexes are already rune offsets.
 func pcreMatchToDict(m *regexp2.Match) runtime.Dict {
-	textKey := runtime.String{Value: "text"}
-	groupsKey := runtime.String{Value: "groups"}
-	namedKey := runtime.String{Value: "named"}
-
 	groups := m.Groups()
-	groupsElems := make([]runtime.Value, len(groups))
-	for i, g := range groups {
+	n := len(groups)
+	groupsElems := make([]runtime.Value, n)
+	starts := make([]int, n)
+	ends := make([]int, n)
+	for i := range groups {
+		g := &groups[i]
 		groupsElems[i] = runtime.String{Value: g.String()}
+		if len(g.Captures) == 0 {
+			starts[i], ends[i] = -1, -1
+			continue
+		}
+		starts[i], ends[i] = g.Index, g.Index+g.Length
 	}
 
-	namedEntries := map[string]runtime.DictEntry{}
-	for i, g := range groups {
+	spansElems := make([]runtime.Value, n)
+	for i := 0; i < n; i++ {
+		spansElems[i] = spanListValue(starts[i], ends[i])
+	}
+
+	named := runtime.NewDict()
+	namedSpans := runtime.NewDict()
+	for i := range groups {
 		if i == 0 {
 			continue
 		}
-		name := g.Name
+		name := groups[i].Name
 		if name == "" || name == fmt.Sprintf("%d", i) {
 			continue
 		}
 		nameKey := runtime.String{Value: name}
-		namedEntries[DictKey(nameKey)] = runtime.DictEntry{Key: nameKey, Value: runtime.String{Value: g.String()}}
+		named.PutEntry(DictKey(nameKey), runtime.DictEntry{Key: nameKey, Value: groupsElems[i]})
+		namedSpans.PutEntry(DictKey(nameKey), runtime.DictEntry{Key: nameKey, Value: spanListValue(starts[i], ends[i])})
 	}
 
-	entries := map[string]runtime.DictEntry{
-		DictKey(textKey):   {Key: textKey, Value: runtime.String{Value: m.String()}},
-		DictKey(groupsKey): {Key: groupsKey, Value: &runtime.List{Elements: groupsElems}},
-		DictKey(namedKey):  {Key: namedKey, Value: runtime.Dict{Entries: namedEntries}},
-	}
-	return runtime.Dict{Entries: entries}
+	dict := runtime.NewDictHint(6)
+	matchDictPut(dict, "text", runtime.String{Value: m.String()})
+	matchDictPut(dict, "span", spanListValue(starts[0], ends[0]))
+	matchDictPut(dict, "groups", &runtime.List{Elements: groupsElems})
+	matchDictPut(dict, "spans", &runtime.List{Elements: spansElems})
+	matchDictPut(dict, "named", named)
+	matchDictPut(dict, "namedSpans", namedSpans)
+	return dict
 }
 
 // translatePCREPattern rewrites PHP/Python named-group syntax to

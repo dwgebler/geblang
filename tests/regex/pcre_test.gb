@@ -117,4 +117,53 @@ class PCRETest extends test.Test {
             pcre.test('foo', "foobar", "q");
         });
     }
+
+    @test
+    func matchSpan(): void {
+        let text = "hello world";
+        let m = pcre.match('world', text);
+        this.assertEquals([6, 11], m["span"]);
+        let s = m["span"] as list<int>;
+        this.assertEquals(m["text"], text.substring(s[0], s[1]));
+    }
+
+    @test
+    func matchAllSpans(): void {
+        let ms = pcre.matchAll('\d+', "v12 and 23");
+        this.assertEquals([1, 3], ms[0]["span"]);
+        this.assertEquals([8, 10], ms[1]["span"]);
+    }
+
+    @test
+    func spansAreRuneOffsets(): void {
+        let text = "wörld wörterbuch";
+        let ms = pcre.matchAll('ö\w+', text);
+        this.assertEquals([1, 5], ms[0]["span"]);
+        this.assertEquals([7, 16], ms[1]["span"]);
+        let s = ms[1]["span"] as list<int>;
+        this.assertEquals("örterbuch", text.substring(s[0], s[1]));
+    }
+
+    @test
+    func groupAndNamedSpans(): void {
+        let m = pcre.match('(?P<word>[a-z]+)([0-9]+)', "abc123");
+        this.assertEquals([0, 6], m["span"]);
+        this.assertEquals([0, 3], (m["namedSpans"] as dict<string, any>)["word"]);
+    }
+
+    @test
+    func unmatchedGroupSpanIsNull(): void {
+        let m = pcre.match('(a)(b)?', "ac");
+        let spans = m["spans"] as list<any>;
+        this.assertEquals([0, 1], spans[1]);
+        this.assertNull(spans[2]);
+    }
+
+    @test
+    func compiledPatternSpans(): void {
+        let p = pcre.compile('\d+');
+        this.assertEquals([1, 3], p.match("v12 and 23")["span"]);
+        let ms = p.matchAll("v12 and 23");
+        this.assertEquals([8, 10], ms[1]["span"]);
+    }
 }

@@ -381,3 +381,47 @@ func BenchmarkStringRuneInfoThreshold(b *testing.B) {
 		})
 	}
 }
+
+func TestRuneIndexOfByte(t *testing.T) {
+	cases := []struct {
+		name string
+		s    string
+	}{
+		{"ascii", "hello world"},
+		{"multibyte", "héllo wörld wörld"},
+		{"multibyte edges", "ééé"},
+		{"invalid utf8", "AB\xffCD\xff\xfféX"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ri := StringRuneInfo(tc.s)
+			// every rune boundary must map to its []rune index, including len(s)
+			runeIdx := 0
+			for b := range tc.s {
+				if got := ri.RuneIndexOfByte(tc.s, b); got != runeIdx {
+					t.Fatalf("%q byte %d: got %d, want %d", tc.s, b, got, runeIdx)
+				}
+				runeIdx++
+			}
+			if got := ri.RuneIndexOfByte(tc.s, len(tc.s)); got != len([]rune(tc.s)) {
+				t.Fatalf("%q byte %d (end): got %d, want %d", tc.s, len(tc.s), got, len([]rune(tc.s)))
+			}
+		})
+	}
+}
+
+func TestRuneIndexOfByteRunesFallback(t *testing.T) {
+	// exercise the offsets-less path directly (reserved for over-int32 strings)
+	s := "aéb\xffc"
+	ri := &RuneInfo{runes: []rune(s)}
+	runeIdx := 0
+	for b := range s {
+		if got := ri.RuneIndexOfByte(s, b); got != runeIdx {
+			t.Fatalf("byte %d: got %d, want %d", b, got, runeIdx)
+		}
+		runeIdx++
+	}
+	if got := ri.RuneIndexOfByte(s, len(s)); got != len([]rune(s)) {
+		t.Fatalf("end: got %d, want %d", got, len([]rune(s)))
+	}
+}

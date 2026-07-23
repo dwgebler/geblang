@@ -26,3 +26,10 @@ let pairs = re.matchAll("(?P<name>[A-Za-z]+):(?P<id>[0-9]+)", text);
 for (pair in pairs) {
     io.println(pair["named"]["name"] + " -> " + pair["named"]["id"]);
 }
+
+# Spans report WHERE each match sits: [start, end] character offsets,
+# end-exclusive, so substring(start, end) returns the matched text.
+for (pair in pairs) {
+    let s = pair["span"];
+    io.println("${pair["text"]} at ${s[0]}-${s[1]}");
+}

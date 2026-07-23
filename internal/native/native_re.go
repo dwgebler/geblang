@@ -8,37 +8,63 @@ import (
 	"sync/atomic"
 )
 
-// reMatchDict builds the result dict for re.match / re.matchAll:
-//
-//	"text"   - the whole match.
-//	"groups" - list of all capture groups in order (groups[0] = whole match,
-//	           groups[1..] = numbered subexpressions).
-//	"named"  - dict mapping named groups to their captured text.
-func reMatchDict(re *regexp.Regexp, match []string) runtime.Dict {
-	textKey := runtime.String{Value: "text"}
-	groupsKey := runtime.String{Value: "groups"}
-	namedKey := runtime.String{Value: "named"}
+func matchDictPut(d runtime.Dict, key string, v runtime.Value) {
+	k := runtime.String{Value: key}
+	d.PutEntry(DictKey(k), runtime.DictEntry{Key: k, Value: v})
+}
 
-	groupsElems := make([]runtime.Value, len(match))
-	for i, g := range match {
-		groupsElems[i] = runtime.String{Value: g}
+func spanListValue(start, end int) runtime.Value {
+	if start < 0 {
+		return runtime.Null{}
+	}
+	return &runtime.List{Elements: []runtime.Value{
+		runtime.SmallInt{Value: int64(start)},
+		runtime.SmallInt{Value: int64(end)},
+	}}
+}
+
+// reMatchDict builds the match dict (text/span/groups/spans/named/namedSpans) from byte-offset index pairs; spans are rune offsets, end-exclusive.
+func reMatchDict(re *regexp.Regexp, text string, idx []int, ri *runtime.RuneInfo) runtime.Dict {
+	n := len(idx) / 2
+	groupsElems := make([]runtime.Value, n)
+	starts := make([]int, n)
+	ends := make([]int, n)
+	for i := 0; i < n; i++ {
+		from, to := idx[2*i], idx[2*i+1]
+		if from < 0 {
+			groupsElems[i] = runtime.String{Value: ""}
+			starts[i], ends[i] = -1, -1
+			continue
+		}
+		groupsElems[i] = runtime.String{Value: text[from:to]}
+		starts[i] = ri.RuneIndexOfByte(text, from)
+		ends[i] = ri.RuneIndexOfByte(text, to)
 	}
 
-	namedEntries := map[string]runtime.DictEntry{}
+	spansElems := make([]runtime.Value, n)
+	for i := 0; i < n; i++ {
+		spansElems[i] = spanListValue(starts[i], ends[i])
+	}
+
+	named := runtime.NewDict()
+	namedSpans := runtime.NewDict()
 	for i, name := range re.SubexpNames() {
-		if name == "" || i >= len(match) {
+		if name == "" || i >= n {
 			continue
 		}
 		nameKey := runtime.String{Value: name}
-		namedEntries[DictKey(nameKey)] = runtime.DictEntry{Key: nameKey, Value: runtime.String{Value: match[i]}}
+		named.PutEntry(DictKey(nameKey), runtime.DictEntry{Key: nameKey, Value: groupsElems[i]})
+		namedSpans.PutEntry(DictKey(nameKey), runtime.DictEntry{Key: nameKey, Value: spanListValue(starts[i], ends[i])})
 	}
 
-	entries := map[string]runtime.DictEntry{
-		DictKey(textKey):   {Key: textKey, Value: runtime.String{Value: match[0]}},
-		DictKey(groupsKey): {Key: groupsKey, Value: &runtime.List{Elements: groupsElems}},
-		DictKey(namedKey):  {Key: namedKey, Value: runtime.Dict{Entries: namedEntries}},
-	}
-	return runtime.Dict{Entries: entries}
+	dict := runtime.NewDictHint(6)
+	matchDictPut(dict, "text", groupsElems[0])
+	matchDictPut(dict, "span", spanListValue(starts[0], ends[0]))
+	matchDictPut(dict, "groups", &runtime.List{Elements: groupsElems})
+	matchDictPut(dict, "spans", &runtime.List{Elements: spansElems})
+	matchDictPut(dict, "named", named)
+	matchDictPut(dict, "namedSpans", namedSpans)
+	return dict
 }
 
 var (
@@ -172,18 +198,21 @@ func reFindAllCore(re *regexp.Regexp, text string) runtime.Value {
 }
 
 func reMatchCore(re *regexp.Regexp, text string) runtime.Value {
-	match := re.FindStringSubmatch(text)
-	if match == nil {
+	idx := re.FindStringSubmatchIndex(text)
+	if idx == nil {
 		return runtime.Null{}
 	}
-	return reMatchDict(re, match)
+	return reMatchDict(re, text, idx, runtime.StringRuneInfo(text))
 }
 
 func reMatchAllCore(re *regexp.Regexp, text string) runtime.Value {
-	all := re.FindAllStringSubmatch(text, -1)
+	all := re.FindAllStringSubmatchIndex(text, -1)
 	elements := make([]runtime.Value, 0, len(all))
-	for _, m := range all {
-		elements = append(elements, reMatchDict(re, m))
+	if len(all) > 0 {
+		ri := runtime.StringRuneInfo(text)
+		for _, idx := range all {
+			elements = append(elements, reMatchDict(re, text, idx, ri))
+		}
 	}
 	return &runtime.List{Elements: elements}
 }

@@ -344,8 +344,17 @@ plain functions share one most-recent-pattern cache slot).
 | Field | Type | Description |
 |-------|------|-------------|
 | `text` | `string` | The whole match (alias for `groups[0]`). |
+| `span` | `list<int>` | `[start, end]` position of the whole match (1.33.0). |
 | `groups` | `list<string>` | Every group in order. `groups[0]` is the whole match; `groups[1]`, `groups[2]`, ... are the parenthesised subexpressions. |
+| `spans` | `list` | `[start, end]` per group, aligned with `groups`; `null` for a group that did not participate in the match (1.33.0). |
 | `named` | `dict<string, string>` | Named capture groups (`(?P<name>...)`) keyed by name. |
+| `namedSpans` | `dict` | `[start, end]` per named group; `null` for an unmatched named group (1.33.0). |
+
+Spans are character offsets (not bytes), end-exclusive, so they
+compose with string indexing and slicing:
+`text.substring(span[0], span[1])` is exactly the matched text, and
+`span[1] - span[0]` is the match length. Multibyte characters count
+as one position.
 
 ```gb
 import re;
@@ -353,15 +362,25 @@ import io;
 
 let m = re.match("(?P<word>[A-Za-z]+)([0-9]+)", "Ada123");
 io.println(m["text"]);              # Ada123
+io.println(m["span"]);              # [0, 6]
 io.println(m["groups"][1]);         # Ada      (numbered group 1)
 io.println(m["groups"][2]);         # 123      (numbered group 2)
+io.println(m["spans"][2]);          # [3, 6]   (position of group 2)
 io.println(m["named"]["word"]);     # Ada      (named group)
+io.println(m["namedSpans"]["word"]); # [0, 3]
 
 # Extract every name=value pair from a free-form string.
 let pairs = re.matchAll("(?P<k>\\w+)=\"(?P<v>[^\"]*)\"",
                        "user=\"ada\" role=\"admin\"");
 for (pair in pairs) {
     io.println(pair["named"]["k"] + " -> " + pair["named"]["v"]);
+}
+
+# Where did the pattern match?
+let text = "v12 and 23";
+for (hit in re.matchAll("\\d+", text)) {
+    let s = hit["span"];
+    io.println("${hit["text"]} at ${s[0]}-${s[1]}");   # 12 at 1-3, 23 at 8-10
 }
 ```
 
@@ -411,7 +430,7 @@ argument:
 - `test(pattern, text, flags = "")` - returns `bool`.
 - `find(pattern, text, flags = "")` - first match as a `string`, or `null`.
 - `findAll(pattern, text, flags = "")` - every non-overlapping match as `list<string>`.
-- `match(pattern, text, flags = "")` - dict with `text` / `groups` / `named` (same shape as `re.match`), or `null`.
+- `match(pattern, text, flags = "")` - dict with `text` / `span` / `groups` / `spans` / `named` / `namedSpans` (same shape as `re.match`), or `null`.
 - `compile(pattern, flags = "")` - returns a reusable `Pattern` that
   carries the pattern and flags; its methods mirror the functions
   without the `pattern`/`flags` arguments (e.g.

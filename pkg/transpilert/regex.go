@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"unicode/utf8"
 )
 
 // Regex bridge over Go's stdlib regexp (RE2), the same engine the interpreter's
@@ -77,46 +78,86 @@ func (p *RePattern) Replace(replacement, text string) string {
 }
 
 // Match returns the match dict, or nil (Geblang null) when there is no match.
-// Keys are inserted sorted (groups, named, text) so Show renders them in the
-// same order as the interpreter, whose legacy-dict path sorts keys.
 func (p *RePattern) Match(text string) *OrderedDict[string, any] {
-	m := p.re.FindStringSubmatch(text)
-	if m == nil {
+	idx := p.re.FindStringSubmatchIndex(text)
+	if idx == nil {
 		return nil
 	}
-	return p.matchDict(m)
+	return p.matchDict(text, idx, newByteRuneOffsets(text))
 }
 
 func (p *RePattern) MatchAll(text string) []*OrderedDict[string, any] {
-	all := p.re.FindAllStringSubmatch(text, -1)
+	all := p.re.FindAllStringSubmatchIndex(text, -1)
 	out := make([]*OrderedDict[string, any], 0, len(all))
-	for _, m := range all {
-		out = append(out, p.matchDict(m))
+	if len(all) > 0 {
+		bro := newByteRuneOffsets(text)
+		for _, idx := range all {
+			out = append(out, p.matchDict(text, idx, bro))
+		}
 	}
 	return out
 }
 
-func (p *RePattern) matchDict(m []string) *OrderedDict[string, any] {
-	groups := make([]string, len(m))
-	copy(groups, m)
+// byteRuneOffsets maps byte offsets on rune boundaries to rune indexes; ASCII strings skip the table.
+type byteRuneOffsets struct{ offsets []int }
 
-	type namedPair struct{ name, value string }
-	var named []namedPair
+func newByteRuneOffsets(s string) *byteRuneOffsets {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			offsets := make([]int, 0, utf8.RuneCountInString(s)+1)
+			for b := range s {
+				offsets = append(offsets, b)
+			}
+			offsets = append(offsets, len(s))
+			return &byteRuneOffsets{offsets: offsets}
+		}
+	}
+	return &byteRuneOffsets{}
+}
+
+func (o *byteRuneOffsets) runeIndex(b int) int64 {
+	if o.offsets == nil {
+		return int64(b)
+	}
+	return int64(sort.Search(len(o.offsets), func(i int) bool { return o.offsets[i] >= b }))
+}
+
+// matchDict mirrors the interpreter's match dict (text/span/groups/spans/named/namedSpans); spans are rune offsets, end-exclusive.
+func (p *RePattern) matchDict(text string, idx []int, bro *byteRuneOffsets) *OrderedDict[string, any] {
+	n := len(idx) / 2
+	spanAt := func(i int) any {
+		from, to := idx[2*i], idx[2*i+1]
+		if from < 0 {
+			return nil
+		}
+		return []int64{bro.runeIndex(from), bro.runeIndex(to)}
+	}
+
+	groups := make([]string, n)
+	spans := make([]any, n)
+	for i := 0; i < n; i++ {
+		if idx[2*i] >= 0 {
+			groups[i] = text[idx[2*i]:idx[2*i+1]]
+		}
+		spans[i] = spanAt(i)
+	}
+
+	named := NewOrderedDict[string, string]()
+	namedSpans := NewOrderedDict[string, any]()
 	for i, name := range p.re.SubexpNames() {
-		if name == "" || i >= len(m) {
+		if name == "" || i >= n {
 			continue
 		}
-		named = append(named, namedPair{name, m[i]})
-	}
-	sort.Slice(named, func(i, j int) bool { return named[i].name < named[j].name })
-	namedDict := NewOrderedDict[string, string]()
-	for _, np := range named {
-		namedDict.Set(np.name, np.value)
+		named.Set(name, groups[i])
+		namedSpans.Set(name, spanAt(i))
 	}
 
 	d := NewOrderedDict[string, any]()
+	d.Set("text", groups[0])
+	d.Set("span", spanAt(0))
 	d.Set("groups", groups)
-	d.Set("named", namedDict)
-	d.Set("text", m[0])
+	d.Set("spans", spans)
+	d.Set("named", named)
+	d.Set("namedSpans", namedSpans)
 	return d
 }

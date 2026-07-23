@@ -42,4 +42,55 @@ class RegexTest extends test.Test {
         this.assertTrue(re.test('^hello', "hello world"));
         this.assertFalse(re.test('^world', "hello world"));
     }
+
+    @test
+    func matchSpan(): void {
+        let text = "hello world";
+        let m = re.match('world', text);
+        this.assertEquals([6, 11], m["span"]);
+        let s = m["span"] as list<int>;
+        this.assertEquals(m["text"], text.substring(s[0], s[1]));
+    }
+
+    @test
+    func matchAllSpans(): void {
+        let ms = re.matchAll('\d+', "v12 and 23");
+        this.assertEquals([1, 3], ms[0]["span"]);
+        this.assertEquals([8, 10], ms[1]["span"]);
+    }
+
+    @test
+    func spansAreRuneOffsets(): void {
+        let text = "héllo wörld wörld";
+        let ms = re.matchAll('w\S+', text);
+        this.assertEquals([6, 11], ms[0]["span"]);
+        this.assertEquals([12, 17], ms[1]["span"]);
+        let s = ms[1]["span"] as list<int>;
+        this.assertEquals("wörld", text.substring(s[0], s[1]));
+    }
+
+    @test
+    func groupSpans(): void {
+        let m = re.match('(\w+)@(?P<host>\w+)', "joe@example");
+        this.assertEquals([[0, 11], [0, 3], [4, 11]], m["spans"]);
+        this.assertEquals([4, 11], (m["namedSpans"] as dict<string, any>)["host"]);
+    }
+
+    @test
+    func unmatchedGroupSpanIsNull(): void {
+        let m = re.match('(a)(?P<opt>b)?', "ac");
+        let spans = m["spans"] as list<any>;
+        this.assertEquals([0, 1], spans[1]);
+        this.assertNull(spans[2]);
+        this.assertNull((m["namedSpans"] as dict<string, any>)["opt"]);
+        this.assertEquals("", (m["groups"] as list<string>)[2]);
+    }
+
+    @test
+    func compiledPatternSpans(): void {
+        let p = re.compile('\d+');
+        this.assertEquals([1, 3], p.match("v12 and 23")["span"]);
+        let ms = p.matchAll("v12 and 23");
+        this.assertEquals([8, 10], ms[1]["span"]);
+    }
 }
