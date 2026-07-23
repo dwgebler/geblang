@@ -36,7 +36,7 @@ all:
 
 test: test-go test-lang
 
-test-go:
+test-go: build
 	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto $(GO) test ./...
 
 # doc-test parses every full-program ```gb block in docs/user so a broken
