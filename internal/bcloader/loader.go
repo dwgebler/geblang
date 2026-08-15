@@ -12,6 +12,7 @@ import (
 
 	"geblang/internal/ast"
 	"geblang/internal/bytecode"
+	"geblang/internal/embedfold"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
 	"geblang/internal/native"
@@ -181,6 +182,10 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 	program := p.ParseProgram()
 	if len(p.Errors()) > 0 {
 		return nil, fmt.Errorf("parse module %s: %s", canonical, strings.Join(p.Errors(), "\n"))
+	}
+	if _, diags := embedfold.Fold(program, path, embedfold.Inline); len(diags) > 0 {
+		d := diags[0]
+		return nil, fmt.Errorf("module %s: %s:%d:%d: %s", canonical, path, d.Line, d.Column, d.Message)
 	}
 	if l.opts.Compile == nil {
 		return nil, fmt.Errorf("compile module %s: loader has no Compile callback", canonical)

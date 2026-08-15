@@ -43,6 +43,8 @@ var GlobalBuiltins = map[string]FunctionDoc{
 	"zrange": Fn([]string{"int start", "int end", "int step = 1"}, "list<int>", "Builds an integer range with an exclusive end (Python-style): zrange(n) ranges 0..n-1; zrange(start, end) and zrange(start, end, step) exclude end."),
 	"dump":   Fn([]string{"any value"}, "string", "Returns a debug-friendly string representation of value (recursive, ordered)."),
 	"dir":    Fn([]string{"any value = null"}, "list<string>", "Returns the visible names: with no argument, names in the current scope; with an imported-module identifier, the module's exports; with any other value, its accessible members."),
+	"parent": Fn([]string{"...any args"}, "void", "Calls the parent class constructor via parent(args) or parent's method via parent.method(args); only valid inside class methods (1.34.0 catalog entry; the builtin itself predates it)."),
+	"embed":  Fn([]string{"string path", "dict<string, any> opts = {}"}, "string", "Embeds the file at path (relative to this source file; no \"..\") as a compile-time constant. Returns string; pass {binary: true} for bytes (1.34.0)."),
 }
 
 func GlobalBuiltinDoc(name string) (FunctionDoc, bool) {
@@ -1109,14 +1111,14 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"restoreAll": Fn([]string{}, "void", "Clear every active test.mock patch."),
 	}, Classes: map[string]string{"Test": "Base class for unit tests. Subclass and annotate methods with @test. Use this.assertEquals / assertTrue / assertThrows / etc. inside test bodies."}},
 	"web": {Functions: map[string]FunctionDoc{
-		"new":            Fn([]string{}, "App", "Creates a web application."),
-		"use":            Fn([]string{"App app", "func middleware"}, "App", "Adds middleware."),
-		"before":         Fn([]string{"App app", "func middleware"}, "App", "Adds before middleware."),
-		"after":          Fn([]string{"App app", "func middleware"}, "App", "Adds after middleware."),
-		"route":          Fn([]string{"App app", "string method", "string path", "func handler"}, "App", "Adds a route."),
-		"get":            Fn([]string{"App app", "string path", "func handler"}, "App", "Adds a GET route."),
-		"post":           Fn([]string{"App app", "string path", "func handler"}, "App", "Adds a POST route."),
-		"handle":         Fn([]string{"App app", "Request request"}, "Response", "Handles a request."),
+		"new":             Fn([]string{}, "App", "Creates a web application."),
+		"use":             Fn([]string{"App app", "func middleware"}, "App", "Adds middleware."),
+		"before":          Fn([]string{"App app", "func middleware"}, "App", "Adds before middleware."),
+		"after":           Fn([]string{"App app", "func middleware"}, "App", "Adds after middleware."),
+		"route":           Fn([]string{"App app", "string method", "string path", "func handler"}, "App", "Adds a route."),
+		"get":             Fn([]string{"App app", "string path", "func handler"}, "App", "Adds a GET route."),
+		"post":            Fn([]string{"App app", "string path", "func handler"}, "App", "Adds a POST route."),
+		"handle":          Fn([]string{"App app", "Request request"}, "Response", "Handles a request."),
 		"withHeader":      Fn([]string{"Response response", "string name", "string value"}, "Response", "Returns a response with a header."),
 		"parseMultipart":  Fn([]string{"Request request"}, "dict<string, any>", "Parses a multipart/form-data request body into {fields, files}."),
 		"serveFileMarker": Fn([]string{"dict<string, any> descriptor"}, "any", "Wraps a file descriptor in an unforgeable native marker the HTTP writer recognises for file serving."),

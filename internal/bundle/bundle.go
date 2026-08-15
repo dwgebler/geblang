@@ -187,8 +187,8 @@ func Write(w io.Writer, manifest Manifest, files map[string][]byte) error {
 	return err
 }
 
-// ExtractTo atomically extracts the bundle into dir (temp dir + rename, so an interrupt leaves no partial dir to be reused) and pre-populates the bytecode cache; skips if dir exists.
-func (b *Bundle) ExtractTo(dir string, version string, cacheDir string) error {
+// ExtractTo atomically extracts the bundle into dir (temp dir + rename, so an interrupt leaves no partial dir to be reused) and pre-populates the bytecode cache via cachePathFor (nil skips seeding); skips if dir exists.
+func (b *Bundle) ExtractTo(dir string, cachePathFor func(sourcePath string, source []byte) string) error {
 	if _, err := os.Stat(dir); err == nil {
 		return nil // already extracted
 	}
@@ -239,7 +239,7 @@ func (b *Bundle) ExtractTo(dir string, version string, cacheDir string) error {
 
 		if strings.HasSuffix(f.Name, ".gb") {
 			sourceBytesMap[f.Name] = data
-		} else if strings.HasSuffix(f.Name, ".gbc") && cacheDir != "" {
+		} else if strings.HasSuffix(f.Name, ".gbc") && cachePathFor != nil {
 			bytecodeBytesMap[f.Name] = data
 		}
 	}
@@ -252,7 +252,7 @@ func (b *Bundle) ExtractTo(dir string, version string, cacheDir string) error {
 			continue
 		}
 		finalSrcPath := filepath.Join(dir, filepath.FromSlash(gbZipPath))
-		cachePath := bytecodeCachePath(cacheDir, finalSrcPath, srcBytes, version)
+		cachePath := cachePathFor(finalSrcPath, srcBytes)
 		_ = os.MkdirAll(filepath.Dir(cachePath), 0o755)
 		_ = os.WriteFile(cachePath, bytecodeData, 0o644)
 	}
@@ -265,13 +265,6 @@ func (b *Bundle) ExtractTo(dir string, version string, cacheDir string) error {
 	}
 	published = true
 	return nil
-}
-
-// bytecodeCachePath mirrors bytecode.CachePath: SHA-256(compiler + NUL + sourcePath + NUL + source).
-// Inlined here to avoid a circular import between bundle and bytecode packages.
-func bytecodeCachePath(cacheDir string, sourcePath string, source []byte, compiler string) string {
-	h := sha256.Sum256(append([]byte(compiler+"\x00"+sourcePath+"\x00"), source...))
-	return filepath.Join(cacheDir, hex.EncodeToString(h[:])+".gbc")
 }
 
 // WalkImports traverses the import graph starting at entryPath and returns a

@@ -1513,6 +1513,11 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		return runtime.Float{Value: parsed}, nil
 	case *ast.StringLiteral:
 		return runtime.String{Value: expr.Value}, nil
+	case *ast.EmbeddedLiteral:
+		if expr.Binary {
+			return runtime.Bytes{Value: expr.Content}, nil
+		}
+		return runtime.String{Value: string(expr.Content)}, nil
 	case *ast.InterpolatedString:
 		var sb strings.Builder
 		for _, part := range expr.Parts {
@@ -3104,10 +3109,10 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 			return runtime.Type{Name: args[0].TypeName()}, nil
 		}
 	}
-	if ident, ok := call.Callee.(*ast.Identifier); ok && strings.EqualFold(ident.Value, "dump") {
+	if ident, ok := call.Callee.(*ast.Identifier); ok && ident.Value == "dump" {
 		return e.evalDumpCall(call, env)
 	}
-	if ident, ok := call.Callee.(*ast.Identifier); ok && strings.EqualFold(ident.Value, "dir") {
+	if ident, ok := call.Callee.(*ast.Identifier); ok && ident.Value == "dir" {
 		return e.evalDirCall(call, env)
 	}
 	if ident, ok := call.Callee.(*ast.Identifier); ok && ident.Value == "range" {

@@ -209,6 +209,8 @@ io.println(dump([1, "x"]));   # list[int(1), string("x")]
 `dir()` with no argument lists the names in the current scope and is available
 only in the REPL/evaluator.
 
+`embed(path)` is the other builtin function available without an import; it reads a file at compile time into a string or bytes constant and is documented in chapter 13, [Compile-Time File Embedding](13-bundling.md#compile-time-file-embedding).
+
 ## Module Invocation
 
 Executable modules expose `main(args)` and can be launched with `-m`:

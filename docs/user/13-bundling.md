@@ -103,6 +103,79 @@ Because resources keep their project-relative path inside the bundle, the same
 relative path (`templates/page.html`) resolves correctly whether `base` is the
 project directory in development or the extract directory in a built binary.
 
+For a small file whose content should become part of the program itself
+rather than a file extracted at launch, see [Compile-Time File
+Embedding](#compile-time-file-embedding) below.
+
+## Compile-Time File Embedding
+
+`embed(path)` reads a file at compile time and inlines its content as a
+constant, directly in the compiled program. Unlike `resources:`, there is no
+manifest entry, no bundle directory, and nothing to extract at launch: the
+value is simply there, the same as a string literal would be.
+
+```gb
+import io;
+
+let banner = embed("assets/banner.txt");
+io.println(banner);
+
+let icon = embed("assets/icon.png", {binary: true});
+io.println("${icon.length()} bytes");
+```
+
+`embed(path)` returns a `string`; `embed(path, {binary: true})` returns
+`bytes`. Both forms require `path` to be a string literal, not a variable or
+an interpolated expression, because the file has to be resolved while the
+program compiles. `embed` works the same way under `geblang run`, `geblang
+test`, `geblang check`, the REPL, and built binaries, and the experimental
+`geblang build --native` path supports it too, including binary embeds.
+
+### Path rules
+
+- The path is resolved relative to the directory of the source file
+  containing the `embed(...)` call, not the current working directory or the
+  package root.
+- Paths use forward slashes on every platform.
+- A path may descend into subdirectories (`embed("data/msg.txt")`) but may
+  not contain a `..` segment or be absolute; embedding is restricted to the
+  subtree under the source file's own directory.
+- The path must be a string literal written directly in the call. It cannot
+  be a variable, a function result, or a string with interpolation.
+- The name `embed` is reserved for this compile-time builtin; using it as a
+  variable or value anywhere in a program is a load error.
+
+### Errors happen at load time, not at runtime
+
+A missing file, a path outside the allowed subtree, a directory given where a
+file is expected, or a malformed call is reported as a load-time error, the
+same class of error as a syntax mistake: the program never starts running.
+There is no way to catch an embed failure with `try`/`catch`, because the
+file is read before the program's `main` logic exists. `geblang check` also
+reports embed problems in place, so an editor or CI run catches a bad path
+before the program ever runs.
+
+### Content lives in the program
+
+The embedded content becomes part of the compiled program: it is held in
+memory for the life of the process, stored in the cached bytecode (`.gbc`)
+alongside the rest of the compiled code, and packed into a `geblang build`
+binary just like source code is. Editing the file on disk invalidates the
+cached bytecode for the module that embeds it, so the next run picks up the
+change automatically. Because the content is duplicated into every place the
+program's code already lives, `embed` suits small assets (icons, short
+templates, fixed configuration snippets) rather than large files.
+
+### `embed` vs. `resources:` / `sys.bundleDir()`
+
+See [Embedding Resources](#embedding-resources) above for the runtime-extraction
+alternative.
+
+| | `embed(path)` | `resources:` + `sys.bundleDir()` |
+|---|---|---|
+| When the file is read | Compile time; content becomes a constant | Runtime; the bundle extracts its files at first launch and the program reads them from disk |
+| Best for | Small, fixed assets baked into the program itself | Larger files, or a whole directory tree, kept as files on disk |
+
 ## Package Layout
 
 A bundle is built from a Geblang package. The package needs:

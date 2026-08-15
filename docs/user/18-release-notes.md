@@ -1,5 +1,49 @@
 # Release Notes
 
+## 1.34.0
+
+### Language and stdlib
+
+- `embed(path)` reads a file at compile time into a string constant, and
+  `embed(path, {binary: true})` into a bytes constant. The path must be a
+  string literal, resolved relative to the source file, and confined to
+  its subtree (no `..`, no absolute paths). A bad path, a missing file,
+  or a malformed call is a load-time error, not a runtime one. Works
+  under `geblang run`, `geblang test`, the REPL, built binaries, and the
+  experimental `geblang build --native` path. Editing an embedded file
+  invalidates the cached bytecode for its module, so the next run picks
+  up the change automatically. The name `embed` is reserved for this
+  compile-time builtin; using it as a variable or value is a load error.
+- Bare builtins (`assert dir dump parent range typeof zrange`) now match
+  case-sensitively on both backends; previously a differently-cased call
+  such as `Dump(x)` dispatched on some paths.
+- String interpolation of a bytes value now renders lowercase hex on both
+  backends; previously the bytecode VM rejected non-UTF-8 bytes inside
+  `"${...}"` while the evaluator rendered hex.
+
+### Static analysis
+
+- `geblang check` reports an embed problem (missing file, invalid path,
+  malformed call) as `error[embed]` and suppresses the misleading cascade
+  of unrelated diagnostics that used to follow one.
+
+### Tooling
+
+- `parent` gained hover and completion in the editor catalog, and REPL
+  tab-completion now lists every bare builtin (`assert`, `parent`, `range`,
+  and `zrange` were previously missing) as well as `embed`.
+
+### Bundling
+
+- Built binaries now reuse their shipped precompiled bytecode at launch
+  instead of recompiling from source (a cache-seeding fix).
+
+### Runtime
+
+- Bytecode chunk format version bumped 79 to 80 to carry embedded-file
+  hashes and bytes constants; older cached bytecode rebuilds
+  automatically.
+
 ## 1.33.0
 
 ### Language and stdlib

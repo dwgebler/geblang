@@ -95,6 +95,18 @@ func TestCollectResourcesMappedDest(t *testing.T) {
 	}
 }
 
+// TestCollectResourcesRejectsEmbedShapedPath: a resource remapped onto a nested src/ path (embed()'s packing shape) must be rejected.
+func TestCollectResourcesRejectsEmbedShapedPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "msg.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := collectResources(root, []resourceSpec{parseResourceSpec("msg.txt=src/data/msg.txt")})
+	if err == nil {
+		t.Error("expected error for resource remapped onto reserved src/ path")
+	}
+}
+
 func keys(m map[string][]byte) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

@@ -761,6 +761,23 @@ func (e *StringLiteral) String() string {
 	return string(quote) + e.Raw + string(quote)
 }
 
+// EmbeddedLiteral is an embed(...) call folded to a constant by internal/embedfold; never parser-produced.
+type EmbeddedLiteral struct {
+	Token   token.Token
+	Path    string
+	Binary  bool
+	Content []byte
+}
+
+func (*EmbeddedLiteral) expressionNode()        {}
+func (e *EmbeddedLiteral) TokenLiteral() string { return e.Token.Literal }
+func (e *EmbeddedLiteral) String() string {
+	if e.Binary {
+		return "embed(" + strconv.Quote(e.Path) + ", {binary: true})"
+	}
+	return "embed(" + strconv.Quote(e.Path) + ")"
+}
+
 type InterpolatedString struct {
 	Token token.Token
 	Parts []Expression // mix of *StringLiteral (literal segments) and arbitrary expressions

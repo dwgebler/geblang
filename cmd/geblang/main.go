@@ -21,6 +21,7 @@ import (
 	"geblang/internal/bundle"
 	"geblang/internal/bytecode"
 	"geblang/internal/check"
+	"geblang/internal/embedfold"
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
 	"geblang/internal/memwatch"
@@ -274,6 +275,10 @@ doneFlags:
 		}
 		os.Exit(1)
 	}
+	if err := foldEmbeds(program, args[0]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	// A directly-run file that declares `export func main` auto-invokes it.
 	// Mark the source so the transformed bytecode caches under a distinct key
 	// from the same file's untransformed compilation when imported as a module.
@@ -290,6 +295,15 @@ doneFlags:
 	if exitCode != 0 {
 		os.Exit(exitCode)
 	}
+}
+
+// foldEmbeds inlines embed(...) calls; the first fold problem is a load error.
+func foldEmbeds(program *ast.Program, sourcePath string) error {
+	if _, diags := embedfold.Fold(program, sourcePath, embedfold.Inline); len(diags) > 0 {
+		d := diags[0]
+		return fmt.Errorf("%s:%d:%d: %s", sourcePath, d.Line, d.Column, d.Message)
+	}
+	return nil
 }
 
 func printUsage(writer io.Writer) {
@@ -1694,6 +1708,9 @@ func parseAndAnalyze(file, source string) (*ast.Program, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := foldEmbeds(program, file); err != nil {
+		return nil, err
+	}
 	if err := analyzeCrossModule(file, program, modules.NewResolver([]string{filepath.Dir(file)})); err != nil {
 		return nil, err
 	}
@@ -1886,7 +1903,7 @@ func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Pro
 	if !bytecode.AssertionsDisabled {
 		if data, err := os.ReadFile(cachePath); err == nil {
 			chunk, err := bytecode.Decode(data)
-			if err == nil && chunk.Compiler == version && chunk.SourceHash == bytecode.SourceHash(source) {
+			if err == nil && chunk.Compiler == version && chunk.SourceHash == bytecode.SourceHash(source) && bytecode.EmbedsFresh(chunk, sourcePath) {
 				return chunk, nil
 			}
 		}

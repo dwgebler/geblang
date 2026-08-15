@@ -1,0 +1,5 @@
+import io;
+
+let msg = embed("embed_text.txt");
+io.println(msg);
+io.println("${msg.length()}");

@@ -2629,6 +2629,11 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 		return typeInfo{name: "float", known: true}
 	case *ast.StringLiteral:
 		return typeInfo{name: "string", known: true}
+	case *ast.EmbeddedLiteral:
+		if expr.Binary {
+			return typeInfo{name: "bytes", known: true}
+		}
+		return typeInfo{name: "string", known: true}
 	case *ast.ListLiteral:
 		return a.collectionLiteralType("list", expr.Elements)
 	case *ast.SetLiteral:
@@ -3338,6 +3343,8 @@ func tokenOfExpression(expr ast.Expression) token.Token {
 	case *ast.DecimalLiteral:
 		return e.Token
 	case *ast.StringLiteral:
+		return e.Token
+	case *ast.EmbeddedLiteral:
 		return e.Token
 	case *ast.PrefixExpression:
 		return e.Token

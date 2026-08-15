@@ -4260,3 +4260,17 @@ func outer() {
 outer();
 `, "11\n")
 }
+
+// A user func named Parent is a callable reference, not a parent-constructor call; the implicit parent constructor must still run.
+func TestParityUserParentCallableDoesNotSuppressImplicitParentConstructor(t *testing.T) {
+	runParity(t, `import io;
+func Parent(): void { io.println("helper"); }
+class Base {
+    func Base() { io.println("base"); }
+}
+class Sub extends Base {
+    func Sub() { Parent(); }
+}
+let s = Sub();
+`, "base\nhelper\n")
+}

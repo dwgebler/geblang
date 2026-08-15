@@ -1,0 +1,5 @@
+import io;
+
+let data = embed("embed_binary.bin", {binary: true});
+io.println(data.length());
+io.println(data.toHex());

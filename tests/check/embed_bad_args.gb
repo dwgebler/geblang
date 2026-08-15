@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag embed() called with a non-literal
+ *          path argument; the path must be a string literal so it can
+ *          fold to a compile-time constant.
+ */
+let p = "a.txt";
+let x = embed(p);

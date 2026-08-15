@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"geblang/internal/ast"
+	"geblang/internal/embedfold"
 	"geblang/internal/lexer"
 	"geblang/internal/parser"
 	"geblang/internal/transpiler"
@@ -127,6 +128,9 @@ func buildAndRunNative(t *testing.T, repoRoot, progPath string, progArgs []strin
 	prog := p.ParseProgram()
 	if errs := p.Errors(); len(errs) != 0 {
 		t.Fatalf("parse %s: %s", progPath, strings.Join(errs, "; "))
+	}
+	if _, diags := embedfold.Fold(prog, progPath, embedfold.Inline); len(diags) > 0 {
+		t.Fatalf("fold %s: %s", progPath, diags[0].Message)
 	}
 	module := strings.TrimSuffix(filepath.Base(progPath), ".gb")
 

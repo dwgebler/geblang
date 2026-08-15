@@ -106,6 +106,43 @@ func TestBareBuiltinsRecognizedOnBothBackends(t *testing.T) {
 	}
 }
 
+// bareBuiltinCaseVariants: uppercased name must be rejected (case-sensitive dispatch).
+var bareBuiltinCaseVariants = map[string]string{
+	"assert": "Assert(true);\n",
+	"dir":    "let x = Dir(1);\n",
+	"dump":   "Dump(1);\n",
+	"parent": "class A { func A() {} }\nclass B extends A { func B() { Parent(); } }\nlet b = B();\n",
+	"range":  "let x = Range(1, 2);\n",
+	"typeof": "let x = TypeOf(1);\n",
+	"zrange": "let x = ZRange(3);\n",
+}
+
+func TestBareBuiltinsAreCaseSensitiveOnBothBackends(t *testing.T) {
+	for _, name := range native.BareBuiltins {
+		snippet, ok := bareBuiltinCaseVariants[name]
+		if !ok {
+			t.Errorf("bare builtin %q has no case-variant snippet", name)
+			continue
+		}
+		if err := runOnEvaluator(snippet); err == nil {
+			t.Errorf("evaluator: case variant of %q unexpectedly accepted", name)
+		}
+		if err := runOnVM(snippet); err == nil {
+			t.Errorf("VM: case variant of %q unexpectedly accepted", name)
+		}
+	}
+}
+
+func TestParentSelectorCaseSensitiveOnBothBackends(t *testing.T) {
+	snippet := "class A { func A() {} func greet(): string { return \"a\"; } }\nclass B extends A { func B() {} func greet(): string { return Parent.greet(); } }\nlet b = B();\nlet x = b.greet();\n"
+	if err := runOnEvaluator(snippet); err == nil {
+		t.Error("evaluator: Parent.greet() unexpectedly accepted")
+	}
+	if err := runOnVM(snippet); err == nil {
+		t.Error("VM: Parent.greet() unexpectedly accepted")
+	}
+}
+
 func runOnEvaluator(src string) error {
 	p := parser.New(lexer.New(src))
 	program := p.ParseProgram()

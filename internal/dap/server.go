@@ -17,6 +17,7 @@ import (
 	gevruntime "geblang/internal/runtime"
 
 	"geblang/internal/bytecode"
+	"geblang/internal/embedfold"
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
 	"geblang/internal/parser"
@@ -819,6 +820,13 @@ func (s *Server) runScript() {
 			s.sendEvent("output", OutputEventBody{Category: "stderr", Output: e + "\n"})
 		}
 		s.terminatedCh <- fmt.Errorf("parse errors in %s", s.scriptPath)
+		return
+	}
+
+	if _, diags := embedfold.Fold(program, s.scriptPath, embedfold.Inline); len(diags) > 0 {
+		d := diags[0]
+		s.sendEvent("output", OutputEventBody{Category: "stderr", Output: fmt.Sprintf("%s:%d:%d: %s\n", s.scriptPath, d.Line, d.Column, d.Message)})
+		s.terminatedCh <- fmt.Errorf("embed errors in %s", s.scriptPath)
 		return
 	}
 

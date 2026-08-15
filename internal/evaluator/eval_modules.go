@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/desugar"
+	"geblang/internal/embedfold"
 	"geblang/internal/ffi"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
@@ -335,6 +336,10 @@ func (e *Evaluator) parseAnalyzedModule(canonical string, path string) (*ast.Pro
 	program := p.ParseProgram()
 	if len(p.Errors()) > 0 {
 		return nil, fmt.Errorf("parse module %s: %s", canonical, strings.Join(p.Errors(), "\n"))
+	}
+	if _, diags := embedfold.Fold(program, path, embedfold.Inline); len(diags) > 0 {
+		d := diags[0]
+		return nil, fmt.Errorf("module %s: %s:%d:%d: %s", canonical, path, d.Line, d.Column, d.Message)
 	}
 	if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
 		errorMessages := make([]string, 0, len(diagnostics))

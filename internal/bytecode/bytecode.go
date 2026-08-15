@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(79)
+	Version = uint16(80)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -333,6 +333,8 @@ const (
 	OpDeferNativeCallSpread
 	// OpDeferCallableCallSpread {argc, meta...}: spread-aware OpDeferCallableCall; stack [callable, args...].
 	OpDeferCallableCallSpread
+	// OpDisplayString pops a value and pushes its interpolation rendering (displayString: __string dunder or Inspect), not the `as string` cast.
+	OpDisplayString
 )
 
 type Instruction struct {
@@ -378,7 +380,15 @@ type Chunk struct {
 	// compiled chunk. The VM pre-sizes vm.globals accordingly so the hot
 	// OpGetGlobal / OpSetGlobal handlers can skip bounds checks.
 	GlobalCount int64
+	// Embeds pins every embed(...) file folded into a constant, so a cached chunk can revalidate against disk.
+	Embeds      []EmbedRecord
 	operandPool []int64 // contiguous backing store for all Instruction.Operands slices
+}
+
+// EmbedRecord pins one embedded file so a cached chunk revalidates it.
+type EmbedRecord struct {
+	Path string // source-file-relative, slash-separated
+	Hash [32]byte
 }
 
 // consolidateOperands packs all instruction operand data into a single contiguous
@@ -799,6 +809,12 @@ func Encode(chunk Chunk) ([]byte, error) {
 			out = binary.BigEndian.AppendUint64(out, uint64(idx))
 		}
 	}
+	out = binary.BigEndian.AppendUint16(out, uint16(len(chunk.Embeds)))
+	for _, rec := range chunk.Embeds {
+		out = binary.BigEndian.AppendUint16(out, uint16(len(rec.Path)))
+		out = append(out, []byte(rec.Path)...)
+		out = append(out, rec.Hash[:]...)
+	}
 	return out, nil
 }
 
@@ -1054,6 +1070,13 @@ func Decode(data []byte) (Chunk, error) {
 		}
 		chunk.Exports = append(chunk.Exports, export)
 	}
+	embedCount := int(reader.u16())
+	chunk.Embeds = make([]EmbedRecord, 0, embedCount)
+	for i := 0; i < embedCount; i++ {
+		rec := EmbedRecord{Path: string(reader.read(int(reader.u16())))}
+		copy(rec.Hash[:], reader.read(32))
+		chunk.Embeds = append(chunk.Embeds, rec)
+	}
 	if reader.err != nil {
 		return Chunk{}, reader.err
 	}
@@ -1205,6 +1228,10 @@ func appendConstant(out []byte, value runtime.Value) ([]byte, error) {
 			return nil, fmt.Errorf("unsupported bytecode constant: non-empty set literal")
 		}
 		return append(out, 12), nil
+	case runtime.Bytes:
+		out = append(out, 13)
+		out = binary.BigEndian.AppendUint32(out, uint32(len(value.Value)))
+		return append(out, value.Value...), nil
 	default:
 		return nil, fmt.Errorf("unsupported bytecode constant %s", value.TypeName())
 	}
@@ -1541,6 +1568,11 @@ func (r *byteReader) constant() runtime.Value {
 		return &runtime.List{Elements: nil}
 	case 12:
 		return runtime.Set{Elements: map[string]runtime.SetEntry{}}
+	case 13:
+		data := r.read(int(r.u32()))
+		value := make([]byte, len(data))
+		copy(value, data)
+		return runtime.Bytes{Value: value}
 	default:
 		if r.err == nil {
 			r.err = fmt.Errorf("unknown constant tag %d", tag)

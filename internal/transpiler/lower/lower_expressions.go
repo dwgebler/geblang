@@ -1,6 +1,7 @@
 package lower
 
 import (
+	"encoding/hex"
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/token"
@@ -1413,6 +1414,18 @@ func (l *Lowerer) lowerIndex(e *ast.IndexExpression) {
 
 func (l *Lowerer) emitStringLiteral(s *ast.StringLiteral) {
 	l.w.WriteString(strconv.Quote(s.Value))
+}
+
+// lowerEmbeddedLiteral emits folded embed() content; binary goes through BytesFromHex to avoid raw bytes in Go source.
+func (l *Lowerer) lowerEmbeddedLiteral(e *ast.EmbeddedLiteral) {
+	if e.Binary {
+		l.Module.AddImport(types.OrderedDictImport)
+		l.w.WriteString("transpilert.BytesFromHex(")
+		l.w.WriteString(strconv.Quote(hex.EncodeToString(e.Content)))
+		l.w.WriteString(")")
+		return
+	}
+	l.w.WriteString(strconv.Quote(string(e.Content)))
 }
 
 func (l *Lowerer) emitIntegerLiteral(s *ast.IntegerLiteral) {

@@ -1,0 +1,29 @@
+/**
+ * @title A user callable named Parent must not suppress the implicit parent constructor
+ * @summary The constructor-body scan that decides whether to insert an
+ * implicit parent() call must match the literal identifier "parent", not
+ * any case-insensitive variant. A top-level func named Parent is a normal
+ * callable reference and the base constructor still runs implicitly.
+ */
+import test;
+
+func Parent(): string { return "helper"; }
+
+class Base {
+    int tag = 5;
+    func Base() { }
+}
+
+class Sub extends Base {
+    string called;
+    func Sub() { this.called = Parent(); }
+}
+
+class ParentContainmentCaseTest extends test.Test {
+    @test
+    func userParentCallableDoesNotSuppressImplicitParentConstructor(): void {
+        let s = Sub();
+        this.assertEquals(5, s.tag);
+        this.assertEquals("helper", s.called);
+    }
+}

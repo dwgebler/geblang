@@ -222,7 +222,7 @@ func isHoistableInitializer(expr ast.Expression) bool {
 	switch e := expr.(type) {
 	case nil:
 		return true
-	case *ast.Literal, *ast.IntegerLiteral, *ast.FloatLiteral, *ast.DecimalLiteral, *ast.StringLiteral, *ast.Identifier:
+	case *ast.Literal, *ast.IntegerLiteral, *ast.FloatLiteral, *ast.DecimalLiteral, *ast.StringLiteral, *ast.EmbeddedLiteral, *ast.Identifier:
 		return true
 	case *ast.ListLiteral:
 		for _, el := range e.Elements {
@@ -536,6 +536,8 @@ func (l *Lowerer) lowerExpression(expr ast.Expression) {
 	switch e := expr.(type) {
 	case *ast.StringLiteral:
 		l.emitStringLiteral(e)
+	case *ast.EmbeddedLiteral:
+		l.lowerEmbeddedLiteral(e)
 	case *ast.IntegerLiteral:
 		l.emitIntegerLiteral(e)
 	case *ast.FloatLiteral:
@@ -998,6 +1000,8 @@ func exprToken(expr ast.Expression) token.Token {
 	case *ast.Identifier:
 		return e.Token
 	case *ast.StringLiteral:
+		return e.Token
+	case *ast.EmbeddedLiteral:
 		return e.Token
 	case *ast.IntegerLiteral:
 		return e.Token

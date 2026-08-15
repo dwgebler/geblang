@@ -20,6 +20,7 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/bcloader"
 	"geblang/internal/bytecode"
+	"geblang/internal/embedfold"
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
 	"geblang/internal/parser"
@@ -33,6 +34,10 @@ import (
 func newHarnessLoader(stdout io.Writer, stateful bytecode.StatefulNativeCaller) *bcloader.Loader {
 	return bcloader.New(stdout, nil, stateful, bcloader.Options{
 		Compile: func(canonical, sourcePath string, source []byte, program *ast.Program, modulePaths []string) (bytecode.Chunk, error) {
+			if _, diags := embedfold.Fold(program, sourcePath, embedfold.Inline); len(diags) > 0 {
+				d := diags[0]
+				return bytecode.Chunk{}, fmt.Errorf("fold module %s: %s:%d:%d: %s", canonical, sourcePath, d.Line, d.Column, d.Message)
+			}
 			if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
 				messages := make([]string, 0, len(diagnostics))
 				for _, d := range diagnostics {
@@ -50,7 +55,6 @@ func newHarnessLoader(stdout io.Writer, stateful bytecode.StatefulNativeCaller) 
 		},
 	})
 }
-
 
 // runParityWithStdlib is like runParityStateful but additionally wires
 // a bytecode-side module loader so source-distributed stdlib modules

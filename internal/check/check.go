@@ -9,16 +9,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"geblang/internal/ast"
-	"geblang/internal/token"
 	"geblang/internal/bytecode"
+	"geblang/internal/embedfold"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
 	"geblang/internal/native"
 	"geblang/internal/parser"
 	"geblang/internal/semantic"
+	"geblang/internal/token"
 )
 
 // Severity classifies a diagnostic.
@@ -155,13 +157,20 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 	if merged, ok := SameModuleTestProgram(file, program, opts.Resolver); ok {
 		analysisProgram = merged
 	}
-	diags := CrossModuleAnalysis(file, analysisProgram, opts)
+	diags := []Diagnostic{}
+	if _, foldDiags := embedfold.Fold(analysisProgram, file, embedfold.Validate); len(foldDiags) > 0 {
+		for _, fd := range foldDiags {
+			diags = append(diags, Diagnostic{File: file, Line: fd.Line, Column: fd.Column, Severity: SeverityError, Rule: "embed", Message: fd.Message})
+		}
+	}
+	diags = append(diags, CrossModuleAnalysis(file, analysisProgram, opts)...)
 	if _, compileErr := bytecode.CompileWithOptions(analysisProgram, []byte(source), file, bytecode.CompileOptions{NativeSymbols: opts.NativeSymbols}); compileErr != nil {
 		if d, ok := compileDiagnostic(file, compileErr); ok {
 			diags = append(diags, d)
 		}
 	}
 	diags = suppressRedundantOverloadErrors(diags)
+	diags = suppressEmbedFoldCascade(diags)
 	if opts.Lint {
 		diags = append(diags, lintProgram(file, program)...)
 	}
@@ -333,6 +342,53 @@ func suppressRedundantOverloadErrors(diags []Diagnostic) []Diagnostic {
 		out = append(out, d)
 	}
 	return out
+}
+
+// suppressEmbedFoldCascade drops the derivative unknown-function/unknown-bytecode-function diagnostics a failing embed() triggers.
+func suppressEmbedFoldCascade(diags []Diagnostic) []Diagnostic {
+	embedLines := map[string]bool{}
+	for _, d := range diags {
+		if d.Rule == "embed" {
+			embedLines[embedLineKey(d.File, d.Line)] = true
+		}
+	}
+	if len(embedLines) == 0 {
+		return diags
+	}
+	out := diags[:0]
+	for _, d := range diags {
+		if d.Rule == "semantic" && d.Message == `unknown function "embed"` && embedLines[embedLineKey(d.File, d.Line)] {
+			continue
+		}
+		if d.Rule == "type" && strings.HasSuffix(d.Message, "unknown bytecode function embed") {
+			if line, ok := locatedLine(d.Message); ok && embedLines[embedLineKey(d.File, line)] {
+				continue
+			}
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+func embedLineKey(file string, line int) string {
+	return file + "\x00" + strconv.Itoa(line)
+}
+
+// locatedLine extracts N from a "line N:M: ..." prefixed compiler message.
+func locatedLine(msg string) (int, bool) {
+	if !strings.HasPrefix(msg, "line ") {
+		return 0, false
+	}
+	rest := msg[len("line "):]
+	idx := strings.Index(rest, ":")
+	if idx < 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest[:idx])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // stripLinePrefix removes a leading "line N:M: " that the bytecode compiler

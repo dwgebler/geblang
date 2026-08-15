@@ -1429,6 +1429,11 @@ func decoratorMetadataValue(expr ast.Expression) (runtime.Value, error) {
 	switch expr := expr.(type) {
 	case *ast.StringLiteral:
 		return runtime.String{Value: expr.Value}, nil
+	case *ast.EmbeddedLiteral:
+		if expr.Binary {
+			return runtime.Bytes{Value: expr.Content}, nil
+		}
+		return runtime.String{Value: string(expr.Content)}, nil
 	case *ast.IntegerLiteral:
 		return runtime.NewIntLiteral(expr.Value)
 	case *ast.DecimalLiteral:

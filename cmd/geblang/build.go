@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"geblang/internal/bundle"
 	"geblang/internal/bytecode"
 	"geblang/internal/check"
+	"geblang/internal/embedfold"
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
@@ -195,6 +197,21 @@ func runBuild(args []string) {
 		p := parser.New(lexer.New(string(src)))
 		prog := p.ParseProgram()
 		if len(p.Errors()) == 0 {
+			// A bundle whose source cannot fold can never run, so a fold failure is a hard build error.
+			embeds, foldDiags := embedfold.Fold(prog, absPath, embedfold.Inline)
+			if len(foldDiags) > 0 {
+				d := foldDiags[0]
+				fmt.Fprintf(os.Stderr, "geblang build: %s:%d:%d: %s\n", absPath, d.Line, d.Column, d.Message)
+				os.Exit(1)
+			}
+			for _, rec := range embeds {
+				data, err := os.ReadFile(rec.Abs)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "geblang build: embed %s: %v\n", rec.Abs, err)
+					os.Exit(1)
+				}
+				files[path.Join(path.Dir(zipSrcPath), rec.Path)] = data
+			}
 			// Fail the build on a user-module semantic error rather than emit a binary that rejects at launch.
 			if !isStdlib {
 				if err := analyzeCrossModule(absPath, prog, resolver); err != nil {
@@ -493,7 +510,9 @@ func runBundledWithArgs(b *bundle.Bundle, args []string) int {
 	hash := b.Hash()
 	tempDir := filepath.Join(os.TempDir(), "geblang-"+hash)
 
-	if err := b.ExtractTo(tempDir, version, bytecodeCacheDir()); err != nil {
+	if err := b.ExtractTo(tempDir, func(sp string, src []byte) string {
+		return bytecode.CachePath(bytecodeCacheDir(), sp, src, version)
+	}); err != nil {
 		fmt.Fprintf(os.Stderr, "geblang: bundle extract: %v\n", err)
 		return 1
 	}

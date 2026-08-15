@@ -53,6 +53,14 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 	case *ast.StringLiteral:
 		c.emitConstant(runtime.String{Value: expr.Value}, expr.Token.Line, expr.Token.Column)
 		return nil
+	case *ast.EmbeddedLiteral:
+		c.recordEmbed(expr)
+		if expr.Binary {
+			c.emitConstant(runtime.Bytes{Value: expr.Content}, expr.Token.Line, expr.Token.Column)
+		} else {
+			c.emitConstant(runtime.String{Value: string(expr.Content)}, expr.Token.Line, expr.Token.Column)
+		}
+		return nil
 	case *ast.InterpolatedString:
 		if len(expr.Parts) == 0 {
 			c.emitConstant(runtime.String{Value: ""}, expr.Token.Line, expr.Token.Column)
@@ -65,9 +73,8 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			_, isStr := part.(*ast.StringLiteral)
 			_, isFmt := part.(*ast.FormattedInterpolation)
 			if !isStr && !isFmt {
-				// cast expression result to string using the same path as `as string`
-				c.emitConstant(runtime.String{Value: "string"}, expr.Token.Line, expr.Token.Column)
-				c.emitAt(OpCast, expr.Token.Line, expr.Token.Column)
+				// display semantics (__string/Inspect), not `as string` cast semantics
+				c.emitAt(OpDisplayString, expr.Token.Line, expr.Token.Column)
 			}
 			if i > 0 {
 				c.emitAt(OpAdd, expr.Token.Line, expr.Token.Column)
@@ -489,7 +496,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		return c.compileAssignmentExpression(expr)
 	case *ast.CallExpression:
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
-			if strings.EqualFold(ident.Value, "parent") {
+			if ident.Value == "parent" {
 				if len(c.classStack) == 0 {
 					return fmt.Errorf("parent is only available inside class methods")
 				}
@@ -540,7 +547,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpCallParentConstructor, expr.Token.Line, expr.Token.Column, c.classStack[len(c.classStack)-1], int64(len(orderedArgs)))
 				return nil
 			}
-			if strings.EqualFold(ident.Value, "dir") {
+			if ident.Value == "dir" {
 				if len(expr.Arguments) != 1 || expr.Arguments[0].Name != nil {
 					return fmt.Errorf("dir(value) expects one positional argument; dir() scope introspection is evaluator/REPL-only")
 				}
@@ -565,7 +572,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpDir, expr.Token.Line, expr.Token.Column)
 				return nil
 			}
-			if strings.EqualFold(ident.Value, "dump") {
+			if ident.Value == "dump" {
 				if len(expr.Arguments) != 1 || expr.Arguments[0].Name != nil {
 					return fmt.Errorf("dump expects exactly one positional argument")
 				}
@@ -575,7 +582,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpDump, expr.Token.Line, expr.Token.Column)
 				return nil
 			}
-			if strings.EqualFold(ident.Value, "typeof") {
+			if ident.Value == "typeof" {
 				if len(expr.Arguments) != 1 || expr.Arguments[0].Name != nil {
 					return fmt.Errorf("typeof expects exactly one positional argument")
 				}
@@ -854,7 +861,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			return nil
 		}
 		if selector, ok := expr.Callee.(*ast.SelectorExpression); ok {
-			if object, ok := selector.Object.(*ast.Identifier); ok && strings.EqualFold(object.Value, "parent") {
+			if object, ok := selector.Object.(*ast.Identifier); ok && object.Value == "parent" {
 				if len(c.classStack) == 0 {
 					return fmt.Errorf("parent is only available inside class methods")
 				}
@@ -1580,7 +1587,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 			defaultConstants = append(defaultConstants, -1)
 			continue
 		}
-		value, err := constantValueFromExpression(param.Default)
+		value, err := c.constantValueFromExpression(param.Default)
 		if err != nil {
 			c.popFunctionLocals()
 			c.popScope()
@@ -2705,6 +2712,11 @@ func (c *Compiler) expressionStaticType(expr ast.Expression) string {
 	case *ast.FloatLiteral:
 		return "float"
 	case *ast.StringLiteral:
+		return "string"
+	case *ast.EmbeddedLiteral:
+		if expr.Binary {
+			return "bytes"
+		}
 		return "string"
 	case *ast.InterpolatedString:
 		return "string"

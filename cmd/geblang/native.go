@@ -12,6 +12,7 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/bundle"
 	"geblang/internal/check"
+	"geblang/internal/embedfold"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
 	"geblang/internal/parser"
@@ -51,6 +52,11 @@ func runBuildNative(entry, outPath, absPkgDir string, entrySig entryMainSig) {
 		prog := p.ParseProgram()
 		if errs := p.Errors(); len(errs) != 0 {
 			fmt.Fprintf(os.Stderr, "geblang build --native: parse %s: %s\n", absPath, strings.Join(errs, "; "))
+			os.Exit(1)
+		}
+		if _, diags := embedfold.Fold(prog, absPath, embedfold.Inline); len(diags) > 0 {
+			d := diags[0]
+			fmt.Fprintf(os.Stderr, "geblang build --native: %s:%d:%d: %s\n", absPath, d.Line, d.Column, d.Message)
 			os.Exit(1)
 		}
 		modulesAst[canonical] = prog

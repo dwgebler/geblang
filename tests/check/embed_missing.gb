@@ -1,0 +1,6 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag embed() pointed at a file that does
+ *          not exist on disk relative to this source file.
+ */
+let x = embed("no/such/file.txt");

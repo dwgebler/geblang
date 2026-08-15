@@ -44,6 +44,9 @@ func prepareTestProgram(path string, tags []string, classFilter string, methodFi
 		}
 		base = parsed
 	}
+	if err := foldEmbeds(base, path); err != nil {
+		return nil, err
+	}
 	if err := analyzeCrossModule(path, base, resolver); err != nil {
 		return nil, err
 	}

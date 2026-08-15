@@ -1,0 +1,5 @@
+module embedhelper;
+
+export func banner(): string {
+    return embed("fixtures/helper.txt");
+}

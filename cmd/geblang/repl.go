@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"geblang/internal/ast"
+	"geblang/internal/embedfold"
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
+	"geblang/internal/native"
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"geblang/internal/semantic"
@@ -618,7 +620,8 @@ func completeREPLLine(line string, session *evaluator.Session) replCompletion {
 			names = append(names, imported)
 		}
 	}
-	names = append(names, "dir", "dump", "typeof")
+	names = append(names, native.BareBuiltins...)
+	names = append(names, "embed")
 	return completeFromCandidates(start, prefix, uniqueSorted(names))
 }
 
@@ -1071,6 +1074,17 @@ func parseAnalyzeREPLSource(source string, errOut io.Writer, session *evaluator.
 		for _, msg := range p.Errors() {
 			fmt.Fprintln(errOut, msg)
 		}
+		return nil, false
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return nil, false
+	}
+	sourcePath := filepath.Join(cwd, "__geblang_repl__.gb")
+	if _, diags := embedfold.Fold(program, sourcePath, embedfold.Inline); len(diags) > 0 {
+		d := diags[0]
+		fmt.Fprintf(errOut, "%s:%d:%d: %s\n", sourcePath, d.Line, d.Column, d.Message)
 		return nil, false
 	}
 	analyzer := semantic.New()

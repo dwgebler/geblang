@@ -3,6 +3,7 @@ package bytecode
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -66,6 +67,8 @@ type Compiler struct {
 	// (no code emitted; arguments are not evaluated). Set via the
 	// --no-assert CLI flag on `geblang` and `geblang build`.
 	AssertionsDisabled bool
+	// embeds dedups embed(...) file records by path across repeated compilation of the same node.
+	embeds map[string][32]byte
 }
 
 type binding struct {
@@ -208,7 +211,7 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 			}
 			c.declareClass(class.Name.Value)
 			classKey := strings.ToLower(class.Name.Value)
-			classDec, err := decoratorsMetadata(class.Decorators, "class", 0)
+			classDec, err := c.decoratorsMetadata(class.Decorators, "class", 0)
 			if err != nil {
 				return Chunk{}, err
 			}
@@ -279,6 +282,14 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 	c.emit(OpReturn)
 	c.chunk.TopLevelLocalCount = c.locals
 	c.chunk.GlobalCount = int64(len(c.globals))
+	embedPaths := make([]string, 0, len(c.embeds))
+	for p := range c.embeds {
+		embedPaths = append(embedPaths, p)
+	}
+	sort.Strings(embedPaths)
+	for _, p := range embedPaths {
+		c.chunk.Embeds = append(c.chunk.Embeds, EmbedRecord{Path: p, Hash: c.embeds[p]})
+	}
 	c.chunk.consolidateOperands()
 	c.chunk.sharedMeta = newChunkSharedMeta()
 	return c.chunk, nil
@@ -868,7 +879,7 @@ func typeNameFromExpression(expr ast.Expression) (string, error) {
 	return "", fmt.Errorf("expected type name, got %s", expr.String())
 }
 
-func constantValueFromExpression(expr ast.Expression) (runtime.Value, error) {
+func (c *Compiler) constantValueFromExpression(expr ast.Expression) (runtime.Value, error) {
 	switch expr := expr.(type) {
 	case *ast.IntegerLiteral:
 		value, err := runtime.NewIntLiteral(expr.Value)
@@ -890,6 +901,12 @@ func constantValueFromExpression(expr ast.Expression) (runtime.Value, error) {
 		return runtime.Float{Value: value}, nil
 	case *ast.StringLiteral:
 		return runtime.String{Value: expr.Value}, nil
+	case *ast.EmbeddedLiteral:
+		c.recordEmbed(expr)
+		if expr.Binary {
+			return runtime.Bytes{Value: expr.Content}, nil
+		}
+		return runtime.String{Value: string(expr.Content)}, nil
 	case *ast.Literal:
 		switch value := expr.Value.(type) {
 		case bool:
@@ -916,6 +933,14 @@ func constantValueFromExpression(expr ast.Expression) (runtime.Value, error) {
 		}
 	}
 	return nil, fmt.Errorf("bytecode compiler only supports literal default function parameters")
+}
+
+// recordEmbed dedups by path so a node visited twice on an edge compile path is recorded once.
+func (c *Compiler) recordEmbed(e *ast.EmbeddedLiteral) {
+	if c.embeds == nil {
+		c.embeds = map[string][32]byte{}
+	}
+	c.embeds[e.Path] = SourceHash(e.Content)
 }
 
 func nextOverloadIndex(decorators []runtime.DecoratorMetadata) int64 {

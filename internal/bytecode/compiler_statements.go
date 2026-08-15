@@ -639,7 +639,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 			constSlots = append(constSlots, paramSlot)
 		}
 		paramTypes = append(paramTypes, paramType)
-		paramDecs, err := decoratorsMetadata(param.Decorators, "parameter", 0)
+		paramDecs, err := c.decoratorsMetadata(param.Decorators, "parameter", 0)
 		if err != nil {
 			if !nestedStatement {
 				c.popFunctionLocals()
@@ -652,7 +652,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 			defaultConstants = append(defaultConstants, -1)
 			continue
 		}
-		value, err := constantValueFromExpression(param.Default)
+		value, err := c.constantValueFromExpression(param.Default)
 		if err != nil {
 			if !nestedStatement {
 				c.popFunctionLocals()
@@ -683,7 +683,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	} else if strings.Contains(name, ".") {
 		target = "staticMethod"
 	}
-	dec, err := decoratorsMetadata(stmt.Decorators, target, int64(len(c.chunk.Functions[index].Decorators)))
+	dec, err := c.decoratorsMetadata(stmt.Decorators, target, int64(len(c.chunk.Functions[index].Decorators)))
 	if err != nil {
 		return err
 	}

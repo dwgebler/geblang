@@ -16,7 +16,7 @@ func reflectFunctionMetadataFromStatement(c *Compiler, stmt *ast.FunctionStateme
 		if param.Name != nil {
 			name = param.Name.Value
 		}
-		paramDecs, err := decoratorsMetadata(param.Decorators, "parameter", 0)
+		paramDecs, err := c.decoratorsMetadata(param.Decorators, "parameter", 0)
 		if err != nil {
 			return runtime.FunctionMetadata{}, err
 		}
@@ -28,7 +28,7 @@ func reflectFunctionMetadataFromStatement(c *Compiler, stmt *ast.FunctionStateme
 			Decorators: paramDecs,
 		})
 	}
-	dec, err := decoratorsMetadata(stmt.Decorators, target, overload)
+	dec, err := c.decoratorsMetadata(stmt.Decorators, target, overload)
 	if err != nil {
 		return runtime.FunctionMetadata{}, err
 	}
@@ -53,7 +53,7 @@ func reflectFunctionMetadataFromSignature(c *Compiler, sig *ast.FunctionSignatur
 		if param.Name != nil {
 			name = param.Name.Value
 		}
-		paramDecs, _ := decoratorsMetadata(param.Decorators, "parameter", 0)
+		paramDecs, _ := c.decoratorsMetadata(param.Decorators, "parameter", 0)
 		parameters = append(parameters, runtime.ParameterMetadata{
 			Name:       name,
 			Type:       c.bytecodeTypeName(param.Type),
@@ -211,7 +211,7 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			callableDecorators = append(callableDecorators, dec)
 		}
 	}
-	classDec, err := decoratorsMetadata(callableDecorators, "class", 0)
+	classDec, err := c.decoratorsMetadata(callableDecorators, "class", 0)
 	if err != nil {
 		return err
 	}
@@ -270,7 +270,7 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			if member.Kind == "static const" || member.Kind == "static let" {
 				value := runtime.Value(runtime.Null{})
 				if member.Value != nil {
-					parsed, err := constantValueFromExpression(member.Value)
+					parsed, err := c.constantValueFromExpression(member.Value)
 					if err != nil {
 						return c.withStatementLocation(member, fmt.Errorf("bytecode compiler only supports literal static %s values", strings.TrimPrefix(member.Kind, "static ")))
 					}
@@ -303,12 +303,12 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 				class.ImmutableFields = append(class.ImmutableFields, member.Name.Value)
 				fieldDecs = withoutImmutableDecorator(member.Decorators)
 			}
-			class.FieldDecorators = appendFieldDecorators(class.FieldDecorators, len(class.FieldNames)-1, fieldDecs)
+			class.FieldDecorators = c.appendFieldDecorators(class.FieldDecorators, len(class.FieldNames)-1, fieldDecs)
 			if member.Value == nil {
 				class.FieldDefaults = append(class.FieldDefaults, -1)
 				continue
 			}
-			value, err := constantValueFromExpression(member.Value)
+			value, err := c.constantValueFromExpression(member.Value)
 			if err != nil {
 				return c.withStatementLocation(member, fmt.Errorf("bytecode compiler only supports literal class field defaults"))
 			}
@@ -357,7 +357,7 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			if member.Static {
 				key := strings.ToLower(member.Name.Value)
 				class.StaticMethods[key] = append(class.StaticMethods[key], functionIndex)
-				staticDec, err := decoratorsMetadata(member.Decorators, "staticMethod", nextOverloadIndex(class.StaticDecorators[key]))
+				staticDec, err := c.decoratorsMetadata(member.Decorators, "staticMethod", nextOverloadIndex(class.StaticDecorators[key]))
 				if err != nil {
 					return c.withStatementLocation(member, err)
 				}
@@ -367,7 +367,7 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			} else {
 				key := strings.ToLower(member.Name.Value)
 				class.Methods[key] = append(class.Methods[key], functionIndex)
-				methodDec, err := decoratorsMetadata(member.Decorators, "method", nextOverloadIndex(class.MethodDecorators[key]))
+				methodDec, err := c.decoratorsMetadata(member.Decorators, "method", nextOverloadIndex(class.MethodDecorators[key]))
 				if err != nil {
 					return c.withStatementLocation(member, err)
 				}
@@ -588,7 +588,7 @@ func expressionContainsParentConstructorCall(expr ast.Expression) bool {
 	case nil:
 		return false
 	case *ast.CallExpression:
-		if ident, ok := expr.Callee.(*ast.Identifier); ok && strings.EqualFold(ident.Value, "parent") {
+		if ident, ok := expr.Callee.(*ast.Identifier); ok && ident.Value == "parent" {
 			return true
 		}
 		if expressionContainsParentConstructorCall(expr.Callee) {
@@ -920,14 +920,14 @@ func withoutImmutableDecorator(decorators []ast.Decorator) []ast.Decorator {
 	return out
 }
 
-func appendFieldDecorators(existing [][]runtime.DecoratorMetadata, fieldIndex int, decorators []ast.Decorator) [][]runtime.DecoratorMetadata {
+func (c *Compiler) appendFieldDecorators(existing [][]runtime.DecoratorMetadata, fieldIndex int, decorators []ast.Decorator) [][]runtime.DecoratorMetadata {
 	for len(existing) <= fieldIndex {
 		existing = append(existing, nil)
 	}
 	if len(decorators) == 0 {
 		return existing
 	}
-	metas, err := decoratorsMetadata(decorators, "field", 0)
+	metas, err := c.decoratorsMetadata(decorators, "field", 0)
 	if err != nil {
 		return existing
 	}
@@ -935,7 +935,7 @@ func appendFieldDecorators(existing [][]runtime.DecoratorMetadata, fieldIndex in
 	return existing
 }
 
-func decoratorsMetadata(decorators []ast.Decorator, target string, overload int64) ([]runtime.DecoratorMetadata, error) {
+func (c *Compiler) decoratorsMetadata(decorators []ast.Decorator, target string, overload int64) ([]runtime.DecoratorMetadata, error) {
 	metadata := make([]runtime.DecoratorMetadata, 0, len(decorators))
 	for position, decorator := range decorators {
 		item := runtime.DecoratorMetadata{
@@ -950,7 +950,7 @@ func decoratorsMetadata(decorators []ast.Decorator, target string, overload int6
 			item.Name = decorator.Name.Value
 		}
 		for _, arg := range decorator.Arguments {
-			value, err := decoratorConstantValue(arg.Value)
+			value, err := c.decoratorConstantValue(arg.Value)
 			if err != nil {
 				return nil, fmt.Errorf("decorator @%s: %w", item.Name, err)
 			}
@@ -965,15 +965,15 @@ func decoratorsMetadata(decorators []ast.Decorator, target string, overload int6
 	return metadata, nil
 }
 
-func decoratorConstantValue(expr ast.Expression) (runtime.Value, error) {
-	if value, err := constantValueFromExpression(expr); err == nil {
+func (c *Compiler) decoratorConstantValue(expr ast.Expression) (runtime.Value, error) {
+	if value, err := c.constantValueFromExpression(expr); err == nil {
 		return value, nil
 	}
 	switch expr := expr.(type) {
 	case *ast.ListLiteral:
 		values := make([]runtime.Value, 0, len(expr.Elements))
 		for _, element := range expr.Elements {
-			value, err := decoratorConstantValue(element)
+			value, err := c.decoratorConstantValue(element)
 			if err != nil {
 				return nil, err
 			}
@@ -983,11 +983,11 @@ func decoratorConstantValue(expr ast.Expression) (runtime.Value, error) {
 	case *ast.DictLiteral:
 		entries := map[string]runtime.DictEntry{}
 		for _, entry := range expr.Entries {
-			key, err := decoratorConstantValue(entry.Key)
+			key, err := c.decoratorConstantValue(entry.Key)
 			if err != nil {
 				return nil, err
 			}
-			value, err := decoratorConstantValue(entry.Value)
+			value, err := c.decoratorConstantValue(entry.Value)
 			if err != nil {
 				return nil, err
 			}
@@ -997,7 +997,7 @@ func decoratorConstantValue(expr ast.Expression) (runtime.Value, error) {
 	case *ast.SetLiteral:
 		entries := map[string]runtime.SetEntry{}
 		for _, element := range expr.Elements {
-			value, err := decoratorConstantValue(element)
+			value, err := c.decoratorConstantValue(element)
 			if err != nil {
 				return nil, err
 			}

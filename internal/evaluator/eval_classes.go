@@ -1255,7 +1255,7 @@ func evaluatorExpressionContainsParentConstructorCall(expr ast.Expression) bool 
 	case nil:
 		return false
 	case *ast.CallExpression:
-		if ident, ok := expr.Callee.(*ast.Identifier); ok && strings.EqualFold(ident.Value, "parent") {
+		if ident, ok := expr.Callee.(*ast.Identifier); ok && ident.Value == "parent" {
 			return true
 		}
 		if evaluatorExpressionContainsParentConstructorCall(expr.Callee) {

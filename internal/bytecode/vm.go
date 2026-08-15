@@ -1448,6 +1448,16 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.push(runtime.String{Value: native.DumpValue(vmv.ToValue())})
+		case OpDisplayString:
+			value, err := vm.pop()
+			if err != nil {
+				return vm.runtimeError(*instruction, "%s", err.Error())
+			}
+			text, err := vm.displayString(value)
+			if err != nil {
+				return vm.callPropagate(*instruction, err)
+			}
+			vm.push(runtime.String{Value: text})
 		case OpSelect:
 			nextIP, err := vm.executeSelect(*instruction, ip)
 			if err != nil {

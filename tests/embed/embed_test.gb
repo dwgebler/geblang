@@ -1,0 +1,49 @@
+/**
+ * @title embed() under geblang test
+ * @summary Compile-time embed() folds run before both geblang test lanes,
+ * covering module-level bindings, parameter defaults, interpolation,
+ * binary embeds, and cross-module embeds.
+ */
+import test;
+import bytes;
+import embedhelper;
+let moduleLevel = embed("fixtures/greeting.txt");
+
+func viaDefault(string s = embed("fixtures/greeting.txt")): string {
+    return s;
+}
+
+class EmbedTest extends test.Test {
+    @test
+    func textEmbed(): void {
+        this.assertEquals("Hello, embed!", embed("fixtures/greeting.txt"));
+    }
+
+    @test
+    func moduleLevelBinding(): void {
+        this.assertEquals("Hello, embed!", moduleLevel);
+    }
+
+    @test
+    func interpolation(): void {
+        this.assertEquals("<Hello, embed!>", "<${embed("fixtures/greeting.txt")}>");
+    }
+
+    @test
+    func parameterDefault(): void {
+        this.assertEquals("Hello, embed!", viaDefault());
+    }
+
+    @test
+    func binaryEmbed(): void {
+        let b = embed("fixtures/data.bin", {binary: true});
+        this.assertEquals("bytes", "${typeof(b)}");
+        this.assertEquals(5, b.length());
+        this.assertEquals("0001fe4742", bytes.toHex(b));
+    }
+
+    @test
+    func crossModule(): void {
+        this.assertEquals("from-helper", embedhelper.banner());
+    }
+}
