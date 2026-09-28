@@ -309,8 +309,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 // already-formed VM error keeps its thrown class/message and frames, and a plain
 // error is rendered. Re-rendering a formed error would double its prefix.
 func (vm *VM) propagateCallbackError(instruction Instruction, ip int, err error) (int, error) {
-	var typed vmTypedError
-	if errors.As(err, &typed) {
+	if typed, ok := asVMTypedError(err); ok {
 		return vm.throwTyped(instruction, ip, typed.class, typed.message)
 	}
 	var rtErr *vmRuntimeError
@@ -989,8 +988,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	}
 	value, err := primitiveMethod(receiver, nameValue.Value, args)
 	if err != nil {
-		var typed vmTypedError
-		if errors.As(err, &typed) {
+		if typed, ok := asVMTypedError(err); ok {
 			return vm.throwTyped(instruction, ip, typed.class, typed.message)
 		}
 		return 0, vm.callPropagate(instruction, err)

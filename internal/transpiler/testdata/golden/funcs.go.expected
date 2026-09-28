@@ -15,7 +15,7 @@ func sumEvensTo(n int64) int64 {
 	var i int64 = 0
 	for i <= n {
 		i = (i + 1)
-		if (i % 2) != 0 {
+		if transpilert.ModInt(i, 2) != 0 {
 			continue
 		}
 		if i > 100 {

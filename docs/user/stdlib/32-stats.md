@@ -197,6 +197,45 @@ let c = stats.polyfit([0.0, 1.0, 2.0, 3.0], [0.0, 1.1, 3.9, 9.1], 2);
 io.println(stats.polyval(c, 4.0));   /* ~16.0 */
 ```
 
+## Descriptive statistics (1.35.0)
+
+```gb
+import stats;
+
+let xs = [2, 4, 4, 4, 5, 5, 7, 9];
+
+stats.variance(xs);                         /* 4.571428571428571 (sample, n-1) */
+stats.stdev(xs, {"population": true});      /* 2.0 */
+stats.weightedMean([1, 2], [3, 1]);         /* 1.25 */
+stats.iqr([1, 2, 3, 4, 5, 6, 7, 8]);        /* 3.5 */
+stats.zscores([1, 2, 3]);                   /* [-1.0, 0.0, 1.0] */
+stats.describe([1, 2, 3, 4]);
+/* {"count": 4, "mean": 2.5, "stdev": 1.29..., "min": 1.0,
+    "q1": 1.75, "median": 2.5, "q3": 3.25, "max": 4.0} */
+```
+
+| Function | Result |
+|----------|--------|
+| `variance(xs, opts?)` | sample variance (n-1); `{"population": true}` for the population variance |
+| `stdev(xs, opts?)` | sample standard deviation; `{"population": true}` for the population form |
+| `geometricMean(xs)` | geometric mean; every value must be positive |
+| `harmonicMean(xs)` | harmonic mean; every value must be positive |
+| `weightedMean(xs, weights)` | mean weighted by non-negative weights (both lists, equal length) |
+| `range(xs)` | max minus min |
+| `iqr(xs)` | interquartile range Q3 - Q1, using the same type-7 quantile as `math.quantile` |
+| `mad(xs)` | median absolute deviation (unscaled) |
+| `zscores(xs)` | `list<float>` of standard scores using the sample standard deviation |
+| `describe(xs)` | dict of `count`, `mean`, `stdev`, `min`, `q1`, `median`, `q3`, `max` |
+
+Results are floats unless stated. `xs` may be a list or a set, except
+`weightedMean` and `zscores`, which need a list because order matters.
+Every function raises `RuntimeError` on an empty input or a non-numeric
+element. The sample variance and standard deviation (and `zscores`) need at
+least 2 values; the population forms need at least 1. `zscores` also raises
+when every value is equal. `describe` of a single value reports a `NaN`
+`stdev` rather than raising. The arithmetic mean, sum, median, mode and
+percentiles are in the [`math`](11-math-datetime.md) module.
+
 ## Descriptive extensions
 
 ```gb

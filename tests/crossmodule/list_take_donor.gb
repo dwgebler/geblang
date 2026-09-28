@@ -1,0 +1,13 @@
+module list_take_donor;
+
+export func drainFront(list<int> xs): int {
+    int total = 0;
+    while (!xs.isEmpty()) {
+        total = total + xs.takeFirst();
+    }
+    return total;
+}
+
+export func dropFirst(list<int> xs): list<int> {
+    return xs.shift();
+}

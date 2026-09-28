@@ -692,7 +692,11 @@ to `geblang build` if it reports something unsupported.
 - Calling a method on an `any`-typed value (cast it to a concrete type first);
   assigning into an `any`-typed index.
 - Arbitrary-precision integers: native arithmetic uses a fast machine-width path
-  that wraps on overflow rather than promoting to big integers.
+  that wraps on overflow rather than promoting to big integers. An integer
+  constant that does not fit in 64 bits is a diagnostic.
+- Decimal arithmetic and comparison operators (casts to and from `decimal` are
+  supported), and `int / int`, whose result is an exact decimal: cast an
+  operand to `float` instead.
 - Partial-application `_` placeholder arguments: use a typed wrapper function instead.
 
 ### Performance note

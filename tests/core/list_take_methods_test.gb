@@ -1,0 +1,101 @@
+/**
+ * @title list.shift and value-returning take methods (1.35.0)
+ * @summary shift() removes the first element in place and returns the list;
+ * takeFirst(), takeLast() and takeAt(i) remove one element and return it,
+ * raising ValueError on an empty list and ImmutableError on a frozen one.
+ */
+import test;
+import freeze;
+
+class Queue {
+    list<string> items = [];
+
+    func enqueue(string item): void { this.items.push(item); }
+    func dequeue(): string { return this.items.takeFirst(); }
+    func dropHead(): void { this.items.shift(); }
+}
+
+class ListTakeMethodsTest extends test.Test {
+
+    func errorClass(func f): string {
+        try {
+            f();
+        } catch (Error e) {
+            return "${typeof(e)}: ${e.message}";
+        }
+        return "no error";
+    }
+
+    @test
+    func shiftRemovesFirstAndReturnsReceiver(): void {
+        list<int> xs = [1, 2, 3];
+        let result = xs.shift();
+        this.assertEquals([2, 3], xs);
+        this.assertTrue(result == xs);
+    }
+
+    @test
+    func shiftOnEmptyIsNoOp(): void {
+        list<int> xs = [];
+        this.assertEquals([], xs.shift());
+    }
+
+    @test
+    func takeFirstAndLastReturnValues(): void {
+        list<int> xs = [10, 20, 30];
+        this.assertEquals(10, xs.takeFirst());
+        this.assertEquals(30, xs.takeLast());
+        this.assertEquals([20], xs);
+    }
+
+    @test
+    func takeAtSupportsNegativeIndex(): void {
+        list<string> xs = ["a", "b", "c", "d"];
+        this.assertEquals("b", xs.takeAt(1));
+        this.assertEquals("d", xs.takeAt(-1));
+        this.assertEquals(["a", "c"], xs);
+    }
+
+    @test
+    func takeIsVisibleThroughAliases(): void {
+        let xs = [1, 2, 3];
+        let ys = xs;
+        xs.takeFirst();
+        this.assertEquals([2, 3], ys);
+    }
+
+    @test
+    func emptyTakeRaisesValueError(): void {
+        list<int> xs = [];
+        this.assertEquals("ValueError: list.takeFirst on empty list", this.errorClass(func(): void { xs.takeFirst(); }));
+        this.assertEquals("ValueError: list.takeLast on empty list", this.errorClass(func(): void { xs.takeLast(); }));
+    }
+
+    @test
+    func takeAtOutOfRangeRaises(): void {
+        list<int> xs = [1];
+        this.assertEquals("RuntimeError: list.takeAt: index out of range", this.errorClass(func(): void { xs.takeAt(1); }));
+        this.assertEquals("RuntimeError: list.takeAt: index out of range", this.errorClass(func(): void { xs.takeAt(-2); }));
+        this.assertEquals([1], xs);
+    }
+
+    @test
+    func frozenListRejectsAllFour(): void {
+        let xs = freeze.shallow([1, 2]);
+        this.assertEquals("ImmutableError: cannot modify frozen list", this.errorClass(func(): void { xs.shift(); }));
+        this.assertEquals("ImmutableError: cannot modify frozen list", this.errorClass(func(): void { xs.takeFirst(); }));
+        this.assertEquals("ImmutableError: cannot modify frozen list", this.errorClass(func(): void { xs.takeLast(); }));
+        this.assertEquals("ImmutableError: cannot modify frozen list", this.errorClass(func(): void { xs.takeAt(0); }));
+    }
+
+    @test
+    func worksOnFieldsInsideMethods(): void {
+        let q = Queue();
+        q.enqueue("a");
+        q.enqueue("b");
+        q.enqueue("c");
+        this.assertEquals("a", q.dequeue());
+        q.dropHead();
+        this.assertEquals(["c"], q.items);
+    }
+}

@@ -229,6 +229,8 @@ across numpy, pandas, R, and Excel.
 
 | Function | Returns | Description |
 |----------|---------|-------------|
+| `math.sum(xs)` | `int`, `decimal` or `float` | Sum of a list or set (1.35.0). Follows `+` promotion: all ints stay an exact `int`, any decimal makes it `decimal`, any float makes it `float`; mixing decimal and float is a `RuntimeError`. `0` when empty. |
+| `math.mean(xs)` | `float` | Arithmetic mean of a list or set (1.35.0). |
 | `math.median(xs)` | `float` | 50th percentile, equivalent to `math.quantile(xs, 0.5f)`. |
 | `math.percentile(xs, p)` | `float` | p-th percentile, `p` in `[0, 100]`. |
 | `math.quantile(xs, q)` | `float` | q-quantile, `q` in `[0, 1]`. |
@@ -240,7 +242,15 @@ io.println(math.median(xs));            # 20
 io.println(math.percentile(xs, 25));    # 10
 io.println(math.percentile(xs, 75));    # 30
 io.println(math.mode([1, 1, 2, 2, 3])); # 1
+io.println(math.sum(xs));               # 100
+io.println(math.mean(xs));              # 20
 ```
+
+`median`, `percentile`, `quantile` and `mode` take a list; `sum` and `mean`
+also accept a set (pass `dict.values()` for a dict). Every function except
+`sum` raises `RuntimeError` on an empty input, and all of them raise on a
+non-numeric element. Variance, standard deviation and other descriptive
+statistics live in the [`stats`](32-stats.md) module.
 
 ### Special functions
 

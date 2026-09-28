@@ -1,0 +1,24 @@
+/**
+ * @title list take methods across a module boundary
+ * @summary A list passed into another module is mutated by takeFirst and
+ * shift there, and the caller observes the change.
+ */
+import test;
+import list_take_donor;
+
+class ListTakeCrossModuleTest extends test.Test {
+    @test
+    func takeFirstDrainsCallerList(): void {
+        list<int> xs = [1, 2, 3];
+        this.assertEquals(6, list_take_donor.drainFront(xs));
+        this.assertEquals(0, xs.length());
+    }
+
+    @test
+    func shiftReturnsSameList(): void {
+        list<int> xs = [4, 5];
+        let result = list_take_donor.dropFirst(xs);
+        this.assertEquals([5], xs);
+        this.assertTrue(result == xs);
+    }
+}

@@ -1,0 +1,77 @@
+/**
+ * @title stats summary and dispersion functions (1.35.0)
+ * @summary variance/stdev (sample by default, population option), geometric,
+ * harmonic and weighted means, range, iqr, mad, zscores and describe.
+ */
+import test;
+import stats;
+import math;
+
+class Sensor {
+    list<float> readings = [];
+
+    func record(float v): void { this.readings.push(v); }
+    func spread(): float { return stats.stdev(this.readings); }
+}
+
+class StatsSummaryTest extends test.Test {
+
+    func failure(func f): string {
+        try {
+            f();
+        } catch (RuntimeError e) {
+            return e.message;
+        }
+        return "no error";
+    }
+
+    @test
+    func varianceAndStdev(): void {
+        let xs = [2, 4, 4, 4, 5, 5, 7, 9];
+        this.assertEquals(4.0f, stats.variance(xs, {"population": true}));
+        this.assertEquals(2.0f, stats.stdev(xs, {"population": true}));
+        this.assertTrue(math.abs(stats.variance(xs) - 4.571428571428571f) < 1e-12f);
+        this.assertEquals("stats.variance: sample variance needs at least 2 values", this.failure(func(): void { stats.variance([1]); }));
+    }
+
+    @test
+    func alternativeMeans(): void {
+        this.assertEquals(1.25f, stats.weightedMean([1, 2], [3, 1]));
+        this.assertTrue(math.abs(stats.geometricMean([1, 2, 4]) - 2.0f) < 1e-12f);
+        this.assertTrue(math.abs(stats.harmonicMean([1, 2, 4]) - 1.7142857142857142f) < 1e-12f);
+        this.assertEquals("stats.geometricMean: values must be positive", this.failure(func(): void { stats.geometricMean([0, 1]); }));
+    }
+
+    @test
+    func spreadMeasures(): void {
+        this.assertEquals(8.0f, stats.range([3, 9, 1]));
+        this.assertEquals(3.5f, stats.iqr([1, 2, 3, 4, 5, 6, 7, 8]));
+        this.assertEquals(1.0f, stats.mad([1, 1, 2, 2, 4, 6, 9]));
+        this.assertEquals(2.0f, stats.range({1, 3}));
+    }
+
+    @test
+    func zscoresUseSampleStdev(): void {
+        this.assertEquals([-1.0f, 0.0f, 1.0f], stats.zscores([1, 2, 3]));
+        this.assertEquals("stats.zscores: zero variance", this.failure(func(): void { stats.zscores([3, 3]); }));
+    }
+
+    @test
+    func describeSummarises(): void {
+        let d = stats.describe([1, 2, 3, 4]);
+        this.assertEquals(4, d["count"]);
+        this.assertEquals(2.5f, d["mean"]);
+        this.assertEquals(1.75f, d["q1"]);
+        this.assertEquals(3.25f, d["q3"]);
+        this.assertTrue(math.isNaN(stats.describe([7])["stdev"]));
+        this.assertEquals("stats.describe: list must not be empty", this.failure(func(): void { stats.describe([]); }));
+    }
+
+    @test
+    func worksInsideMethods(): void {
+        let s = Sensor();
+        s.record(2.0f);
+        s.record(4.0f);
+        this.assertTrue(math.abs(s.spread() - 1.4142135623730951f) < 1e-12f);
+    }
+}

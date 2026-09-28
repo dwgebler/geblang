@@ -1,0 +1,81 @@
+/**
+ * @title math.sum and math.mean (1.35.0)
+ * @summary sum follows + promotion rules over a list or set (0 when empty);
+ * mean returns a float and rejects empty or non-numeric input.
+ */
+import test;
+import math;
+
+class Basket {
+    list<decimal> prices = [];
+
+    func add(decimal price): void { this.prices.push(price); }
+    func total(): decimal { return math.sum(this.prices); }
+    func average(): float { return math.mean(this.prices); }
+}
+
+class MathSumMeanTest extends test.Test {
+
+    func failure(func f): string {
+        try {
+            f();
+        } catch (RuntimeError e) {
+            return e.message;
+        }
+        return "no error";
+    }
+
+    @test
+    func sumPreservesIntExactly(): void {
+        this.assertEquals(6, math.sum([1, 2, 3]));
+        this.assertEquals("int", "${typeof(math.sum([1, 2, 3]))}");
+        this.assertEquals("9223372036854775808", "${math.sum([9223372036854775807, 1])}");
+    }
+
+    @test
+    func sumPromotesLikePlus(): void {
+        this.assertEquals(3.5, math.sum([1, 2.5]));
+        this.assertEquals("decimal", "${typeof(math.sum([1, 2.5]))}");
+        this.assertEquals("float", "${typeof(math.sum([1, 2.5f]))}");
+    }
+
+    @test
+    func sumOfEmptyIsZero(): void {
+        this.assertEquals(0, math.sum([]));
+    }
+
+    @test
+    func sumAcceptsSetsAndDictValues(): void {
+        this.assertEquals(6, math.sum({1, 2, 3}));
+        this.assertEquals(5, math.sum({"a": 2, "b": 3}.values()));
+    }
+
+    @test
+    func sumRejectsDecimalFloatMix(): void {
+        list<any> mixed = [1.5, 2.5f];
+        this.assertTrue(this.failure(func(): void { math.sum(mixed); }).startsWith("math.sum: cannot mix decimal and float"));
+    }
+
+    @test
+    func meanReturnsFloat(): void {
+        this.assertEquals(2.5f, math.mean([1, 2, 3, 4]));
+        this.assertEquals(3.0f, math.mean({2, 4}));
+        this.assertEquals("float", "${typeof(math.mean([1]))}");
+    }
+
+    @test
+    func meanRejectsBadInput(): void {
+        list<any> strs = [1, "a"];
+        this.assertEquals("math.mean: list must not be empty", this.failure(func(): void { math.mean([]); }));
+        this.assertEquals("math.mean: list element 1: expected numeric value, got string", this.failure(func(): void { math.mean(strs); }));
+    }
+
+    @test
+    func worksInsideMethods(): void {
+        let b = Basket();
+        b.add(1.25);
+        b.add(2.75);
+        this.assertEquals(4.0, b.total());
+        this.assertEquals(2.0f, b.average());
+    }
+}

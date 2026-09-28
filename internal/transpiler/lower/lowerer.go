@@ -24,6 +24,8 @@ type Lowerer struct {
 	errors      []Error
 	w           *emit.Writer
 	parentClass string
+	// inIntConstant skips nested overflow checks: Go evaluates an untyped constant exactly.
+	inIntConstant bool
 	// moduleTopLevel holds the Geblang names of this module's top-level functions
 	// and module-level let/const; a same-module reference to one prefixes it with
 	// NamePrefix so it binds to the prefixed Go symbol (non-entry modules only).

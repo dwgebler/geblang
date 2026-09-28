@@ -6,6 +6,8 @@ import (
 	argbinding "geblang/internal/binding"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
+	"math"
+	"math/big"
 	"strconv"
 	"strings"
 )
@@ -3109,15 +3111,18 @@ func boolLiteralValue(expr ast.Expression) (bool, bool) {
 func foldIntInt(op string, l, r int64) (runtime.Value, bool, error) {
 	switch op {
 	case "+":
-		return runtime.NewInt64(l + r), true, nil
+		return runtime.Int{Value: new(big.Int).Add(big.NewInt(l), big.NewInt(r))}, true, nil
 	case "-":
-		return runtime.NewInt64(l - r), true, nil
+		return runtime.Int{Value: new(big.Int).Sub(big.NewInt(l), big.NewInt(r))}, true, nil
 	case "*":
-		return runtime.NewInt64(l * r), true, nil
+		return runtime.Int{Value: new(big.Int).Mul(big.NewInt(l), big.NewInt(r))}, true, nil
 	case "//":
 		if r == 0 {
 			// Defer to runtime so the throw stays catchable (eval parity).
 			return nil, false, nil
+		}
+		if l == math.MinInt64 && r == -1 {
+			return runtime.Int{Value: new(big.Int).Neg(big.NewInt(l))}, true, nil
 		}
 		// Floor semantics: Go's `/` truncates toward zero.
 		q := l / r

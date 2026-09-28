@@ -162,11 +162,30 @@ io.println("geblang"[::-1]); # gnalbeg
 | `push(value)` | `list<T>` | Append `value`; returns the same list |
 | `fill(value, count)` | `list<T>` | Append `count` copies of `value`; returns the same list (`count` must be `>= 0`) |
 | `pop()` | `list<T>` | Remove the last element (no-op when empty) |
+| `shift()` | `list<T>` | Remove the first element (no-op when empty) (1.35.0) |
 | `prepend(value)` | `list<T>` | Insert `value` at the front |
 | `unshift(value)` | `list<T>` | Alias for `prepend` |
 | `insert(index, value)` | `list<T>` | Insert `value` before `index` |
 | `removeAt(index)` | `list<T>` | Remove the element at `index` |
 | `remove(value)` | `list<T>` | Remove the first occurrence of `value`; no-op if absent |
+
+**In-place, returning the removed element** (1.35.0):
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `takeFirst()` | `T` | Remove and return the first element; `ValueError` when empty |
+| `takeLast()` | `T` | Remove and return the last element; `ValueError` when empty |
+| `takeAt(index)` | `T` | Remove and return the element at `index` (negative counts from the end); out-of-range is an error |
+
+Use these when you need the value, and `pop()` / `shift()` / `removeAt()` when
+you want the list back for chaining. All of them raise `ImmutableError` on a
+frozen list.
+
+```gb
+list<string> queue = ["a", "b", "c"];
+string next = queue.takeFirst();   # "a"; queue is ["b", "c"]
+string tail = queue.takeLast();    # "c"; queue is ["b"]
+```
 
 **Copy-and-return** (allocate a new list; receiver unchanged):
 

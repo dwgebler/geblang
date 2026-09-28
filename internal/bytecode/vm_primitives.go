@@ -1265,6 +1265,15 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		default:
 			return nil, fmt.Errorf("%s has no method clear", receiver.TypeName())
 		}
+	case "shift", "takeFirst", "takeLast", "takeAt":
+		list, ok := receiver.(*runtime.List)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
+		}
+		if name == "shift" {
+			return native.ListShift(list, args)
+		}
+		return native.ListTake(list, name, args)
 	case "pop":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("list.pop expects no arguments")

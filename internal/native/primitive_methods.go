@@ -32,7 +32,7 @@ var PrimitiveMethods = map[string][]string{
 		"lowerBound", "map", "maxBy", "minBy", "mode", "partition", "pop",
 		"prepend", "push", "reduce", "remove", "removeAt", "reverse", "reversed",
 		"search", "searchPattern",
-		"set", "slice", "sort", "sortBy", "sorted", "sumBy", "toList", "topBy",
+		"set", "shift", "slice", "sort", "sortBy", "sorted", "sumBy", "takeAt", "takeFirst", "takeLast", "toList", "topBy",
 		"topK", "unique", "unshift", "upperBound", "zip", "zipWith",
 		"flatMap", "uniqueBy", "takeWhile", "dropWhile", "windowed", "unzip", "scan",
 		"enumerate",

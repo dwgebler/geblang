@@ -3,6 +3,7 @@ package lower
 import (
 	"geblang/internal/ast"
 	"geblang/internal/transpiler/types"
+	"strings"
 )
 
 // listMutatorRecv classifies a mutator receiver. Go passes slice headers by
@@ -104,8 +105,10 @@ func listMutatorArityOK(name string, n int) bool {
 	switch name {
 	case "push", "prepend", "unshift", "removeAt", "remove":
 		return n == 1
-	case "pop", "reverse":
+	case "pop", "shift", "reverse", "takeFirst", "takeLast":
 		return n == 0
+	case "takeAt":
+		return n == 1
 	case "insert":
 		return n == 2
 	case "sort":
@@ -122,6 +125,10 @@ func (l *Lowerer) emitListMutator(name string, obj ast.Expression, ty *types.Typ
 	elemGo := types.ToGo(ty.Elem, l.Module.IntMode)
 	l.Module.AddTypeImports(elemGo)
 	sliceTy := "[]" + elemGo.Source
+	if strings.HasPrefix(name, "take") {
+		l.emitListTake(name, obj, sliceTy, elemGo.Source, args)
+		return
+	}
 	l.w.WriteString("func(__p *")
 	l.w.WriteString(sliceTy)
 	l.w.WriteString(") ")
@@ -141,6 +148,9 @@ func (l *Lowerer) emitMutatorBody(name, sliceTy string, args []ast.CallArgument)
 		l.w.WriteString("); ")
 	case "pop":
 		l.w.WriteString("if len(*__p) > 0 { *__p = (*__p)[:len(*__p)-1] }; ")
+	case "shift":
+		l.Module.AddImport("slices")
+		l.w.WriteString("if len(*__p) > 0 { *__p = slices.Delete(*__p, 0, 1) }; ")
 	case "prepend", "unshift":
 		l.w.WriteString("*__p = append(")
 		l.w.WriteString(sliceTy)
@@ -176,6 +186,27 @@ func (l *Lowerer) emitMutatorBody(name, sliceTy string, args []ast.CallArgument)
 		l.Module.AddImport("slices")
 		l.w.WriteString("slices.Sort(*__p); ")
 	}
+}
+
+// emitListTake emits an IIFE that removes one element from the slot and returns it.
+func (l *Lowerer) emitListTake(name string, obj ast.Expression, sliceTy, elemTy string, args []ast.CallArgument) {
+	l.Module.AddImport("slices")
+	l.Module.AddImport(types.OrderedDictImport)
+	l.w.WriteString("func(__p *" + sliceTy + ") " + elemTy + " { ")
+	switch name {
+	case "takeAt":
+		l.w.WriteString("__i := int(")
+		l.lowerExpression(args[0].Value)
+		l.w.WriteString("); if __i < 0 { __i += len(*__p) }; if __i < 0 || __i >= len(*__p) { panic(transpilert.NewError(\"RuntimeError\", \"list.takeAt: index out of range\")) }; ")
+	default:
+		l.w.WriteString("if len(*__p) == 0 { panic(transpilert.NewError(\"ValueError\", \"list." + name + " on empty list\")) }; __i := 0; ")
+		if name == "takeLast" {
+			l.w.WriteString("__i = len(*__p) - 1; ")
+		}
+	}
+	l.w.WriteString("__v := (*__p)[__i]; *__p = slices.Delete(*__p, __i, __i+1); return __v }(&")
+	l.lowerExpression(obj)
+	l.w.WriteString(")")
 }
 
 func isOrderedElemKind(t *types.Type) bool {

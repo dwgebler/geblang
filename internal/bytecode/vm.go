@@ -413,6 +413,23 @@ type vmTypedError struct {
 
 func (e vmTypedError) Error() string { return e.class + ": " + e.message }
 
+// asVMTypedError also accepts a native runtime.TypedError; an already-thrown error keeps its frames instead.
+func asVMTypedError(err error) (vmTypedError, bool) {
+	var typed vmTypedError
+	if errors.As(err, &typed) {
+		return typed, true
+	}
+	var thrown vmThrownError
+	if errors.As(err, &thrown) {
+		return vmTypedError{}, false
+	}
+	var nativeErr runtime.TypedError
+	if errors.As(err, &nativeErr) {
+		return vmTypedError{class: nativeErr.ErrorClass(), message: nativeErr.Error()}, true
+	}
+	return vmTypedError{}, false
+}
+
 // vmThrownError carries a runtime.Error across a VM boundary without collapsing it to a plain string.
 type vmThrownError struct {
 	err runtime.Error

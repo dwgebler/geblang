@@ -795,6 +795,10 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("list.toList expects no arguments")
 			}
 			return value, nil
+		case "shift":
+			return native.ListShift(value, args)
+		case "takeFirst", "takeLast", "takeAt":
+			return native.ListTake(value, name, args)
 		case "pop":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.pop expects no arguments")

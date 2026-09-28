@@ -1,0 +1,41 @@
+import io;
+
+/* shift mutates and returns the list; take* remove and return one element. */
+list<int> xs = [1, 2, 3, 4, 5];
+xs.shift();
+io.println(xs);
+list<int> empty = [];
+empty.shift();
+io.println(empty.length());
+
+list<int> ys = [10, 20, 30, 40, 50];
+int first = ys.takeFirst();
+int last = ys.takeLast();
+int mid = ys.takeAt(1);
+int neg = ys.takeAt(-1);
+io.println(first);
+io.println(last);
+io.println(mid);
+io.println(neg);
+io.println(ys);
+
+list<string> words = ["a", "b"];
+string w = words.takeLast();
+io.println(w);
+io.println(words);
+
+try {
+    empty.takeFirst();
+} catch (ValueError e) {
+    io.println(e.message);
+}
+try {
+    empty.takeLast();
+} catch (ValueError e) {
+    io.println(e.message);
+}
+try {
+    ys.takeAt(5);
+} catch (RuntimeError e) {
+    io.println(e.message);
+}

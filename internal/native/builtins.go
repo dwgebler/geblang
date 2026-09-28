@@ -48,6 +48,7 @@ func NewBuiltinRegistry() *Registry {
 // NewBuiltinRegistry.
 func registerAllBuiltins(r *Registry) {
 	registerMath(r)
+	registerMathAggregates(r)
 	registerVecmath(r)
 	registerTokenizer(r)
 	registerPooling(r)
@@ -88,6 +89,7 @@ func registerAllBuiltins(r *Registry) {
 	registerRegexCompile(r)
 	registerNDArray(r)
 	registerStats(r)
+	registerStatsDescriptive(r)
 	registerComplex(r)
 	registerGeo(r)
 	registerPhysics(r)

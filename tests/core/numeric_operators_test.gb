@@ -104,4 +104,14 @@ class NumericOperatorsTest extends test.Test {
         this.assertThrows(func(): void { let x = "not a number" as int; });
         this.assertThrows(func(): void { let x = "xyz" as float; });
     }
+
+    @test
+    func literalArithmeticPromotesPastInt64(): void {
+        int max = 9223372036854775807;
+        this.assertEquals(max + 1, 9223372036854775807 + 1);
+        this.assertTrue(9223372036854775807 + 1 > max);
+        this.assertEquals(max * 2, 9223372036854775807 * 2);
+        this.assertEquals("18446744073709551616", "${4611686018427387904 * 4}");
+        this.assertEquals("int", this.typeName(9223372036854775807 + 1));
+    }
 }

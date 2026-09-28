@@ -1,5 +1,47 @@
 # Release Notes
 
+## 1.35.0
+
+### Language and stdlib
+
+- `list.shift()` removes the first element in place and returns the list
+  (a no-op when empty), mirroring `pop()`.
+- `list.takeFirst()`, `list.takeLast()` and `list.takeAt(index)` remove one
+  element and return it. `takeFirst` / `takeLast` raise `ValueError` on an
+  empty list; `takeAt` accepts negative indexes and raises on an
+  out-of-range one. All raise `ImmutableError` on a frozen list, and all
+  are supported by `geblang build --native`.
+- `math.sum(xs)` sums a list or set with the same promotion rules as `+`
+  (exact `int`, `decimal`, or `float`; mixing decimal and float raises
+  `RuntimeError`), returning `0` for an empty input.
+- `math.mean(xs)` returns the arithmetic mean of a list or set as a
+  `float`, raising `RuntimeError` on an empty or non-numeric input.
+- The `stats` module gains descriptive statistics: `variance` and `stdev`
+  (sample by default, `{"population": true}` for the population form),
+  `geometricMean`, `harmonicMean`, `weightedMean`, `range`, `iqr`, `mad`,
+  `zscores`, and `describe`, a summary dict of count, mean, stdev, min,
+  quartiles and max.
+
+### Runtime
+
+- Arithmetic on two integer literals that overflows 64 bits (for example
+  `9223372036854775807 + 1`) now promotes to an arbitrary-precision int on
+  the bytecode VM, matching the evaluator; previously the VM wrapped to a
+  negative number.
+
+### Bundling
+
+- `geblang build --native` (experimental) reports an integer constant that
+  does not fit in 64 bits as a Geblang diagnostic instead of emitting Go
+  that fails to compile.
+- `geblang build --native` (experimental) now uses floor modulo for `%` on
+  int and float operands, matching the VM and evaluator; previously
+  `7 % -3` produced `1` instead of `-2`.
+- `geblang build --native` (experimental) reports decimal arithmetic and
+  comparison operators, and `int / int`, as unsupported diagnostics;
+  previously they emitted Go that failed to compile or silently truncated
+  `1 / 2` to `0`.
+
 ## 1.34.0
 
 ### Language and stdlib

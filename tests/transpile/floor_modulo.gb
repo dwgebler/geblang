@@ -1,0 +1,30 @@
+import io;
+
+/* `%` is floor modulo: the remainder takes the divisor's sign. */
+int a = 7;
+int b = -3;
+io.println(a % b);
+io.println(-7 % 3);
+io.println(7 % -3);
+io.println(6 % -3);
+
+int acc = 17;
+acc %= -5;
+io.println(acc);
+
+float f = 7.5f;
+io.println(f % -2.0f);
+io.println(-7.5f % 2);
+io.println(7 % 2.5f);
+
+try {
+    int z = 0;
+    io.println(a % z);
+} catch (RuntimeError e) {
+    io.println(e.message);
+}
+try {
+    io.println(f % 0.0f);
+} catch (RuntimeError e) {
+    io.println(e.message);
+}

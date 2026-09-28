@@ -234,8 +234,7 @@ func TestLowererInfixOperatorMap(t *testing.T) {
 		{"+", "1 + 2"},
 		{"-", "1 - 2"},
 		{"*", "1 * 2"},
-		{"/", "1 / 2"},
-		{"%", "1 % 2"},
+		{"%", "transpilert.ModInt(1, 2)"},
 		{"==", "1 == 2"},
 		{"!=", "1 != 2"},
 		{"<", "1 < 2"},
@@ -259,6 +258,20 @@ func TestLowererInfixOperatorMap(t *testing.T) {
 		if !strings.Contains(body, c.want) {
 			t.Errorf("operator %q: expected %q in body, got:\n%s", c.gbOp, c.want, body)
 		}
+	}
+}
+
+func TestLowererFloatDivisionMapsToGoDivision(t *testing.T) {
+	p := parser.New(lexer.New("float x = 1.0f / 2.0f;\n"))
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) != 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	mod := lower.NewModule("main", true, types.IntModeFast)
+	l := lower.NewLowerer(mod, lower.NewNativeBridge(), "test.gb")
+	l.LowerProgram(prog)
+	if body := mod.MainBody().String(); !strings.Contains(body, "1.0 / 2.0") {
+		t.Errorf("expected Go float division, got:\n%s", body)
 	}
 }
 
@@ -2296,12 +2309,12 @@ enum Result implements Describable {
 	}
 	decls := mod.TopDecls().String()
 	for _, want := range []string{
-		"type Result interface {",            // enum interface
-		"describe() string",                  // method sig on the interface
-		"func Result_describe(this Result)",  // shared impl, this is the interface
-		"func (__v ResultOk) describe()",     // variant delegate
-		"func (__v ResultErr) describe()",    // variant delegate
-		"return Result_describe(__v)",        // delegate forwards to shared impl
+		"type Result interface {",           // enum interface
+		"describe() string",                 // method sig on the interface
+		"func Result_describe(this Result)", // shared impl, this is the interface
+		"func (__v ResultOk) describe()",    // variant delegate
+		"func (__v ResultErr) describe()",   // variant delegate
+		"return Result_describe(__v)",       // delegate forwards to shared impl
 	} {
 		if !strings.Contains(decls, want) {
 			t.Errorf("expected %q in decls, got:\n%s", want, decls)

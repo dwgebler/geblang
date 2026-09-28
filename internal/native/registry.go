@@ -146,7 +146,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"pow": {}, "pi": {}, "e": {},
 		"log2": {}, "trunc": {}, "sign": {}, "cbrt": {}, "hypot": {},
 		"inf": {}, "nan": {}, "isNaN": {}, "isInf": {}, "isPrime": {},
-		"median": {}, "percentile": {}, "quantile": {}, "mode": {},
+		"median": {}, "percentile": {}, "quantile": {}, "mode": {}, "mean": {}, "sum": {},
 		"tau": {}, "ln2": {}, "ln10": {}, "sqrt2": {}, "phi": {},
 		"maxInt": {}, "minInt": {}, "maxFloat": {}, "minFloat": {},
 		"epsilon": {}, "sqrt2Pi": {}, "log2Pi": {},
@@ -351,6 +351,8 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"linregress": {},
 		"polyfit":    {}, "polyval": {},
 		"skewness": {}, "kurtosis": {}, "covariance": {}, "corrcoef": {},
+		"variance": {}, "stdev": {}, "geometricMean": {}, "harmonicMean": {}, "weightedMean": {},
+		"range": {}, "iqr": {}, "mad": {}, "zscores": {}, "describe": {},
 	},
 	"physics": {
 		"c": {}, "G": {}, "planck": {}, "hbar": {}, "avogadro": {}, "boltzmann": {},

@@ -102,7 +102,7 @@ func buildBuiltinMethodTable() map[builtinMethodKey]builtinMethodFn {
 		t[builtinMethodKey{k, "isEmpty"}] = lowerCollectionIsEmpty
 	}
 	t[builtinMethodKey{types.KindList, "contains"}] = lowerListContains
-	for _, name := range []string{"push", "pop", "prepend", "unshift", "insert", "removeAt", "remove", "reverse"} {
+	for _, name := range []string{"push", "pop", "shift", "prepend", "unshift", "insert", "removeAt", "remove", "reverse", "takeFirst", "takeLast", "takeAt"} {
 		t[builtinMethodKey{types.KindList, name}] = lowerListMutator
 	}
 	t[builtinMethodKey{types.KindList, "sort"}] = lowerListSort
@@ -903,9 +903,9 @@ func DateTimeZoneType() *types.Type {
 	return &types.Type{Kind: types.KindClass, Name: types.DateTimeZoneName}
 }
 
-func dtIntT() *types.Type    { return &types.Type{Kind: types.KindInt} }
-func dtStrT() *types.Type    { return &types.Type{Kind: types.KindString} }
-func dtBoolT() *types.Type   { return &types.Type{Kind: types.KindBool} }
+func dtIntT() *types.Type  { return &types.Type{Kind: types.KindInt} }
+func dtStrT() *types.Type  { return &types.Type{Kind: types.KindString} }
+func dtBoolT() *types.Type { return &types.Type{Kind: types.KindBool} }
 func dtAnyDictT() *types.Type {
 	return &types.Type{Kind: types.KindDict, Key: dtStrT(), Value: &types.Type{Kind: types.KindAny}}
 }
@@ -1209,8 +1209,10 @@ func builtinMethodReturnType(method string, recv *types.Type) *types.Type {
 			return &types.Type{Kind: types.KindInt}
 		case "isEmpty", "contains", "any", "all":
 			return &types.Type{Kind: types.KindBool}
-		case "push", "pop", "prepend", "unshift", "insert", "removeAt", "remove", "reverse", "sort", "sortBy", "sorted", "reversed":
+		case "push", "pop", "shift", "prepend", "unshift", "insert", "removeAt", "remove", "reverse", "sort", "sortBy", "sorted", "reversed":
 			return recv
+		case "takeFirst", "takeLast", "takeAt":
+			return recv.Elem
 		case "join":
 			return &types.Type{Kind: types.KindString}
 		case "find", "findLast":

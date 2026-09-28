@@ -11,7 +11,7 @@ func main() {
 	evens := func() []int64 {
 		__dt1 := []int64{}
 		for _, x := range xs {
-			if (x % 2) == 0 {
+			if transpilert.ModInt(x, 2) == 0 {
 				__dt1 = append(__dt1, x)
 			}
 		}

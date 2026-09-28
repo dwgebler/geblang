@@ -7,6 +7,7 @@ import (
 	"geblang/internal/token"
 	"geblang/internal/transpiler/emit"
 	"geblang/internal/transpiler/types"
+	"math/big"
 	"strconv"
 	"strings"
 )
@@ -79,6 +80,10 @@ func (l *Lowerer) lowerAwait(e *ast.AwaitExpression) {
 
 func (l *Lowerer) lowerPrefix(e *ast.PrefixExpression) {
 	op := e.Operator
+	if l.intConstantOverflows(e, e.Token.Line, e.Token.Column) {
+		return
+	}
+	defer l.enterIntConstant(e)()
 	if op == "-" && l.Module.IntMode == types.IntModeBigInt {
 		if rt := l.inferExpressionType(e.Right); rt != nil && rt.Kind == types.KindInt {
 			l.Module.AddImport(types.OrderedDictImport)
@@ -87,6 +92,13 @@ func (l *Lowerer) lowerPrefix(e *ast.PrefixExpression) {
 			l.w.WriteString(")")
 			return
 		}
+	}
+	if op == "-" && l.operandKind(e.Right) == types.KindDecimal {
+		l.errAt(e.Token.Line, e.Token.Column,
+			"the transpiler does not yet support the unary - operator on decimal values",
+			"use 'geblang build' for the bundled VM binary, or cast to float")
+		l.w.WriteString("nil")
+		return
 	}
 	switch op {
 	case "-", "!":
@@ -281,6 +293,13 @@ func (l *Lowerer) lowerInfix(e *ast.InfixExpression) {
 			return
 		}
 	}
+	if l.intConstantOverflows(e, e.Token.Line, e.Token.Column) {
+		return
+	}
+	defer l.enterIntConstant(e)()
+	if l.Module.IntMode != types.IntModeBigInt && l.lowerNumericSemantics(e) {
+		return
+	}
 	if l.Module.IntMode == types.IntModeBigInt && l.bothIntOperands(e.Left, e.Right) {
 		if l.lowerSafeIntInfix(e) {
 			return
@@ -358,6 +377,75 @@ func (l *Lowerer) isCollectionOperand(expr ast.Expression) bool {
 		return true
 	}
 	return false
+}
+
+// lowerNumericSemantics handles operators whose Go meaning differs from
+// Geblang's: floor modulo, exact int division, and decimal (*big.Rat) operands.
+func (l *Lowerer) lowerNumericSemantics(e *ast.InfixExpression) bool {
+	switch e.Operator {
+	case "+", "-", "*", "/", "%", "<", ">", "<=", ">=", "==", "!=":
+	default:
+		return false
+	}
+	if isNullLiteral(e.Left) || isNullLiteral(e.Right) {
+		return false
+	}
+	lk, rk := l.operandKind(e.Left), l.operandKind(e.Right)
+	if (lk == types.KindDecimal || rk == types.KindDecimal) && lk != types.KindString && rk != types.KindString {
+		l.errAt(e.Token.Line, e.Token.Column,
+			fmt.Sprintf("the transpiler does not yet support the %s operator on decimal values", e.Operator),
+			"use 'geblang build' for the bundled VM binary, or cast to float")
+		l.w.WriteString("false")
+		return true
+	}
+	isNum := func(k types.Kind) bool { return k == types.KindInt || k == types.KindFloat }
+	switch e.Operator {
+	case "/":
+		if lk == types.KindInt && rk == types.KindInt {
+			l.errAt(e.Token.Line, e.Token.Column,
+				"the transpiler does not yet support int / int, which yields an exact decimal",
+				"cast an operand to float, or use 'geblang build' for the bundled VM binary")
+			l.w.WriteString("0")
+			return true
+		}
+	case "%":
+		if !isNum(lk) || !isNum(rk) {
+			return false
+		}
+		l.Module.AddImport(types.OrderedDictImport)
+		if lk == types.KindInt && rk == types.KindInt {
+			l.w.WriteString("transpilert.ModInt(")
+			l.lowerExpression(e.Left)
+			l.w.WriteString(", ")
+			l.lowerExpression(e.Right)
+			l.w.WriteString(")")
+			return true
+		}
+		l.w.WriteString("transpilert.ModFloat(")
+		l.lowerFloatOperand(e.Left, lk)
+		l.w.WriteString(", ")
+		l.lowerFloatOperand(e.Right, rk)
+		l.w.WriteString(")")
+		return true
+	}
+	return false
+}
+
+func (l *Lowerer) operandKind(e ast.Expression) types.Kind {
+	if t := l.inferExpressionType(e); t != nil {
+		return t.Kind
+	}
+	return types.KindUnknown
+}
+
+func (l *Lowerer) lowerFloatOperand(e ast.Expression, k types.Kind) {
+	if k == types.KindInt {
+		l.w.WriteString("float64(")
+		l.lowerExpression(e)
+		l.w.WriteString(")")
+		return
+	}
+	l.lowerExpression(e)
 }
 
 func goOperator(op string) string {
@@ -1436,7 +1524,78 @@ func (l *Lowerer) emitIntegerLiteral(s *ast.IntegerLiteral) {
 		l.w.WriteString(")")
 		return
 	}
+	if l.intConstantOverflows(s, s.Token.Line, s.Token.Column) {
+		return
+	}
 	l.w.WriteString(s.Value)
+}
+
+// intConstantValue evaluates an int-literal expression the way Go evaluates the
+// emitted untyped constant; ok is false for anything that is not one.
+func intConstantValue(e ast.Expression) (*big.Int, bool) {
+	switch n := e.(type) {
+	case *ast.IntegerLiteral:
+		v, ok := new(big.Int).SetString(n.Value, 0)
+		return v, ok
+	case *ast.PrefixExpression:
+		if n.Operator != "-" && n.Operator != "+" {
+			return nil, false
+		}
+		v, ok := intConstantValue(n.Right)
+		if !ok {
+			return nil, false
+		}
+		if n.Operator == "-" {
+			v.Neg(v)
+		}
+		return v, true
+	case *ast.InfixExpression:
+		if n.Operator != "+" && n.Operator != "-" && n.Operator != "*" {
+			return nil, false
+		}
+		lv, ok := intConstantValue(n.Left)
+		if !ok {
+			return nil, false
+		}
+		rv, ok := intConstantValue(n.Right)
+		if !ok {
+			return nil, false
+		}
+		switch n.Operator {
+		case "+":
+			return lv.Add(lv, rv), true
+		case "-":
+			return lv.Sub(lv, rv), true
+		}
+		return lv.Mul(lv, rv), true
+	}
+	return nil, false
+}
+
+func (l *Lowerer) intConstantOverflows(e ast.Expression, line, col int) bool {
+	if l.inIntConstant || l.Module.IntMode == types.IntModeBigInt {
+		return false
+	}
+	v, ok := intConstantValue(e)
+	if !ok || v.IsInt64() {
+		return false
+	}
+	l.errAt(line, col,
+		fmt.Sprintf("integer constant %s overflows int64", v.String()),
+		"native integers are machine-width; use 'geblang build' for arbitrary-precision int")
+	l.w.WriteString("0")
+	return true
+}
+
+func (l *Lowerer) enterIntConstant(e ast.Expression) func() {
+	if l.inIntConstant || l.Module.IntMode == types.IntModeBigInt {
+		return func() {}
+	}
+	if _, ok := intConstantValue(e); !ok {
+		return func() {}
+	}
+	l.inIntConstant = true
+	return func() { l.inIntConstant = false }
 }
 
 // emitFloatLiteral strips the Geblang 'f' suffix; Go float literals carry no

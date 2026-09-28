@@ -62,7 +62,7 @@ func (g *fuzzGen) expr(t fuzzType, depth int) string {
 	}
 	switch t {
 	case fzInt:
-		switch g.rng.Intn(9) {
+		switch g.rng.Intn(10) {
 		case 0:
 			return g.leaf(t)
 		case 1:
@@ -79,6 +79,10 @@ func (g *fuzzGen) expr(t fuzzType, depth int) string {
 			return "(" + g.expr(fzInt, depth-1) + ").sign()"
 		case 7: // decimal -> int cast (truncation)
 			return "((" + g.expr(fzDecimal, depth-1) + ") as int)"
+		case 8: // literal-literal fold across the int64 boundary
+			bounds := []string{"9223372036854775807", "4611686018427387904", "3037000500"}
+			ops := []string{" + ", " * ", " - "}
+			return "(" + bounds[g.rng.Intn(len(bounds))] + ops[g.rng.Intn(len(ops))] + bounds[g.rng.Intn(len(bounds))] + ")"
 		default: // ternary
 			return "(" + g.expr(fzBool, depth-1) + " ? " + g.expr(fzInt, depth-1) + " : " + g.expr(fzInt, depth-1) + ")"
 		}
