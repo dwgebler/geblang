@@ -1,0 +1,173 @@
+/**
+ * @title Forwarding union-typed values
+ * @summary A value whose static type is a union can be passed on to a
+ * parameter that accepts any of its branches, in every call context.
+ */
+import test;
+
+class Box {
+    int n;
+
+    func Box(Box|int v) {
+        this.n = Box.unwrap(v);
+    }
+
+    static func unwrap(Box|int v): int {
+        if (v instanceof Box) {
+            return (v as Box).n;
+        }
+        return v as int;
+    }
+
+    static func relay(Box|int v): int {
+        return Box.unwrap(v);
+    }
+
+    func plus(Box|int other): Box {
+        return Box(this.n + Box.unwrap(other));
+    }
+
+    func viaThis(Box|int other): Box {
+        return this.plus(other);
+    }
+
+    func rebuild(Box|int other): Box {
+        return Box(other);
+    }
+
+    func __add(Box|int other): Box {
+        return this.plus(other);
+    }
+}
+
+class TaggedBox extends Box {
+    string tag;
+
+    func TaggedBox(Box|int v, string tag) {
+        parent(v);
+        this.tag = tag;
+    }
+
+    func doubled(Box|int other): int {
+        return Box.unwrap(other) * 2;
+    }
+
+    func inheritedRelay(Box|int other): int {
+        return this.plus(other).n;
+    }
+}
+
+func label(string|int v): string {
+    return "${typeof(v)}:${v}";
+}
+
+func relay(string|int v): string {
+    return label(v);
+}
+
+func nullable(?string|int v): string {
+    return typeof(v);
+}
+
+func widen(string|int v): string {
+    return nullable(v);
+}
+
+func wide(string|int|bool v): string {
+    return typeof(v);
+}
+
+func subset(string|int v): string {
+    return wide(v);
+}
+
+func onlyInt(int v): int {
+    return v + 1;
+}
+
+func narrowed(string|int v): int {
+    if (v instanceof int) {
+        return onlyInt(v);
+    }
+    return -1;
+}
+
+func unnarrowed(string|int v): int {
+    return onlyInt(v);
+}
+
+func generic(list<int>|string v): string {
+    return typeof(v);
+}
+
+func genericRelay(list<int>|string v): string {
+    return generic(v);
+}
+
+class UnionForwardingTest extends test.Test {
+    @test
+    func functionToFunction(): void {
+        this.assertEquals("int:3", relay(3));
+        this.assertEquals("string:a", relay("a"));
+    }
+
+    @test
+    func toNullableAndWiderUnions(): void {
+        this.assertEquals("int", widen(4));
+        this.assertEquals("string", subset("s"));
+    }
+
+    @test
+    func toNarrowerParameterAfterInstanceof(): void {
+        this.assertEquals(42, narrowed(41));
+        this.assertEquals(-1, narrowed("x"));
+    }
+
+    @test
+    func toNarrowerParameterIsCheckedAtRuntime(): void {
+        this.assertEquals(2, unnarrowed(1));
+        this.assertThrowsOf(func(): int { return unnarrowed("x"); }, "RuntimeError", "onlyInt expects int");
+    }
+
+    @test
+    func unionWithGenericBranch(): void {
+        this.assertEquals("list", genericRelay([1]));
+        this.assertEquals("string", genericRelay("x"));
+    }
+
+    @test
+    func staticMethod(): void {
+        this.assertEquals(5, Box.relay(5));
+        this.assertEquals(6, Box.relay(Box(6)));
+    }
+
+    @test
+    func instanceMethodAndConstructor(): void {
+        this.assertEquals(3, Box(1).plus(2).n);
+        this.assertEquals(10, Box(1).plus(Box(9)).n);
+        this.assertEquals(4, Box(1).viaThis(3).n);
+        this.assertEquals(7, Box(1).rebuild(Box(7)).n);
+    }
+
+    @test
+    func operatorDunder(): void {
+        this.assertEquals(5, (Box(2) + 3).n);
+        this.assertEquals(6, (Box(2) + Box(4)).n);
+    }
+
+    @test
+    func subclassOwnAndInheritedMembers(): void {
+        let t = TaggedBox(Box(3), "t");
+        this.assertEquals(3, t.n);
+        this.assertEquals(8, t.doubled(4));
+        this.assertEquals(8, t.inheritedRelay(5));
+        this.assertEquals(4, t.viaThis(1).n);
+        this.assertEquals(9, (t + Box(6)).n);
+    }
+
+    @test
+    func lambda(): void {
+        let viaLambda = func(string|int v): string { return label(v); };
+        this.assertEquals("int:8", viaLambda(8));
+    }
+}

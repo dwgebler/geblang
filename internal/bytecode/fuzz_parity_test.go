@@ -548,6 +548,34 @@ func (g *fuzzGen) deferFormsBlock() (decls string, calls []string) {
 	return d.String(), calls
 }
 
+// unionForwardBlock: a union-typed parameter forwarded to same-union, wider and narrower parameters (the VM rejected same-union forwarding at compile time).
+func (g *fuzzGen) unionForwardBlock() (decls string, calls []string) {
+	var d strings.Builder
+	d.WriteString("class UBox {\n    int n;\n    func UBox(UBox|int v) { this.n = UBox.unwrap(v); }\n")
+	d.WriteString("    static func unwrap(UBox|int v): int { if (v instanceof UBox) { return (v as UBox).n; } return v as int; }\n")
+	d.WriteString("    func __add(UBox|int o): UBox { return UBox(this.n + UBox.unwrap(o)); }\n}\n")
+	d.WriteString("func uLabel(string|int v): string { return \"${typeof(v)}:${v}\"; }\n")
+	d.WriteString("func uRelay(string|int v): string { return uLabel(v); }\n")
+	d.WriteString("func uWide(string|int|bool v): string { return typeof(v); }\n")
+	d.WriteString("func uWiden(string|int v): string { return uWide(v); }\n")
+	d.WriteString("func uInt(int v): int { return v + 1; }\n")
+	d.WriteString("func uNarrow(string|int v): int { return uInt(v); }\n")
+	value := func() string {
+		if g.rng.Intn(2) == 0 {
+			return g.intLit()
+		}
+		return g.stringLit()
+	}
+	calls = append(calls,
+		"io.println(uRelay("+value()+"));",
+		"io.println(uWiden("+value()+"));",
+		"try { io.println(uNarrow("+value()+")); } catch (Error e) { io.println(e.message); }",
+		"io.println((UBox("+g.intLit()+") + "+g.intLit()+").n);",
+		"io.println((UBox("+g.intLit()+") + UBox("+g.intLit()+")).n);",
+	)
+	return d.String(), calls
+}
+
 func (g *fuzzGen) program() string {
 	var b strings.Builder
 	b.WriteString("import io;\n")
@@ -598,6 +626,10 @@ func (g *fuzzGen) program() string {
 		sectionCalls = calls
 	case 10:
 		decls, calls := g.deferFormsBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 11:
+		decls, calls := g.unionForwardBlock()
 		b.WriteString(decls)
 		sectionCalls = calls
 	}

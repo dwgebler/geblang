@@ -516,40 +516,24 @@ func registerMath(r *Registry) {
 		return bigIntValue(result), nil
 	})
 	r.Register("math", "gcd", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("math.gcd expects exactly two arguments")
-		}
-		a, err := intArg(args[0], "math.gcd a")
+		a, b, err := bigIntPair(args, "math.gcd")
 		if err != nil {
 			return nil, err
 		}
-		b, err := intArg(args[1], "math.gcd b")
-		if err != nil {
-			return nil, err
-		}
-		g := new(big.Int).GCD(nil, nil, big.NewInt(a), big.NewInt(b))
-		return bigIntValue(g), nil
+		return bigIntValue(new(big.Int).GCD(nil, nil, new(big.Int).Abs(a), new(big.Int).Abs(b))), nil
 	})
 	r.Register("math", "lcm", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("math.lcm expects exactly two arguments")
-		}
-		a, err := intArg(args[0], "math.lcm a")
+		a, b, err := bigIntPair(args, "math.lcm")
 		if err != nil {
 			return nil, err
 		}
-		b, err := intArg(args[1], "math.lcm b")
-		if err != nil {
-			return nil, err
-		}
-		if a == 0 || b == 0 {
+		if a.Sign() == 0 || b.Sign() == 0 {
 			return runtime.SmallInt{Value: 0}, nil
 		}
-		g := new(big.Int).GCD(nil, nil, big.NewInt(a), big.NewInt(b))
-		absA := new(big.Int).Abs(big.NewInt(a))
-		absB := new(big.Int).Abs(big.NewInt(b))
-		lcm := new(big.Int).Mul(new(big.Int).Quo(absA, g), absB)
-		return bigIntValue(lcm), nil
+		absA := new(big.Int).Abs(a)
+		absB := new(big.Int).Abs(b)
+		g := new(big.Int).GCD(nil, nil, absA, absB)
+		return bigIntValue(absA.Mul(absA.Quo(absA, g), absB)), nil
 	})
 	r.Register("math", "lcomb", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {

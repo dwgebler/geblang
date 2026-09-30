@@ -289,7 +289,9 @@ All combinatorics functions require integer arguments. `factorial`, `comb`,
 and `perm` return an exact big integer (no floating-point approximation);
 `lcomb` returns `float`. Inputs `n` > 100000 raise an error. `comb(n, k)`
 returns 0 when `k > n`. `lcm(a, 0)` or `lcm(0, b)` returns 0. `gcd`
-handles negative inputs by returning the positive GCD.
+handles negative inputs by returning the positive GCD. `gcd` and `lcm`
+accept integers of any size, so they can reduce the big results of
+`factorial`, `comb`, `perm`, or `**`.
 
 ```gb
 io.println(math.factorial(25));    # 15511210043330985984000000
@@ -297,6 +299,7 @@ io.println(math.comb(50, 25));     # 126410606437752
 io.println(math.perm(20, 10));     # 670442572800
 io.println(math.gcd(48, 36));      # 12
 io.println(math.lcm(4, 6));        # 12
+io.println(math.gcd(2 ** 100, 6 ** 50));   # 1125899906842624
 io.println(math.lcomb(50, 25));    # 32.47055650581197
 ```
 

@@ -272,6 +272,24 @@ future release; today the union form is only enforced at the function
 boundary. Inside a function body, a union-typed parameter can be
 narrowed with `instanceof` and re-bound via `as`.
 
+A union-typed value can also be passed straight on to another function.
+The call is accepted when the receiving parameter takes at least one of
+the union's branches, and the receiver checks the actual value at runtime:
+
+```gb
+func label(int | string id): string { return "${id}"; }
+func describe(int | string id): string { return "id " + label(id); }
+
+func double(int n): int { return n * 2; }
+func twice(int | string v): int { return double(v); }
+
+twice(21);      # 42
+twice("x");     # RuntimeError: double expects int for parameter 'n', got string
+```
+
+A call is only a static error when no branch of the union could match
+the parameter.
+
 ## Casts And Type Checks
 
 ```gb

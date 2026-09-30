@@ -1,0 +1,28 @@
+module union_forward_donor;
+
+export class Box {
+    int n;
+
+    func Box(Box|int v) {
+        this.n = Box.unwrap(v);
+    }
+
+    static func unwrap(Box|int v): int {
+        if (v instanceof Box) {
+            return (v as Box).n;
+        }
+        return v as int;
+    }
+
+    func plus(Box|int other): Box {
+        return Box(this.n + Box.unwrap(other));
+    }
+}
+
+export func label(string|int v): string {
+    return "${typeof(v)}:${v}";
+}
+
+export func relay(string|int v): string {
+    return label(v);
+}

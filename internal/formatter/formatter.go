@@ -208,7 +208,7 @@ func (f *fmtr) program(prog *ast.Program) {
 	// imports and module declarations
 	for i < len(stmts) {
 		switch stmts[i].(type) {
-		case *ast.ModuleStatement, *ast.ImportStatement:
+		case *ast.ModuleStatement, *ast.ImportStatement, *ast.FromImportStatement:
 			f.flushComments(startLine(stmts[i]))
 			f.stmt(stmts[i])
 			f.flushTrailing(endLine(stmts[i]))
@@ -238,6 +238,13 @@ func (f *fmtr) program(prog *ast.Program) {
 	f.flushComments(1 << 30)
 }
 
+func importPath(path []string, forceBuiltin bool) string {
+	if forceBuiltin {
+		return ast.ReservedModuleNamespace + "." + strings.Join(path, ".")
+	}
+	return strings.Join(path, ".")
+}
+
 // ---- statements ----
 
 func (f *fmtr) stmt(s ast.Statement) {
@@ -245,11 +252,21 @@ func (f *fmtr) stmt(s ast.Statement) {
 	case *ast.ModuleStatement:
 		f.writeln("module " + strings.Join(s.Path, ".") + ";")
 	case *ast.ImportStatement:
-		line := "import " + strings.Join(s.Path, ".")
+		line := f.pad() + "import " + importPath(s.Path, s.ForceBuiltin)
 		if s.Alias != nil {
 			line += " as " + s.Alias.Value
 		}
 		f.writeln(line + ";")
+	case *ast.FromImportStatement:
+		names := make([]string, 0, len(s.Names))
+		for _, n := range s.Names {
+			name := n.Name.Value
+			if n.Alias != nil {
+				name += " as " + n.Alias.Value
+			}
+			names = append(names, name)
+		}
+		f.writeln(f.pad() + "from " + importPath(s.Path, s.ForceBuiltin) + " import " + strings.Join(names, ", ") + ";")
 	case *ast.ExportStatement:
 		f.write(f.pad() + "export ")
 		f.stmtInner(s.Statement)

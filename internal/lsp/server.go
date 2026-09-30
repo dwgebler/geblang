@@ -439,6 +439,9 @@ func (s *server) definition(params TextDocumentPositionParams) any {
 			return moduleSymbolLocation(hit)
 		}
 	}
+	if r, ok := localDefinition(source, params.Position.Line, params.Position.Character, word, qualifier); ok {
+		return Location{URI: params.TextDocument.URI, Range: r}
+	}
 	defLine := findDefinition(source, word)
 	if defLine >= 0 {
 		lines := strings.Split(source, "\n")

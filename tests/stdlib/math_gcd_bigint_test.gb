@@ -1,0 +1,62 @@
+/**
+ * @title math.gcd and math.lcm on arbitrary-precision integers
+ * @summary Both functions accept and return integers of any size.
+ */
+import test;
+import math;
+
+class MathGcdBigIntTest extends test.Test {
+    @test
+    func gcdOfBigIntegers(): void {
+        let big = 2 ** 100;
+        this.assertEquals(2 ** 50, math.gcd(big, 6 ** 50));
+        this.assertEquals(2 ** 65, math.gcd(-(2 ** 70), 2 ** 65));
+        this.assertEquals(5 ** 6 * 73, math.gcd(math.perm(365, 23), 365 ** 23));
+    }
+
+    @test
+    func gcdMixesSmallAndBig(): void {
+        let big = 2 ** 100;
+        this.assertEquals(4, math.gcd(big, 12));
+        this.assertEquals(4, math.gcd(12, big));
+        this.assertEquals("int", typeof(math.gcd(big, 12)));
+    }
+
+    @test
+    func gcdWithZero(): void {
+        this.assertEquals(2 ** 100, math.gcd(2 ** 100, 0));
+        this.assertEquals(0, math.gcd(0, 0));
+        this.assertEquals(5, math.gcd(0, -5));
+    }
+
+    @test
+    func lcmOfBigIntegers(): void {
+        this.assertEquals(2 ** 70 * 3 ** 50, math.lcm(2 ** 70, 3 ** 50));
+        this.assertEquals(2 ** 70, math.lcm(-(2 ** 70), 2 ** 65));
+        this.assertEquals(18446744073709551614, math.lcm(9223372036854775807, 2));
+        this.assertEquals(0, math.lcm(2 ** 100, 0));
+        this.assertEquals(12, math.lcm(-4, 6));
+    }
+
+    @test
+    func spreadAndNamedArguments(): void {
+        let pair = [2 ** 100, 2 ** 90];
+        this.assertEquals(2 ** 90, math.gcd(...pair));
+        this.assertEquals(18, math.gcd(b: 18, a: 2 ** 100 * 9));
+    }
+
+    @test
+    func reducesAFractionExactly(): void {
+        let num = math.factorial(30);
+        let den = math.factorial(28);
+        let g = math.gcd(num, den);
+        this.assertEquals(870, num // g);
+        this.assertEquals(1, den // g);
+    }
+
+    @test
+    func rejectsNonIntegers(): void {
+        this.assertThrowsOf(func(): int { return math.gcd(1.5, 2); }, "RuntimeError", "math.gcd a expects an integer");
+        this.assertThrowsOf(func(): int { return math.lcm(2, "x"); }, "RuntimeError", "math.lcm b expects an integer");
+    }
+}

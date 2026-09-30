@@ -317,6 +317,21 @@ func besselN(args []runtime.Value, fn func(int, float64) float64, label string) 
 	return runtime.Float{Value: fn(int(n), x)}, nil
 }
 
+func bigIntPair(args []runtime.Value, label string) (*big.Int, *big.Int, error) {
+	if len(args) != 2 {
+		return nil, nil, fmt.Errorf("%s expects exactly two arguments", label)
+	}
+	a, ok := IntValueToBigInt(args[0])
+	if !ok {
+		return nil, nil, fmt.Errorf("%s a expects an integer", label)
+	}
+	b, ok := IntValueToBigInt(args[1])
+	if !ok {
+		return nil, nil, fmt.Errorf("%s b expects an integer", label)
+	}
+	return a, b, nil
+}
+
 func intArg(v runtime.Value, label string) (int64, error) {
 	switch n := v.(type) {
 	case runtime.SmallInt:

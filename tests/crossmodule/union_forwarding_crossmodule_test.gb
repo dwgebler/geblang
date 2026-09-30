@@ -1,0 +1,54 @@
+/**
+ * @title Cross-module union forwarding
+ * @summary A union-typed value forwards to an imported function, static
+ * method, constructor, and a method inherited across the module boundary.
+ */
+import test;
+import union_forward_donor;
+from union_forward_donor import Box;
+
+class LocalBox extends Box {
+    func LocalBox(Box|int v) {
+        parent(v);
+    }
+
+    func twice(Box|int other): int {
+        return this.plus(other).plus(other).n;
+    }
+}
+
+func forward(string|int v): string {
+    return union_forward_donor.label(v);
+}
+
+func unwrapHere(Box|int v): int {
+    return Box.unwrap(v);
+}
+
+func build(Box|int v): Box {
+    return Box(v);
+}
+
+class UnionForwardingCrossModuleTest extends test.Test {
+    @test
+    func importedFunction(): void {
+        this.assertEquals("int:3", forward(3));
+        this.assertEquals("string:a", forward("a"));
+        this.assertEquals("int:4", union_forward_donor.relay(4));
+    }
+
+    @test
+    func importedStaticMethodAndConstructor(): void {
+        this.assertEquals(5, unwrapHere(5));
+        this.assertEquals(6, unwrapHere(Box(6)));
+        this.assertEquals(7, build(Box(7)).n);
+    }
+
+    @test
+    func subclassAcrossModuleBoundary(): void {
+        let b = LocalBox(Box(2));
+        this.assertEquals(2, b.n);
+        this.assertEquals(8, b.twice(3));
+        this.assertEquals(6, b.plus(Box(4)).n);
+    }
+}

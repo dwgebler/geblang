@@ -2764,6 +2764,15 @@ func (c *Compiler) staticTypeAssignable(target string, actual string) bool {
 	if strings.EqualFold(strings.TrimPrefix(actual, "?"), "any") {
 		return true
 	}
+	// Union actual: any branch may be the runtime value, so only a union with no assignable branch is a static mismatch.
+	if branches, ok := splitTopLevelTypeOp(actual, '|'); ok {
+		for _, b := range branches {
+			if c.staticTypeAssignable(target, b) {
+				return true
+			}
+		}
+		return false
+	}
 	// Union target: value is assignable when it matches any branch.
 	if branches, ok := splitTopLevelTypeOp(target, '|'); ok {
 		for _, b := range branches {
@@ -2779,15 +2788,6 @@ func (c *Compiler) staticTypeAssignable(target string, actual string) bool {
 	if branches, ok := splitTopLevelTypeOp(target, '&'); ok {
 		for _, b := range branches {
 			if !c.staticTypeAssignable(b, actual) {
-				return false
-			}
-		}
-		return true
-	}
-	// Union actual: every branch must be assignable to the target.
-	if branches, ok := splitTopLevelTypeOp(actual, '|'); ok {
-		for _, b := range branches {
-			if !c.staticTypeAssignable(target, b) {
 				return false
 			}
 		}
