@@ -123,6 +123,18 @@ Options:
 | `headers`   | list of header labels (defaults to the column key names)   |
 | `separator` | column separator string (default: two spaces)              |
 
+Columns are sized by displayed width, not byte length: accented and other
+multi-byte characters count as one column, East Asian wide characters as
+two, and ANSI styling from `cli.style` or `cli.color` as none. A styled or
+non-ASCII cell therefore lines up with plain ones:
+
+```gb
+io.println(cli.table([
+    {"check": "build", "result": cli.style("ok", {"fg": "green"})},
+    {"check": "café",  "result": cli.style("failed", {"fg": "red"})}
+], {"columns": ["check", "result"]}));
+```
+
 ## `cli.command` - structured subcommands
 
 Import the source module `cli.command` when a tool has multiple subcommands or

@@ -1,0 +1,70 @@
+/**
+ * @title cli.table column widths
+ * @summary Columns are sized by displayed width, so accented, wide, and
+ * ANSI-styled cells stay aligned.
+ */
+import test;
+import cli;
+import cli.color as color;
+
+class CliTableWidthTest extends test.Test {
+    func lines(string table): list<string> {
+        return cli.stripAnsi(table).split("\n");
+    }
+
+    @test
+    func accentedCellsAlign(): void {
+        let out = cli.table([{"a": "é", "b": "x"}, {"a": "ee", "b": "y"}], {"columns": ["a", "b"]});
+        this.assertEquals(["a   b", "--  -", "é   x", "ee  y"], this.lines(out));
+    }
+
+    @test
+    func blockCharactersSizeTheRule(): void {
+        let out = cli.table([{"bar": "███", "n": "3"}, {"bar": "█", "n": "1"}], {"columns": ["bar", "n"]});
+        this.assertEquals(["bar  n", "---  -", "███  3", "█    1"], this.lines(out));
+    }
+
+    @test
+    func wideCharactersTakeTwoColumns(): void {
+        let out = cli.table([{"a": "日本", "b": "x"}, {"a": "abcd", "b": "y"}], {"columns": ["a", "b"]});
+        this.assertEquals(["a     b", "----  -", "日本  x", "abcd  y"], this.lines(out));
+    }
+
+    @test
+    func styledCellsAlignAndKeepTheirStyle(): void {
+        let styled = cli.style("ok", {"fg": "green", "bold": true});
+        let out = cli.table([{"a": styled, "b": "x"}, {"a": "fail", "b": "y"}], {"columns": ["a", "b"]});
+        this.assertTrue(out.contains(styled));
+        this.assertEquals(["a     b", "----  -", "ok    x", "fail  y"], this.lines(out));
+    }
+
+    @test
+    func colorHelpersAlign(): void {
+        let out = cli.table([{"a": color.bold("hi"), "b": "x"}, {"a": "hello", "b": "y"}], {"columns": ["a", "b"]});
+        this.assertEquals(["a      b", "-----  -", "hi     x", "hello  y"], this.lines(out));
+    }
+
+    @test
+    func accentedHeadersAndSeparator(): void {
+        let out = cli.table(
+            [{"n": "1", "v": "a"}],
+            {"columns": ["n", "v"], "headers": ["Número", "V"], "separator": " | "}
+        );
+        this.assertEquals(["Número | V", "------ | -", "1      | a"], this.lines(out));
+    }
+
+    @test
+    func listRowsWithHeaderList(): void {
+        let out = cli.table([["█", "x"], ["ab", "y"]], ["L", "R"]);
+        this.assertEquals(["L   R", "--  -", "█   x", "ab  y"], this.lines(out));
+    }
+
+    @test
+    func plainAsciiIsUnchanged(): void {
+        let out = cli.table(
+            [{"name": "Alice", "role": "admin"}, {"name": "Bob", "role": "viewer"}],
+            {"columns": ["name", "role"], "headers": ["Name", "Role"]}
+        );
+        this.assertEquals(["Name   Role  ", "-----  ------", "Alice  admin ", "Bob    viewer"], this.lines(out));
+    }
+}

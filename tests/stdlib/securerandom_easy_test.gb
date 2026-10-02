@@ -1,0 +1,122 @@
+/**
+ * @title secureRandom.randomInt and secureRandom.randomBytes
+ * @summary Both work without a session (OS CSPRNG) or with a session as the
+ * first argument (provably fair, logged, replayable).
+ */
+import test;
+import secureRandom;
+
+const SEED = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+class SecureRandomEasyTest extends test.Test {
+    @test
+    func randomIntIsInclusiveWithoutASession(): void {
+        set<int> seen = {0};
+        for (i in 1..400) {
+            let n = secureRandom.randomInt(1, 6);
+            this.assertTrue(n >= 1 && n <= 6);
+            seen.add(n);
+        }
+        for (face in 1..6) {
+            this.assertTrue(seen.contains(face));
+        }
+    }
+
+    @test
+    func randomIntSingleValueAndNegativeRanges(): void {
+        this.assertEquals(7, secureRandom.randomInt(7, 7));
+        this.assertEquals(-2, secureRandom.randomInt(-2, -2));
+        let n = secureRandom.randomInt(-3, 3);
+        this.assertTrue(n >= -3 && n <= 3);
+    }
+
+    @test
+    func randomIntHandlesBigIntegersWithoutASession(): void {
+        this.assertEquals(2 ** 70, secureRandom.randomInt(2 ** 70, 2 ** 70));
+        let n = secureRandom.randomInt(2 ** 70, 2 ** 70 + 10);
+        this.assertTrue(n >= 2 ** 70 && n <= 2 ** 70 + 10);
+    }
+
+    @test
+    func randomIntNamedAndSpreadArguments(): void {
+        this.assertEquals(3, secureRandom.randomInt(min: 3, max: 3));
+        this.assertEquals(9, secureRandom.randomInt(...[9, 9]));
+    }
+
+    @test
+    func randomBytesWithoutASession(): void {
+        this.assertEquals(16, secureRandom.randomBytes(16).length());
+        this.assertEquals(0, secureRandom.randomBytes(0).length());
+        this.assertEquals("bytes", typeof(secureRandom.randomBytes(4)));
+        this.assertNotEquals(secureRandom.randomBytes(16), secureRandom.randomBytes(16));
+    }
+
+    @test
+    func sessionRandomIntIsReproducible(): void {
+        let s = secureRandom.fromSeed(SEED, "Alice");
+        let draws = [secureRandom.randomInt(s, 1, 6) for i in 1..12];
+        this.assertEquals([5, 5, 4, 3, 4, 5, 2, 6, 3, 5, 5, 2], draws);
+        let again = secureRandom.fromSeed(SEED, "Alice");
+        this.assertEquals(draws, [secureRandom.randomInt(again, 1, 6) for i in 1..12]);
+    }
+
+    @test
+    func sessionRandomIntCoversTheFullIntRange(): void {
+        let s = secureRandom.fromSeed(SEED, "Alice");
+        this.assertEquals(0, secureRandom.randomInt(s, 0, 0));
+        let n = secureRandom.randomInt(s, -9223372036854775807 - 1, 9223372036854775807);
+        this.assertEquals("int", typeof(n));
+        let top = secureRandom.randomInt(s, 9223372036854775806, 9223372036854775807);
+        this.assertTrue(top >= 9223372036854775806);
+    }
+
+    @test
+    func sessionDrawsAreLoggedAndReplayable(): void {
+        let s = secureRandom.fromSeed(SEED, "Alice");
+        let first = secureRandom.randomInt(s, 1, 6);
+        let data = secureRandom.randomBytes(s, 6);
+        let entries = secureRandom.auditLog(s);
+        this.assertEquals(2, entries.length());
+        this.assertEquals("randomInt", entries[0]["method"]);
+        this.assertEquals([1, 6], entries[0]["args"]);
+        this.assertEquals(first, entries[0]["output"]);
+        this.assertEquals("bytes", entries[1]["method"]);
+        this.assertEquals(first, secureRandom.replay(SEED, "Alice", 0, "randomInt", [1, 6]));
+        this.assertEquals(data, secureRandom.replay(SEED, "Alice", 1, "bytes", [6]));
+    }
+
+    @test
+    func sessionRandomBytesMatchesBytes(): void {
+        let a = secureRandom.randomBytes(secureRandom.fromSeed(SEED, "Alice"), 6);
+        let b = secureRandom.bytes(secureRandom.fromSeed(SEED, "Alice"), 6);
+        this.assertEquals(a, b);
+        this.assertEquals(6, a.length());
+    }
+
+    @test
+    func sessionLessDrawsLeaveASessionUntouched(): void {
+        let s = secureRandom.fromSeed(SEED, "Alice");
+        secureRandom.randomInt(1, 6);
+        secureRandom.randomBytes(4);
+        this.assertEquals(0, secureRandom.auditLog(s).length());
+    }
+
+    @test
+    func rejectsBadArguments(): void {
+        let s = secureRandom.fromSeed(SEED, "Alice");
+        this.assertThrowsOf(func(): int { return secureRandom.randomInt(5, 1); }, "RuntimeError", "min must be <= max");
+        this.assertThrowsOf(func(): int { return secureRandom.randomInt(s, 5, 1); }, "RuntimeError", "min must be <= max");
+        this.assertThrowsOf(func(): int { return secureRandom.randomInt("a", 2); }, "RuntimeError", "min must be int");
+        this.assertThrowsOf(func(): int { return secureRandom.randomInt(s, 1, 2 ** 70); }, "RuntimeError", "64-bit");
+        this.assertThrowsOf(func(): bytes { return secureRandom.randomBytes(-1); }, "RuntimeError", "out of range");
+    }
+
+    @test
+    func revealedSessionRefusesFurtherDraws(): void {
+        let s = secureRandom.fromSeed(SEED, "Alice");
+        secureRandom.reveal(s);
+        this.assertThrows(func(): int { return secureRandom.randomInt(s, 1, 6); }, "revealed");
+        this.assertThrows(func(): bytes { return secureRandom.randomBytes(s, 2); }, "revealed");
+        this.assertTrue(secureRandom.randomInt(1, 6) >= 1);
+    }
+}

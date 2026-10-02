@@ -1915,6 +1915,8 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"auditLogJson":     Fn([]string{"SecureRandomSession s"}, "string", "Serialises the audit log (and serverSeed if revealed) to JSON."),
 		"bytes":            Fn([]string{"SecureRandomSession s", "int n"}, "bytes", "Draws n provably-fair pseudo-random bytes."),
 		"uintRange":        Fn([]string{"SecureRandomSession s", "int lo", "int hi"}, "int", "Returns an unbiased uniform int in [lo, hi)."),
+		"randomBytes":      Fn([]string{"int n"}, "bytes", "Returns n cryptographically random bytes; pass a session first to draw them provably fair."),
+		"randomInt":        Fn([]string{"int min", "int max"}, "int", "Returns a cryptographically random int in [min, max]; pass a session first to draw it provably fair."),
 		"float":            Fn([]string{"SecureRandomSession s"}, "float", "Returns a uniform float in [0, 1)."),
 		"bool":             Fn([]string{"SecureRandomSession s"}, "bool", "Returns a fair coin flip."),
 		"choice":           Fn([]string{"SecureRandomSession s", "list<any> items"}, "any", "Returns one element of items uniformly at random."),

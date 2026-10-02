@@ -902,6 +902,8 @@ caller has to prove fairness, not just unpredictability.
 | `secureRandom.auditLogJson(s)` | Returns the audit log + commitment + clientSeed (and serverSeed, once revealed) as a JSON envelope ready to publish. |
 | `secureRandom.bytes(s, n)` | Draws `n` provably-fair random bytes. |
 | `secureRandom.uintRange(s, lo, hi)` | Unbiased uniform integer in `[lo, hi)`. Uses rejection sampling. |
+| `secureRandom.randomInt(min, max)` / `randomInt(s, min, max)` | Uniform integer in `[min, max]`, both ends included (1.35.2). Session optional. |
+| `secureRandom.randomBytes(n)` / `randomBytes(s, n)` | `n` random bytes (1.35.2). Session optional. |
 | `secureRandom.float(s)` | Uniform float in `[0, 1)`. |
 | `secureRandom.bool(s)` | Fair coin flip. |
 | `secureRandom.choice(s, items)` | Uniformly picks one element of `items`. |
@@ -909,6 +911,36 @@ caller has to prove fairness, not just unpredictability.
 | `secureRandom.weightedChoice(s, items, weights)` | Picks one element with probability proportional to its weight. |
 | `secureRandom.verifyCommitment(commit, seedHex)` | True if `sha256(seedHex) == commit`. |
 | `secureRandom.replay(seedHex, clientSeed, nonce, method, args)` | Reproduces a single draw outside a session; same inputs always yield the same output. |
+
+### Quick draws: `randomInt` and `randomBytes`
+
+`randomInt` and `randomBytes` are the simplest way in. Called on their
+own they read the OS cryptographic random source, exactly like
+`secrets.randomInt` and `secrets.randomBytes`:
+
+```gb
+import secureRandom;
+
+let roll  = secureRandom.randomInt(1, 6);     # 1..6, both ends included
+let token = secureRandom.randomBytes(16);     # 16 random bytes
+```
+
+Pass a session as the first argument and the same call becomes a
+provably-fair draw: it is derived from the session seed, recorded in the
+audit log, and can be re-derived with `replay`:
+
+```gb
+let s = secureRandom.openSession({"clientSeed": "player#42"});
+let roll = secureRandom.randomInt(s, 1, 6);
+let salt = secureRandom.randomBytes(s, 16);
+```
+
+A draw made without a session is unpredictable but leaves no audit
+trail; use a session whenever the outcome has to be verifiable later.
+With a session, `min` and `max` must fit in 64 bits; without one they
+may be any size. `randomBytes(s, n)` is the same draw as `bytes(s, n)`
+and is logged under the method name `bytes`; `randomInt(s, min, max)` is
+logged as `randomInt`.
 
 ### Example: a provably-fair dice roll
 

@@ -16,6 +16,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
+
+	"golang.org/x/text/width"
 )
 
 func secretsGetEnv(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -1242,7 +1245,7 @@ func renderTableWithSeparator(headers []string, rows [][]string, separator strin
 	if len(headers) > 0 {
 		widths = make([]int, len(headers))
 		for i, header := range headers {
-			widths[i] = len(header)
+			widths[i] = displayWidth(header)
 		}
 	}
 	for _, row := range rows {
@@ -1250,8 +1253,8 @@ func renderTableWithSeparator(headers []string, rows [][]string, separator strin
 			widths = append(widths, make([]int, len(row)-len(widths))...)
 		}
 		for i, value := range row {
-			if len(value) > widths[i] {
-				widths[i] = len(value)
+			if w := displayWidth(value); w > widths[i] {
+				widths[i] = w
 			}
 		}
 	}
@@ -1270,6 +1273,26 @@ func renderTableWithSeparator(headers []string, rows [][]string, separator strin
 	return strings.TrimRight(out.String(), "\n")
 }
 
+// displayWidth is the terminal column count of text, ignoring ANSI escapes.
+func displayWidth(text string) int {
+	cols := 0
+	for _, r := range stripANSI(text) {
+		switch {
+		case unicode.Is(unicode.Mn, r), unicode.Is(unicode.Me, r), unicode.Is(unicode.Cf, r):
+		case isWideRune(r):
+			cols += 2
+		default:
+			cols++
+		}
+	}
+	return cols
+}
+
+func isWideRune(r rune) bool {
+	kind := width.LookupRune(r).Kind()
+	return kind == width.EastAsianWide || kind == width.EastAsianFullwidth
+}
+
 func writeTableRow(out *strings.Builder, row []string, widths []int, separator string) {
 	for i, width := range widths {
 		if i > 0 {
@@ -1280,7 +1303,7 @@ func writeTableRow(out *strings.Builder, row []string, widths []int, separator s
 			value = row[i]
 		}
 		out.WriteString(value)
-		if pad := width - len(value); pad > 0 {
+		if pad := width - displayWidth(value); pad > 0 {
 			out.WriteString(strings.Repeat(" ", pad))
 		}
 	}

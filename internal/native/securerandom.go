@@ -52,6 +52,8 @@ func registerSecureRandom(r *Registry) {
 	r.Register("secureRandom", "auditLogJson", secureRandomAuditLogJson)
 	r.Register("secureRandom", "bytes", sessionRandomBytes)
 	r.Register("secureRandom", "uintRange", secureRandomUintRange)
+	r.Register("secureRandom", "randomBytes", secureRandomRandomBytes)
+	r.Register("secureRandom", "randomInt", secureRandomRandomInt)
 	r.Register("secureRandom", "float", secureRandomFloat)
 	r.Register("secureRandom", "bool", secureRandomBool)
 	r.Register("secureRandom", "choice", secureRandomChoice)
@@ -323,6 +325,65 @@ func secureRandomUintRange(args []runtime.Value) (runtime.Value, error) {
 	})
 }
 
+func isSecureSession(v runtime.Value) bool {
+	obj, ok := v.(runtime.NativeObject)
+	return ok && obj.Kind == "SecureRandomSession"
+}
+
+func secureRandomRandomBytes(args []runtime.Value) (runtime.Value, error) {
+	if len(args) > 0 && isSecureSession(args[0]) {
+		return sessionRandomBytes(args)
+	}
+	data, err := secureRandomBytes(args, "secureRandom.randomBytes")
+	if err != nil {
+		return nil, err
+	}
+	return runtime.Bytes{Value: data}, nil
+}
+
+func secureRandomRandomInt(args []runtime.Value) (runtime.Value, error) {
+	if len(args) == 0 || !isSecureSession(args[0]) {
+		return cryptoRandomInt(args, "secureRandom.randomInt")
+	}
+	sess, err := lookupSecureSession(args[0], "secureRandom.randomInt")
+	if err != nil {
+		return nil, err
+	}
+	rest := args[1:]
+	lo, hi, err := inclusiveBounds(rest, "secureRandom.randomInt")
+	if err != nil {
+		return nil, err
+	}
+	return drawAndLog(sess, "randomInt", rest, func(seed []byte, nonce int64) (runtime.Value, error) {
+		msg, _ := makeMessage(sess.clientSeed, nonce, "randomInt", rest)
+		return inclusiveIntDraw(seed, msg, lo, hi), nil
+	})
+}
+
+func inclusiveBounds(args []runtime.Value, label string) (int64, int64, error) {
+	if len(args) != 2 {
+		return 0, 0, fmt.Errorf("%s expects min and max", label)
+	}
+	lo, ok1 := AsInt64(args[0])
+	hi, ok2 := AsInt64(args[1])
+	if !ok1 || !ok2 {
+		return 0, 0, fmt.Errorf("%s: min and max must be 64-bit ints in a session draw", label)
+	}
+	if lo > hi {
+		return 0, 0, fmt.Errorf("%s min must be <= max", label)
+	}
+	return lo, hi, nil
+}
+
+func inclusiveIntDraw(seed []byte, msg string, lo, hi int64) runtime.Value {
+	span := uint64(hi) - uint64(lo) + 1
+	// span wraps to 0 only for the full int64 range, where every 64-bit draw is valid.
+	if span == 0 {
+		return runtime.SmallInt{Value: int64(binary.BigEndian.Uint64(deriveBytes(seed, msg, 8)))}
+	}
+	return runtime.SmallInt{Value: int64(uint64(lo) + uniformUintInRange(seed, msg, span))}
+}
+
 func uniformUintInRange(seed []byte, baseMsg string, span uint64) uint64 {
 	// Rejection sampling to avoid modulo bias. Truncate uint64 -> [0, span).
 	maxAccepted := (^uint64(0) / span) * span
@@ -555,6 +616,12 @@ func secureRandomReplay(args []runtime.Value) (runtime.Value, error) {
 		}
 		v := uniformUintInRange(seedBytes, msg, uint64(hi-lo))
 		return runtime.SmallInt{Value: int64(v) + lo}, nil
+	case "randomInt":
+		lo, hi, err := inclusiveBounds(argsList.Elements, "replay randomInt")
+		if err != nil {
+			return nil, err
+		}
+		return inclusiveIntDraw(seedBytes, msg, lo, hi), nil
 	case "float":
 		bytes := deriveBytes(seedBytes, msg, 8)
 		u := binary.BigEndian.Uint64(bytes) >> 11

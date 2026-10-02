@@ -1228,6 +1228,10 @@ func (f *fmtr) exprBare(e ast.Expression) string {
 		}
 		return f.exprChild(e.Left, leftWrap) + " " + e.Operator + " " + f.exprChild(e.Right, rightWrap)
 	case *ast.AssignmentExpression:
+		// The parser desugars `a op= b` into `a = a op b` sharing the one left node.
+		if infix, ok := e.Value.(*ast.InfixExpression); ok && infix.Left == e.Left {
+			return f.expr(e.Left) + " " + infix.Operator + "= " + f.expr(infix.Right)
+		}
 		return f.expr(e.Left) + " = " + f.expr(e.Value)
 	case *ast.SelectorExpression:
 		if f.shouldBreakChain(e) {

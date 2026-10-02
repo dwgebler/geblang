@@ -1,5 +1,30 @@
 # Release Notes
 
+## 1.35.2
+
+### Standard library
+
+- `secureRandom.randomInt(min, max)` returns a cryptographically random
+  integer with both ends included, and `secureRandom.randomBytes(n)`
+  returns `n` random bytes, with no session needed. Pass a session as the
+  first argument (`randomInt(s, min, max)`, `randomBytes(s, n)`) to make
+  the same call a provably-fair draw that is logged and replayable.
+
+### Fixes
+
+- `cli.table` sizes columns by displayed width instead of byte length, so
+  cells with accented or other multi-byte characters, East Asian wide
+  characters, or ANSI styling from `cli.style` / `cli.color` line up and
+  the header rule is the right length.
+
+### Tooling
+
+- `geblang fmt` keeps compound assignments (`x += 2`, `d["a"] -= 1`,
+  `n ??= 4`, and the rest) as written; previously it rewrote them to the
+  expanded form (`x = x + 2`).
+- Editor completion and hover cover `secureRandom.randomInt` and
+  `secureRandom.randomBytes`.
+
 ## 1.35.1
 
 ### Fixes

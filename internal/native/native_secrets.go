@@ -18,31 +18,7 @@ func registerSecrets(r *Registry) {
 		return runtime.Bytes{Value: data}, nil
 	})
 	r.Register("secrets", "randomInt", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("secrets.randomInt expects min and max")
-		}
-		minBig, ok := IntValueToBigInt(args[0])
-		if !ok {
-			return nil, fmt.Errorf("secrets.randomInt min must be int")
-		}
-		maxBig, ok := IntValueToBigInt(args[1])
-		if !ok {
-			return nil, fmt.Errorf("secrets.randomInt max must be int")
-		}
-		if minBig.Cmp(maxBig) > 0 {
-			return nil, fmt.Errorf("secrets.randomInt min must be <= max")
-		}
-		width := new(big.Int).Sub(maxBig, minBig)
-		width.Add(width, big.NewInt(1))
-		offset, err := rand.Int(rand.Reader, width)
-		if err != nil {
-			return nil, err
-		}
-		result := offset.Add(offset, minBig)
-		if result.IsInt64() {
-			return runtime.SmallInt{Value: result.Int64()}, nil
-		}
-		return runtime.Int{Value: result}, nil
+		return cryptoRandomInt(args, "secrets.randomInt")
 	})
 	r.Register("secrets", "randomHex", func(args []runtime.Value) (runtime.Value, error) {
 		data, err := secureRandomBytes(args, "secrets.randomHex")
@@ -72,4 +48,28 @@ func registerSecrets(r *Registry) {
 		}
 		return runtime.Bool{Value: constantTimeEqual(left, right)}, nil
 	})
+}
+
+func cryptoRandomInt(args []runtime.Value, label string) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects min and max", label)
+	}
+	minBig, ok := IntValueToBigInt(args[0])
+	if !ok {
+		return nil, fmt.Errorf("%s min must be int", label)
+	}
+	maxBig, ok := IntValueToBigInt(args[1])
+	if !ok {
+		return nil, fmt.Errorf("%s max must be int", label)
+	}
+	if minBig.Cmp(maxBig) > 0 {
+		return nil, fmt.Errorf("%s min must be <= max", label)
+	}
+	width := new(big.Int).Sub(maxBig, minBig)
+	width.Add(width, big.NewInt(1))
+	offset, err := rand.Int(rand.Reader, width)
+	if err != nil {
+		return nil, err
+	}
+	return bigIntValue(offset.Add(offset, minBig)), nil
 }

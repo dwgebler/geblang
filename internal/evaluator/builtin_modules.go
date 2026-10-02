@@ -1069,6 +1069,8 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"auditLogJson":     e.registryBuiltin("secureRandom", "auditLogJson"),
 			"bytes":            e.registryBuiltin("secureRandom", "bytes"),
 			"uintRange":        e.registryBuiltin("secureRandom", "uintRange"),
+			"randomBytes":      e.registryBuiltin("secureRandom", "randomBytes"),
+			"randomInt":        e.registryBuiltin("secureRandom", "randomInt"),
 			"float":            e.registryBuiltin("secureRandom", "float"),
 			"bool":             e.registryBuiltin("secureRandom", "bool"),
 			"choice":           e.registryBuiltin("secureRandom", "choice"),
