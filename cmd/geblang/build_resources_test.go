@@ -95,6 +95,63 @@ func TestCollectResourcesMappedDest(t *testing.T) {
 	}
 }
 
+func TestCollectResourcesExplicitAbsoluteMappingOutsideProject(t *testing.T) {
+	project := t.TempDir()
+	external := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(external, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(external, "nested", "message.txt"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := collectResources(project, []resourceSpec{parseResourceSpec(external + "=assets")})
+	if err != nil {
+		t.Fatalf("explicit absolute mapping: %v", err)
+	}
+	if string(got["assets/nested/message.txt"]) != "outside" {
+		t.Fatalf("mapped resource = %q, want outside", got["assets/nested/message.txt"])
+	}
+}
+
+func TestCollectResourcesRejectsUnmappedOrImplicitExternalSource(t *testing.T) {
+	project := t.TempDir()
+	external := filepath.Join(t.TempDir(), "message.txt")
+	if err := os.WriteFile(external, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	relativeExternal, err := filepath.Rel(project, external)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, spec := range []resourceSpec{
+		parseResourceSpec(external),
+		{src: external, dest: "assets/message.txt"},
+		parseResourceSpec(relativeExternal + "=assets/message.txt"),
+	} {
+		if _, err := collectResources(project, []resourceSpec{spec}); err == nil {
+			t.Fatalf("external source %+v was accepted", spec)
+		}
+	}
+}
+
+func TestCollectResourcesRejectsSymlinkOutsideExplicitSource(t *testing.T) {
+	project := t.TempDir()
+	external := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(external, "escape.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := collectResources(project, []resourceSpec{parseResourceSpec(external + "=assets")}); err == nil {
+		t.Fatal("symlink outside explicit source was accepted")
+	}
+}
+
 // TestCollectResourcesRejectsEmbedShapedPath: a resource remapped onto a nested src/ path (embed()'s packing shape) must be rejected.
 func TestCollectResourcesRejectsEmbedShapedPath(t *testing.T) {
 	root := t.TempDir()

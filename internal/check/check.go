@@ -239,9 +239,9 @@ func withoutModuleDeclarations(statements []ast.Statement) []ast.Statement {
 
 // checkReservedNames flags a user module that declares a reserved built-in
 // name (native or stdlib, or the geblang namespace) and a `geblang.X` import
-// whose target is not a built-in. Keyed on the declared module name, not the
-// filename, so a namespaced module (e.g. `module gebweb.errors` in errors.gb)
-// is fine. stdlib-path files are exempt: they legitimately wrap native modules.
+// whose target is not a built-in. Package-local declarations may use a
+// built-in's short name when their canonical package path is distinct.
+// stdlib-path files are exempt: they legitimately wrap native modules.
 func checkReservedNames(file string, program *ast.Program, opts Options) []Diagnostic {
 	if opts.Resolver == nil || fileUnderStdlib(file, opts.Resolver) {
 		return nil
@@ -251,7 +251,7 @@ func checkReservedNames(file string, program *ast.Program, opts Options) []Diagn
 		switch s := stmt.(type) {
 		case *ast.ModuleStatement:
 			name := strings.Join(s.Path, ".")
-			if opts.Resolver.IsReservedModuleName(name) {
+			if opts.Resolver.IsReservedModuleName(CanonicalModuleName(file, name, opts.Resolver)) {
 				diags = append(diags, Diagnostic{
 					File: file, Line: s.Token.Line, Column: s.Token.Column,
 					Severity: SeverityError, Rule: "module",
@@ -269,6 +269,29 @@ func checkReservedNames(file string, program *ast.Program, opts Options) []Diagn
 		}
 	}
 	return diags
+}
+
+// CanonicalModuleName qualifies a short declaration only when the package
+// resolver maps that qualified name back to this source file.
+func CanonicalModuleName(file, name string, resolver *modules.Resolver) string {
+	if resolver == nil || strings.Contains(name, ".") {
+		return name
+	}
+	manifest, err := resolver.FindManifest(file)
+	if err != nil || manifest == nil || manifest.Name == "" {
+		return name
+	}
+	canonical := manifest.Name + "." + name
+	resolved, err := resolver.Resolve(canonical)
+	if err != nil {
+		return name
+	}
+	fileAbs, fileErr := filepath.Abs(file)
+	resolvedAbs, resolvedErr := filepath.Abs(resolved)
+	if fileErr == nil && resolvedErr == nil && fileAbs == resolvedAbs {
+		return canonical
+	}
+	return name
 }
 
 func reservedImportDiag(file string, tok token.Token, name string) Diagnostic {

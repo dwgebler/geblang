@@ -1,5 +1,18 @@
 # Release Notes
 
+## 1.36.1
+
+### Fixes
+
+- Package modules may keep a short declaration that matches a standard-library
+  name, such as `module i18n;` imported as `app.i18n`. Module checking and
+  imports use the package-qualified identity; top-level built-in names remain
+  reserved.
+- `geblang build --resource /absolute/source=destination` again accepts an
+  explicitly mapped source outside the project. Manifest resources and relative
+  CLI sources remain project-bound, and symlinks cannot escape the selected
+  source directory.
+
 ## 1.36.0
 
 ### Standard library

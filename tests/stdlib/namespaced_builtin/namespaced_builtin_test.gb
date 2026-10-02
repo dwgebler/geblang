@@ -1,0 +1,11 @@
+import collision_fixture.i18n as local;
+import i18n;
+import test;
+
+class NamespacedBuiltinTest extends test.Test {
+    @test
+    func resolvesPackageAndBuiltinSeparately(): void {
+        this.assertEquals("package", local.greeting());
+        this.assertEquals("stdlib", i18n.catalog({"en": {"greeting": "stdlib"}}, "en").text("greeting"));
+    }
+}

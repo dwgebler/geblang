@@ -3133,6 +3133,29 @@ io.println(catalog.plural("files", 2));
 `, "12.345,67\n31c2a03233342c3530c2a0e282ac\nFriday, 5 July 2024\n-1\nHello\n2 fichiers\n")
 }
 
+func TestParityPackageModuleSharesBuiltinShortName(t *testing.T) {
+	dir := t.TempDir()
+	sourceDir := filepath.Join(dir, "src")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "geblang.yaml"), []byte("name: collision_fixture\nsource: src\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "i18n.gb"), []byte(`module i18n;
+export func greeting(): string { return "package"; }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runParityModulesDir(t, dir, `import collision_fixture.i18n as local;
+import i18n;
+import io;
+io.println(local.greeting());
+io.println(i18n.catalog({"en": {"greeting": "stdlib"}}, "en").text("greeting"));
+`, "package\nstdlib\n")
+}
+
 // Regression: cross-module facade `class X extends mod.X` failed in the
 // evaluator at construction because parent() routed through
 // applyOverloadedFunction with a label matching this.Class.Name.

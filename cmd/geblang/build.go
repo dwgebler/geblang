@@ -580,14 +580,15 @@ if (__geb_result != null) {
 type resourceSpec struct {
 	src  string
 	dest string
+	cli  bool
 }
 
 // parseResourceSpec parses a --resource value of the form "src" or "src=dest".
 func parseResourceSpec(arg string) resourceSpec {
 	if i := strings.Index(arg, "="); i >= 0 {
-		return resourceSpec{src: arg[:i], dest: filepath.ToSlash(arg[i+1:])}
+		return resourceSpec{src: arg[:i], dest: filepath.ToSlash(arg[i+1:]), cli: true}
 	}
-	return resourceSpec{src: arg}
+	return resourceSpec{src: arg, cli: true}
 }
 
 // resolveBundlePermissions folds the manifest permissions block and --allow-* flags into the baked capability set (nil when empty).
@@ -622,7 +623,7 @@ func collectResources(root string, specs []resourceSpec) (map[string][]byte, err
 		return nil, fmt.Errorf("resource root %q: %w", root, err)
 	}
 
-	put := func(bundlePath, diskPath string) error {
+	put := func(bundlePath, diskPath, allowedRoot string) error {
 		bundlePath = filepath.ToSlash(bundlePath)
 		if bundlePath == ".." || strings.HasPrefix(bundlePath, "../") {
 			return fmt.Errorf("resource %q maps outside the bundle", diskPath)
@@ -634,7 +635,7 @@ func collectResources(root string, specs []resourceSpec) (map[string][]byte, err
 		if err != nil {
 			return fmt.Errorf("resource %q: %w", diskPath, err)
 		}
-		rel, err := filepath.Rel(resolvedRoot, resolvedPath)
+		rel, err := filepath.Rel(allowedRoot, resolvedPath)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("resource %q escapes the project directory", diskPath)
 		}
@@ -672,7 +673,15 @@ func collectResources(root string, specs []resourceSpec) (map[string][]byte, err
 		return projRel, nil
 	}
 
-	addPath := func(diskPath, dest string) error {
+	addPath := func(diskPath, dest string, explicitExternal bool) error {
+		allowedRoot := resolvedRoot
+		if explicitExternal {
+			resolvedSource, resolveErr := filepath.EvalSymlinks(diskPath)
+			if resolveErr != nil {
+				return fmt.Errorf("resource %q: %w", diskPath, resolveErr)
+			}
+			allowedRoot = resolvedSource
+		}
 		info, err := os.Stat(diskPath)
 		if err != nil {
 			return err
@@ -689,17 +698,17 @@ func collectResources(root string, specs []resourceSpec) (map[string][]byte, err
 				if err != nil {
 					return err
 				}
-				return put(bundlePath, p)
+				return put(bundlePath, p, allowedRoot)
 			})
 		}
 		if dest != "" {
-			return put(dest, diskPath)
+			return put(dest, diskPath, allowedRoot)
 		}
 		bundlePath, err := bundlePathFor(diskPath, root, "")
 		if err != nil {
 			return err
 		}
-		return put(bundlePath, diskPath)
+		return put(bundlePath, diskPath, allowedRoot)
 	}
 
 	for _, spec := range specs {
@@ -710,8 +719,9 @@ func collectResources(root string, specs []resourceSpec) (map[string][]byte, err
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(root, spec.src)
 		}
+		explicitExternal := spec.cli && filepath.IsAbs(spec.src) && spec.dest != ""
 		if _, err := os.Stat(abs); err == nil {
-			if err := addPath(abs, spec.dest); err != nil {
+			if err := addPath(abs, spec.dest, explicitExternal); err != nil {
 				return nil, err
 			}
 			continue
@@ -728,7 +738,7 @@ func collectResources(root string, specs []resourceSpec) (map[string][]byte, err
 			if dest != "" {
 				dest = dest + "/" + filepath.Base(m)
 			}
-			if err := addPath(m, dest); err != nil {
+			if err := addPath(m, dest, explicitExternal); err != nil {
 				return nil, err
 			}
 		}

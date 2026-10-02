@@ -1118,7 +1118,9 @@ func checkModuleDeclarations(config checkConfig, programs map[string]*ast.Progra
 			continue
 		}
 		decl := modules[0]
-		resolved, err := checkResolver(config, file).Resolve(decl.name)
+		resolver := checkResolver(config, file)
+		decl.name = check.CanonicalModuleName(file, decl.name, resolver)
+		resolved, err := resolver.Resolve(decl.name)
 		if err != nil {
 			declared[decl.name] = append(declared[decl.name], decl)
 			diagnostics = append(diagnostics, checkDiagnostic{

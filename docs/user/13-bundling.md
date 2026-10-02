@@ -241,6 +241,12 @@ geblang build --entry <module.name> --out <output-path> [<package-dir>]
 | `--force` | no | Overwrite an existing generated Dockerfile |
 | `<package-dir>` | no | Package root directory (default: `.`) |
 
+Manifest resources and relative `--resource` sources must stay inside the
+project directory. To bundle an intentionally external file or directory,
+specify an absolute source and a destination, such as
+`--resource /opt/assets/icons=static/icons`. Files reached through a symlink
+outside the selected source directory are rejected.
+
 Build the example package above:
 
 ```sh

@@ -894,6 +894,30 @@ export func ok(): bool { return true; }
 	}
 }
 
+func TestCheckGeblangPathAllowsPackageModuleWithBuiltinShortName(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "geblang.yaml"), []byte("name: app\nsource: src\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "i18n.gb"), []byte(`module i18n;
+export func greeting(): string { return "package"; }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := checkGeblangPath(checkConfig{Path: root, Lint: true})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("package module diagnostics: %v", result.Diagnostics)
+	}
+}
+
 func TestCheckGeblangPathReportsModuleDeclarationMismatch(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src", "app")

@@ -1,0 +1,5 @@
+module i18n;
+
+export func greeting(): string {
+    return "package";
+}

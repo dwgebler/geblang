@@ -25,6 +25,67 @@ func TestSourceFlagsUnresolvedImport(t *testing.T) {
 	}
 }
 
+func TestSourceAllowsPackageLocalModuleWithBuiltinShortName(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "src")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "geblang.yaml"), []byte("name: app\nsource: src\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(sourceDir, "i18n.gb")
+	source := "module i18n;\nexport func greeting(): string { return \"hello\"; }\n"
+	if err := os.WriteFile(file, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, diags := Source(file, source, Options{Resolver: modules.NewResolver([]string{root})})
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			t.Fatalf("package-local i18n rejected: %+v", diags)
+		}
+	}
+	resolver := modules.NewResolver([]string{root})
+	qualified, err := resolver.Resolve("app.i18n")
+	if err != nil || qualified != file {
+		t.Fatalf("qualified package import resolved to %q: %v", qualified, err)
+	}
+	bare, err := resolver.Resolve("i18n")
+	if err != nil || bare == file {
+		t.Fatalf("bare stdlib import resolved to %q: %v", bare, err)
+	}
+}
+
+func TestSourceRejectsStandaloneModuleWithBuiltinName(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "i18n.gb")
+	source := "module i18n;\nexport func greeting(): string { return \"hello\"; }\n"
+
+	_, diags := Source(file, source, Options{Resolver: modules.NewResolver([]string{root})})
+	if !hasDiag(diags, "module", "shadows a reserved built-in module name") {
+		t.Fatalf("standalone i18n was not rejected: %+v", diags)
+	}
+}
+
+func TestSourceRejectsReservedNamespaceInPackage(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "src")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "geblang.yaml"), []byte("name: app\nsource: src\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(sourceDir, "i18n.gb")
+	source := "module geblang.i18n;\nexport func greeting(): string { return \"hello\"; }\n"
+
+	_, diags := Source(file, source, Options{Resolver: modules.NewResolver([]string{root})})
+	if !hasDiag(diags, "module", "shadows a reserved built-in module name") {
+		t.Fatalf("reserved namespace was not rejected: %+v", diags)
+	}
+}
+
 func TestSourceTreatsNativeImportsAsResolved(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.gb")
