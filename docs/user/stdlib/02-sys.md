@@ -67,18 +67,26 @@ it; prefer passing state explicitly or sharing through a `store.Store`.
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `bundleDir()` | `string` | Extract directory of a built binary's embedded resources, or `""` when not running from a bundle |
+| `packageRoot()` | `string` | Directory of the current package manifest, or `""` when none is available |
 
 `geblang build` can embed non-code files (templates, static assets, data) listed
 under `resources:` in `geblang.yaml`. A running program locates them through
-`sys.bundleDir()`: resolve resource paths against it, falling back to the project
-directory when it is empty, so the same code works in development and in a built
-binary.
+the `resources` module. It uses the package manifest directory in development
+and the extracted bundle directory in a built binary.
 
 ```gb
-let base = sys.bundleDir();
-if (base == "") { base = "."; }
-let html = io.readText(base + "/templates/page.html");
+import resources;
+let html = resources.readText("templates/page.html");
 ```
+
+`resources.path(name)` returns an absolute readable path. `exists(name)` returns
+false when a declared file is absent; other operations raise an error.
+`readBytes(name)` preserves binary data, and `open(name)` returns a read-only
+`file.File` that the caller closes. Paths must be project-relative, use forward
+slashes, and stay inside the resource root after symlinks resolve. The module
+only exposes files declared in `resources:` or added with `--resource`. For a
+script without a manifest, use `resources.withRoot(root)` and call the same
+methods on its `ResourceRoot` value.
 
 See [Bundling And Standalone Executables](../13-bundling.md) for the `resources:`
 manifest field and how embedding works.

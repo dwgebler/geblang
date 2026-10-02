@@ -12,11 +12,9 @@ import (
 	"geblang/internal/runtime"
 )
 
-// registerArchive wires the archive.zip*, archive.tar*, and
-// archive.tarGz* helpers. Eager API only in v1: full entry list
-// in/out; lazy cursors are queued for a follow-up commit.
+// registerArchive wires the eager archive functions used by the source module.
 func registerArchive(r *Registry) {
-	r.Register("archive", "zipRead", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("archive_native", "zipRead", func(args []runtime.Value) (runtime.Value, error) {
 		data, err := singleBytes(args, "archive.zipRead")
 		if err != nil {
 			return nil, err
@@ -40,7 +38,7 @@ func registerArchive(r *Registry) {
 		}
 		return &runtime.List{Elements: entries}, nil
 	})
-	r.Register("archive", "zipWrite", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("archive_native", "zipWrite", func(args []runtime.Value) (runtime.Value, error) {
 		entries, err := singleArchiveEntries(args, "archive.zipWrite")
 		if err != nil {
 			return nil, err
@@ -63,14 +61,14 @@ func registerArchive(r *Registry) {
 		}
 		return runtime.Bytes{Value: buf.Bytes()}, nil
 	})
-	r.Register("archive", "tarRead", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("archive_native", "tarRead", func(args []runtime.Value) (runtime.Value, error) {
 		data, err := singleBytes(args, "archive.tarRead")
 		if err != nil {
 			return nil, err
 		}
 		return readTar(bytes.NewReader(data), "archive.tarRead")
 	})
-	r.Register("archive", "tarWrite", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("archive_native", "tarWrite", func(args []runtime.Value) (runtime.Value, error) {
 		entries, err := singleArchiveEntries(args, "archive.tarWrite")
 		if err != nil {
 			return nil, err
@@ -81,7 +79,7 @@ func registerArchive(r *Registry) {
 		}
 		return runtime.Bytes{Value: buf.Bytes()}, nil
 	})
-	r.Register("archive", "tarGzRead", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("archive_native", "tarGzRead", func(args []runtime.Value) (runtime.Value, error) {
 		data, err := singleBytes(args, "archive.tarGzRead")
 		if err != nil {
 			return nil, err
@@ -93,7 +91,7 @@ func registerArchive(r *Registry) {
 		defer gz.Close()
 		return readTar(gz, "archive.tarGzRead")
 	})
-	r.Register("archive", "tarGzWrite", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("archive_native", "tarGzWrite", func(args []runtime.Value) (runtime.Value, error) {
 		entries, err := singleArchiveEntries(args, "archive.tarGzWrite")
 		if err != nil {
 			return nil, err

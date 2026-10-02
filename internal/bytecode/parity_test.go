@@ -3052,7 +3052,7 @@ io.println((real != "mocked-hello") as string);
 // archive, read it back, print the names and decoded text. The
 // expected output is identical regardless of which engine ran it.
 func TestParityArchiveZipRoundTrip(t *testing.T) {
-	runParity(t, `import archive;
+	runParityWithStdlib(t, `import archive;
 import bytes;
 import io;
 let raw = archive.zipWrite([
@@ -3072,7 +3072,7 @@ io.println(bytes.toString(entries[1]["data"] as bytes));
 // helpers; tar writers sort by name for determinism so the entry
 // order is stable across backends.
 func TestParityArchiveTarGzRoundTrip(t *testing.T) {
-	runParity(t, `import archive;
+	runParityWithStdlib(t, `import archive;
 import bytes;
 import io;
 let raw = archive.tarGzWrite([
@@ -3085,6 +3085,52 @@ io.println(bytes.toString(entries[0]["data"] as bytes));
 io.println(entries[1]["name"] as string);
 io.println(bytes.toString(entries[1]["data"] as bytes));
 `, "first\none\nsecond\ntwo\n")
+}
+
+func TestParityArchiveStreamingAndExtraction(t *testing.T) {
+	runParityWithStdlib(t, `import archive;
+import bytes;
+import io;
+import path;
+let root = io.tempDir("archive-parity-*");
+defer io.remove(root);
+let location = path.join(root, "data.tar.gz");
+let writer = archive.create(location, "tar.gz");
+writer.addDir("nested");
+writer.addFile("nested/data.bin", bytes.fromHex("00ff01"));
+writer.close();
+let reader = archive.open(location);
+io.println((reader.next() as archive.ArchiveEntry).isDir);
+let entry = reader.next() as archive.ArchiveEntry;
+io.println(entry.name);
+io.println(bytes.toHex(entry.readBytes(1)));
+io.println(bytes.toHex(entry.readBytes(2)));
+reader.close();
+let paths = archive.extract(location, path.join(root, "out"));
+io.println(paths.length());
+io.println(bytes.toHex(io.readBytes(path.join(root, "out", "nested", "data.bin"))));
+`, "true\nnested/data.bin\n00\nff01\n2\n00ff01\n")
+}
+
+func TestParityLocaleFormattingAndCatalog(t *testing.T) {
+	runParityWithStdlib(t, `import bytes;
+import datetime;
+import i18n;
+import io;
+import locale;
+io.println(locale.formatNumber(12345.67, "de"));
+io.println(bytes.toHex(bytes.fromString(locale.formatCurrency(1234.5, "EUR", "fr"))));
+io.println(locale.formatDate(datetime.Instant("2024-07-04T23:30:00Z"),
+    "en-GB", "full", "Europe/London"));
+io.println(locale.compare("a2", "a10", "en", {"numeric": true}));
+let messages = {
+    "en": {"fallback": "Hello", "files": {"one": "{count} file", "other": "{count} files"}},
+    "fr": {"files": {"one": "{count} fichier", "other": "{count} fichiers"}}
+};
+let catalog = i18n.catalog(messages, "fr-CA");
+io.println(catalog.text("fallback"));
+io.println(catalog.plural("files", 2));
+`, "12.345,67\n31c2a03233342c3530c2a0e282ac\nFriday, 5 July 2024\n-1\nHello\n2 fichiers\n")
 }
 
 // Regression: cross-module facade `class X extends mod.X` failed in the
@@ -3409,6 +3455,139 @@ let r = http.response("hello", 200);
 io.println(r.body());
 io.println(r.body() == r["body"]);
 `, "hello\ntrue\n")
+}
+
+func TestParityJsonLinesReaderAndWriter(t *testing.T) {
+	runParityWithStdlib(t, `import jsonl;
+import streams;
+import io;
+let reader = jsonl.reader("null\r\n{\"n\":2}\n", {"maxLineBytes": 64});
+io.println(reader.hasNext());
+io.println(reader.next() == null);
+io.println(reader.next()["n"]);
+io.println(reader.hasNext());
+let output = streams.memory();
+let writer = jsonl.writer(output);
+writer.write([1, 2]);
+writer.close();
+io.println(output.toString() == "[1,2]\n");
+`, "true\ntrue\n2\nfalse\ntrue\n")
+}
+
+func TestParityResourceRootReadsAndRejectsEscape(t *testing.T) {
+	runParityWithStdlib(t, `import bytes;
+import io;
+import path;
+import resources;
+let root = io.tempDir("resources-parity-*");
+defer io.remove(root);
+io.writeText(path.join(root, "hello.txt"), "hello");
+io.writeBytes(path.join(root, "data.bin"), bytes.fromHex("00ff"));
+let items = resources.withRoot(root);
+io.println(items.readText("hello.txt"));
+io.println(bytes.toHex(items.readBytes("data.bin")));
+io.println(items.exists("missing.txt"));
+let rejected = false;
+try { items.path("../escape"); }
+catch (Error e) { rejected = true; }
+io.println(rejected);
+`, "hello\n00ff\nfalse\ntrue\n")
+}
+
+func TestParityConfigLoadLayers(t *testing.T) {
+	runParityWithStdlib(t, `import config;
+import io;
+import path;
+let root = io.tempDir("config-parity-*");
+defer io.remove(root);
+io.writeText(path.join(root, "base.json"), "{\"app\":{\"name\":\"file\",\"port\":1}}");
+io.writeText(path.join(root, "later.toml"), "[app]\nport = 2\n");
+let cfg = config.load({"baseDir": root, "defaults": {"app": {"name": "default"}},
+    "files": [{"path": "base.json"}, {"path": "later.toml"}],
+    "overrides": {"app": {"enabled": true}}});
+io.println(cfg.get("app.name"));
+io.println(cfg.get("app.port"));
+io.println(cfg.get("app.enabled"));
+`, "file\n2\ntrue\n")
+}
+
+func TestParityStreamAdaptersBinaryAndShortWrites(t *testing.T) {
+	runParityWithStdlib(t, `import bytes;
+import io;
+import streams;
+class Source {
+    bytes data;
+    int pos;
+    func Source(bytes data) { this.data = data; this.pos = 0; }
+    func __readBytes(int n): bytes {
+        bytes out = this.data.slice(this.pos, this.pos + n);
+        this.pos = this.pos + out.length();
+        return out;
+    }
+}
+class Sink {
+    bytes data;
+    func Sink() { this.data = bytes.fromString(""); }
+    func __writeBytes(bytes part): int {
+        this.data = bytes.concat(this.data, part.slice(0, 1));
+        return 1;
+    }
+}
+let src = Source(bytes.fromHex("00ffc3a9"));
+let dst = Sink();
+io.println(streams.copyN(src, dst, 3, 2));
+io.println(bytes.toHex(dst.data));
+let limited = streams.limit(src, 1, false);
+io.println(bytes.toHex(limited.readBytes(8)));
+io.println(bytes.toHex(bytes.fromString(bytes.rawString(bytes.fromHex("ff00")))));
+`, "3\n00ffc3\na9\nff00\n")
+}
+
+func TestParityMailparseMimeMessage(t *testing.T) {
+	runParityWithStdlib(t, `import bytes;
+import io;
+import mailparse;
+let raw = "From: \"Doe, Jane\" <jane@example.com>\r\n" +
+    "Subject: =?UTF-8?Q?Hello_=C3=A9?=\r\n" +
+    "X-Trace: first\r\nX-Trace: second\r\n" +
+    "Content-Type: multipart/mixed; boundary=x\r\n\r\n" +
+    "--x\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nbody\r\n" +
+    "--x\r\nContent-Type: application/octet-stream\r\n" +
+    "Content-Disposition: attachment; filename=a.bin\r\n" +
+    "Content-Transfer-Encoding: base64\r\n\r\nAP8=\r\n--x--\r\n";
+let message = mailparse.parse(raw);
+io.println(message.subject());
+io.println(message.from()[0]);
+io.println(message.headerAll("X-Trace").length());
+io.println(message.textBody().trim());
+io.println(bytes.toHex(message.attachments()[0].data));
+`, "Hello é\n\"Doe, Jane\" <jane@example.com>\n2\nbody\n00ff\n")
+}
+
+func TestParityNativeDatetimeInstanceOf(t *testing.T) {
+	runParity(t, `import datetime;
+import io;
+io.println(datetime.Instant(0) instanceof datetime.Instant);
+io.println(datetime.Duration(1) instanceof datetime.Duration);
+io.println(datetime.Zone("UTC") instanceof datetime.Zone);
+io.println(datetime.Instant(0) instanceof datetime.Duration);
+`, "true\ntrue\ntrue\nfalse\n")
+}
+
+func TestParityCalendarPeriodAndRecurrence(t *testing.T) {
+	runParityWithStdlib(t, `import datetime;
+import datetime.period as period;
+import io;
+let end = period.Period(0, 1).addTo(datetime.Instant(2024, 1, 31));
+io.println(end.formatRFC3339());
+let spring = period.Period(0, 0, 1).addTo(
+    datetime.Instant("2024-03-09T07:30:00Z"), "America/New_York");
+io.println(spring.formatRFC3339());
+let schedule = period.Recurrence(datetime.Instant(2024, 1, 31), "monthly", {"count": 3});
+for (item in schedule.occurrences(10)) { io.println(item.formatRFC3339()); }
+io.println(period.addBusinessDays(datetime.Instant(2024, 5, 24), 1,
+    "UTC", ["2024-05-27"]).formatRFC3339());
+`, "2024-02-29T00:00:00Z\n2024-03-10T07:00:00Z\n2024-01-31T00:00:00Z\n2024-03-31T00:00:00Z\n2024-05-31T00:00:00Z\n2024-05-28T00:00:00Z\n")
 }
 
 // TestParityGoroutineId asserts properties (not values, which vary per run): the

@@ -1,0 +1,59 @@
+module resources;
+
+import file;
+import io;
+import resources_native;
+import sys;
+
+@immutable
+export class ResourceRoot {
+    string root;
+    string mode;
+
+    func ResourceRoot(string root, string mode = "explicit") {
+        this.root = resources_native.root(root);
+        this.mode = mode;
+    }
+
+    func path(string name): string {
+        return resources_native.path(this.root, name, this.mode);
+    }
+
+    func exists(string name): bool {
+        return resources_native.exists(this.root, name, this.mode);
+    }
+
+    func readText(string name): string {
+        return io.readText(this.path(name));
+    }
+
+    func readBytes(string name): bytes {
+        return io.readBytes(this.path(name));
+    }
+
+    func open(string name): file.File {
+        return file.open(this.path(name), "r");
+    }
+}
+
+func defaultRoot(): ResourceRoot {
+    string bundled = sys.bundleDir();
+    if (bundled != "") {
+        return ResourceRoot(bundled, "bundle");
+    }
+    string project = sys.packageRoot();
+    if (project == "") {
+        throw ValueError("resources: no package manifest; use resources.withRoot(root)");
+    }
+    return ResourceRoot(project, "manifest");
+}
+
+export func withRoot(string root): ResourceRoot {
+    return ResourceRoot(root);
+}
+
+export func path(string name): string { return defaultRoot().path(name); }
+export func exists(string name): bool { return defaultRoot().exists(name); }
+export func readText(string name): string { return defaultRoot().readText(name); }
+export func readBytes(string name): bytes { return defaultRoot().readBytes(name); }
+export func open(string name): file.File { return defaultRoot().open(name); }

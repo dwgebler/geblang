@@ -43,7 +43,11 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 			vm.push(runtime.Bool{Value: matched})
 			return nil
 		}
-		// Non-instance values keep the legacy name-based match on the bare name.
+		// Native values carry their module in TypeName, unlike class instances.
+		if value.TypeName() == module+"."+name {
+			vm.push(runtime.Bool{Value: true})
+			return nil
+		}
 		target = name
 	}
 	if arms, ok := vmSplitTopLevelUnion(target); ok {

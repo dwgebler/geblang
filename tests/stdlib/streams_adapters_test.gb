@@ -1,0 +1,175 @@
+import bytes;
+import io;
+import path;
+import streams;
+import test;
+
+class ShortSink {
+    bytes data;
+    bool closed;
+    func ShortSink() { this.data = bytes.fromString(""); this.closed = false; }
+    func __writeBytes(bytes part): int {
+        int n = 1;
+        if (part.length() < n) { n = part.length(); }
+        this.data = bytes.concat(this.data, part.slice(0, n));
+        return n;
+    }
+    func __close(): void { this.closed = true; }
+}
+
+class BinarySource {
+    bytes data;
+    int pos;
+    bool closed;
+    func BinarySource(bytes data) { this.data = data; this.pos = 0; this.closed = false; }
+    func __readBytes(int n): bytes {
+        bytes result = this.data.slice(this.pos, this.pos + n);
+        this.pos = this.pos + result.length();
+        return result;
+    }
+    func __close(): void { this.closed = true; }
+}
+
+class StalledSink {
+    func __writeBytes(bytes part): int { return 0; }
+}
+
+class TextSource {
+    string data;
+    int pos;
+    func TextSource(string data) { this.data = data; this.pos = 0; }
+    func __read(int n): string {
+        bytes part = bytes.fromString(this.data).slice(this.pos, this.pos + n);
+        this.pos = this.pos + part.length();
+        return bytes.rawString(part);
+    }
+}
+
+class TextSink {
+    string data;
+    func TextSink() { this.data = ""; }
+    func __write(string part): int {
+        bytes raw = bytes.fromString(part);
+        this.data = this.data + bytes.rawString(raw.slice(0, 1));
+        return 1;
+    }
+}
+
+class StreamAdaptersTest extends test.Test {
+    @test
+    func copiesBinaryWithShortWrites(): void {
+        let source = BinarySource(bytes.fromHex("00ffc3a9"));
+        let sink = ShortSink();
+        this.assertEquals(3, streams.copyN(source, sink, 3, 2));
+        this.assertEquals("00ffc3", bytes.toHex(sink.data));
+        this.assertEquals(1, streams.copy(source, sink, 2));
+        this.assertEquals("00ffc3a9", bytes.toHex(sink.data));
+    }
+
+    @test
+    func limitsReadsWithoutOverreading(): void {
+        let source = BinarySource(bytes.fromHex("c3a942"));
+        let limited = streams.limit(source, 1, false);
+        this.assertEquals("c3", bytes.toHex(limited.readBytes(9)));
+        this.assertEquals("", bytes.toHex(limited.readBytes(9)));
+        limited.close();
+        limited.close();
+        this.assertFalse(source.closed);
+        this.assertEquals("a9", bytes.toHex(source.__readBytes(1)));
+    }
+
+    @test
+    func buffersWritesAndClosesOwnedSink(): void {
+        let sink = ShortSink();
+        let buffered = streams.buffer(sink, 4);
+        this.assertEquals(3, buffered.writeBytes(bytes.fromHex("010203")));
+        this.assertEquals("", bytes.toHex(sink.data));
+        buffered.flush();
+        this.assertEquals("010203", bytes.toHex(sink.data));
+        buffered.close();
+        buffered.close();
+        this.assertTrue(sink.closed);
+    }
+
+    @test
+    func teesExactlyWhatWasRead(): void {
+        let source = BinarySource(bytes.fromString("hello"));
+        let sink = ShortSink();
+        let tee = streams.tee(source, sink, false);
+        this.assertEquals("he", tee.read(2));
+        this.assertEquals("he", bytes.rawString(sink.data));
+        tee.close();
+        this.assertFalse(source.closed);
+        this.assertFalse(sink.closed);
+    }
+
+    @test
+    func reportsZeroProgressWrites(): void {
+        bool failed = false;
+        try { streams.copy(BinarySource(bytes.fromString("x")), StalledSink()); }
+        catch (IOError e) { failed = e.message.contains("no progress"); }
+        this.assertTrue(failed);
+    }
+
+    @test
+    func composesLimitAndBufferedRead(): void {
+        let source = BinarySource(bytes.fromHex("00ffc3a942"));
+        let buffered = streams.buffer(source, 3, false);
+        let limited = streams.limit(buffered, 4, false);
+        this.assertEquals("00ff", bytes.toHex(limited.readBytes(2)));
+        this.assertEquals("c3a9", bytes.toHex(limited.readBytes(9)));
+        this.assertEquals("", bytes.toHex(limited.readBytes(1)));
+        limited.close();
+        buffered.close();
+        this.assertFalse(source.closed);
+    }
+
+    @test
+    func validatesSizesAndStopsAtZeroLimit(): void {
+        let source = BinarySource(bytes.fromString("abc"));
+        this.assertEquals("", streams.limit(source, 0).read(5));
+        this.assertEquals(0, source.pos);
+        bool failed = false;
+        try { streams.buffer(source, 0); }
+        catch (ValueError e) { failed = true; }
+        this.assertTrue(failed);
+    }
+
+    @test
+    func preservesTextProtocolWithShortWrites(): void {
+        let source = TextSource("abc");
+        let sink = TextSink();
+        this.assertEquals(3, streams.copy(source, sink, 2));
+        this.assertEquals("abc", sink.data);
+    }
+
+    @test
+    func stopsTeeAfterSinkFailure(): void {
+        let source = BinarySource(bytes.fromString("abc"));
+        let reader = streams.tee(source, StalledSink(), false);
+        bool failed = false;
+        try { reader.readBytes(1); }
+        catch (IOError e) { failed = true; }
+        this.assertTrue(failed);
+        int position = source.pos;
+        try { reader.readBytes(1); }
+        catch (IOError e) {}
+        this.assertEquals(position, source.pos);
+    }
+
+    @test
+    func readsFileThroughBufferedLimit(): void {
+        let root = io.tempDir("stream-adapter-*");
+        defer io.remove(root);
+        let filePath = path.join(root, "binary.dat");
+        io.writeBytes(filePath, bytes.fromHex("00ffc3a942"));
+        let file = streams.open(filePath, "r");
+        let buffered = streams.buffer(file, 2, false);
+        let limited = streams.limit(buffered, 4, false);
+        this.assertEquals("00ffc3a9", bytes.toHex(limited.readBytes(8)));
+        limited.close();
+        buffered.close();
+        this.assertFalse(file.isClosed());
+        file.close();
+    }
+}

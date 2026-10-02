@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"geblang/internal/ast"
+	"geblang/internal/modules"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
 	"io"
@@ -279,6 +280,22 @@ func sysBundleDir(call *ast.CallExpression, args []runtime.Value) (runtime.Value
 		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
 	}
 	return runtime.String{Value: os.Getenv("GEBLANG_BUNDLE_DIR")}, nil
+}
+
+func (e *Evaluator) sysPackageRoot(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
+	}
+	for _, base := range e.modulePaths {
+		manifest, err := modules.NewResolver([]string{base}).FindManifest(base)
+		if err != nil {
+			return nil, err
+		}
+		if manifest != nil {
+			return runtime.String{Value: manifest.Root}, nil
+		}
+	}
+	return runtime.String{Value: ""}, nil
 }
 
 func (e *Evaluator) sysArgs(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

@@ -1007,6 +1007,106 @@
         ],
         "description": "messaging.connect AWS SQS queue"
     },
+    "config.load": {
+        "prefix": "configload",
+        "body": [
+            "import config;",
+            "let ${1:settings} = config.load({",
+            "\t\"defaults\": ${2:{}},",
+            "\t\"files\": [{\"path\": \"${3:settings.json}\"}],",
+            "\t\"env\": ${4:{}}",
+            "});",
+            "$0"
+        ],
+        "description": "Load layered configuration"
+    },
+    "locale.formatNumber": {
+        "prefix": "localeformat",
+        "body": [
+            "import locale;",
+            "let ${1:formatted} = locale.formatNumber(${2:value}, \"${3:en}\");",
+            "$0"
+        ],
+        "description": "Format a number for an explicit locale"
+    },
+    "i18n.catalog": {
+        "prefix": "i18ncatalog",
+        "body": [
+            "import i18n;",
+            "let ${1:catalog} = i18n.catalog(${2:messages}, \"${3:en}\");",
+            "$0"
+        ],
+        "description": "Create a per-locale message catalog"
+    },
+    "archive.extract": {
+        "prefix": "archiveextract",
+        "body": [
+            "import archive;",
+            "let ${1:paths} = archive.extract(${2:archivePath}, ${3:destination}, {\"maxTotalBytes\": ${4:536870912}});",
+            "$0"
+        ],
+        "description": "Extract an archive with bounded decompressed size"
+    },
+    "resources.readText": {
+        "prefix": "resourcesread",
+        "body": [
+            "import resources;",
+            "let ${1:text} = resources.readText(\"${2:assets/file.txt}\");",
+            "$0"
+        ],
+        "description": "Read a declared package resource"
+    },
+    "jsonl.reader": {
+        "prefix": "jsonlreader",
+        "body": [
+            "import jsonl;",
+            "let ${1:reader} = jsonl.reader(${2:source});",
+            "while (${1:reader}.hasNext()) {",
+            "\tlet ${3:row} = ${1:reader}.next();",
+            "\t$0",
+            "}",
+            "${1:reader}.close();"
+        ],
+        "description": "Read JSON Lines records"
+    },
+    "streams.copyN": {
+        "prefix": "streamscopyn",
+        "body": [
+            "import streams;",
+            "let ${1:count} = streams.copyN(${2:source}, ${3:sink}, ${4:maxBytes});",
+            "$0"
+        ],
+        "description": "Copy a bounded number of bytes between streams"
+    },
+    "streams.tee": {
+        "prefix": "streamstee",
+        "body": [
+            "import streams;",
+            "let ${1:reader} = streams.tee(${2:source}, ${3:sink}, false);",
+            "$0"
+        ],
+        "description": "Copy bytes read from a stream to a sink"
+    },
+    "mailparse.parse": {
+        "prefix": "mailparse",
+        "body": [
+            "import mailparse;",
+            "let ${1:message} = mailparse.parse(${2:rawMessage});",
+            "$0"
+        ],
+        "description": "Parse a bounded MIME message"
+    },
+    "datetime.period.Recurrence": {
+        "prefix": "recurrence",
+        "body": [
+            "import datetime.period as period;",
+            "let ${1:schedule} = period.Recurrence(${2:start}, \"${3:weekly}\", {\"interval\": ${4:1}});",
+            "for (instant in ${1:schedule}.occurrences(${5:10})) {",
+            "\t$0",
+            "}"
+        ],
+        "description": "Iterate a bounded calendar recurrence"
+    },
     "messaging.topic.sns": {
         "prefix": "messagingsns",
         "body": [

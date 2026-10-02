@@ -1,0 +1,181 @@
+module archive;
+
+import archive_native;
+import bytes;
+import file;
+import io;
+import reflect;
+
+export func zipRead(bytes data): list<dict<string, any>> {
+    return archive_native.zipRead(data);
+}
+
+export func zipWrite(list<dict<string, any>> entries): bytes {
+    return archive_native.zipWrite(entries);
+}
+
+export func tarRead(bytes data): list<dict<string, any>> {
+    return archive_native.tarRead(data);
+}
+
+export func tarWrite(list<dict<string, any>> entries): bytes {
+    return archive_native.tarWrite(entries);
+}
+
+export func tarGzRead(bytes data): list<dict<string, any>> {
+    return archive_native.tarGzRead(data);
+}
+
+export func tarGzWrite(list<dict<string, any>> entries): bytes {
+    return archive_native.tarGzWrite(entries);
+}
+
+export class ArchiveEntry {
+    string name;
+    int size;
+    bool isDir;
+    string kind;
+    any handle;
+
+    func ArchiveEntry(dict<string, any> metadata) {
+        this.name = metadata["name"] as string;
+        this.size = metadata["size"] as int;
+        this.isDir = metadata["isDir"] as bool;
+        this.kind = metadata["kind"] as string;
+        this.handle = metadata["handle"];
+    }
+
+    func readBytes(int n): bytes {
+        return archive_native.readBytes(this.handle, n);
+    }
+
+    func close(): void {
+        archive_native.closeEntry(this.handle);
+    }
+}
+
+export class ArchiveReader {
+    any handle;
+
+    func ArchiveReader(any handle) {
+        this.handle = handle;
+    }
+
+    func next(): ?ArchiveEntry {
+        let metadata = archive_native.next(this.handle);
+        if (metadata == null) {
+            return null;
+        }
+        return ArchiveEntry(metadata as dict<string, any>);
+    }
+
+    func close(): void {
+        archive_native.closeReader(this.handle);
+    }
+}
+
+export func open(string path, string format = "auto"): ArchiveReader {
+    return ArchiveReader(archive_native.open(path, format));
+}
+
+export class ArchiveWriter {
+    any handle;
+
+    func ArchiveWriter(any handle) {
+        this.handle = handle;
+    }
+
+    func addFile(string name, any source): void {
+        if (source instanceof bytes || source instanceof string) {
+            archive_native.addFile(this.handle, name, source);
+            return;
+        }
+        let read = reflect.method(source, "__readBytes");
+        if (read == null) {
+            read = reflect.method(source, "readBytes");
+        }
+        if (read == null) {
+            throw ValueError("archive.addFile: source must be bytes, a path, or a binary stream");
+        }
+        string temporary = io.tempFile("archive-source-*.bin");
+        defer io.remove(temporary);
+        let spool = file.open(temporary, "w");
+        defer spool.close();
+        while (true) {
+            bytes chunk = read(32768) as bytes;
+            if (chunk.length() == 0) {
+                break;
+            }
+            if (spool.writeBytes(chunk) != chunk.length()) {
+                spool.close();
+                throw ValueError("archive.addFile: short write to temporary file");
+            }
+        }
+        spool.close();
+        archive_native.addFile(this.handle, name, temporary);
+    }
+
+    func addDir(string name): void {
+        archive_native.addDir(this.handle, name);
+    }
+
+    func close(): void {
+        archive_native.closeWriter(this.handle);
+    }
+}
+
+export func create(string path, string format): ArchiveWriter {
+    return ArchiveWriter(archive_native.create(path, format));
+}
+
+export func extract(string path, string destination, dict<string, any> opts = {}): list<string> {
+    int maxEntries = 10000;
+    int maxEntryBytes = 67108864;
+    int maxTotalBytes = 536870912;
+    bool overwrite = false;
+    any filter = null;
+    if (opts.hasKey("maxEntries")) { maxEntries = opts["maxEntries"] as int; }
+    if (opts.hasKey("maxEntryBytes")) { maxEntryBytes = opts["maxEntryBytes"] as int; }
+    if (opts.hasKey("maxTotalBytes")) { maxTotalBytes = opts["maxTotalBytes"] as int; }
+    if (opts.hasKey("overwrite")) { overwrite = opts["overwrite"] as bool; }
+    if (opts.hasKey("filter")) { filter = opts["filter"]; }
+    if (maxEntries <= 0 || maxEntryBytes <= 0 || maxTotalBytes <= 0) {
+        throw ValueError("archive.extract: limits must be positive");
+    }
+    let reader = open(path);
+    defer reader.close();
+    list<string> extracted = [];
+    list<string> seen = [];
+    int count = 0;
+    int total = 0;
+    while (true) {
+        let item = reader.next();
+        if (item == null) {
+            break;
+        }
+        ArchiveEntry entry = item as ArchiveEntry;
+        archive_native.validateEntry(entry.handle);
+        count += 1;
+        if (count > maxEntries) {
+            throw ValueError("archive.extract: entry count limit exceeded");
+        }
+        string name = entry.name;
+        if (seen.contains(name) && !overwrite) {
+            throw ValueError("archive.extract: duplicate entry " + name);
+        }
+        seen.push(name);
+        dict<string, any> metadata = {
+            "name": name, "size": entry.size, "isDir": entry.isDir
+        };
+        if (filter != null && !(filter(metadata) as bool)) {
+            entry.close();
+            continue;
+        }
+        total += archive_native.extractEntry(
+            entry.handle, destination, overwrite, maxEntryBytes, maxTotalBytes - total
+        ) as int;
+        extracted.push(name);
+        entry.close();
+    }
+    return extracted;
+}

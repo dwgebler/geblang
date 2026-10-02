@@ -1,0 +1,133 @@
+import config;
+import io;
+import path;
+import sys;
+import test;
+
+class ConfigLoadTest extends test.Test {
+    @test
+    func clonesNestedInputs(): void {
+        let original = {"db": {"ports": [5432]}};
+        let copied = config.clone(original);
+        let dbSettings = copied["db"] as dict<string, any>;
+        (dbSettings["ports"] as list<any>)[0] = 9000;
+        this.assertEquals(5432, original["db"]["ports"][0]);
+        let cfg = config.Config(original);
+        let out = cfg.toDict();
+        ((out["db"] as dict<string, any>)["ports"] as list<any>)[0] = 8000;
+        this.assertEquals(5432, cfg.get("db.ports")[0]);
+    }
+
+    @test
+    func loadsFilesDotenvEnvironmentAndOverrides(): void {
+        let root = io.tempDir("config-load-*");
+        defer io.remove(root);
+        io.writeText(path.join(root, "base.json"), "{\"server\":{\"host\":\"file\",\"port\":1000}}");
+        io.writeText(path.join(root, "later.toml"), "[server]\nhost = \"toml\"\n");
+        io.writeText(path.join(root, "final.yaml"), "server:\n  host: yaml\n");
+        this.assertNull(sys.getenv("GEBLANG_CONFIG_LOAD_TEST_DOTENV_ONLY_999"));
+        io.writeText(path.join(root, ".env"), "GEBLANG_CONFIG_LOAD_TEST_PORT=2000\nGEBLANG_CONFIG_LOAD_TEST_DOTENV_ONLY_999=yes\n");
+        sys.setenv("GEBLANG_CONFIG_LOAD_TEST_PORT", "3000");
+        let options = {
+            "baseDir": root,
+            "defaults": {"server": {"host": "default", "port": 1}},
+            "files": [{"path": "base.json"}, {"path": "later.toml"}, {"path": "final.yaml"}],
+            "dotenvFiles": [".env"],
+            "env": {"server.port": {"name": "GEBLANG_CONFIG_LOAD_TEST_PORT", "type": "int"}}
+        };
+        let cfg = config.load(options);
+        this.assertEquals("yaml", cfg.get("server.host"));
+        this.assertEquals(3000, cfg.get("server.port"));
+        options["overrides"] = {"server": {"port": 4000}};
+        this.assertEquals(4000, config.load(options).get("server.port"));
+        this.assertEquals("3000", sys.getenv("GEBLANG_CONFIG_LOAD_TEST_PORT"));
+        this.assertNull(sys.getenv("GEBLANG_CONFIG_LOAD_TEST_DOTENV_ONLY_999"));
+    }
+
+    @test
+    func reportsSchemaErrorsWithoutLosingConfig(): void {
+        let options = {"defaults": {"port": "bad"},
+            "schema": {"type": "object", "properties": {"port": {"type": "int"}}}};
+        let result = config.validate(options);
+        this.assertFalse(result["valid"] as bool);
+        this.assertEquals("bad", result["config"].get("port"));
+        bool failed = false;
+        try { config.load(options); }
+        catch (ValueError e) { failed = e.message.contains("port"); }
+        this.assertTrue(failed);
+    }
+
+    @test
+    func rejectsInvalidPathsValuesAndOptions(): void {
+        bool collided = false;
+        sys.setenv("GEBLANG_CONFIG_LOAD_TEST_COLLISION", "true");
+        try { config.load({"defaults": {"app": 1},
+            "env": {"app.enabled": {"name": "GEBLANG_CONFIG_LOAD_TEST_COLLISION", "type": "bool"}}}); }
+        catch (ValueError e) { collided = e.message.contains("collision"); }
+        this.assertTrue(collided);
+        bool invalid = false;
+        sys.setenv("GEBLANG_CONFIG_LOAD_TEST_BOOL", "maybe");
+        try { config.load({"env": {"ok": {"name": "GEBLANG_CONFIG_LOAD_TEST_BOOL", "type": "bool"}}}); }
+        catch (ValueError e) { invalid = e.message.contains("invalid bool"); }
+        this.assertTrue(invalid);
+        bool unknown = false;
+        try { config.load({"surprise": true}); }
+        catch (ValueError e) { unknown = e.message.contains("unknown option"); }
+        this.assertTrue(unknown);
+        bool badFiles = false;
+        try { config.load({"files": "base.json"}); }
+        catch (ValueError e) { badFiles = e.message.contains("files must be a list"); }
+        this.assertTrue(badFiles);
+        bool absent = false;
+        try { config.load({"files": [{"path": "missing-config-load.json"}]}); }
+        catch (ValueError e) { absent = e.message.contains("missing-config-load.json"); }
+        this.assertTrue(absent);
+    }
+
+    @test
+    func convertsExplicitEnvironmentTypes(): void {
+        sys.setenv("GEBLANG_CONFIG_LOAD_TEST_JSON", "[1,2]");
+        sys.setenv("GEBLANG_CONFIG_LOAD_TEST_FLOAT", "1.5");
+        let cfg = config.load({"env": {
+            "items": {"name": "GEBLANG_CONFIG_LOAD_TEST_JSON", "type": "json"},
+            "ratio": {"name": "GEBLANG_CONFIG_LOAD_TEST_FLOAT", "type": "float"}
+        }});
+        this.assertEquals([1, 2], cfg.get("items"));
+        this.assertEquals(1.5f, cfg.get("ratio"));
+    }
+
+    @test
+    func acceptsPresentEmptyStringAndRejectsEmptyTypedValue(): void {
+        sys.setenv("GEBLANG_CONFIG_LOAD_TEST_EMPTY", "");
+        let loaded = config.load({"defaults": {"label": "fallback"},
+            "env": {"label": {"name": "GEBLANG_CONFIG_LOAD_TEST_EMPTY"}}});
+        this.assertEquals("", loaded.get("label"));
+        bool failed = false;
+        try {
+            config.load({"env": {"count": {"name": "GEBLANG_CONFIG_LOAD_TEST_EMPTY", "type": "int"}}});
+        } catch (ValueError e) {
+            failed = e.message.contains("invalid int");
+        }
+        this.assertTrue(failed);
+    }
+
+    @test
+    func reportsMalformedFilesAndUnknownFormats(): void {
+        let root = io.tempDir("config-invalid-*");
+        defer io.remove(root);
+        io.writeText(path.join(root, "bad.json"), "{");
+        io.writeText(path.join(root, "array.json"), "[]");
+        bool malformed = false;
+        try { config.load({"baseDir": root, "files": [{"path": "bad.json"}]}); }
+        catch (ValueError e) { malformed = e.message.contains("bad.json"); }
+        this.assertTrue(malformed);
+        bool wrongRoot = false;
+        try { config.load({"baseDir": root, "files": [{"path": "array.json"}]}); }
+        catch (ValueError e) { wrongRoot = e.message.contains("expected object"); }
+        this.assertTrue(wrongRoot);
+        bool unknown = false;
+        try { config.load({"baseDir": root, "files": [{"path": "bad.xyz"}]}); }
+        catch (ValueError e) { unknown = e.message.contains("unknown format"); }
+        this.assertTrue(unknown);
+    }
+}

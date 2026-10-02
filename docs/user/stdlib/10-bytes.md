@@ -5,6 +5,7 @@
 Import `bytes`:
 
 - `fromString(text)`, `toString(bytes)`
+- `rawString(bytes)` returns a byte-preserving string without UTF-8 validation
 - `fromList(list<int>)` - builds bytes from a list of byte values
   (0-255); rejects out-of-range values
 - `fromHex(text)`, `toHex(bytes)`
@@ -174,9 +175,9 @@ io.println(bytes.toString(compress.gunzip(packed)));
 ## Archives
 
 Import `archive` for zip and tar archive reading and writing.
-The 1.4.0 API is eager: readers materialise the full entry list
-in memory; writers take a list of entry dicts and return bytes.
-A streaming cursor API is queued for a follow-up.
+The original eager functions remain available for small archives. Use the
+file-backed API below when archive entries may be large or when extracting
+untrusted archives.
 
 - `archive.zipRead(bytes)` and `archive.zipWrite(entries)`.
 - `archive.tarRead(bytes)` and `archive.tarWrite(entries)`.
@@ -209,6 +210,52 @@ let tgz = archive.tarGzWrite([
 ]);
 let configEntries = archive.tarGzRead(tgz);
 ```
+
+### Streaming archives
+
+`archive.open(path, format = "auto")` opens a zip, tar, or tar.gz file. The
+`ArchiveReader.next()` cursor returns an `ArchiveEntry` or `null` at EOF. An
+entry has `name`, `size`, and `isDir` fields and `readBytes(n)` and `close()`
+methods. Only one entry is active: `next()` closes the previous one, including
+any unread data. Close the reader when finished. Zip input must be a seekable
+file. Tar and tar.gz advance sequentially. Auto detection reads the file
+header.
+
+`archive.create(path, format)` creates a streaming writer.
+`addFile(name, source)` accepts bytes, a file path, or a binary stream with `__readBytes(n)`
+or `readBytes(n)`. Streams are spooled to a temporary file so tar can record
+the entry size without retaining the entire input in memory. `addDir(name)`
+adds a directory. Call `close()` to finalize the archive; repeated close is
+safe. Entry names must be relative forward-slash paths without traversal.
+
+```gb
+import archive;
+import bytes;
+
+let writer = archive.create("backup.tar.gz", "tar.gz");
+writer.addDir("data");
+writer.addFile("data/settings.bin", bytes.fromHex("00ff"));
+writer.close();
+
+let reader = archive.open("backup.tar.gz");
+while (true) {
+    let entry = reader.next();
+    if (entry == null) { break; }
+    io.println(entry.name);
+    entry.close();
+}
+reader.close();
+```
+
+`archive.extract(path, destination, opts = {})` returns the extracted relative
+paths. Options are `maxEntries` (default 10000), `maxEntryBytes` (64 MiB),
+`maxTotalBytes` (512 MiB), `overwrite` (default false), and `filter` (a
+callable receiving `{"name", "size", "isDir"}` metadata). Limits are positive.
+The extractor rejects absolute and traversal names, symlink and hardlink
+entries, and paths through existing symlinks. It checks actual decompressed
+bytes. New files use owner-only permissions and newly created directories use
+owner-only traversal permissions; archive modes and timestamps are ignored. If an entry
+fails, its partial file is removed. Earlier completed entries remain.
 
 Reader errors (corrupt or non-archive bytes) and writer errors
 (missing `name` / `data` field) throw catchable runtime

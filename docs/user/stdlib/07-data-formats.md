@@ -41,6 +41,69 @@ if (!(result["ok"] as bool)) {
 would never fire (the dict itself is never `null`), so failures would
 pass silently.
 
+## JSON Lines
+
+Import `jsonl` for one complete JSON value per physical line. This format is
+also called NDJSON. Unlike `json.reader`, it reads records rather than JSON
+syntax events. Newline-delimited records work well for logs and exports.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `reader(source, opts = {})` | `Reader` | Lazily reads records from text, bytes, or a readable stream. |
+| `readAll(source, opts = {})` | `list<any>` | Reads every record into memory. |
+| `writer(sink)` | `Writer` | Writes compact JSON records to a writable stream. |
+| `stringify(values)` | `string` | Converts an iterable to newline-terminated JSON Lines text. |
+
+`Reader.hasNext()` must be checked before `next()`: JSON `null` is a valid
+record, so `null` cannot signal end of input. `next()` raises `ValueError` at
+EOF. A `Reader` buffers at most one line beyond its current input chunk. The
+default `maxLineBytes` is 1 MiB; set a positive limit in `opts` if needed.
+Empty lines raise `ParseError` unless `skipBlank` is true. Errors include the
+1-based physical line number. LF and CRLF are accepted, including a final
+record without a newline. Invalid UTF-8 is rejected.
+
+```gb
+import jsonl;
+import streams;
+import io;
+
+let source = streams.open("events.jsonl", "r");
+defer source.close();
+let records = jsonl.reader(source);
+defer records.close();
+while (records.hasNext()) {
+    let event = records.next();
+    io.println(event);
+}
+```
+
+Pass text content directly for small inputs: `jsonl.readAll("1\nnull\n")`.
+To read a path, open it explicitly with `streams.open(path)`; string arguments
+are interpreted as content. The writer retries partial sink writes and emits
+one `\n` after each value. `Reader.close()` and `Writer.close()` do not close
+caller-provided streams. `Writer.close()` flushes its sink. The caller owns and
+closes that sink.
+
+For converting a CSV reader one row at a time:
+
+```gb
+import csv;
+import jsonl;
+import streams;
+
+let input = streams.open("events.csv", "r");
+let output = streams.open("events.jsonl", "w");
+defer input.close();
+defer output.close();
+let rows = csv.reader(input);
+let records = jsonl.writer(output);
+defer rows.close();
+defer records.close();
+while (rows.hasNext()) {
+    records.write(rows.next());
+}
+```
+
 ## YAML
 
 Import `yaml`:

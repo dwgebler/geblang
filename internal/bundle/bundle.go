@@ -39,6 +39,7 @@ type Manifest struct {
 	// EntryMainArgs: entry main takes args, so the launcher calls main(sys.args()).
 	EntryMainArgs bool           `json:"entryMainArgs,omitempty"`
 	Modules       []ModuleRecord `json:"modules"`
+	Resources     []string       `json:"resources,omitempty"`
 	Permissions   *Permissions   `json:"permissions,omitempty"`
 }
 
@@ -217,9 +218,6 @@ func (b *Bundle) ExtractTo(dir string, cachePathFor func(sourcePath string, sour
 	bytecodeBytesMap := map[string][]byte{} // zip path -> bytecode bytes
 
 	for _, f := range zr.File {
-		if f.Name == "BUNDLE.json" {
-			continue
-		}
 		destPath := filepath.Join(tmpDir, filepath.FromSlash(f.Name))
 		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 			return fmt.Errorf("bundle extract: mkdir %s: %w", destPath, err)

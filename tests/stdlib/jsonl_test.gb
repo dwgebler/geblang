@@ -1,0 +1,95 @@
+import bytes;
+import io;
+import jsonl;
+import streams;
+import test;
+
+class ShortSink {
+    streams.IOStream target;
+    func ShortSink(streams.IOStream target) { this.target = target; }
+    func writeBytes(bytes data): int {
+        if (data.length() == 0) { return 0; }
+        return this.target.writeBytes(data.slice(0, 1));
+    }
+    func flush(): void { this.target.flush(); }
+}
+
+class JsonLinesTest extends test.Test {
+    @test
+    func readsRecordsIncludingNull(): void {
+        let r = jsonl.reader("null\r\n42\n{\"name\":\"Ada\"}");
+        this.assertTrue(r.hasNext());
+        this.assertTrue(r.hasNext());
+        this.assertNull(r.next());
+        this.assertEquals(42, r.next());
+        this.assertEquals("Ada", r.next()["name"]);
+        this.assertFalse(r.hasNext());
+        bool ended = false;
+        try { r.next(); } catch (ValueError e) { ended = true; }
+        this.assertTrue(ended);
+    }
+
+    @test
+    func blankLinesAndLineNumbers(): void {
+        this.assertEquals([1, 2], jsonl.readAll("\n1\n\n2\n", {"skipBlank": true}));
+        bool sawLine = false;
+        try { jsonl.readAll("1\n2\n\n"); }
+        catch (ParseError e) { sawLine = e.message.contains("line 3"); }
+        this.assertTrue(sawLine);
+    }
+
+    @test
+    func enforcesLineLimit(): void {
+        bool limited = false;
+        try { jsonl.readAll("12345\n", {"maxLineBytes": 4}); }
+        catch (ParseError e) { limited = e.message.contains("line 1"); }
+        this.assertTrue(limited);
+        bool finalLimited = false;
+        try { jsonl.readAll("12345", {"maxLineBytes": 4}); }
+        catch (ParseError e) { finalLimited = e.message.contains("line 1"); }
+        this.assertTrue(finalLimited);
+    }
+
+    @test
+    func rejectsMalformedJsonAndInvalidUtf8WithLineNumber(): void {
+        bool malformed = false;
+        try { jsonl.readAll("1\n2\n{"); }
+        catch (ParseError e) { malformed = e.message.contains("line 3"); }
+        this.assertTrue(malformed);
+        bool invalidUtf8 = false;
+        try { jsonl.readAll(bytes.fromHex("ff0a")); }
+        catch (ParseError e) { invalidUtf8 = e.message.contains("line 1"); }
+        this.assertTrue(invalidUtf8);
+    }
+
+    @test
+    func writesWithPartialSinkAndKeepsItOpen(): void {
+        let target = streams.memory();
+        let w = jsonl.writer(ShortSink(target));
+        w.write({"x": 1});
+        w.write(null);
+        w.close();
+        this.assertEquals("{\"x\":1}\nnull\n", target.toString());
+        this.assertFalse(target.isClosed());
+    }
+
+    @test
+    func readsFromFileStreamWithoutOwningIt(): void {
+        let filePath = io.tempFile("jsonl-*.txt");
+        defer io.remove(filePath);
+        io.writeText(filePath, "true\nfalse\n");
+        let source = streams.open(filePath);
+        let r = jsonl.reader(source);
+        this.assertEquals(true, r.next());
+        r.close();
+        this.assertFalse(source.isClosed());
+        source.close();
+    }
+
+    @test
+    func stringifiesEmptyAndNonemptyInputs(): void {
+        this.assertEquals("", jsonl.stringify([]));
+        this.assertEquals("1\nfalse\n", jsonl.stringify([1, false]));
+        this.assertEquals([], jsonl.readAll(""));
+    }
+}

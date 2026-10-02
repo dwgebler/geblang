@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -245,6 +246,7 @@ func runBuild(args []string) {
 	appName := entry
 	appVersion := ""
 	var manifestPerm modules.ManifestPermissions
+	var resourcePaths []string
 	if pkgManifest, err := resolver.FindManifest(absPkgDir); err == nil && pkgManifest != nil {
 		resourceRoot = pkgManifest.Root
 		for _, pattern := range pkgManifest.Resources {
@@ -264,7 +266,9 @@ func runBuild(args []string) {
 		}
 		for zipPath, data := range resources {
 			files[zipPath] = data
+			resourcePaths = append(resourcePaths, zipPath)
 		}
+		sort.Strings(resourcePaths)
 	}
 
 	manifest := bundle.Manifest{
@@ -274,6 +278,7 @@ func runBuild(args []string) {
 		AppVersion:    appVersion,
 		EntryMainArgs: entrySig.WantsArgs,
 		Modules:       records,
+		Resources:     resourcePaths,
 		Permissions:   resolveBundlePermissions(manifestPerm, cliAllowFFI, cliAllowOnnx, cliAllowProcessControl, cliAllowBrowser),
 	}
 
@@ -612,14 +617,26 @@ func resolveBundlePermissions(m modules.ManifestPermissions, cliFFI []string, cl
 // treated as a glob.
 func collectResources(root string, specs []resourceSpec) (map[string][]byte, error) {
 	out := map[string][]byte{}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("resource root %q: %w", root, err)
+	}
 
 	put := func(bundlePath, diskPath string) error {
 		bundlePath = filepath.ToSlash(bundlePath)
 		if bundlePath == ".." || strings.HasPrefix(bundlePath, "../") {
 			return fmt.Errorf("resource %q maps outside the bundle", diskPath)
 		}
-		if bundlePath == "src" || strings.HasPrefix(bundlePath, "src/") || bundlePath == "stdlib" || strings.HasPrefix(bundlePath, "stdlib/") {
+		if bundlePath == "BUNDLE.json" || bundlePath == "src" || strings.HasPrefix(bundlePath, "src/") || bundlePath == "stdlib" || strings.HasPrefix(bundlePath, "stdlib/") {
 			return fmt.Errorf("resource path %q collides with a reserved bundle directory", bundlePath)
+		}
+		resolvedPath, err := filepath.EvalSymlinks(diskPath)
+		if err != nil {
+			return fmt.Errorf("resource %q: %w", diskPath, err)
+		}
+		rel, err := filepath.Rel(resolvedRoot, resolvedPath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("resource %q escapes the project directory", diskPath)
 		}
 		data, err := os.ReadFile(diskPath)
 		if err != nil {

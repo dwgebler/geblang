@@ -139,6 +139,11 @@ func IsPureBuiltinModule(module string) bool {
 }
 
 var pureBuiltins = map[string]map[string]struct{}{
+	"locale": {
+		"canonicalTag": {}, "formatNumber": {}, "formatCurrency": {},
+		"formatDate": {}, "compare": {}, "pluralCategory": {},
+	},
+	"i18n_native": {"interpolate": {}},
 	"math": {
 		"abs": {}, "min": {}, "max": {}, "clamp": {}, "lerp": {}, "remap": {}, "floor": {}, "ceil": {},
 		"round": {}, "sqrt": {}, "sin": {}, "cos": {}, "tan": {}, "asin": {},
@@ -274,9 +279,18 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"constantTimeEqual": {},
 	},
 	"bytes": {
-		"fromString": {}, "toString": {}, "fromHex": {}, "toHex": {},
+		"fromString": {}, "toString": {}, "rawString": {}, "fromHex": {}, "toHex": {},
 		"fromBase64": {}, "toBase64": {}, "fromBase64Url": {}, "toBase64Url": {},
 		"fromList": {}, "concat": {},
+	},
+	"mailparse_native": {
+		"parse": {},
+	},
+	"calendar_native": {
+		"addPeriod": {}, "candidate": {}, "indexNear": {}, "localDate": {}, "validDate": {},
+	},
+	"resources_native": {
+		"root": {}, "path": {}, "exists": {},
 	},
 	"string": {
 		"fromCodePoint": {}, "fromCodePoints": {},
@@ -291,11 +305,6 @@ var pureBuiltins = map[string]map[string]struct{}{
 	},
 	"compress": {
 		"gzip": {}, "gunzip": {},
-	},
-	"archive": {
-		"zipRead": {}, "zipWrite": {},
-		"tarRead": {}, "tarWrite": {},
-		"tarGzRead": {}, "tarGzWrite": {},
 	},
 	"binary": {
 		"pack": {}, "unpack": {}, "unpackNamed": {}, "size": {},

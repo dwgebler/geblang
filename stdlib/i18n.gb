@@ -1,0 +1,77 @@
+module i18n;
+
+import config;
+import freeze;
+import i18n_native;
+import locale;
+
+@immutable
+export class Catalog {
+    dict<string, any> messages;
+    string tag;
+    string fallback;
+
+    func Catalog(dict<string, any> messages, string tag, string fallback = "en") {
+        this.tag = locale.canonicalTag(tag);
+        this.fallback = locale.canonicalTag(fallback);
+        dict<string, any> copied = {};
+        for (name, entries in messages.items()) {
+            string canonical = locale.canonicalTag(name);
+            if (copied.hasKey(canonical)) {
+                throw ValueError("i18n.catalog: duplicate locale " + canonical);
+            }
+            if (!(entries instanceof dict)) {
+                throw ValueError("i18n.catalog: messages for " + canonical + " must be a dictionary");
+            }
+            copied[canonical] = config.clone(entries as dict<string, any>);
+        }
+        this.messages = freeze.deep(copied) as dict<string, any>;
+    }
+
+    func lookup(string key): dict<string, any> {
+        list<string> tags = [this.tag];
+        string parentTag = this.tag.split("-")[0];
+        if (!tags.contains(parentTag)) { tags.push(parentTag); }
+        if (!tags.contains(this.fallback)) { tags.push(this.fallback); }
+        string parentFallback = this.fallback.split("-")[0];
+        if (!tags.contains(parentFallback)) { tags.push(parentFallback); }
+        for (candidate in tags) {
+            if (!this.messages.hasKey(candidate)) { continue; }
+            let entries = this.messages[candidate] as dict<string, any>;
+            if (entries.hasKey(key)) {
+                return {"value": entries[key], "tag": candidate};
+            }
+        }
+        throw ValueError("i18n.catalog: missing key " + key);
+    }
+
+    func text(string key, dict<string, any> args = {}): string {
+        let value = this.lookup(key)["value"];
+        if (!(value instanceof string)) {
+            throw ValueError("i18n.catalog: key " + key + " is not a text message");
+        }
+        return i18n_native.interpolate(value as string, args);
+    }
+
+    func plural(string key, int count, dict<string, any> args = {}): string {
+        let selected = this.lookup(key);
+        let value = selected["value"];
+        if (!(value instanceof dict)) {
+            throw ValueError("i18n.catalog: key " + key + " has no plural forms");
+        }
+        let forms = value as dict<string, any>;
+        string category = locale.pluralCategory(count, selected["tag"] as string);
+        string chosen = category;
+        if (!forms.hasKey(chosen)) { chosen = "other"; }
+        if (!forms.hasKey(chosen) || !(forms[chosen] instanceof string)) {
+            throw ValueError("i18n.catalog: missing plural form " + category + " for " + key);
+        }
+        let values = config.clone(args);
+        values["count"] = count;
+        return i18n_native.interpolate(forms[chosen] as string, values);
+    }
+}
+
+export func catalog(dict<string, any> messages, string tag, string fallback = "en"): Catalog {
+    return Catalog(messages, tag, fallback);
+}

@@ -1,0 +1,191 @@
+module datetime.period;
+
+import calendar_native;
+import datetime;
+import freeze;
+
+@immutable
+export class Period {
+    int years;
+    int months;
+    int days;
+
+    func Period(int years = 0, int months = 0, int days = 0) {
+        this.years = years;
+        this.months = months;
+        this.days = days;
+    }
+
+    func addTo(datetime.Instant instant, string zone = "UTC"): datetime.Instant {
+        return datetime.Instant(calendar_native.addPeriod(
+            instant.unix(), this.years, this.months, this.days, zone));
+    }
+}
+
+@immutable
+export class Recurrence {
+    datetime.Instant start;
+    string frequency;
+    int interval;
+    string zone;
+    ?int count;
+    ?datetime.Instant until;
+    list<int> weekdays;
+
+    func Recurrence(datetime.Instant start, string frequency, dict<string, any> opts = {}) {
+        if (frequency != "daily" && frequency != "weekly" &&
+            frequency != "monthly" && frequency != "yearly") {
+            throw ValueError("Recurrence: unsupported frequency " + frequency);
+        }
+        for (key in opts.keys()) {
+            if (key != "interval" && key != "zone" && key != "count" &&
+                key != "until" && key != "weekdays") {
+                throw ValueError("Recurrence: unknown option " + key);
+            }
+        }
+        this.start = start;
+        this.frequency = frequency;
+        this.interval = 1;
+        if (opts.hasKey("interval")) {
+            if (!(opts["interval"] instanceof int) || (opts["interval"] as int) <= 0) {
+                throw ValueError("Recurrence: interval must be positive");
+            }
+            this.interval = opts["interval"] as int;
+        }
+        this.zone = "UTC";
+        if (opts.hasKey("zone")) {
+            if (!(opts["zone"] instanceof string)) { throw ValueError("Recurrence: zone must be string"); }
+            this.zone = opts["zone"] as string;
+        }
+        datetime.Zone(this.zone);
+        this.count = null;
+        if (opts.hasKey("count")) {
+            if (!(opts["count"] instanceof int) || (opts["count"] as int) <= 0) {
+                throw ValueError("Recurrence: count must be positive");
+            }
+            this.count = opts["count"] as int;
+        }
+        this.until = null;
+        if (opts.hasKey("until")) {
+            if (!(opts["until"] instanceof datetime.Instant)) {
+                throw ValueError("Recurrence: until must be an Instant");
+            }
+            this.until = opts["until"] as datetime.Instant;
+            if ((this.until as datetime.Instant).isBefore(start)) {
+                throw ValueError("Recurrence: until precedes start");
+            }
+        }
+        this.weekdays = [];
+        if (opts.hasKey("weekdays")) {
+            if (frequency != "weekly" || !(opts["weekdays"] instanceof list)) {
+                throw ValueError("Recurrence: weekdays require weekly frequency");
+            }
+            for (day in opts["weekdays"] as list<any>) {
+                if (!(day instanceof int) || (day as int) < 1 || (day as int) > 7 ||
+                    this.weekdays.contains(day as int)) {
+                    throw ValueError("Recurrence: weekdays must be unique ISO days 1-7");
+                }
+                this.weekdays.push(day as int);
+            }
+            if (this.weekdays.length() == 0) {
+                throw ValueError("Recurrence: weekdays must not be empty");
+            }
+        }
+        this.weekdays = freeze.shallow(this.weekdays) as list<int>;
+    }
+
+    func candidate(int index): ?datetime.Instant {
+        let value = calendar_native.candidate(this.start.unix(), this.frequency,
+            this.interval, index, this.zone, this.weekdays);
+        if (value == null) { return null; }
+        return datetime.Instant(value as int);
+    }
+
+    func occurrences(int limit): generator<datetime.Instant> {
+        if (limit <= 0) { throw ValueError("Recurrence: limit must be positive"); }
+        int emitted = 0;
+        int index = 0;
+        int attempts = 0;
+        while (emitted < limit && attempts < limit * 4 + 16) {
+            let candidate = this.candidate(index);
+            index = index + 1;
+            attempts = attempts + 1;
+            if (candidate == null) { continue; }
+            let instant = candidate as datetime.Instant;
+            if (instant.isBefore(this.start)) { continue; }
+            if (this.until != null && instant.isAfter(this.until as datetime.Instant)) { break; }
+            yield instant;
+            emitted = emitted + 1;
+            if (this.count != null && emitted >= (this.count as int)) { break; }
+        }
+    }
+
+    func between(datetime.Instant from, datetime.Instant to, int limit): generator<datetime.Instant> {
+        if (limit <= 0) { throw ValueError("Recurrence: limit must be positive"); }
+        if (from.isBefore(to)) {
+            int index = calendar_native.indexNear(this.start.unix(), from.unix(),
+                this.frequency, this.interval, this.zone, this.weekdays);
+            if (this.count == null || index <= (this.count as int) * 4 + 16) {
+                int total = 0;
+                if (this.count != null) {
+                    for (let int earlier = 0; earlier < index; earlier++) {
+                        let prior = this.candidate(earlier);
+                        if (prior != null && !(prior as datetime.Instant).isBefore(this.start)) {
+                            total = total + 1;
+                        }
+                    }
+                }
+                int emitted = 0;
+                int attempts = 0;
+                while (emitted < limit && attempts < limit * 4 + 16) {
+                    let candidate = this.candidate(index);
+                    index = index + 1;
+                    attempts = attempts + 1;
+                    if (candidate == null) { continue; }
+                    let instant = candidate as datetime.Instant;
+                    if (instant.isBefore(this.start)) { continue; }
+                    if (this.until != null && instant.isAfter(this.until as datetime.Instant)) { break; }
+                    if (!instant.isBefore(to)) { break; }
+                    total = total + 1;
+                    if (this.count != null && total > (this.count as int)) { break; }
+                    if (instant.isBefore(from)) { continue; }
+                    yield instant;
+                    emitted = emitted + 1;
+                }
+            }
+        }
+    }
+}
+
+func validHolidays(list<string> holidays): void {
+    for (holiday in holidays) {
+        if (!(calendar_native.validDate(holiday) as bool)) {
+            throw ValueError("calendar: invalid holiday " + holiday);
+        }
+    }
+}
+
+export func isBusinessDay(datetime.Instant instant, string zone = "UTC",
+                          list<string> holidays = []): bool {
+    validHolidays(holidays);
+    let parts = calendar_native.localDate(instant.unix(), zone) as dict<string, any>;
+    return (parts["weekday"] as int) <= 5 && !holidays.contains(parts["date"] as string);
+}
+
+export func addBusinessDays(datetime.Instant instant, int count, string zone = "UTC",
+                            list<string> holidays = []): datetime.Instant {
+    validHolidays(holidays);
+    datetime.Zone(zone);
+    if (count == 0) { return instant; }
+    int direction = 1;
+    if (count < 0) { direction = -1; }
+    int remaining = count * direction;
+    datetime.Instant current = instant;
+    while (remaining > 0) {
+        current = Period(0, 0, direction).addTo(current, zone);
+        if (isBusinessDay(current, zone, holidays)) {
+            remaining = remaining - 1;
+        }
+    }
+    return current;
+}

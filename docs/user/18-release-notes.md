@@ -1,5 +1,32 @@
 # Release Notes
 
+## 1.36.0
+
+### Standard library
+
+- `streams` adds binary stream adapters for limiting, buffering, and teeing
+  reads, plus bounded `copyN` and correct handling of short writes.
+- `archive` adds streaming zip, tar, and tar.gz readers and writers, with
+  bounded extraction that rejects unsafe paths and links.
+- `i18n` adds explicit-locale number, date, and currency formatting, collation,
+  plural rules, and message catalogs with locale fallback.
+- `config` adds layered loading, environment overrides, and schema validation.
+- `datetime.period` adds zoned periods, recurrence, and business-day helpers.
+- `mailparse` adds bounded MIME message parsing and attachment access.
+- `jsonl` adds line-oriented JSON reading and writing.
+- `resources` adds safe access to bundled package resources.
+
+### Fixes
+
+- Native datetime objects now pass `instanceof` consistently in the evaluator
+  and bytecode VM.
+- Cached embedded standard-library modules now use their content in the cache
+  key, so a rebuilt toolchain does not reuse stale module bytecode.
+
+### Tooling
+
+- Editor completion and hover cover the new standard-library APIs.
+
 ## 1.35.2
 
 ### Standard library

@@ -1,6 +1,8 @@
 package modules
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -274,7 +276,11 @@ func ensureEmbeddedStdlib() string {
 		cache = os.TempDir()
 	}
 	root := filepath.Join(cache, "geblang")
-	dir := filepath.Join(root, "stdlib-"+version.Geblang)
+	hash, err := embeddedStdlibHash(rootembed.StdlibFS)
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(root, "stdlib-"+version.Geblang+"-"+hash[:16])
 	if hasManifest(dir) {
 		return dir
 	}
@@ -296,6 +302,31 @@ func ensureEmbeddedStdlib() string {
 		return ""
 	}
 	return dir
+}
+
+func embeddedStdlibHash(source fs.FS) (string, error) {
+	digest := sha256.New()
+	err := fs.WalkDir(source, "stdlib", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		content, err := fs.ReadFile(source, p)
+		if err != nil {
+			return err
+		}
+		_, _ = digest.Write([]byte(p))
+		_, _ = digest.Write([]byte{0})
+		_, _ = digest.Write(content)
+		_, _ = digest.Write([]byte{0})
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func extractEmbeddedStdlib(dst string) error {

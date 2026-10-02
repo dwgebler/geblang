@@ -71,6 +71,8 @@ Data and transformation:
   checksums, hashes, and compression.
 - [Math, Dates, And UUIDs](math-datetime.html): numeric helpers, time values,
   durations, zones, and UUID generation/parsing.
+- [Localization And Translation](localization.html): explicit-locale number,
+  currency, and date formatting, collation, and message catalogs.
 - [Security](security.html): secrets, cryptographic helpers, passwords,
   certificates, keys, and CSRs.
 
@@ -85,7 +87,7 @@ Application building:
   stream-protocol-shaped TCP and TLS clients and servers.
 - [SSH Client](ssh.html): connect with password / key / agent auth, run
   commands, stream sessions, transfer files via SFTP, and forward ports.
-- [Mailer And SMTP](mailer-smtp.html): mail messages, alternatives,
+- [Mailer And SMTP](mailer-smtp.html): mail messages, MIME parsing,
   attachments, and SMTP delivery.
 - [Web Modules](web-router.html): request/response wrappers, routing,
   decorators, middleware, sessions, cache/auth/form helpers, SSE, and web

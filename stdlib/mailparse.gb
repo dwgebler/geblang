@@ -1,0 +1,108 @@
+module mailparse;
+
+import bytes;
+import datetime;
+import mailparse_native;
+import streams;
+
+export class Attachment {
+    string filename;
+    string contentType;
+    string disposition;
+    string contentId;
+    bytes data;
+
+    func Attachment(dict<string, any> values) {
+        this.filename = values["filename"] as string;
+        this.contentType = values["contentType"] as string;
+        this.disposition = values["disposition"] as string;
+        this.contentId = values["contentId"] as string;
+        this.data = values["data"] as bytes;
+    }
+}
+
+export class Message {
+    dict<string, any> data;
+
+    func Message(dict<string, any> data) {
+        this.data = data;
+    }
+
+    func headers(): dict<string, list<string>> {
+        dict<string, list<string>> out = {};
+        for (name, values in (this.data["headers"] as dict<string, any>).items()) {
+            out[name] = (values as list<string>).copy();
+        }
+        return out;
+    }
+
+    func headerAll(string name): list<string> {
+        let headers = this.data["headers"] as dict<string, any>;
+        string key = name.lower();
+        if (!headers.hasKey(key)) { return []; }
+        return (headers[key] as list<string>).copy();
+    }
+
+    func header(string name): ?string {
+        let values = this.headerAll(name);
+        if (values.length() == 0) { return null; }
+        return values[0];
+    }
+
+    func subject(): string { return this.data["subject"] as string; }
+    func from(): list<string> { return (this.data["from"] as list<string>).copy(); }
+    func to(): list<string> { return (this.data["to"] as list<string>).copy(); }
+    func cc(): list<string> { return (this.data["cc"] as list<string>).copy(); }
+    func date(): ?datetime.Instant {
+        if (this.data["date"] == null) { return null; }
+        return datetime.Instant(this.data["date"] as int);
+    }
+    func textBody(): ?string { return this.data["text"] as ?string; }
+    func htmlBody(): ?string { return this.data["html"] as ?string; }
+    func attachments(): list<Attachment> {
+        list<Attachment> out = [];
+        for (entry in this.data["attachments"] as list<any>) {
+            out.push(Attachment(entry as dict<string, any>));
+        }
+        return out;
+    }
+}
+
+func option(dict<string, any> options, string name, int fallback): int {
+    if (!options.hasKey(name)) { return fallback; }
+    if (!(options[name] instanceof int) || (options[name] as int) <= 0) {
+        throw ValueError("mailparse.parse: " + name + " must be a positive integer");
+    }
+    return options[name] as int;
+}
+
+## Parses a complete RFC 5322/MIME message within explicit size limits.
+export func parse(any data, dict<string, any> opts = {}): Message {
+    for (name in opts.keys()) {
+        if (name != "maxMessageBytes" && name != "maxParts" &&
+            name != "maxHeaderBytes" && name != "maxAttachmentBytes") {
+            throw ValueError("mailparse.parse: unknown option " + name);
+        }
+    }
+    int maxMessage = option(opts, "maxMessageBytes", 10485760);
+    int maxParts = option(opts, "maxParts", 100);
+    int maxHeader = option(opts, "maxHeaderBytes", 65536);
+    int maxAttachment = option(opts, "maxAttachmentBytes", 5242880);
+    bytes raw;
+    if (data instanceof bytes) {
+        raw = data as bytes;
+    } else if (data instanceof string) {
+        raw = bytes.fromString(data as string);
+    } else {
+        let sink = streams.memory();
+        int count = streams.copyN(data, sink, maxMessage + 1);
+        raw = bytes.fromString(sink.toString());
+        sink.close();
+        if (count > maxMessage) { throw ValueError("mailparse.parse: message exceeds maxMessageBytes"); }
+    }
+    if (raw.length() > maxMessage) {
+        throw ValueError("mailparse.parse: message exceeds maxMessageBytes");
+    }
+    return Message(mailparse_native.parse(raw, maxMessage, maxParts, maxHeader, maxAttachment)
+        as dict<string, any>);
+}

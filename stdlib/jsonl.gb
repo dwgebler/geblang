@@ -1,0 +1,226 @@
+module jsonl;
+
+import bytes;
+import io;
+import json;
+import streams;
+import strings;
+
+export class Reader {
+    any _source;
+    bytes _buffer;
+    bytes _partial;
+    int _offset;
+    int _lineNumber;
+    int _maxLineBytes;
+    bool _skipBlank;
+    bool _eof;
+    bool _ready;
+    bool _closed;
+    bool _owned;
+    any _value;
+
+    func Reader(any source, dict<string, any> opts = {}) {
+        if (source instanceof string || source instanceof bytes) {
+            this._source = streams.IOStream(io.memory(source));
+            this._owned = true;
+        } else {
+            this._source = source;
+            this._owned = false;
+        }
+        this._buffer = bytes.fromString("");
+        this._partial = bytes.fromString("");
+        this._offset = 0;
+        this._lineNumber = 0;
+        this._maxLineBytes = 1048576;
+        this._skipBlank = false;
+        this._eof = false;
+        this._ready = false;
+        this._closed = false;
+        this._value = null;
+        for (key in opts.keys()) {
+            if (key != "skipBlank" && key != "maxLineBytes") {
+                throw ValueError("jsonl.reader: unknown option " + key);
+            }
+        }
+        if (opts.hasKey("skipBlank")) {
+            if (!(opts["skipBlank"] instanceof bool)) {
+                throw ValueError("jsonl.reader: skipBlank must be bool");
+            }
+            this._skipBlank = opts["skipBlank"] as bool;
+        }
+        if (opts.hasKey("maxLineBytes")) {
+            if (!(opts["maxLineBytes"] instanceof int) || (opts["maxLineBytes"] as int) < 1) {
+                throw ValueError("jsonl.reader: maxLineBytes must be a positive int");
+            }
+            this._maxLineBytes = opts["maxLineBytes"] as int;
+        }
+    }
+
+    func _readLine(): ?bytes {
+        while (true) {
+            if (this._offset >= this._buffer.length()) {
+                if (this._eof) {
+                    if (this._partial.length() == 0) {
+                        return null;
+                    }
+                    this._lineNumber = this._lineNumber + 1;
+                    bytes finalLine = this._partial;
+                    this._partial = bytes.fromString("");
+                    if (finalLine.length() > this._maxLineBytes) {
+                        throw ParseError("jsonl line " + (this._lineNumber as string) + ": exceeds maxLineBytes");
+                    }
+                    return finalLine;
+                }
+                this._buffer = this._source.readBytes(4096) as bytes;
+                this._offset = 0;
+                if (this._buffer.length() == 0) {
+                    this._eof = true;
+                }
+                continue;
+            }
+            int end = this._offset;
+            while (end < this._buffer.length() && this._buffer.get(end) != 10) {
+                end = end + 1;
+            }
+            int partLength = end - this._offset;
+            if (this._partial.length() + partLength > this._maxLineBytes + 1) {
+                throw ParseError("jsonl line " + ((this._lineNumber + 1) as string) + ": exceeds maxLineBytes");
+            }
+            this._partial = bytes.concat(this._partial, this._buffer.slice(this._offset, end));
+            this._offset = end;
+            if (end < this._buffer.length()) {
+                this._offset = end + 1;
+                this._lineNumber = this._lineNumber + 1;
+                bytes line = this._partial;
+                this._partial = bytes.fromString("");
+                if (line.length() > 0 && line.get(line.length() - 1) == 13) {
+                    line = line.slice(0, line.length() - 1);
+                }
+                if (line.length() > this._maxLineBytes) {
+                    throw ParseError("jsonl line " + (this._lineNumber as string) + ": exceeds maxLineBytes");
+                }
+                return line;
+            }
+            if (this._partial.length() > this._maxLineBytes + 1) {
+                throw ParseError("jsonl line " + ((this._lineNumber + 1) as string) + ": exceeds maxLineBytes");
+            }
+        }
+    }
+
+    func hasNext(): bool {
+        if (this._closed) {
+            return false;
+        }
+        if (this._ready) {
+            return true;
+        }
+        while (true) {
+            ?bytes line = this._readLine();
+            if (line == null) {
+                return false;
+            }
+            if ((line as bytes).length() == 0 && this._skipBlank) {
+                continue;
+            }
+            try {
+                this._value = json.parse((line as bytes).toString());
+            } catch (Error e) {
+                throw ParseError("jsonl line " + (this._lineNumber as string) + ": " + e.message);
+            }
+            this._ready = true;
+            return true;
+        }
+    }
+
+    func next(): any {
+        if (!this.hasNext()) {
+            throw ValueError("jsonl.Reader.next: end of input");
+        }
+        any value = this._value;
+        this._value = null;
+        this._ready = false;
+        return value;
+    }
+
+    func close(): void {
+        if (this._closed) {
+            return;
+        }
+        this._closed = true;
+        if (this._owned) {
+            this._source.close();
+        }
+        this._buffer = bytes.fromString("");
+        this._partial = bytes.fromString("");
+        this._value = null;
+        this._ready = false;
+    }
+}
+
+export class Writer {
+    any _sink;
+    bool _closed;
+
+    func Writer(any sink) {
+        this._sink = sink;
+        this._closed = false;
+    }
+
+    func write(any value): void {
+        if (this._closed) {
+            throw ValueError("jsonl.Writer.write: writer is closed");
+        }
+        bytes data = bytes.fromString(json.stringify(value) + "\n");
+        int offset = 0;
+        while (offset < data.length()) {
+            int n = this._sink.writeBytes(data.slice(offset)) as int;
+            if (n <= 0 || n > data.length() - offset) {
+                throw RuntimeError("jsonl.Writer.write: sink made no valid progress");
+            }
+            offset = offset + n;
+        }
+    }
+
+    func flush(): void {
+        if (!this._closed) {
+            this._sink.flush();
+        }
+    }
+
+    func close(): void {
+        if (this._closed) {
+            return;
+        }
+        this.flush();
+        this._closed = true;
+    }
+}
+
+export func reader(any source, dict<string, any> opts = {}): Reader {
+    return Reader(source, opts);
+}
+
+export func readAll(any source, dict<string, any> opts = {}): list<any> {
+    Reader r = Reader(source, opts);
+    defer r.close();
+    list<any> values = [];
+    while (r.hasNext()) {
+        values.push(r.next());
+    }
+    return values;
+}
+
+export func writer(any sink): Writer {
+    return Writer(sink);
+}
+
+export func stringify(any values): string {
+    strings.StringBuilder sb = strings.StringBuilder();
+    defer sb.dispose();
+    for (value in values) {
+        sb.append(json.stringify(value));
+        sb.append("\n");
+    }
+    return sb.build();
+}

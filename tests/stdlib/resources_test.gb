@@ -1,0 +1,54 @@
+import bytes;
+import io;
+import path;
+import resources;
+import test;
+
+class ResourcesTest extends test.Test {
+    @test
+    func readsExplicitRootAsTextBytesAndStream(): void {
+        let root = io.tempDir("resources-*");
+        defer io.remove(root);
+        io.writeText(path.join(root, "hello.txt"), "hello");
+        io.writeBytes(path.join(root, "binary.bin"), bytes.fromHex("00ff"));
+        let items = resources.withRoot(root);
+        this.assertTrue(items.exists("hello.txt"));
+        this.assertEquals("hello", items.readText("hello.txt"));
+        this.assertEquals("00ff", bytes.toHex(items.readBytes("binary.bin")));
+        let stream = items.open("binary.bin");
+        this.assertEquals("00ff", bytes.toHex(stream.readBytes(2)));
+        stream.close();
+        this.assertTrue(path.abs(items.path("hello.txt")) == items.path("hello.txt"));
+        this.assertFalse(items.exists("missing.txt"));
+        bool missing = false;
+        try { items.readText("missing.txt"); }
+        catch (Error e) { missing = e.message.contains("missing.txt"); }
+        this.assertTrue(missing);
+    }
+
+    @test
+    func rejectsTraversalAndSymlinkEscape(): void {
+        let root = io.tempDir("resources-root-*");
+        let outside = io.tempDir("resources-outside-*");
+        defer io.remove(root);
+        defer io.remove(outside);
+        io.writeText(path.join(outside, "secret.txt"), "secret");
+        io.symlink(path.join(outside, "secret.txt"), path.join(root, "escape.txt"));
+        let items = resources.withRoot(root);
+        for (name in ["", "../secret.txt", "/etc/passwd", "C:/secret.txt", "a\\b"]) {
+            bool rejected = false;
+            try { items.path(name); }
+            catch (Error e) { rejected = true; }
+            this.assertTrue(rejected);
+        }
+        bool escaped = false;
+        try { items.exists("escape.txt"); }
+        catch (Error e) { escaped = e.message.contains("escapes"); }
+        this.assertTrue(escaped);
+        io.symlink(outside, path.join(root, "link"));
+        escaped = false;
+        try { items.exists("link/missing/file.txt"); }
+        catch (Error e) { escaped = e.message.contains("escapes"); }
+        this.assertTrue(escaped);
+    }
+}

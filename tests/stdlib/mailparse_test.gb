@@ -1,0 +1,132 @@
+import bytes;
+import mailer;
+import mailparse;
+import streams;
+import test;
+
+class MailparseTest extends test.Test {
+    @test
+    func parsesFoldedHeadersAddressesAndNestedParts(): void {
+        let raw = "From: \"Doe, Jane\" <jane@example.com>\r\n" +
+            "To: Bob <bob@example.com>\r\n" +
+            "Subject: =?UTF-8?Q?Hello_=C3=A9?=\r\n" +
+            "X-Trace: first\r\nX-Trace: second\r\n" +
+            "X-Folded: hello\r\n world\r\n" +
+            "Date: Tue, 14 Nov 2023 22:13:20 +0000\r\n" +
+            "MIME-Version: 1.0\r\n" +
+            "Content-Type: multipart/mixed; boundary=\"outer\"\r\n\r\n" +
+            "--outer\r\nContent-Type: multipart/alternative; boundary=\"inner\"\r\n\r\n" +
+            "--inner\r\nContent-Type: text/plain; charset=iso-8859-1\r\n" +
+            "Content-Transfer-Encoding: quoted-printable\r\n\r\ncaf=E9\r\n" +
+            "--inner\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<b>hello</b>\r\n" +
+            "--inner--\r\n" +
+            "--outer\r\nContent-Type: application/octet-stream\r\n" +
+            "Content-Disposition: attachment; filename=\"blob.bin\"\r\n" +
+            "Content-Transfer-Encoding: base64\r\n\r\nAP8=\r\n" +
+            "--outer--\r\n";
+        let message = mailparse.parse(raw);
+        this.assertEquals("Hello é", message.subject());
+        this.assertEquals("\"Doe, Jane\" <jane@example.com>", message.from()[0]);
+        this.assertEquals(["first", "second"], message.headerAll("x-TRACE"));
+        this.assertEquals("first", message.header("X-Trace"));
+        this.assertEquals("hello world", message.header("x-folded"));
+        this.assertEquals(1700000000, message.date().unix());
+        this.assertEquals("café", message.textBody().trim());
+        this.assertEquals("<b>hello</b>", message.htmlBody().trim());
+        let files = message.attachments();
+        this.assertEquals(1, files.length());
+        this.assertEquals("blob.bin", files[0].filename);
+        this.assertEquals("00ff", bytes.toHex(files[0].data));
+    }
+
+    @test
+    func parsesMailerRenderedMessage(): void {
+        let outgoing = mailer.Message("Report").fromAddress("a@example.com")
+            .toAddress("b@example.com").withText("ready");
+        let incoming = mailparse.parse(outgoing.render());
+        this.assertEquals("Report", incoming.subject());
+        this.assertEquals("ready", incoming.textBody().trim());
+        this.assertEquals("a@example.com", incoming.from()[0]);
+    }
+
+    @test
+    func acceptsBinaryStreamWithoutClosingIt(): void {
+        let source = streams.memory("Subject: Hi\r\n\r\nbody");
+        let message = mailparse.parse(source);
+        this.assertEquals("body", message.textBody());
+        this.assertFalse(source.isClosed());
+        source.close();
+    }
+
+    @test
+    func rejectsMalformedAndOversizedInput(): void {
+        bool malformed = false;
+        try { mailparse.parse("no separator"); }
+        catch (Error e) { malformed = e.message.contains("separator"); }
+        this.assertTrue(malformed);
+        bool size = false;
+        try { mailparse.parse("Subject: Hi\r\n\r\nbody", {"maxMessageBytes": 8}); }
+        catch (Error e) { size = e.message.contains("maxMessageBytes"); }
+        this.assertTrue(size);
+        let empty = mailparse.parse("Subject: Empty\r\n\r\n");
+        this.assertNull(empty.textBody());
+        this.assertNull(empty.htmlBody());
+    }
+
+    @test
+    func enforcesPartAttachmentAndCharsetLimits(): void {
+        let raw = "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n" +
+            "--x\r\nContent-Type: application/octet-stream\r\n" +
+            "Content-Disposition: attachment; filename=a.bin\r\n\r\nabc\r\n--x--\r\n";
+        bool partLimit = false;
+        try { mailparse.parse(raw, {"maxParts": 1, "maxAttachmentBytes": 2}); }
+        catch (Error e) { partLimit = e.message.contains("maxAttachmentBytes"); }
+        this.assertTrue(partLimit);
+        bool charset = false;
+        try { mailparse.parse("Content-Type: text/plain; charset=unknown-charset\r\n\r\nx"); }
+        catch (Error e) { charset = e.message.contains("charset"); }
+        this.assertTrue(charset);
+        bool parts = false;
+        let two = "Content-Type: multipart/mixed; boundary=x\r\n\r\n" +
+            "--x\r\nContent-Type: text/plain\r\n\r\na\r\n" +
+            "--x\r\nContent-Type: text/plain\r\n\r\nb\r\n--x--\r\n";
+        try { mailparse.parse(two, {"maxParts": 1}); }
+        catch (Error e) { parts = e.message.contains("maxParts"); }
+        this.assertTrue(parts);
+    }
+
+    @test
+    func rejectsBadTransferEncodings(): void {
+        bool base64Failed = false;
+        try {
+            mailparse.parse("Content-Transfer-Encoding: base64\r\n\r\n!!!!");
+        } catch (Error e) {
+            base64Failed = e.message.contains("transfer encoding");
+        }
+        this.assertTrue(base64Failed);
+        bool quotedFailed = false;
+        try {
+            mailparse.parse("Content-Transfer-Encoding: quoted-printable\r\n\r\n=ZZ");
+        } catch (Error e) {
+            quotedFailed = e.message.contains("transfer encoding");
+        }
+        this.assertTrue(quotedFailed);
+    }
+
+    @test
+    func keepsInlineContentIdAndRejectsLargeHeaders(): void {
+        let raw = "Content-Type: multipart/related; boundary=x\r\n\r\n" +
+            "--x\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:logo\">\r\n" +
+            "--x\r\nContent-Type: image/png\r\nContent-ID: <logo>\r\n" +
+            "Content-Disposition: inline\r\nContent-Transfer-Encoding: base64\r\n\r\nAAE=\r\n" +
+            "--x--\r\n";
+        let message = mailparse.parse(raw);
+        this.assertEquals("inline", message.attachments()[0].disposition);
+        this.assertEquals("logo", message.attachments()[0].contentId);
+        this.assertEquals("0001", bytes.toHex(message.attachments()[0].data));
+        bool headers = false;
+        try { mailparse.parse(raw, {"maxHeaderBytes": 10}); }
+        catch (Error e) { headers = e.message.contains("maxHeaderBytes"); }
+        this.assertTrue(headers);
+    }
+}

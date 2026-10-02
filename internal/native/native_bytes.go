@@ -41,6 +41,13 @@ func registerBytes(r *Registry) {
 		}
 		return BytesToUTF8String(data, "bytes.toString")
 	})
+	r.Register("bytes", "rawString", func(args []runtime.Value) (runtime.Value, error) {
+		data, err := singleBytes(args, "bytes.rawString")
+		if err != nil {
+			return nil, err
+		}
+		return runtime.String{Value: string(data)}, nil
+	})
 	r.Register("bytes", "fromHex", func(args []runtime.Value) (runtime.Value, error) {
 		text, err := singleString(args, "bytes.fromHex")
 		if err != nil {

@@ -1,0 +1,12 @@
+import datetime;
+import test;
+
+class DatetimeInstanceofTest extends test.Test {
+    @test
+    func recognizesNativeDatetimeValues(): void {
+        this.assertTrue(datetime.Instant(0) instanceof datetime.Instant);
+        this.assertTrue(datetime.Duration(1) instanceof datetime.Duration);
+        this.assertTrue(datetime.Zone("UTC") instanceof datetime.Zone);
+        this.assertFalse(datetime.Instant(0) instanceof datetime.Duration);
+    }
+}

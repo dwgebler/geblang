@@ -1,0 +1,304 @@
+{
+  "_meta": {
+    "notice": "Modified subset of Unicode CLDR 32 Gregorian date and Latin number data for en, en-GB, fr, fr-CA, de, and de-CH.",
+    "license": "CLDR32_LICENSE.txt",
+    "sources": [
+      "https://github.com/unicode-cldr/cldr-dates-full/tree/32.0.0",
+      "https://github.com/unicode-cldr/cldr-numbers-full/tree/32.0.0"
+    ]
+  },
+  "en": {
+    "formats": {
+      "full": "EEEE, MMMM d, y",
+      "long": "MMMM d, y",
+      "medium": "MMM d, y",
+      "short": "M/d/yy"
+    },
+    "monthsWide": [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December"
+    ],
+    "monthsShort": [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec"
+    ],
+    "daysWide": [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday"
+    ],
+    "group": ",",
+    "decimal": ".",
+    "minus": "-",
+    "currencyPattern": "\u00a4#,##0.00"
+  },
+  "en-GB": {
+    "formats": {
+      "full": "EEEE, d MMMM y",
+      "long": "d MMMM y",
+      "medium": "d MMM y",
+      "short": "dd/MM/y"
+    },
+    "monthsWide": [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December"
+    ],
+    "monthsShort": [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec"
+    ],
+    "daysWide": [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday"
+    ],
+    "group": ",",
+    "decimal": ".",
+    "minus": "-",
+    "currencyPattern": "\u00a4#,##0.00"
+  },
+  "fr": {
+    "formats": {
+      "full": "EEEE d MMMM y",
+      "long": "d MMMM y",
+      "medium": "d MMM y",
+      "short": "dd/MM/y"
+    },
+    "monthsWide": [
+      "janvier",
+      "f\u00e9vrier",
+      "mars",
+      "avril",
+      "mai",
+      "juin",
+      "juillet",
+      "ao\u00fbt",
+      "septembre",
+      "octobre",
+      "novembre",
+      "d\u00e9cembre"
+    ],
+    "monthsShort": [
+      "janv.",
+      "f\u00e9vr.",
+      "mars",
+      "avr.",
+      "mai",
+      "juin",
+      "juil.",
+      "ao\u00fbt",
+      "sept.",
+      "oct.",
+      "nov.",
+      "d\u00e9c."
+    ],
+    "daysWide": [
+      "dimanche",
+      "lundi",
+      "mardi",
+      "mercredi",
+      "jeudi",
+      "vendredi",
+      "samedi"
+    ],
+    "group": "\u00a0",
+    "decimal": ",",
+    "minus": "-",
+    "currencyPattern": "#,##0.00\u00a0\u00a4"
+  },
+  "fr-CA": {
+    "formats": {
+      "full": "EEEE d MMMM y",
+      "long": "d MMMM y",
+      "medium": "d MMM y",
+      "short": "yy-MM-dd"
+    },
+    "monthsWide": [
+      "janvier",
+      "f\u00e9vrier",
+      "mars",
+      "avril",
+      "mai",
+      "juin",
+      "juillet",
+      "ao\u00fbt",
+      "septembre",
+      "octobre",
+      "novembre",
+      "d\u00e9cembre"
+    ],
+    "monthsShort": [
+      "janv.",
+      "f\u00e9vr.",
+      "mars",
+      "avr.",
+      "mai",
+      "juin",
+      "juill.",
+      "ao\u00fbt",
+      "sept.",
+      "oct.",
+      "nov.",
+      "d\u00e9c."
+    ],
+    "daysWide": [
+      "dimanche",
+      "lundi",
+      "mardi",
+      "mercredi",
+      "jeudi",
+      "vendredi",
+      "samedi"
+    ],
+    "group": "\u00a0",
+    "decimal": ",",
+    "minus": "-",
+    "currencyPattern": "#,##0.00\u00a0\u00a4"
+  },
+  "de": {
+    "formats": {
+      "full": "EEEE, d. MMMM y",
+      "long": "d. MMMM y",
+      "medium": "dd.MM.y",
+      "short": "dd.MM.yy"
+    },
+    "monthsWide": [
+      "Januar",
+      "Februar",
+      "M\u00e4rz",
+      "April",
+      "Mai",
+      "Juni",
+      "Juli",
+      "August",
+      "September",
+      "Oktober",
+      "November",
+      "Dezember"
+    ],
+    "monthsShort": [
+      "Jan.",
+      "Feb.",
+      "M\u00e4rz",
+      "Apr.",
+      "Mai",
+      "Juni",
+      "Juli",
+      "Aug.",
+      "Sep.",
+      "Okt.",
+      "Nov.",
+      "Dez."
+    ],
+    "daysWide": [
+      "Sonntag",
+      "Montag",
+      "Dienstag",
+      "Mittwoch",
+      "Donnerstag",
+      "Freitag",
+      "Samstag"
+    ],
+    "group": ".",
+    "decimal": ",",
+    "minus": "-",
+    "currencyPattern": "#,##0.00\u00a0\u00a4"
+  },
+  "de-CH": {
+    "formats": {
+      "full": "EEEE, d. MMMM y",
+      "long": "d. MMMM y",
+      "medium": "dd.MM.y",
+      "short": "dd.MM.yy"
+    },
+    "monthsWide": [
+      "Januar",
+      "Februar",
+      "M\u00e4rz",
+      "April",
+      "Mai",
+      "Juni",
+      "Juli",
+      "August",
+      "September",
+      "Oktober",
+      "November",
+      "Dezember"
+    ],
+    "monthsShort": [
+      "Jan.",
+      "Feb.",
+      "M\u00e4rz",
+      "Apr.",
+      "Mai",
+      "Juni",
+      "Juli",
+      "Aug.",
+      "Sep.",
+      "Okt.",
+      "Nov.",
+      "Dez."
+    ],
+    "daysWide": [
+      "Sonntag",
+      "Montag",
+      "Dienstag",
+      "Mittwoch",
+      "Donnerstag",
+      "Freitag",
+      "Samstag"
+    ],
+    "group": "\u2019",
+    "decimal": ".",
+    "minus": "-",
+    "currencyPattern": "\u00a4\u00a0#,##0.00;\u00a4-#,##0.00"
+  }
+}

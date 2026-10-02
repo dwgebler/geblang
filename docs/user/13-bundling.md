@@ -82,26 +82,24 @@ pattern that matches nothing is a build error, so a typo fails loudly rather
 than silently shipping an empty bundle. Resource paths may not collide with the
 reserved `src/` or `stdlib/` bundle directories.
 
-At run time a program finds its embedded files through `sys.bundleDir()`, which
-returns the bundle's extract directory (see [First-Run
-Extraction](#first-run-extraction)) or the empty string when the program is not
-running from a bundle. Resolve resources against it, falling back to the project
-directory in development, so the same code path works in both cases:
+At run time, use `resources` to access declared files. It resolves from the
+package manifest directory in development and the bundle's extract directory
+in a built binary, independent of the process working directory:
 
 ```gb
-import io;
-import sys;
+import resources;
 
 func loadTemplate(string name): string {
-    let base = sys.bundleDir();
-    if (base == "") { base = "."; }   /* dev: read from the project tree */
-    return io.readText(base + "/templates/" + name);
+    return resources.readText("templates/" + name);
 }
 ```
 
-Because resources keep their project-relative path inside the bundle, the same
-relative path (`templates/page.html`) resolves correctly whether `base` is the
-project directory in development or the extract directory in a built binary.
+Use `resources.readBytes(name)` for binary data, `resources.open(name)` for an
+owned read-only file handle, `resources.exists(name)` to test absence, or
+`resources.path(name)` to pass an absolute path to another API. A path must be
+declared and cannot traverse outside the root. A `--resource src=dest` remap
+introduces `dest` only in the built binary. Scripts without a manifest can use
+`resources.withRoot(root)` to select an explicit directory.
 
 For a small file whose content should become part of the program itself
 rather than a file extracted at launch, see [Compile-Time File
@@ -166,12 +164,12 @@ change automatically. Because the content is duplicated into every place the
 program's code already lives, `embed` suits small assets (icons, short
 templates, fixed configuration snippets) rather than large files.
 
-### `embed` vs. `resources:` / `sys.bundleDir()`
+### `embed` vs. `resources`
 
 See [Embedding Resources](#embedding-resources) above for the runtime-extraction
 alternative.
 
-| | `embed(path)` | `resources:` + `sys.bundleDir()` |
+| | `embed(path)` | `resources:` + `resources` |
 |---|---|---|
 | When the file is read | Compile time; content becomes a constant | Runtime; the bundle extracts its files at first launch and the program reads them from disk |
 | Best for | Small, fixed assets baked into the program itself | Larger files, or a whole directory tree, kept as files on disk |

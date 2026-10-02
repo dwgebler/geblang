@@ -1,0 +1,109 @@
+import archive;
+import bytes;
+import file;
+import io;
+import path;
+import test;
+
+class ArchiveStreamTest extends test.Test {
+    @test
+    func streamsThreeFormatsAndClosesOldEntries(): void {
+        let root = io.tempDir("archive-stream-*");
+        defer io.remove(root);
+        let source = path.join(root, "source.bin");
+        io.writeBytes(source, bytes.fromHex("00ff01"));
+        for (format in ["zip", "tar", "tar.gz"]) {
+            let location = path.join(root, format + ".bin");
+            let writer = archive.create(location, format);
+            writer.addDir("nested");
+            writer.addFile("nested/first.bin", bytes.fromHex("00ff01"));
+            writer.addFile("nested/second.bin", source);
+            let stream = file.open(source, "r");
+            writer.addFile("nested/third.bin", stream);
+            stream.close();
+            writer.close();
+            writer.close();
+            let reader = archive.open(location);
+            let directory = reader.next() as archive.ArchiveEntry;
+            this.assertTrue(directory.isDir);
+            let first = reader.next() as archive.ArchiveEntry;
+            this.assertEquals("00", bytes.toHex(first.readBytes(1)));
+            let second = reader.next() as archive.ArchiveEntry;
+            bool closed = false;
+            try { first.readBytes(1); }
+            catch (Error e) { closed = e.message.contains("closed"); }
+            this.assertTrue(closed);
+            this.assertEquals("00ff01", bytes.toHex(second.readBytes(100)));
+            second.close();
+            let third = reader.next() as archive.ArchiveEntry;
+            this.assertEquals("00ff01", bytes.toHex(third.readBytes(100)));
+            third.close();
+            this.assertTrue(reader.next() == null);
+            reader.close();
+            reader.close();
+        }
+    }
+
+    @test
+    func extractsWithLimitsFilterAndOverwrite(): void {
+        let root = io.tempDir("archive-extract-*");
+        defer io.remove(root);
+        let location = path.join(root, "input.zip");
+        let writer = archive.create(location, "zip");
+        writer.addFile("keep.txt", bytes.fromString("hello"));
+        writer.addFile("skip.txt", bytes.fromString("skip"));
+        writer.close();
+        let destination = path.join(root, "out");
+        let extracted = archive.extract(location, destination, {
+            "filter": func(any entry): bool {
+                return (entry as dict<string, any>)["name"] == "keep.txt";
+            }
+        });
+        this.assertEquals(["keep.txt"], extracted);
+        this.assertEquals("hello", io.readText(path.join(destination, "keep.txt")));
+        this.assertFalse(io.exists(path.join(destination, "skip.txt")));
+        bool rejected = false;
+        try { archive.extract(location, destination); }
+        catch (Error e) { rejected = true; }
+        this.assertTrue(rejected);
+        extracted = archive.extract(location, destination, {"overwrite": true});
+        this.assertEquals(2, extracted.length());
+        rejected = false;
+        try { archive.extract(location, path.join(root, "limited"), {"maxEntryBytes": 4}); }
+        catch (Error e) { rejected = e.message.contains("limit"); }
+        this.assertTrue(rejected);
+        this.assertFalse(io.exists(path.join(root, "limited", "keep.txt")));
+        rejected = false;
+        try { archive.extract(location, path.join(root, "total-limited"), {"maxTotalBytes": 4}); }
+        catch (Error e) { rejected = e.message.contains("limit"); }
+        this.assertTrue(rejected);
+        this.assertFalse(io.exists(path.join(root, "total-limited", "keep.txt")));
+    }
+
+    @test
+    func streamsLargeFileInSmallChunksAndRejectsDuplicates(): void {
+        let root = io.tempDir("archive-large-*");
+        defer io.remove(root);
+        let source = path.join(root, "large.txt");
+        io.writeText(source, "z".repeat(131072));
+        let location = path.join(root, "data.zip");
+        let writer = archive.create(location, "zip");
+        writer.addFile("large.txt", source);
+        writer.addFile("large.txt", bytes.fromString("again"));
+        writer.close();
+        let reader = archive.open(location);
+        let entry = reader.next() as archive.ArchiveEntry;
+        int count = 0;
+        while (true) {
+            bytes chunk = entry.readBytes(257);
+            if (chunk.length() == 0) { break; }
+            count += chunk.length();
+        }
+        this.assertEquals(131072, count);
+        reader.close();
+        bool rejected = false;
+        try { archive.extract(location, path.join(root, "out")); }
+        catch (Error e) { rejected = e.message.contains("duplicate"); }
+        this.assertTrue(rejected);
+    }
+}

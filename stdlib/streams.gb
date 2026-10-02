@@ -1,7 +1,9 @@
 module streams;
 
 import collections;
+import bytes;
 import io;
+import reflect;
 import strings;
 
 ## Stream wraps any iterable (list, set, generator, range, or another
@@ -151,6 +153,10 @@ export class IOStream {
         return io.read(this.handle, n);
     }
 
+    func readBytes(int n): bytes {
+        return io.readBytes(this.handle, n);
+    }
+
     ## Reads the entire remaining contents of the stream into a
     ## single string.
     func readAll(): string {
@@ -177,6 +183,10 @@ export class IOStream {
     ## Writes `buf` and returns the number of bytes written.
     func write(string buf): int {
         return io.write(this.handle, buf);
+    }
+
+    func writeBytes(bytes data): int {
+        return io.writeBytes(this.handle, data);
     }
 
     ## Writes `buf` followed by a newline.
@@ -240,6 +250,14 @@ export class IOStream {
         return io.write(this.handle, buf);
     }
 
+    func __readBytes(int n): bytes {
+        return io.readBytes(this.handle, n);
+    }
+
+    func __writeBytes(bytes data): int {
+        return io.writeBytes(this.handle, data);
+    }
+
     func __close(): void {
         this.close();
     }
@@ -300,14 +318,243 @@ export func readAll(any src, int chunk = 4096): string {
 ## Pipes everything from `src.__read(chunk)` into `dst.__write(...)`
 ## until `src` returns EOF. Returns the total number of bytes
 ## transferred (as reported by `dst.__write`).
+func readChunk(any src, int n): bytes {
+    let binary = reflect.method(src, "__readBytes");
+    bytes data;
+    if (binary != null) {
+        data = binary(n) as bytes;
+    } else {
+        data = bytes.fromString(src.__read(n) as string);
+    }
+    if (data.length() > n) {
+        throw ValueError("streams: source returned more bytes than requested");
+    }
+    return data;
+}
+
+func writeChunk(any dst, bytes data): int {
+    let binary = reflect.method(dst, "__writeBytes");
+    int written;
+    if (binary != null) {
+        written = binary(data) as int;
+    } else {
+        written = dst.__write(bytes.rawString(data)) as int;
+    }
+    if (written < 0 || written > data.length()) {
+        throw ValueError("streams: invalid write count");
+    }
+    return written;
+}
+
+func writeFully(any dst, bytes data): int {
+    int written = 0;
+    while (written < data.length()) {
+        int count = writeChunk(dst, data.slice(written));
+        if (count == 0) { throw IOError("streams: write made no progress"); }
+        written = written + count;
+    }
+    return written;
+}
+
+func flushStream(any target): void {
+    let method = reflect.method(target, "flush");
+    if (method != null) { method(); }
+}
+
+func closeStream(any target): void {
+    let method = reflect.method(target, "__close");
+    if (method != null) { method(); }
+}
+
+export class LimitedStream {
+    any source;
+    int remaining;
+    bool closeUnderlying;
+    bool closed;
+
+    func LimitedStream(any source, int maxBytes, bool closeUnderlying) {
+        if (maxBytes < 0) { throw ValueError("streams.limit: maxBytes must be nonnegative"); }
+        this.source = source;
+        this.remaining = maxBytes;
+        this.closeUnderlying = closeUnderlying;
+        this.closed = false;
+    }
+
+    func readBytes(int n): bytes {
+        if (this.closed) { throw IOError("streams.limit: closed"); }
+        if (n < 0) { throw ValueError("streams.limit: read size must be nonnegative"); }
+        if (n == 0 || this.remaining == 0) { return bytes.fromString(""); }
+        int count = n;
+        if (count > this.remaining) { count = this.remaining; }
+        bytes data = readChunk(this.source, count);
+        this.remaining = this.remaining - data.length();
+        return data;
+    }
+
+    func read(int n): string { return bytes.rawString(this.readBytes(n)); }
+    func __read(int n): string { return this.read(n); }
+    func __readBytes(int n): bytes { return this.readBytes(n); }
+    func write(string data): int { throw IOError("streams.limit: read-only"); }
+    func writeBytes(bytes data): int { throw IOError("streams.limit: read-only"); }
+    func __write(string data): int { return this.write(data); }
+    func __writeBytes(bytes data): int { return this.writeBytes(data); }
+    func flush(): void {}
+    func close(): void {
+        if (this.closed) { return; }
+        this.closed = true;
+        if (this.closeUnderlying) { closeStream(this.source); }
+    }
+    func __close(): void { this.close(); }
+}
+
+export func limit(any source, int maxBytes, bool closeUnderlying = true): LimitedStream {
+    return LimitedStream(source, maxBytes, closeUnderlying);
+}
+
+export class BufferedStream {
+    any source;
+    int size;
+    bool closeUnderlying;
+    bool closed;
+    bytes pendingRead;
+    bytes pendingWrite;
+
+    func BufferedStream(any source, int size, bool closeUnderlying) {
+        if (size <= 0) { throw ValueError("streams.buffer: size must be positive"); }
+        this.source = source;
+        this.size = size;
+        this.closeUnderlying = closeUnderlying;
+        this.closed = false;
+        this.pendingRead = bytes.fromString("");
+        this.pendingWrite = bytes.fromString("");
+    }
+
+    func readBytes(int n): bytes {
+        if (this.closed) { throw IOError("streams.buffer: closed"); }
+        if (n < 0) { throw ValueError("streams.buffer: read size must be nonnegative"); }
+        if (n == 0) { return bytes.fromString(""); }
+        bytes output = bytes.fromString("");
+        while (output.length() < n) {
+            if (this.pendingRead.length() == 0) {
+                this.pendingRead = readChunk(this.source, this.size);
+                if (this.pendingRead.length() == 0) { break; }
+            }
+            int count = n - output.length();
+            if (count > this.pendingRead.length()) { count = this.pendingRead.length(); }
+            output = bytes.concat(output, this.pendingRead.slice(0, count));
+            this.pendingRead = this.pendingRead.slice(count);
+        }
+        return output;
+    }
+
+    func read(int n): string { return bytes.rawString(this.readBytes(n)); }
+    func __read(int n): string { return this.read(n); }
+    func __readBytes(int n): bytes { return this.readBytes(n); }
+
+    func writeBytes(bytes data): int {
+        if (this.closed) { throw IOError("streams.buffer: closed"); }
+        this.pendingWrite = bytes.concat(this.pendingWrite, data);
+        if (this.pendingWrite.length() >= this.size) { this.flush(); }
+        return data.length();
+    }
+
+    func write(string data): int { return this.writeBytes(bytes.fromString(data)); }
+    func __write(string data): int { return this.write(data); }
+    func __writeBytes(bytes data): int { return this.writeBytes(data); }
+
+    func flush(): void {
+        if (this.closed) { throw IOError("streams.buffer: closed"); }
+        while (this.pendingWrite.length() > 0) {
+            int written = writeChunk(this.source, this.pendingWrite);
+            if (written == 0) { throw IOError("streams.buffer: write made no progress"); }
+            this.pendingWrite = this.pendingWrite.slice(written);
+        }
+        flushStream(this.source);
+    }
+
+    func close(): void {
+        if (this.closed) { return; }
+        this.flush();
+        this.closed = true;
+        if (this.closeUnderlying) { closeStream(this.source); }
+    }
+    func __close(): void { this.close(); }
+}
+
+export func buffer(any source, int size = 8192, bool closeUnderlying = true): BufferedStream {
+    return BufferedStream(source, size, closeUnderlying);
+}
+
+export class TeeStream {
+    any source;
+    any sink;
+    bool closeUnderlying;
+    bool closed;
+    bool failed;
+
+    func TeeStream(any source, any sink, bool closeUnderlying) {
+        this.source = source;
+        this.sink = sink;
+        this.closeUnderlying = closeUnderlying;
+        this.closed = false;
+        this.failed = false;
+    }
+
+    func readBytes(int n): bytes {
+        if (this.closed || this.failed) { throw IOError("streams.tee: closed or failed"); }
+        if (n < 0) { throw ValueError("streams.tee: read size must be nonnegative"); }
+        bytes data = readChunk(this.source, n);
+        if (data.length() > 0) {
+            try { writeFully(this.sink, data); }
+            catch (Error e) { this.failed = true; throw e; }
+        }
+        return data;
+    }
+
+    func read(int n): string { return bytes.rawString(this.readBytes(n)); }
+    func __read(int n): string { return this.read(n); }
+    func __readBytes(int n): bytes { return this.readBytes(n); }
+    func write(string data): int { throw IOError("streams.tee: read-only"); }
+    func writeBytes(bytes data): int { throw IOError("streams.tee: read-only"); }
+    func __write(string data): int { return this.write(data); }
+    func __writeBytes(bytes data): int { return this.writeBytes(data); }
+    func flush(): void { flushStream(this.sink); }
+    func close(): void {
+        if (this.closed) { return; }
+        this.closed = true;
+        flushStream(this.sink);
+        if (this.closeUnderlying) {
+            closeStream(this.source);
+            closeStream(this.sink);
+        }
+    }
+    func __close(): void { this.close(); }
+}
+
+export func tee(any source, any sink, bool closeUnderlying = true): TeeStream {
+    return TeeStream(source, sink, closeUnderlying);
+}
+
+export func copyN(any src, any dst, int maxBytes, int chunk = 8192): int {
+    if (maxBytes < 0 || chunk <= 0) { throw ValueError("streams.copyN: invalid size"); }
+    int total = 0;
+    while (total < maxBytes) {
+        int count = chunk;
+        if (count > maxBytes - total) { count = maxBytes - total; }
+        bytes data = readChunk(src, count);
+        if (data.length() == 0) { break; }
+        total = total + writeFully(dst, data);
+    }
+    return total;
+}
+
 export func copy(any src, any dst, int chunk = 4096): int {
+    if (chunk <= 0) { throw ValueError("streams.copy: chunk must be positive"); }
     int total = 0;
     while (true) {
-        string part = src.__read(chunk);
-        if (part == "") {
-            break;
-        }
-        total = total + (dst.__write(part) as int);
+        bytes part = readChunk(src, chunk);
+        if (part.length() == 0) { break; }
+        total = total + writeFully(dst, part);
     }
     return total;
 }

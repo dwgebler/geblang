@@ -8,16 +8,16 @@ import "sort"
 // even when the engine doesn't yet expose every function in that
 // module to the LSP catalog.
 var NativeModuleNames = map[string]struct{}{
-	"amqp": {}, "archive": {}, "args": {}, "async": {}, "binary": {},
+	"amqp": {}, "archive_native": {}, "args": {}, "async": {}, "binary": {},
 	"async.atomic": {}, "async.channel": {}, "async.sync": {}, "hnsw": {},
 	"bytes": {}, "clone": {}, "cli": {}, "cli.widgets": {}, "collections": {},
-	"compress": {}, "cron": {}, "crypt": {}, "csv": {}, "datetime": {}, "db": {},
+	"compress": {}, "cron": {}, "crypt": {}, "csv": {}, "datetime": {}, "calendar_native": {}, "db": {},
 	"dataframe": {}, "dotenv": {}, "encoding": {}, "errors": {}, "ext": {}, "ffinative": {},
-	"freeze": {}, "html": {}, "http": {}, "imagenative": {}, "io": {}, "json": {}, "kafka": {}, "log": {},
-	"markdown": {}, "math": {}, "metrics": {}, "msgpack": {}, "ndarray": {}, "net": {}, "onnx": {}, "browser": {}, "path": {},
+	"freeze": {}, "html": {}, "http": {}, "i18n_native": {}, "imagenative": {}, "io": {}, "json": {}, "kafka": {}, "locale": {}, "log": {},
+	"markdown": {}, "mailparse_native": {}, "math": {}, "metrics": {}, "msgpack": {}, "ndarray": {}, "net": {}, "onnx": {}, "browser": {}, "path": {},
 	"complex": {}, "geo": {}, "stats": {}, "physics": {},
 	"pcre": {}, "proc": {}, "procnative": {}, "process": {}, "profile": {},
-	"profiler": {}, "random": {}, "re": {}, "reflect": {}, "schema": {},
+	"profiler": {}, "random": {}, "re": {}, "reflect": {}, "resources_native": {}, "schema": {},
 	"secrets": {}, "secureRandom": {}, "serde": {}, "smtp": {}, "sockets": {},
 	"ssh": {}, "sshnative": {}, "store": {}, "strbuilder": {},
 	"streams": {}, "string": {}, "strings": {}, "sys": {}, "template": {},

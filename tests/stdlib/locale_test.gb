@@ -1,0 +1,96 @@
+import bytes;
+import datetime;
+import i18n;
+import locale;
+import test;
+
+class LocaleTest extends test.Test {
+    @test
+    func formatsNumbersCurrenciesAndDates(): void {
+        this.assertEquals("12,345.67", locale.formatNumber(12345.67, "en"));
+        this.assertEquals("12.345,67", locale.formatNumber(12345.67, "de"));
+        this.assertEquals("3132c2a03334352c3637",
+            bytes.toHex(bytes.fromString(locale.formatNumber(12345.67, "fr"))));
+        this.assertEquals("1234,5", locale.formatNumber(1234.5, "de", {"grouping": false}));
+        this.assertEquals("1.234,500", locale.formatNumber(1234.5, "de",
+            {"minFractionDigits": 3, "maxFractionDigits": 3}));
+        this.assertEquals("31c2a03233342c3530c2a0e282ac",
+            bytes.toHex(bytes.fromString(locale.formatCurrency(1234.5, "EUR", "fr"))));
+        this.assertEquals("Friday, 5 July 2024",
+            locale.formatDate(datetime.Instant("2024-07-04T23:30:00Z"),
+                "en-GB", "full", "Europe/London"));
+        this.assertEquals("4 Jul 2024",
+            locale.formatDate(datetime.Instant("2024-07-04T23:30:00Z"),
+                "en-GB", "medium", "UTC"));
+    }
+
+    @test
+    func comparesAndSelectsPluralCategories(): void {
+        this.assertTrue(locale.compare("a2", "a10", "en", {"numeric": true}) < 0);
+        this.assertEquals(0, locale.compare("A", "a", "en", {"ignoreCase": true}));
+        this.assertTrue(locale.compare("a", "z", "de") < 0);
+        this.assertEquals("other", locale.pluralCategory(0, "en"));
+        this.assertEquals("one", locale.pluralCategory(1, "en"));
+        this.assertEquals("other", locale.pluralCategory(2, "en"));
+        this.assertEquals("one", locale.pluralCategory(0, "fr"));
+        this.assertEquals("one", locale.pluralCategory(1, "fr"));
+        this.assertEquals("other", locale.pluralCategory(2, "fr"));
+    }
+
+    @test
+    func catalogFallsBackAndCopiesMessages(): void {
+        let messages = {
+            "en": {
+                "fallback": "Only English",
+                "count": {"one": "{count} file", "other": "{count} files"}
+            },
+            "fr": {
+                "hello": "Bonjour, {name}!",
+                "count": {"one": "{count} fichier", "other": "{count} fichiers"}
+            }
+        };
+        let catalog = i18n.catalog(messages, "fr-CA");
+        this.assertEquals("Bonjour, Ada!", catalog.text("hello", {"name": "Ada", "extra": 1}));
+        this.assertEquals("Only English", catalog.text("fallback"));
+        this.assertEquals("0 fichier", catalog.plural("count", 0));
+        this.assertEquals("2 fichiers", catalog.plural("count", 2));
+        let fallback = i18n.catalog({
+            "en": {"count": {"one": "{count} file", "other": "{count} files"}},
+            "fr": {"hello": "Bonjour"}
+        }, "fr-CA");
+        this.assertEquals("0 files", fallback.plural("count", 0));
+        messages["fr"]["hello"] = "Changed";
+        this.assertEquals("Bonjour, Ada!", catalog.text("hello", {"name": "Ada"}));
+        bool frozen = false;
+        try { catalog.messages["fr"] = {}; }
+        catch (Error e) { frozen = true; }
+        this.assertTrue(frozen);
+        bool missing = false;
+        try { catalog.text("hello"); }
+        catch (Error e) { missing = e.message.contains("name"); }
+        this.assertTrue(missing);
+        let plain = i18n.catalog({"en": {"html": "<{name}>"}}, "en");
+        this.assertEquals("<<b>>", plain.text("html", {"name": "<b>"}));
+    }
+
+    @test
+    func rejectsInvalidLocaleCurrencyZoneAndMissingKey(): void {
+        bool rejected = false;
+        try { locale.formatNumber(1, "bad_tag"); }
+        catch (Error e) { rejected = true; }
+        this.assertTrue(rejected);
+        rejected = false;
+        try { locale.formatCurrency(1, "NOPE", "en"); }
+        catch (Error e) { rejected = true; }
+        this.assertTrue(rejected);
+        rejected = false;
+        try { locale.formatDate(datetime.Instant(0), "en", "short", "Not/AZone"); }
+        catch (Error e) { rejected = true; }
+        this.assertTrue(rejected);
+        let catalog = i18n.catalog({"en": {"hello": "Hi"}}, "de");
+        rejected = false;
+        try { catalog.text("unknown"); }
+        catch (Error e) { rejected = e.message.contains("unknown"); }
+        this.assertTrue(rejected);
+    }
+}

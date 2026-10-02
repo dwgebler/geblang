@@ -1,14 +1,36 @@
 module config;
 
 import serde;
+import collections;
+import dotenv;
+import io;
+import json;
+import path;
+import re;
+import schema;
+import sys;
 
-## Returns a shallow copy of a configuration dictionary.
-export func clone(dict<string, any> data): dict<string, any> {
-    dict<string, any> copied = {};
-    for (key, value in data.items()) {
-        copied[key] = value;
+func cloneValue(any value): any {
+    if (value instanceof dict) {
+        dict<string, any> copied = {};
+        for (key, item in (value as dict<string, any>).items()) {
+            copied[key] = cloneValue(item);
+        }
+        return copied;
     }
-    return copied;
+    if (value instanceof list) {
+        list<any> copied = [];
+        for (item in value as list<any>) {
+            copied.push(cloneValue(item));
+        }
+        return copied;
+    }
+    return value;
+}
+
+## Returns a deep copy of a configuration dictionary and its nested lists.
+export func clone(dict<string, any> data): dict<string, any> {
+    return cloneValue(data) as dict<string, any>;
 }
 
 ## Recursively merges override values into a copy of base.
@@ -18,7 +40,7 @@ export func merge(dict<string, any> base, dict<string, any> overrides): dict<str
         if (merged.hasKey(key) && merged[key] instanceof dict && value instanceof dict) {
             merged[key] = merge(merged[key] as dict<string, any>, value as dict<string, any>);
         } else {
-            merged[key] = value;
+            merged[key] = cloneValue(value);
         }
     }
     return merged;
@@ -126,4 +148,190 @@ export func parse(string format, string text): Config {
         throw ValueError("config.parse expects " + format + " document to contain an object");
     }
     return Config(parsed as dict<string, any>);
+}
+
+func configPath(string baseDir, string filePath): string {
+    if (filePath == "") {
+        throw ValueError("config.load: file path must not be empty");
+    }
+    if (path.abs(filePath) == path.clean(filePath)) {
+        return path.clean(filePath);
+    }
+    return path.join(baseDir, filePath);
+}
+
+func configFormat(string filePath, ?string explicit): string {
+    string format = "";
+    if (explicit != null) {
+        format = explicit as string;
+    } else {
+        string ext = path.ext(filePath).lower();
+        if (ext == ".json") { format = "json"; }
+        if (ext == ".yaml" || ext == ".yml") { format = "yaml"; }
+        if (ext == ".toml") { format = "toml"; }
+    }
+    if (format != "json" && format != "yaml" && format != "toml") {
+        throw ValueError("config.load: unknown format for " + filePath);
+    }
+    return format;
+}
+
+func convertEnv(string name, string kind, string value): any {
+    if (kind == "string") { return value; }
+    if (kind == "bool") {
+        if (value.lower() == "true") { return true; }
+        if (value.lower() == "false") { return false; }
+    } else if (kind == "int") {
+        if (re.test("^[+-]?[0-9]+$", value)) { return value as int; }
+    } else if (kind == "float") {
+        if (re.test("^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?$", value)) {
+            return value as float;
+        }
+    } else if (kind == "json") {
+        try { return json.parse(value); }
+        catch (Error e) { throw ValueError("config.load: invalid json for " + name); }
+    } else {
+        throw ValueError("config.load: unknown conversion type " + kind + " for " + name);
+    }
+    throw ValueError("config.load: invalid " + kind + " for " + name);
+}
+
+func setPath(dict<string, any> data, string dotted, any value): void {
+    list<string> parts = dotted.split(".");
+    if (dotted == "" || parts.contains("")) {
+        throw ValueError("config.load: invalid config path " + dotted);
+    }
+    dict<string, any> current = data;
+    for (let int i = 0; i < parts.length() - 1; i++) {
+        string part = parts[i];
+        if (!current.hasKey(part)) {
+            current[part] = {};
+        } else if (!(current[part] instanceof dict)) {
+            throw ValueError("config.load: scalar collision at " + dotted);
+        }
+        current = current[part] as dict<string, any>;
+    }
+    current[parts[parts.length() - 1]] = value;
+}
+
+func applyEnv(dict<string, any> data, dict<string, any> bindings, dict<string, string> values): void {
+    for (dotted in collections.sorted(bindings.keys())) {
+        any descriptor = bindings[dotted];
+        if (!(descriptor instanceof dict)) {
+            throw ValueError("config.load: env binding for " + dotted + " must be a dict");
+        }
+        dict<string, any> binding = descriptor as dict<string, any>;
+        if (!binding.hasKey("name") || !(binding["name"] instanceof string)) {
+            throw ValueError("config.load: env binding for " + dotted + " requires name");
+        }
+        string name = binding["name"] as string;
+        string kind = "string";
+        if (binding.hasKey("type")) {
+            if (!(binding["type"] instanceof string)) {
+                throw ValueError("config.load: env binding type for " + dotted + " must be string");
+            }
+            kind = binding["type"] as string;
+        }
+        for (key in binding.keys()) {
+            if (key != "name" && key != "type") {
+                throw ValueError("config.load: unknown env binding option " + key);
+            }
+        }
+        if (name == "" || (kind != "string" && kind != "int" && kind != "float" && kind != "bool" && kind != "json")) {
+            throw ValueError("config.load: invalid env binding for " + dotted);
+        }
+        if (values.hasKey(name)) {
+            setPath(data, dotted, convertEnv(name, kind, values[name]));
+        }
+    }
+}
+
+func loadData(dict<string, any> options): dict<string, any> {
+    for (key in options.keys()) {
+        if (key != "defaults" && key != "files" && key != "dotenvFiles" && key != "env" && key != "overrides" && key != "schema" && key != "baseDir") {
+            throw ValueError("config.load: unknown option " + key);
+        }
+    }
+    string baseDir = sys.cwd();
+    if (options.hasKey("baseDir")) {
+        if (!(options["baseDir"] instanceof string)) { throw ValueError("config.load: baseDir must be string"); }
+        baseDir = options["baseDir"] as string;
+    }
+    baseDir = path.abs(baseDir);
+    dict<string, any> result = {};
+    if (options.hasKey("defaults")) {
+        if (!(options["defaults"] instanceof dict)) { throw ValueError("config.load: defaults must be a dict"); }
+        result = clone(options["defaults"] as dict<string, any>);
+    }
+    if (options.hasKey("files")) {
+        if (!(options["files"] instanceof list)) { throw ValueError("config.load: files must be a list"); }
+        for (fileSpec in options["files"] as list<any>) {
+            if (!(fileSpec instanceof dict)) { throw ValueError("config.load: file entry must be a dict"); }
+            dict<string, any> entry = fileSpec as dict<string, any>;
+            if (!entry.hasKey("path") || !(entry["path"] instanceof string)) {
+                throw ValueError("config.load: file entry requires path");
+            }
+            for (key in entry.keys()) {
+                if (key != "path" && key != "format") { throw ValueError("config.load: unknown file option " + key); }
+            }
+            string filePath = configPath(baseDir, entry["path"] as string);
+            ?string formatOption = null;
+            if (entry.hasKey("format")) {
+                if (!(entry["format"] instanceof string)) { throw ValueError("config.load: file format must be string"); }
+                formatOption = entry["format"] as string;
+            }
+            string format = configFormat(filePath, formatOption);
+            any parsed;
+            try { parsed = serde.parse(format, io.readText(filePath)); }
+            catch (Error e) { throw ValueError("config.load: cannot parse " + filePath); }
+            if (!(parsed instanceof dict)) { throw ValueError("config.load: expected object in " + filePath); }
+            result = merge(result, parsed as dict<string, any>);
+        }
+    }
+    dict<string, any> bindings = {};
+    if (options.hasKey("env")) {
+        if (!(options["env"] instanceof dict)) { throw ValueError("config.load: env must be a dict"); }
+        bindings = options["env"] as dict<string, any>;
+    }
+    if (options.hasKey("dotenvFiles")) {
+        if (!(options["dotenvFiles"] instanceof list)) { throw ValueError("config.load: dotenvFiles must be a list"); }
+        for (name in options["dotenvFiles"] as list<any>) {
+            if (!(name instanceof string)) { throw ValueError("config.load: dotenv file path must be string"); }
+            string filePath = configPath(baseDir, name as string);
+            dict<string, string> values;
+            try { values = dotenv.load(filePath); }
+            catch (Error e) { throw ValueError("config.load: cannot parse " + filePath); }
+            applyEnv(result, bindings, values);
+        }
+    }
+    applyEnv(result, bindings, sys.environ());
+    if (options.hasKey("overrides")) {
+        if (!(options["overrides"] instanceof dict)) { throw ValueError("config.load: overrides must be a dict"); }
+        result = merge(result, options["overrides"] as dict<string, any>);
+    }
+    return result;
+}
+
+## Loads and validates layered configuration without changing process environment.
+export func load(dict<string, any> options): Config {
+    dict<string, any> data = loadData(options);
+    if (options.hasKey("schema")) {
+        if (!(options["schema"] instanceof dict)) { throw ValueError("config.load: schema must be a dict"); }
+        dict<string, any> check = schema.validate(data, options["schema"] as dict<string, any>);
+        if (!(check["valid"] as bool)) {
+            throw ValueError("config.load: schema validation failed: " + (check["errors"] as list<string>).join("; "));
+        }
+    }
+    return Config(data);
+}
+
+## Validates a loaded configuration and returns all schema errors.
+export func validate(dict<string, any> options): dict<string, any> {
+    dict<string, any> data = loadData(options);
+    if (!options.hasKey("schema")) {
+        return {"valid": true, "errors": [], "config": Config(data)};
+    }
+    if (!(options["schema"] instanceof dict)) { throw ValueError("config.validate: schema must be a dict"); }
+    dict<string, any> check = schema.validate(data, options["schema"] as dict<string, any>);
+    return {"valid": check["valid"], "errors": check["errors"], "config": Config(data)};
 }

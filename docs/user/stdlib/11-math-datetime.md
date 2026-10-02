@@ -765,6 +765,51 @@ io.println(countdown("2026-01-01T00:00:00Z"));
 
 ---
 
+### Calendar periods and recurrence
+
+Import `datetime.period` as a separate source module:
+
+```gb
+import datetime;
+import datetime.period as period;
+
+let lastJanuary = datetime.Instant(2024, 1, 31, 9, 0, 0);
+io.println(period.Period(0, 1).addTo(lastJanuary).formatRFC3339());
+```
+
+`Period(years = 0, months = 0, days = 0)` adds calendar fields in that order
+in the requested IANA zone (UTC by default). Years and months clamp dates at
+the end of a shorter target month. This is deliberately different from the
+existing `Instant.addMonths` and `addYears` normalization rule. A calendar day
+can last 23 or 25 hours across daylight saving transitions. A nonexistent
+local time resolves to the first valid instant after the gap; a repeated time
+uses the earlier occurrence.
+
+`Recurrence(start, frequency, opts = {})` describes a daily, weekly, monthly,
+or yearly wall-time schedule. `opts` accepts positive `interval` (default 1),
+`zone` (default UTC), positive total `count`, inclusive `until` Instant, and
+`weekdays` for weekly rules (unique ISO weekday integers 1-7). The start is
+the first occurrence when it matches the rule. Monthly and yearly schedules
+skip invalid dates rather than clamping them.
+
+`occurrences(limit)` lazily yields at most a positive number of Instants.
+`between(from, to, limit)` yields only those in the half-open interval
+`[from, to)`. Both require a positive safety limit.
+
+```gb
+let schedule = period.Recurrence(datetime.Instant(2024, 1, 31, 9, 0, 0),
+    "monthly", {"count": 3, "zone": "Europe/London"});
+for (instant in schedule.occurrences(3)) {
+    io.println(instant.formatRFC3339());
+}
+```
+
+`isBusinessDay(instant, zone = "UTC", holidays = [])` checks Monday-Friday
+outside the specified local holiday dates. Holidays are strict `YYYY-MM-DD`
+strings. `addBusinessDays(instant, count, zone = "UTC", holidays = [])` moves
+forward or backward by business days while retaining local time of day. Zero
+returns the original Instant.
+
 ## Time - Elapsed durations
 
 ```gb

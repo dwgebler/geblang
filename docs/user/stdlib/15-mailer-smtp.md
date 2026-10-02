@@ -12,6 +12,7 @@ using SMTP underneath.
 ## Quick Start
 
 ```gb
+import io;
 import mailer;
 
 let message = mailer.Message("Welcome")
@@ -227,3 +228,38 @@ assert(raw.contains("Subject: Welcome"));
 This avoids network access and makes assertions deterministic. A later
 application framework can wrap `mailer.Mailer` behind an interface and provide
 an in-memory test transport.
+
+## Parsing received mail
+
+`mailparse.parse(data, opts = {})` parses a complete RFC 5322/MIME message
+from a string, bytes value, or binary stream. It is separate from SMTP
+delivery. A caller-supplied stream remains open. Parsing does not sanitize
+HTML, fetch remote content, or write attachments.
+
+`Message` has `headers()` (lowercase names with repeated values in arrival
+order), case-insensitive `header(name)` and `headerAll(name)`, `subject()`,
+`from()`, `to()`, `cc()`, `date()`, `textBody()`, `htmlBody()`, and
+`attachments()`. Missing bodies and dates return `null`. An attachment has
+`filename`, `contentType`, `disposition`, `contentId`, and exact `data` bytes.
+Display names and quoted commas are parsed as mailboxes.
+
+```gb
+import io;
+import mailer;
+import mailparse;
+
+let outgoing = mailer.Message("Report")
+    .fromAddress("sender@example.com")
+    .toAddress("reader@example.com")
+    .withText("ready");
+let incoming = mailparse.parse(outgoing.render());
+io.println(incoming.subject());
+io.println(incoming.textBody());
+```
+
+The default limits are 10 MiB per message, 100 MIME parts, 64 KiB of headers,
+and 5 MiB per attachment. Override them with positive integer keys
+`maxMessageBytes`, `maxParts`, `maxHeaderBytes`, and `maxAttachmentBytes`.
+Unknown keys and invalid values raise errors. Headers, encoded words,
+base64, quoted-printable, and supported character sets are decoded. Parsing
+rejects malformed input and unsupported character sets with a part location.
