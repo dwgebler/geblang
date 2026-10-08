@@ -176,11 +176,18 @@ func checkFromImportSymbols(program *ast.Program, opts Options, cache *ModuleCac
 		if !lookup {
 			continue
 		}
+		var typeAliases map[string]string
+		if !native {
+			typeAliases = (&crossTypeCollector{opts: opts, cache: cache}).typeAliasNames(importAlias{canonical: canonical})
+		}
 		for _, item := range from.Names {
 			if item.Name == nil {
 				continue
 			}
 			if _, exists := exports[item.Name.Value]; exists {
+				continue
+			}
+			if _, isAlias := typeAliases[item.Name.Value]; isAlias {
 				continue
 			}
 			diags = append(diags, Diagnostic{

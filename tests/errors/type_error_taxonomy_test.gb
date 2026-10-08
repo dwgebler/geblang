@@ -1,0 +1,89 @@
+/**
+ * @title Runtime type and value errors
+ * @summary Runtime type mismatches and invalid values use specific error classes.
+ */
+import test;
+
+func needsInt(int value): int { return value; }
+func opaqueWrong(): any { return "x"; }
+func wrongReturn(): int { return opaqueWrong(); }
+func sometimes(bool choose): int { if (choose) { return 1; } }
+
+class TypeErrorTaxonomyTest extends test.Test {
+    @test
+    func invalidOperandsRaiseTypeError(): void {
+        any left = 1;
+        any right = "2";
+        this.assertThrowsOf(func(): void { let result = left + right; }, "TypeError", "unsupported operands for +");
+        this.assertThrowsOf(func(): void { let result = ~right; }, "TypeError", "expects int");
+        this.assertThrowsOf(func(): void { let result = left & right; }, "TypeError", "unsupported operands for &");
+        any negative = -1;
+        this.assertThrowsOf(func(): void { let result = left << negative; }, "ValueError", "shift amount must be a non-negative int");
+        this.assertThrowsOf(func(): void { let result = left in "abc"; }, "TypeError", "left operand must be a string");
+    }
+
+    @test
+    func dynamicParameterMismatchRaisesTypeError(): void {
+        any bad = "x";
+        this.assertThrowsOf(func(): void { needsInt(bad); }, "TypeError", "needsInt expects int");
+    }
+
+    @test
+    func dynamicReturnMismatchRaisesTypeError(): void {
+        this.assertThrowsOf(func(): void { wrongReturn(); }, "TypeError", "wrongReturn expects int return");
+    }
+
+    @test
+    func castsDistinguishTypeAndValueFailures(): void {
+        this.assertThrowsOf(func(): void { let result = [1] as int; }, "TypeError", "cannot cast list to int");
+        this.assertThrowsOf(func(): void { let result = "abc" as int; }, "ValueError", "invalid integer literal");
+        this.assertThrowsOf(func(): void { let result = "abc".toInt(); }, "ValueError", "invalid integer literal");
+    }
+
+    @test
+    func indexesDistinguishTypeAndValueFailures(): void {
+        any bad = "x";
+        this.assertThrowsOf(func(): void { let result = [1][bad]; }, "TypeError", "index must be int");
+        this.assertThrowsOf(func(): void { let result = [1][3]; }, "ValueError", "index out of range");
+        this.assertThrowsOf(func(): void { let result = [1].takeAt(bad); }, "TypeError", "index must be int");
+        this.assertThrowsOf(func(): void { let result = [1].takeAt(3); }, "ValueError", "index out of range");
+    }
+
+    @test
+    func broadCatchUsesError(): void {
+        this.assertFalse(TypeError("x") instanceof RuntimeError);
+        this.assertTrue(TypeError("x") instanceof Error);
+        this.assertTrue(ValueError("x") instanceof Error);
+    }
+
+    @test
+    func fallthroughReturnRaisesTypeError(): void {
+        this.assertThrowsOf(func(): void { sometimes(false); }, "TypeError", "expects int return, got null");
+    }
+
+    @test
+    func booleanOperandsRaiseTypeError(): void {
+        any number = 1;
+        any yes = true;
+        any no = false;
+        this.assertThrowsOf(func(): void { let result = number xor yes; }, "TypeError", "left operand must be bool");
+        this.assertThrowsOf(func(): void { let result = number && yes; }, "TypeError", "condition must be bool, got int");
+        this.assertThrowsOf(func(): void { let result = yes && number; }, "TypeError", "condition must be bool, got int");
+        this.assertThrowsOf(func(): void { let result = number || yes; }, "TypeError", "condition must be bool, got int");
+        this.assertThrowsOf(func(): void { let result = no || number; }, "TypeError", "condition must be bool, got int");
+    }
+
+    @test
+    func invalidCollectionTargetsRaiseTypeError(): void {
+        any number = 1;
+        this.assertThrowsOf(func(): void { let result = number[0:1]; }, "TypeError", "int is not sliceable");
+        this.assertThrowsOf(func(): void { number[0] = 2; }, "TypeError", "does not support index assignment");
+    }
+
+    @test
+    func invalidOrderingRaisesTypeError(): void {
+        any number = 1;
+        any text = "2";
+        this.assertThrowsOf(func(): void { let result = number < text; }, "TypeError", "cannot compare int and string");
+    }
+}

@@ -1,0 +1,5 @@
+module alias_chain;
+
+import alias_facade;
+
+export type Chained = alias_facade.Bot;

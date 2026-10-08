@@ -1,5 +1,78 @@
 # Release Notes
 
+## 1.37.0
+
+### Language
+
+- Runtime operand type mismatches now raise `TypeError`. This includes unary and
+  binary operators and decimal/float arithmetic. Dynamic parameter, generic
+  constraint, and typed assignment mismatches use the same class.
+- Unsupported casts and invalid cast-hook return types raise `TypeError`.
+  Supported conversions with invalid content raise `ValueError`, including
+  `as` casts and primitive conversion methods.
+- Collection access uses `TypeError` for an index of the wrong type and
+  `ValueError` for an out-of-range index or zero slice step. Typed collection
+  writes continue to raise `TypeError`; missing dict keys still return `null`.
+- Return annotations are now checked at runtime with the same rules as
+  parameters, and a mismatch raises `TypeError`. This covers primitives,
+  collections and their element types, classes, interfaces, enums, `func`,
+  unions, and nullable types; a bare type parameter is checked against its
+  receiver or explicit call binding. Previously returns were not checked. A
+  function annotated `dict<...>` that returns an object, `list<int>` that returns
+  a list of strings, or `Dog` that falls off the end without returning now fails.
+- Type errors raised for closure parameters and returns name the function
+  `<closure>` on both backends.
+- Non-bool conditions in `if`, `while`, ternaries, `&&`, and `||` raise
+  `TypeError: condition must be bool, got <type>`; `!` reports the operand type.
+- Bitwise operators with non-int operands report
+  `unsupported operands for <op>`, matching the other binary operators.
+- `typeof(...)` produces a `Type`, so returning it from a function declared
+  `string` now needs an explicit `as string` cast or interpolation.
+- `export type Name = Target;` publishes a type alias to importers. `mod.Name`
+  means exactly `Target` in every type position, including generic arguments,
+  `implements`, `extends`, `instanceof`, `as`, and `from mod import Name`.
+  Aliases are type-only and private aliases stay in their module.
+- Names brought in with `from M import N` are no longer part of the importing
+  module's surface: `facade.N` for a merely imported `N` is a `geblang check`
+  error. Re-export a type with `export type N = M.N;`.
+- Type aliases now expand in `instanceof` (previously an alias name never
+  matched), and an alias declared without type arguments accepts them:
+  `type Rows = list;` makes `Rows<int>` mean `list<int>`.
+- Unresolved generic parameters are left out of `reflect.typeBindings` instead
+  of reporting the parameter's own name (`{"E": "string"}` rather than
+  `{"E": "string", "T": "T"}`).
+
+`TypeError`, `ValueError`, and `RuntimeError` remain siblings under `Error`.
+Code that caught `RuntimeError` for the reclassified failures should catch the
+specific class or `Error` for broad recovery.
+
+### Fixes
+
+- On the bytecode VM, an integer literal assigned or returned where a `float`
+  or `decimal` is expected now takes that type, matching the evaluator.
+  `float f = 3;` was previously stored as an `int`.
+- On the bytecode VM, `&&` and `||` with a non-bool right operand now raise
+  `TypeError` instead of returning the operand.
+- On the bytecode VM, a variable declared with a collection alias
+  (`type Ints = list<int>; Ints xs = ...;`) is element-checked, matching the
+  evaluator.
+- On the bytecode VM, a `?T` parameter or return on a bound generic accepts
+  `null`, and a nullable constructor parameter (`?T`) still infers `T` from a
+  non-null argument.
+- On the evaluator, a module's private type alias no longer changes what the
+  same name means in other modules.
+
+### Standard library
+
+- `llm.Client` is now an alias of the `llm.contract.Client` interface, which
+  the OpenAI, Anthropic, and Bedrock clients implement explicitly. Values from
+  `llm.client(...)` are accepted wherever an `llm.Client` is expected.
+- `messaging.MessageQueue` and `messaging.MessageTopic` are aliases of the
+  `messaging.contract` interfaces, which every queue and topic backend
+  implements explicitly.
+- `async.Channel.recv()` and `tryRecv()` are declared `?T`, matching their
+  documented `null` result for a closed or empty channel.
+
 ## 1.36.1
 
 ### Fixes

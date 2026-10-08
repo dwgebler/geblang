@@ -1,5 +1,6 @@
 module messaging.stomp;
 
+import messaging.contract;
 import bytes;
 import json;
 import sockets;
@@ -8,13 +9,13 @@ import sockets;
  * STOMP 1.2 backend for messaging.MessageQueue. Speaks the
  * text-based STOMP protocol over a single TCP connection, which
  * covers ActiveMQ natively and RabbitMQ when the STOMP plugin is
- * enabled. Duck-types `messaging.MessageQueue`.
+ * enabled.
  *
  * One subscription per StompQueue: receive() and consume() pull
  * from MESSAGE frames delivered against the subscription id this
  * queue installed at connect().
  */
-export class StompQueue {
+export class StompQueue implements contract.MessageQueue {
     sockets.Socket sock;
     string destination;
     string subId;
@@ -183,7 +184,7 @@ export func connect(dict<string, any> opts): StompQueue {
  * e.g. ActiveMQ uses `/topic/...`). publish / subscribe / close
  * map onto SEND / MESSAGE-loop / DISCONNECT.
  */
-export class StompTopic {
+export class StompTopic implements contract.MessageTopic {
     StompQueue inner;
 
     func publish(any payload): void { this.inner.publish(payload); }

@@ -29,6 +29,10 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 			// parent-class dispatch.
 			c.moduleAliases[alias] = canonical
 			c.sourceModuleAliases[alias] = true
+			if c.chunk.ModuleAliases == nil {
+				c.chunk.ModuleAliases = map[string]string{}
+			}
+			c.chunk.ModuleAliases[alias] = canonical
 			canonicalIndex := int64(len(c.chunk.Constants))
 			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: canonical})
 			aliasIndex := int64(len(c.chunk.Constants))
@@ -63,6 +67,12 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 			nameIdx := int64(len(c.chunk.Constants))
 			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: item.Name.Value})
 			operands = append(operands, nameIdx, int64(c.globalSlot(item.Local())))
+			if !native {
+				if c.chunk.FromImports == nil {
+					c.chunk.FromImports = map[string]string{}
+				}
+				c.chunk.FromImports[item.Local()] = canonical + "." + item.Name.Value
+			}
 		}
 		c.emitAt(OpImportFrom, stmt.Token.Line, stmt.Token.Column, operands...)
 		return nil
@@ -121,12 +131,12 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		}
 		// For generic built-in collection declarations (e.g. list<int>, int[]), emit OpTypeAssert
 		// to enforce element types at runtime.
-		if stmt.Type != nil && stmt.Type.Operator == "" && stmt.Value != nil {
-			baseName := strings.ToLower(stmt.Type.Name)
-			isListAlias := stmt.Type.ListAlias && len(stmt.Type.Arguments) == 0
-			isGenericCollection := len(stmt.Type.Arguments) > 0 && (baseName == "list" || baseName == "set" || baseName == "dict")
+		if declRef := c.resolvedDeclarationType(stmt.Type); declRef != nil && declRef.Operator == "" && stmt.Value != nil {
+			baseName := strings.ToLower(declRef.Name)
+			isListAlias := declRef.ListAlias && len(declRef.Arguments) == 0
+			isGenericCollection := len(declRef.Arguments) > 0 && (baseName == "list" || baseName == "set" || baseName == "dict")
 			if isListAlias || isGenericCollection {
-				fullTypeName := c.bytecodeTypeNameForParam(stmt.Type, nil)
+				fullTypeName := c.bytecodeTypeNameForParam(declRef, nil)
 				typeStrIdx := int64(len(c.chunk.Constants))
 				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: fullTypeName})
 				c.emitAt(OpTypeAssert, stmt.Token.Line, stmt.Token.Column, typeStrIdx)
@@ -675,6 +685,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	c.chunk.Functions[index].ParamTypes = paramTypes
 	c.chunk.Functions[index].ParamDecorators = paramDecorators
 	c.chunk.Functions[index].ReturnType = c.bytecodeReturnType(stmt.ReturnType)
+	c.chunk.Functions[index].ReturnCheckType = c.bytecodeReturnCheckType(stmt.ReturnType)
 	c.chunk.Functions[index].DefaultConstants = defaultConstants
 	c.chunk.Functions[index].IsGenerator = blockContainsYield(stmt.Body)
 	target := "function"

@@ -415,7 +415,7 @@ func (e *Evaluator) checkConstraintSatisfied(typeName, paramName string, constra
 	if constraint == nil || e.constraintSatisfied(typeName, constraint, env) {
 		return nil
 	}
-	return fmt.Errorf("type %s does not satisfy constraint %s for type parameter %s", typeName, constraintDisplayString(constraint), paramName)
+	return runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("type %s does not satisfy constraint %s for type parameter %s", typeName, constraintDisplayString(constraint), paramName)}
 }
 
 func (e *Evaluator) constraintSatisfied(typeName string, constraint *ast.TypeRef, env *runtime.Environment) bool {
@@ -564,7 +564,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		 * string representation. */
 		if v, ok := value.(runtime.Bytes); ok {
 			if !utf8.Valid(v.Value) {
-				return nil, fmt.Errorf("bytes value is not valid UTF-8")
+				return nil, runtime.ClassifiedError{Class: "ValueError", Message: "bytes value is not valid UTF-8"}
 			}
 			return runtime.String{Value: string(v.Value)}, nil
 		}
@@ -572,7 +572,11 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 	case "int":
 		switch v := value.(type) {
 		case runtime.String:
-			return runtime.NewIntLiteral(v.Value)
+			value, err := runtime.NewIntLiteral(v.Value)
+			if err != nil {
+				return nil, runtime.ClassifiedError{Class: "ValueError", Message: err.Error()}
+			}
+			return value, nil
 		case runtime.Decimal:
 			/* Truncate toward zero: matches the C/Java/Go integer-
 			 * cast convention. Use big.Int division of num/den so
@@ -596,9 +600,17 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		case runtime.Int:
 			return intToDecimal(v), nil
 		case runtime.Float:
-			return runtime.NewDecimalLiteral(strconv.FormatFloat(v.Value, 'g', -1, 64))
+			value, err := runtime.NewDecimalLiteral(strconv.FormatFloat(v.Value, 'g', -1, 64))
+			if err != nil {
+				return nil, runtime.ClassifiedError{Class: "ValueError", Message: err.Error()}
+			}
+			return value, nil
 		case runtime.String:
-			return runtime.NewDecimalLiteral(v.Value)
+			value, err := runtime.NewDecimalLiteral(v.Value)
+			if err != nil {
+				return nil, runtime.ClassifiedError{Class: "ValueError", Message: err.Error()}
+			}
+			return value, nil
 		}
 	case "float":
 		switch v := value.(type) {
@@ -613,7 +625,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		case runtime.String:
 			f, err := strconv.ParseFloat(v.Value, 64)
 			if err != nil {
-				return nil, err
+				return nil, runtime.ClassifiedError{Class: "ValueError", Message: err.Error()}
 			}
 			return runtime.Float{Value: f}, nil
 		}
@@ -636,6 +648,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 			case "false":
 				return runtime.Bool{Value: false}, nil
 			}
+			return nil, runtime.ClassifiedError{Class: "ValueError", Message: fmt.Sprintf("cannot cast %s to %s", value.TypeName(), target)}
 		case runtime.Null:
 			return runtime.Bool{Value: false}, nil
 		}
@@ -674,7 +687,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 			return runtime.Set{Elements: elements}, nil
 		}
 	}
-	return nil, fmt.Errorf("cannot cast %s to %s", value.TypeName(), target)
+	return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("cannot cast %s to %s", value.TypeName(), target)}
 }
 
 func primitiveConversionTarget(name string) (string, bool) {
@@ -731,6 +744,21 @@ func matchValueToTypeRefWith(typeParams map[string]bool, inherited map[string]st
 	return matchValueToTypeRef(typeParams, value, typ)
 }
 
+func returnTypeChecked(fn runtime.Function) bool {
+	ref := fn.ReturnType
+	if ref == nil || fn.IsGenerator || (fn.OwnerClass != nil && fn.OwnerClass.Name == fn.Name) {
+		return false
+	}
+	if ref.Operator != "" {
+		return true
+	}
+	switch strings.ToLower(ref.Name) {
+	case "", "void", "any":
+		return false
+	}
+	return true
+}
+
 func functionReturnMatchesExpected(fn runtime.Function, expected *ast.TypeRef) bool {
 	if expected == nil || expected.Operator != "" || expected.Name == "any" {
 		return true
@@ -778,7 +806,7 @@ func typeRefAssignable(target, actual *ast.TypeRef) bool {
 	return true
 }
 
-func valueMatchesTypeRef(value runtime.Value, typ *ast.TypeRef) bool {
+func valueMatchesTypeRef(typeParams map[string]bool, value runtime.Value, typ *ast.TypeRef) bool {
 	if typ == nil || typ.Operator != "" || typ.Name == "any" {
 		return true
 	}
@@ -813,7 +841,7 @@ func valueMatchesTypeRef(value runtime.Value, typ *ast.TypeRef) bool {
 		return ok
 	}
 	if typeNamesEqual(value.TypeName(), typ.Name) {
-		if instance, ok := value.(*runtime.Instance); ok && !instanceMatchesTypeArgs(instance, typ) {
+		if instance, ok := value.(*runtime.Instance); ok && !instanceMatchesTypeArgs(typeParams, instance, typ) {
 			return false
 		}
 		return true
@@ -845,7 +873,7 @@ func valueMatchesTypeRef(value runtime.Value, typ *ast.TypeRef) bool {
 	}
 	for class := instance.Class.Parent; class != nil; class = class.Parent {
 		if typeNamesEqual(class.Name, typ.Name) {
-			if !instanceMatchesTypeArgs(instance, typ) {
+			if !instanceMatchesTypeArgs(typeParams, instance, typ) {
 				return false
 			}
 			return true
@@ -865,7 +893,7 @@ func valueMatchesTypeRef(value runtime.Value, typ *ast.TypeRef) bool {
 // When the parameter type carries no arguments, or the instance has no
 // recorded bindings (raw polymorphic construction), the check passes -
 // invariance only fires when both sides explicitly carry type arguments.
-func instanceMatchesTypeArgs(instance *runtime.Instance, typ *ast.TypeRef) bool {
+func instanceMatchesTypeArgs(typeParams map[string]bool, instance *runtime.Instance, typ *ast.TypeRef) bool {
 	if instance == nil || typ == nil || len(typ.Arguments) == 0 {
 		return true
 	}
@@ -879,12 +907,12 @@ func instanceMatchesTypeArgs(instance *runtime.Instance, typ *ast.TypeRef) bool 
 		if i >= len(instance.Class.TypeParameters) {
 			break
 		}
-		if arg == nil || arg.Operator != "" || arg.Name == "" {
+		if arg == nil || arg.Operator != "" || arg.Name == "" || typeParams[strings.ToLower(arg.Name)] {
 			continue
 		}
 		paramName := instance.Class.TypeParameters[i]
 		bound, ok := instance.TypeBindings[paramName]
-		if !ok || bound == "" {
+		if !ok || bound == "" || isOwnTypeParameter(instance.Class.TypeParameters, bound) {
 			continue
 		}
 		if !typeNamesEqual(bound, arg.Name) {
@@ -894,9 +922,19 @@ func instanceMatchesTypeArgs(instance *runtime.Instance, typ *ast.TypeRef) bool 
 	return true
 }
 
+// A binding naming the class's own type parameter was never resolved.
+func isOwnTypeParameter(params []string, name string) bool {
+	for _, p := range params {
+		if strings.EqualFold(p, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func simpleTypeName(name string) string {
-	if _, suffix, ok := strings.Cut(name, "."); ok {
-		return suffix
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		return name[dot+1:]
 	}
 	return name
 }
@@ -1046,7 +1084,7 @@ func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 		}
 		return true
 	}
-	return valueMatchesTypeRef(value, typ)
+	return valueMatchesTypeRef(typeParams, value, typ)
 }
 
 // collectionMismatchSuffix returns a detail string like " (element at index 1 is string)"
@@ -1139,4 +1177,22 @@ func typeRefUsesTypeParameter(typ *ast.TypeRef, params map[string]bool) bool {
 		}
 	}
 	return typeRefUsesTypeParameter(typ.Left, params) || typeRefUsesTypeParameter(typ.Right, params)
+}
+
+func (e *Evaluator) typeParamInScope(name string) bool {
+	if fn := e.currentFunction(); fn != nil {
+		for _, param := range fn.TypeParameters {
+			if strings.EqualFold(param, name) {
+				return true
+			}
+		}
+	}
+	if n := len(e.classStack); n > 0 {
+		for _, param := range e.classStack[n-1].TypeParameters {
+			if strings.EqualFold(param, name) {
+				return true
+			}
+		}
+	}
+	return false
 }

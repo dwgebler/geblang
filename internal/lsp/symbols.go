@@ -15,6 +15,8 @@ const (
 	symbolKindEnum      = 10
 	symbolKindVariable  = 13
 	symbolKindConstant  = 14
+	// LSP has no alias kind; TypeParameter is the closest type-level kind.
+	symbolKindTypeAlias = 26
 )
 
 // DocumentSymbol is an LSP DocumentSymbol.
@@ -71,6 +73,12 @@ func symbolsFromStatement(stmt ast.Statement) []userSymbol {
 			return nil
 		}
 		return []userSymbol{{name: s.Name.Value, kind: symbolKindEnum, line: s.Token.Line, detail: "enum " + s.Name.Value}}
+
+	case *ast.TypeAliasStatement:
+		if s.Name == nil || s.Type == nil {
+			return nil
+		}
+		return []userSymbol{{name: s.Name.Value, kind: symbolKindTypeAlias, line: s.Token.Line, detail: "type " + s.Name.Value + " = " + s.Type.String()}}
 
 	case *ast.DeclarationStatement:
 		if s.Name == nil {

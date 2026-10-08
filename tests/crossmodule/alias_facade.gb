@@ -1,0 +1,16 @@
+module alias_facade;
+
+import alias_contract;
+import alias_provider;
+
+export type Client = alias_contract.Client;
+export type Bot = alias_contract.Client;
+export type Money = decimal;
+export type Ids = list<int>;
+export type Root = alias_contract.Base;
+export type Rows = list;
+
+/* Private alias: must not change what `Page` means in importers. */
+type Page = int;
+
+export func client(): Client { return alias_provider.Provider(); }

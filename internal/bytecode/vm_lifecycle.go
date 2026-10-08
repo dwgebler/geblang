@@ -559,6 +559,7 @@ func (vm *VM) prepareFunctionTypeMetadata() {
 		function := &vm.chunk.Functions[i]
 		function.typeParamSet = functionTypeParameterSetOrNil(*function)
 		function.requiresParamValidation = functionRequiresParamValidation(*function)
+		function.frameMeta = newFrameMeta(*function, vm.typeSpec)
 		if function.Async || function.IsGenerator || len(function.Decorators) > 0 {
 			hasCallSitePolymorphism = true
 		}

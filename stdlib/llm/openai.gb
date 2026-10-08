@@ -1,5 +1,6 @@
 module llm.openai;
 
+import llm.contract;
 import bytes;
 import encoding;
 import http;
@@ -10,11 +11,8 @@ import json;
  * Authenticates via `Authorization: Bearer <apiKey>` on every
  * request. Endpoint defaults to `https://api.openai.com`; override
  * for Azure OpenAI or compatible local stacks via opts.endpoint.
- *
- * Duck-types `llm.Client`; explicit implements is omitted to
- * break a parser-level circular import with the facade module.
  */
-export class OpenaiClient {
+export class OpenaiClient implements contract.Client {
     string apiKey;
     string endpoint;
     ?string organization;

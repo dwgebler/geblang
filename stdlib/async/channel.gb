@@ -42,7 +42,7 @@ export class Channel<T> {
      * Receives the next value. Blocks until one is available. Returns
      * `null` when the channel is closed and drained.
      */
-    func recv(): T {
+    func recv(): ?T {
         return native.recv(this._h);
     }
 
@@ -51,7 +51,7 @@ export class Channel<T> {
      * immediately available, otherwise `null`. Pair with `isClosed()`
      * to disambiguate "no value pending" from "closed and drained".
      */
-    func tryRecv(): T {
+    func tryRecv(): ?T {
         return native.tryRecv(this._h);
     }
 

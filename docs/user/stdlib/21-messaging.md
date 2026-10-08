@@ -328,8 +328,9 @@ without one throws with a clear error. The implementation is in
 
 ## Adding a backend
 
-Implement a class with the same method set as the SQS backend (the
-`messaging.MessageQueue` interface), register it under a new driver
+Implement `messaging.contract.MessageQueue` (or `MessageTopic`) with
+`implements`, importing `messaging.contract` rather than the `messaging`
+facade to avoid a circular import, register it under a new driver
 name in `messaging.gb`, and write tests under
 `tests/stdlib/messaging_*_test.gb`. The interface is small by
 design - one method per logical operation, no broker-specific

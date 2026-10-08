@@ -53,7 +53,7 @@ class MapsTest extends test.Test {
         this.assertTrue("k" in r);
         this.assertEquals(1, r.length());
         let threw = false;
-        try { r["new"] = 1; } catch (RuntimeError e) { threw = true; }
+        try { r["new"] = 1; } catch (TypeError e) { threw = true; }
         this.assertTrue(threw);
     }
 }

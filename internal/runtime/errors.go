@@ -20,6 +20,14 @@ type TypedError interface {
 	ErrorClass() string
 }
 
+type ClassifiedError struct {
+	Class   string
+	Message string
+}
+
+func (e ClassifiedError) Error() string      { return e.Message }
+func (e ClassifiedError) ErrorClass() string { return e.Class }
+
 // Returned by cross-module method dispatch when the target method
 // doesn't exist, so callers distinguish "missing" from "ran-and-threw".
 type MethodNotFoundError struct {

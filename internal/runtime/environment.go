@@ -3,7 +3,10 @@ package runtime
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
+
+	"geblang/internal/ast"
 )
 
 type Binding struct {
@@ -33,6 +36,7 @@ type Environment struct {
 	inlineCount  uint8
 	store        map[string]Binding
 	typeBindings map[string]string
+	typeAliases  map[string]*ast.TypeRef
 	outer        *Environment
 }
 
@@ -223,6 +227,32 @@ func (e *Environment) Delete(name string) bool {
 		return outer.Delete(name)
 	}
 	return false
+}
+
+// DefineTypeAlias binds a `type` alias in this scope; names are case-insensitive.
+func (e *Environment) DefineTypeAlias(name string, target *ast.TypeRef) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.typeAliases == nil {
+		e.typeAliases = map[string]*ast.TypeRef{}
+	}
+	e.typeAliases[strings.ToLower(name)] = target
+}
+
+// GetTypeAlias resolves a `type` alias through the enclosing scopes.
+func (e *Environment) GetTypeAlias(name string) (*ast.TypeRef, bool) {
+	key := strings.ToLower(name)
+	for env := e; env != nil; {
+		env.mu.RLock()
+		target, ok := env.typeAliases[key]
+		outer := env.outer
+		env.mu.RUnlock()
+		if ok {
+			return target, true
+		}
+		env = outer
+	}
+	return nil, false
 }
 
 func (e *Environment) DefineTypeBinding(name, typeName string) {

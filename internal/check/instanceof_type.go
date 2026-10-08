@@ -12,8 +12,8 @@ import (
 // that resolves to nothing: not ambient, not declared in the file, not a
 // generic type param, and not a trailing name of any resolved import's
 // export set (instanceof matches cross-module types by trailing name).
-// Bails silently on any uncertainty - an unresolvable import or a
-// facade module makes the import surface unknowable.
+// Bails silently on any uncertainty - an unresolvable import makes the
+// import surface unknowable.
 func checkInstanceofTypes(file string, program *ast.Program, opts Options) []Diagnostic {
 	cache := opts.ModuleCache
 	if cache == nil {
@@ -22,14 +22,14 @@ func checkInstanceofTypes(file string, program *ast.Program, opts Options) []Dia
 	importedExports := map[string]struct{}{}
 	collector := &crossTypeCollector{aliases: collectImportAliases(program), opts: opts, cache: cache}
 	for _, alias := range collector.aliases {
-		if collector.moduleReExports(alias) {
-			return nil
-		}
 		exports, ok := resolveExportSet(alias.canonical, alias.native, opts, cache)
 		if !ok {
 			return nil
 		}
 		for name := range exports {
+			importedExports[name] = struct{}{}
+		}
+		for name := range collector.typeAliasNames(alias) {
 			importedExports[name] = struct{}{}
 		}
 	}

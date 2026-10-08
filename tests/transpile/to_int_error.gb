@@ -1,6 +1,6 @@
 import io;
 
-/* toInt of a non-numeric string raises an uncaught RuntimeError; all three
+/* toInt of a non-numeric string raises an uncaught ValueError; all three
  * backends must exit 1 with no stdout before the failing call. */
 string bad = "notanumber";
 io.println(bad.toInt());

@@ -72,6 +72,11 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	// fields to defaults for the new function.
 	frame := &vm.frames[len(vm.frames)-1]
 	frame.functionName = function.Name
+	frame.meta = function.frameMeta
+	frame.returnBindings = nil
+	if function.frameMeta != nil && function.frameMeta.needsBindings && len(args) > 0 {
+		frame.returnBindings = vm.returnBindingsFor(&function, args[0].ToValue())
+	}
 	// Keep frame.callLine at the original entry site; the tail-call site is the [xN] line.
 	frame.tailRepeat++
 	frame.tailCallLine = int(instruction.Line)
@@ -474,6 +479,15 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	frame.returnIP = ip
 	frame.returnOverride = nil
 	frame.functionName = function.Name
+	frame.meta = function.frameMeta
+	frame.returnBindings = nil
+	if function.frameMeta != nil && function.frameMeta.needsBindings {
+		var receiver runtime.Value
+		if paramCount > 0 {
+			receiver = stackArgs[0].ToValue()
+		}
+		frame.returnBindings = vm.returnBindingsFor(function, receiver)
+	}
 	frame.callLine = int(instruction.Line)
 	frame.tailRepeat = 0
 	frame.tailCallLine = 0
@@ -573,6 +587,9 @@ func mergedTypeBindings(primary, secondary map[string]string) map[string]string 
 // matchVMValueToTypeSpecWith applies matchValueToTypeSpecWith's
 // bindings-before-own-type-param precedence to VMValues.
 func (vm *VM) matchVMValueToTypeSpecWith(typeParams map[string]bool, inherited map[string]string, value runtime.VMValue, spec vmTypeSpec) bool {
+	if spec.nullable && (value.Kind == runtime.VMKindNull || value.Kind == runtime.VMKindUnset) {
+		return true
+	}
 	if len(inherited) > 0 {
 		if bound, ok := inherited[spec.base]; ok && bound != "" {
 			return vm.matchVMValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
@@ -582,6 +599,44 @@ func (vm *VM) matchVMValueToTypeSpecWith(typeParams map[string]bool, inherited m
 		}
 	}
 	return vm.matchVMValueToTypeSpec(typeParams, value, spec)
+}
+
+// frameMeta is the per-function data a call frame needs for return checks and binding resolution.
+type frameMeta struct {
+	returnSpec    *vmTypeSpec
+	typeParams    map[string]bool
+	needsBindings bool
+}
+
+func newFrameMeta(function FunctionInfo, spec func(string) vmTypeSpec) *frameMeta {
+	returnSpec := checkedReturnSpecFor(function, spec)
+	if returnSpec == nil && function.typeParamSet == nil {
+		return nil
+	}
+	meta := &frameMeta{returnSpec: returnSpec, typeParams: function.typeParamSet}
+	meta.needsBindings = returnSpec != nil && returnSpec.kind != vmTypeUnion && returnSpec.kind != vmTypeIntersection && function.typeParamSet[returnSpec.baseLower]
+	return meta
+}
+
+func checkedReturnSpecFor(function FunctionInfo, spec func(string) vmTypeSpec) *vmTypeSpec {
+	if function.IsGenerator || compiledConstructorName(function.Name) {
+		return nil
+	}
+	switch strings.ToLower(function.ReturnCheckType) {
+	case "", "void", "any":
+		return nil
+	}
+	s := spec(function.ReturnCheckType)
+	return &s
+}
+
+func (vm *VM) returnBindingsFor(function *FunctionInfo, receiver runtime.Value) map[string]string {
+	if len(function.ParamNames) > 0 && function.ParamNames[0] == "this" {
+		if inst, ok := receiver.(*runtime.Instance); ok {
+			return mergedTypeBindings(vm.pendingTypeBindings, inst.TypeBindings)
+		}
+	}
+	return vm.pendingTypeBindings
 }
 
 // matchVMValueToTypeSpec is the VMValue-aware variant of
@@ -659,11 +714,11 @@ func (vm *VM) inferTypeBindingsFromLocals(function *FunctionInfo) map[string]str
 			vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
 			continue
 		}
-		if typeParamSet[strings.ToLower(paramType)] {
+		if name := strings.TrimPrefix(paramType, "?"); typeParamSet[strings.ToLower(name)] {
 			slot := function.ParamSlots[i]
-			if v, err := vm.getLocal(slot); err == nil && v != nil {
-				if _, exists := typeBindings[paramType]; !exists {
-					typeBindings[paramType] = v.TypeName()
+			if v, err := vm.getLocal(slot); err == nil && v != nil && v.TypeName() != "null" {
+				if _, exists := typeBindings[name]; !exists {
+					typeBindings[name] = v.TypeName()
 				}
 			}
 		}
@@ -726,7 +781,7 @@ func (vm *VM) bindOrRecurse(spec vmTypeSpec, v runtime.Value, typeParamSet map[s
 		if !typeParamSet[strings.ToLower(spec.base)] {
 			return
 		}
-		if v == nil {
+		if _, isNull := v.(runtime.Null); v == nil || isNull {
 			return
 		}
 		if _, exists := typeBindings[spec.base]; exists {
@@ -831,18 +886,22 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			if !ok || bound == "" {
 				continue
 			}
+			if _, isNull := arg.(runtime.Null); isNull && spec.nullable {
+				continue
+			}
 			if !vm.matchValueToTypeSpec(typeParams, arg, vm.typeSpec(bound)) {
 				paramName := ""
 				if i < len(function.ParamNames) {
 					paramName = function.displayParamName(i)
 				}
-				suffix := vm.collectionMismatchSuffixStr(arg, function.ParamTypes[i])
+				declared := vm.expandTypeAliases(function.ParamTypes[i])
+				suffix := vm.collectionMismatchSuffixStr(arg, declared)
 				gotName := vm.descriptiveRuntimeTypeName(arg)
 				if suffix != "" {
 					gotName = arg.TypeName()
 				}
-				msg := fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, function.ParamTypes[i], paramName, gotName, suffix)
-				return vm.throwTyped(instruction, ip, "RuntimeError", msg)
+				msg := fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, declared, paramName, gotName, suffix)
+				return vm.throwTyped(instruction, ip, "TypeError", msg)
 			}
 		}
 	}
@@ -868,18 +927,19 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 				if i < len(function.ParamNames) {
 					paramName = function.displayParamName(i)
 				}
-				suffix := vm.collectionMismatchSuffixStr(arg, function.ParamTypes[i])
+				declared := vm.expandTypeAliases(function.ParamTypes[i])
+				suffix := vm.collectionMismatchSuffixStr(arg, declared)
 				gotName := vm.descriptiveRuntimeTypeName(arg)
 				if suffix != "" {
 					gotName = arg.TypeName()
 				}
 				var msg string
 				if paramName != "" {
-					msg = fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, function.ParamTypes[i], paramName, gotName, suffix)
+					msg = fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, declared, paramName, gotName, suffix)
 				} else {
-					msg = fmt.Sprintf("%s expects %s, got %s%s", function.Name, function.ParamTypes[i], gotName, suffix)
+					msg = fmt.Sprintf("%s expects %s, got %s%s", function.Name, declared, gotName, suffix)
 				}
-				return vm.throwTyped(instruction, ip, "RuntimeError", msg)
+				return vm.throwTyped(instruction, ip, "TypeError", msg)
 			}
 		}
 	}
@@ -898,6 +958,15 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	frame.returnIP = ip
 	frame.returnOverride = returnOverride
 	frame.functionName = function.Name
+	frame.meta = function.frameMeta
+	frame.returnBindings = nil
+	if function.frameMeta != nil && function.frameMeta.needsBindings {
+		var receiver runtime.Value
+		if len(args) > 0 {
+			receiver = args[0]
+		}
+		frame.returnBindings = vm.returnBindingsFor(function, receiver)
+	}
 	frame.callLine = int(instruction.Line)
 	frame.tailRepeat = 0
 	frame.tailCallLine = 0
@@ -957,11 +1026,11 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 				continue
 			}
 			// Direct T parameter.
-			if typeParamSet[strings.ToLower(paramType)] {
+			if name := strings.TrimPrefix(paramType, "?"); typeParamSet[strings.ToLower(name)] {
 				slot := function.ParamSlots[i]
-				if v, err := vm.getLocal(slot); err == nil && v != nil {
-					if _, exists := typeBindings[paramType]; !exists {
-						typeBindings[paramType] = v.TypeName()
+				if v, err := vm.getLocal(slot); err == nil && v != nil && v.TypeName() != "null" {
+					if _, exists := typeBindings[name]; !exists {
+						typeBindings[name] = v.TypeName()
 					}
 				}
 			}

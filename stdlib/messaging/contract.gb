@@ -1,0 +1,41 @@
+module messaging.contract;
+
+/**
+ * Common shape every backend implements. Concrete backends (SQS,
+ * RabbitMQ, ActiveMQ, Kafka) sit behind this interface so application
+ * code can swap brokers without changing its publish / receive call
+ * sites.
+ *
+ * Messages flowing through this surface are dicts with at least:
+ *   `body`   the payload (string or bytes depending on the broker)
+ *   `id`     a broker-specific identifier needed for ack / delete
+ *
+ * `receive(timeoutMs)` blocks up to the timeout. Returns `null` when
+ * no message arrived inside the window. `consume(handler)` loops:
+ * each delivered message is passed to `handler` which should return
+ * normally to ack or throw to nack (where the backend supports it).
+ */
+export interface MessageQueue {
+    func publish(any payload): void;
+    func receive(int timeoutMs): ?dict<string, any>;
+    func ack(any messageId): void;
+    func consume(callable handler): void;
+    func close(): void;
+}
+
+/**
+ * Pub/sub topic. Multiple subscribers each see every published
+ * message - in contrast to MessageQueue where each message is
+ * delivered to exactly one consumer. The backend chosen by the
+ * `driver` option determines how the fan-out is implemented
+ * (RabbitMQ fanout exchange, Kafka unique consumer groups, STOMP
+ * topic destinations).
+ *
+ * `subscribe(handler)` runs the handler for each delivered message
+ * and blocks until the caller closes the topic.
+ */
+export interface MessageTopic {
+    func publish(any payload): void;
+    func subscribe(callable handler): void;
+    func close(): void;
+}

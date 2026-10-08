@@ -1,0 +1,5 @@
+/**
+ * @category Tests
+ * @summary A Type value cannot satisfy a string return annotation without a cast.
+ */
+func wrong(int value): string { return typeof(value); }

@@ -18,6 +18,7 @@ import (
 	"geblang/internal/native"
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 )
 
 // Options injects the two dependencies bcloader must not import directly.
@@ -121,6 +122,35 @@ func (l *Loader) chunkValue(module string) (bytecode.Chunk, bool) {
 var _ bytecode.ModuleLoader = (*Loader)(nil)
 
 // SetMainChunk registers the entry-point chunk for cross-module reflect lookups.
+// SourceTypeAliasLookup resolves alias references written in program by reading the imported modules' sources.
+func SourceTypeAliasLookup(program *ast.Program, canonical string, paths []string) typealias.Lookup {
+	resolver := modules.NewResolver(paths)
+	source := typealias.NewSourceLookup(func(module string) (*ast.Program, bool) {
+		path, err := resolver.Resolve(module)
+		if err != nil {
+			return nil, false
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, false
+		}
+		p := parser.New(lexer.New(string(data)))
+		parsed := p.ParseProgram()
+		return parsed, len(p.Errors()) == 0
+	})
+	return typealias.ScopedLookup(program, canonical, source.Target)
+}
+
+// ModuleTypeAlias returns an already-loaded module's exported type alias target.
+func (l *Loader) ModuleTypeAlias(module, name string) (string, bool) {
+	rec, ok := l.recordFor(module)
+	if !ok || rec.module == nil {
+		return "", false
+	}
+	target, ok := rec.module.TypeAliases[name]
+	return target, ok
+}
+
 func (l *Loader) SetMainChunk(chunk bytecode.Chunk) { l.mainChunk = chunk; l.hasMainChunk = true }
 
 // SetMainVM connects the running entry VM so its globals/interface-defaults read live.
@@ -194,6 +224,7 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 	if err != nil {
 		return nil, fmt.Errorf("compile module %s: %w", canonical, err)
 	}
+	bytecode.ResolveClassTypeAliases(&chunk, SourceTypeAliasLookup(program, canonical, append([]string{filepath.Dir(path)}, l.modulePaths...)))
 	previousPaths := l.modulePaths
 	l.modulePaths = append([]string{filepath.Dir(path)}, l.modulePaths...)
 	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
@@ -209,7 +240,7 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 	if err != nil {
 		return nil, fmt.Errorf("export module %s: %w", canonical, err)
 	}
-	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports}
+	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports, TypeAliases: typealias.ExportedFromProgram(program, canonical)}
 	for name, value := range module.Exports {
 		if function, ok := value.(runtime.BytecodeFunction); ok {
 			function.Module = canonical

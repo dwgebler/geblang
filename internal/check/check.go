@@ -21,6 +21,7 @@ import (
 	"geblang/internal/parser"
 	"geblang/internal/semantic"
 	"geblang/internal/token"
+	"geblang/internal/typealias"
 )
 
 // Severity classifies a diagnostic.
@@ -77,6 +78,25 @@ type Options struct {
 	ModuleCache *ModuleCache
 }
 
+// TypeAliasLookup resolves the exported type aliases that program's imports refer to.
+func TypeAliasLookup(program *ast.Program, resolver *modules.Resolver, cache *ModuleCache) typealias.Lookup {
+	if resolver == nil {
+		return nil
+	}
+	if cache == nil {
+		cache = NewModuleCache()
+	}
+	source := typealias.NewSourceLookup(func(canonical string) (*ast.Program, bool) {
+		path, err := resolver.Resolve(canonical)
+		if err != nil {
+			return nil, false
+		}
+		program, _, err := cache.load(path)
+		return program, err == nil
+	})
+	return typealias.ScopedLookup(program, "", source.Target)
+}
+
 // NewDefaultResolver returns a resolver rooted at the file's directory.
 // Mirrors the per-file behaviour of the legacy `checkResolver` helper.
 func NewDefaultResolver(file string) *modules.Resolver {
@@ -91,6 +111,9 @@ func NewDefaultResolver(file string) *modules.Resolver {
 func CrossModuleAnalysis(file string, program *ast.Program, opts Options) []Diagnostic {
 	diags := []Diagnostic{}
 	analyzer := semantic.New()
+	if opts.Resolver != nil {
+		analyzer.SetTypeAliasLookup(TypeAliasLookup(program, opts.Resolver, opts.ModuleCache))
+	}
 	if opts.CrossModule {
 		analyzer.EnableMethodChecks()
 		if opts.Resolver != nil {
@@ -164,7 +187,7 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		}
 	}
 	diags = append(diags, CrossModuleAnalysis(file, analysisProgram, opts)...)
-	if _, compileErr := bytecode.CompileWithOptions(analysisProgram, []byte(source), file, bytecode.CompileOptions{NativeSymbols: opts.NativeSymbols}); compileErr != nil {
+	if _, compileErr := bytecode.CompileWithOptions(analysisProgram, []byte(source), file, bytecode.CompileOptions{NativeSymbols: opts.NativeSymbols, TypeAliasLookup: TypeAliasLookup(analysisProgram, opts.Resolver, opts.ModuleCache)}); compileErr != nil {
 		if d, ok := compileDiagnostic(file, compileErr); ok {
 			diags = append(diags, d)
 		}

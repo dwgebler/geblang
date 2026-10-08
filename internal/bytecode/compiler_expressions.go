@@ -6,6 +6,7 @@ import (
 	argbinding "geblang/internal/binding"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 	"math"
 	"math/big"
 	"strconv"
@@ -30,6 +31,15 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		value, err := runtime.NewIntLiteral(expr.Value)
 		if err != nil {
 			return err
+		}
+		switch strings.TrimPrefix(c.expandRecordedTypeAlias(c.currentExpectedType()), "?") {
+		case "decimal":
+			c.emitConstant(native.IntToDecimal(value), expr.Token.Line, expr.Token.Column)
+			return nil
+		case "float":
+			f, _ := new(big.Rat).SetInt(value.Value).Float64()
+			c.emitConstant(runtime.Float{Value: f}, expr.Token.Line, expr.Token.Column)
+			return nil
 		}
 		if value.Value.IsInt64() {
 			c.emitConstant(runtime.SmallInt{Value: value.Value.Int64()}, expr.Token.Line, expr.Token.Column)
@@ -285,7 +295,14 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			if err != nil {
 				return err
 			}
-			if target, ok := c.instanceofExactTarget(expr.RightType); ok {
+			rightType := expr.RightType
+			if rightType != nil {
+				if resolved := c.resolveTypeRef(rightType); resolved.String() != rightType.String() {
+					rightType = resolved
+					typeName = resolved.String()
+				}
+			}
+			if target, ok := c.instanceofExactTarget(rightType); ok {
 				typeName = target
 			}
 			c.emitConstant(runtime.String{Value: typeName}, expr.Token.Line, expr.Token.Column)
@@ -1606,6 +1623,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	fn.ParamSlots = paramSlots
 	fn.ParamTypes = paramTypes
 	fn.ReturnType = c.bytecodeReturnType(expr.ReturnType)
+	fn.ReturnCheckType = c.bytecodeReturnCheckType(expr.ReturnType)
 	fn.DefaultConstants = defaultConstants
 	fn.UpvalueCount = upvalueCount
 	fn.Variadic = len(expr.Parameters) > 0 && expr.Parameters[len(expr.Parameters)-1].Variadic
@@ -1652,8 +1670,11 @@ func (c *Compiler) compileShortCircuitExpression(expr *ast.InfixExpression) erro
 		if err := c.compileExpression(expr.Right); err != nil {
 			return err
 		}
+		rightFalseJump := c.emitJump(OpJumpIfFalse, expr.Token.Line, expr.Token.Column)
+		c.emitConstant(runtime.Bool{Value: true}, expr.Token.Line, expr.Token.Column)
 		endJump := c.emitJump(OpJump, expr.Token.Line, expr.Token.Column)
 		c.patchJump(falseJump)
+		c.patchJump(rightFalseJump)
 		c.emitConstant(runtime.Bool{Value: false}, expr.Token.Line, expr.Token.Column)
 		c.patchJump(endJump)
 		return nil
@@ -1665,7 +1686,13 @@ func (c *Compiler) compileShortCircuitExpression(expr *ast.InfixExpression) erro
 	if err := c.compileExpression(expr.Right); err != nil {
 		return err
 	}
+	rightFalseJump := c.emitJump(OpJumpIfFalse, expr.Token.Line, expr.Token.Column)
+	c.emitConstant(runtime.Bool{Value: true}, expr.Token.Line, expr.Token.Column)
+	rightEndJump := c.emitJump(OpJump, expr.Token.Line, expr.Token.Column)
+	c.patchJump(rightFalseJump)
+	c.emitConstant(runtime.Bool{Value: false}, expr.Token.Line, expr.Token.Column)
 	c.patchJump(endJump)
+	c.patchJump(rightEndJump)
 	return nil
 }
 
@@ -2760,6 +2787,10 @@ func (c *Compiler) staticTypeAssignable(target string, actual string) bool {
 	if target == "" || strings.EqualFold(target, "any") || actual == "" {
 		return true
 	}
+	if c.typeAliasLookup != nil {
+		target = typealias.ExpandString(target, c.typeAliasLookup)
+		actual = typealias.ExpandString(actual, c.typeAliasLookup)
+	}
 	// An `any` actual is statically opaque; runtime validation owns it.
 	if strings.EqualFold(strings.TrimPrefix(actual, "?"), "any") {
 		return true
@@ -2817,7 +2848,7 @@ func (c *Compiler) staticTypeAssignable(target string, actual string) bool {
 	if ltIdx := strings.Index(actual, "<"); ltIdx >= 0 {
 		baseActual = actual[:ltIdx]
 	}
-	if strings.EqualFold(baseTarget, baseActual) {
+	if strings.EqualFold(baseTarget, baseActual) || strings.EqualFold(c.staticCanonicalTypeName(baseTarget), c.staticCanonicalTypeName(baseActual)) {
 		return true
 	}
 	// generator and iterable are interchangeable type names: a function
@@ -2980,8 +3011,15 @@ func (c *Compiler) staticClassAssignable(target string, actual string) bool {
 	}
 }
 
+func (c *Compiler) staticCanonicalTypeName(name string) string {
+	if c.typeAliasLookup != nil {
+		name = typealias.ExpandString(name, c.typeAliasLookup)
+	}
+	return c.resolveQualifiedClassName(name)
+}
+
 func (c *Compiler) staticInterfaceAssignable(target string, actual string) bool {
-	if strings.EqualFold(target, actual) {
+	if strings.EqualFold(target, actual) || strings.EqualFold(c.staticCanonicalTypeName(target), c.staticCanonicalTypeName(actual)) {
 		return true
 	}
 	ifaceIndex, ok := c.interfaces[strings.ToLower(actual)]

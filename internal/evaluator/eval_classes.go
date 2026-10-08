@@ -305,7 +305,7 @@ func mergeInterfaceMembers(stmt *ast.ClassStatement, ifaces []*runtime.Interface
 }
 
 func (e *Evaluator) buildInterface(stmt *ast.InterfaceStatement, env *runtime.Environment) (*runtime.Interface, error) {
-	iface := &runtime.Interface{Name: stmt.Name.Value, Doc: stmt.Doc, Module: e.currentModule, TypeParameters: typeParameterNames(stmt.Generics), Methods: e.resolveFunctionSignatures(stmt.Methods), Defaults: stmt.Defaults, Fields: stmt.Fields}
+	iface := &runtime.Interface{Name: stmt.Name.Value, Doc: stmt.Doc, Module: e.currentModule, TypeParameters: typeParameterNames(stmt.Generics), Methods: e.resolveFunctionSignatures(stmt.Methods, env), Defaults: stmt.Defaults, Fields: stmt.Fields}
 	for _, parentRef := range stmt.Parents {
 		parentValue, ok, err := e.resolveTypeValue(parentRef, env)
 		if err != nil {
@@ -508,7 +508,7 @@ func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment)
 			if err := checkEnumMethodCollision(enum, member.Name.Value); err != nil {
 				return nil, err
 			}
-			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: typeParameterNames(member.Generics), TypeParamConstraints: typeParamConstraints(member.Generics), Parameters: e.resolveParameters(member.Parameters), ReturnType: e.resolveTypeRef(member.ReturnType), Body: member.Body, Env: env, Decorators: member.Decorators, Target: "method", Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: true}
+			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: typeParameterNames(member.Generics), TypeParamConstraints: typeParamConstraints(member.Generics), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env, Decorators: member.Decorators, Target: "method", Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: true}
 			decorated, err := e.applyCallableFunctionDecorators(fn, member.Decorators, env)
 			if err != nil {
 				return nil, err
@@ -591,7 +591,7 @@ func (e *Evaluator) foldInterfaceDefaultsIntoEnum(enum *runtime.EnumDef, iface *
 		if err := checkEnumMethodCollision(enum, def.Name.Value); err != nil {
 			return err
 		}
-		fn := runtime.Function{Name: def.Name.Value, Doc: def.Doc, TypeParameters: typeParameterNames(def.Generics), TypeParamConstraints: typeParamConstraints(def.Generics), Parameters: e.resolveParameters(def.Parameters), ReturnType: e.resolveTypeRef(def.ReturnType), Body: def.Body, Env: env, Decorators: def.Decorators, Target: "method", Async: def.Async, IsGenerator: blockContainsYield(def.Body), ForwardThis: true}
+		fn := runtime.Function{Name: def.Name.Value, Doc: def.Doc, TypeParameters: typeParameterNames(def.Generics), TypeParamConstraints: typeParamConstraints(def.Generics), Parameters: e.resolveParameters(def.Parameters, env), ReturnType: e.resolveTypeRef(def.ReturnType, env), Body: def.Body, Env: env, Decorators: def.Decorators, Target: "method", Async: def.Async, IsGenerator: blockContainsYield(def.Body), ForwardThis: true}
 		enum.Methods[key] = append(enum.Methods[key], fn)
 	}
 	return nil
@@ -794,7 +794,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 				target = "staticMethod"
 			}
 			methodTypeParams := append(typeParameterNames(member.Generics), classTypeParams...)
-			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(member.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(member.Parameters), ReturnType: e.resolveTypeRef(member.ReturnType), Body: member.Body, Env: env, Decorators: member.Decorators, Target: target, Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: !member.Static}
+			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(member.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env, Decorators: member.Decorators, Target: target, Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: !member.Static}
 			decorated, err := e.applyCallableFunctionDecorators(fn, member.Decorators, env)
 			if err != nil {
 				return nil, err
@@ -819,7 +819,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 	if stmt.Destructor != nil {
 		dtor := stmt.Destructor
 		methodTypeParams := append(typeParameterNames(dtor.Generics), classTypeParams...)
-		fn := runtime.Function{Name: "~" + dtor.Name.Value, Doc: dtor.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(dtor.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(dtor.Parameters), ReturnType: e.resolveTypeRef(dtor.ReturnType), Body: dtor.Body, Env: env, Decorators: dtor.Decorators, Target: "method", Async: dtor.Async, IsGenerator: false, ForwardThis: true}
+		fn := runtime.Function{Name: "~" + dtor.Name.Value, Doc: dtor.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(dtor.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(dtor.Parameters, env), ReturnType: e.resolveTypeRef(dtor.ReturnType, env), Body: dtor.Body, Env: env, Decorators: dtor.Decorators, Target: "method", Async: dtor.Async, IsGenerator: false, ForwardThis: true}
 		decorated, err := e.applyCallableFunctionDecorators(fn, dtor.Decorators, env)
 		if err != nil {
 			return nil, err
@@ -849,11 +849,17 @@ func (e *Evaluator) resolveTypeValue(ref *ast.TypeRef, env *runtime.Environment)
 		if !ok {
 			return nil, false, fmt.Errorf("%s is not a module", moduleName)
 		}
-		value, exists := module.Exports[exportName]
-		return value, exists, nil
+		if value, exists := module.Exports[exportName]; exists {
+			return value, true, nil
+		}
+		value, aliased := e.resolveAliasedTypeValue(ref, env)
+		return value, aliased, nil
 	}
-	value, ok := env.Get(ref.Name)
-	return value, ok, nil
+	if value, ok := env.Get(ref.Name); ok {
+		return value, true, nil
+	}
+	value, aliased := e.resolveAliasedTypeValue(ref, env)
+	return value, aliased, nil
 }
 
 func isErrorDerived(class *runtime.Class) bool {
@@ -1077,11 +1083,11 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 	// remaining bindings further down.
 	// A type-arg name that is itself a bound generic param (an enclosing
 	// generic function's T) resolves to the call site's concrete binding.
-	resolveArgName := func(name string) string {
+	resolveArgName := func(name string) (string, bool) {
 		if bound, ok := env.GetTypeBinding(name); ok && bound != "" {
-			return bound
+			return bound, true
 		}
-		return name
+		return name, !e.typeParamInScope(name)
 	}
 	if len(call.TypeArguments) > 0 && len(class.TypeParameters) > 0 {
 		if instance.TypeBindings == nil {
@@ -1092,7 +1098,9 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 				break
 			}
 			if arg != nil && arg.Operator == "" && arg.Name != "" {
-				instance.TypeBindings[class.TypeParameters[i]] = resolveArgName(arg.Name)
+				if resolved, bound := resolveArgName(arg.Name); bound {
+					instance.TypeBindings[class.TypeParameters[i]] = resolved
+				}
 			}
 		}
 	} else if len(declared) > 0 && declared[0] != nil {
@@ -1106,7 +1114,9 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 					break
 				}
 				if arg != nil && arg.Operator == "" && arg.Name != "" {
-					instance.TypeBindings[class.TypeParameters[i]] = resolveArgName(arg.Name)
+					if resolved, bound := resolveArgName(arg.Name); bound {
+						instance.TypeBindings[class.TypeParameters[i]] = resolved
+					}
 				}
 			}
 		}
@@ -1547,44 +1557,55 @@ func validateInterfaceImplementation(class *runtime.Class, iface *runtime.Interf
 	return nil
 }
 
-func (e *Evaluator) resolveTypeRef(ref *ast.TypeRef) *ast.TypeRef {
+func (e *Evaluator) resolveTypeRef(ref *ast.TypeRef, env *runtime.Environment) *ast.TypeRef {
 	if ref == nil {
 		return nil
 	}
 	out := cloneTypeRef(ref)
 	if out.Operator != "" {
-		out.Left = e.resolveTypeRef(out.Left)
-		out.Right = e.resolveTypeRef(out.Right)
+		out.Left = e.resolveTypeRef(out.Left, env)
+		out.Right = e.resolveTypeRef(out.Right, env)
 		return out
 	}
-	resolved, ok := e.typeAliases[strings.ToLower(out.Name)]
+	resolved, ok := env.GetTypeAlias(out.Name)
+	if !ok {
+		if target, exported := e.exportedTypeAlias(out.Name); exported {
+			resolved, ok = e.resolveTypeRef(target, env), true
+		}
+	}
 	if ok {
 		alias := cloneTypeRef(resolved)
 		alias.Nullable = alias.Nullable || out.Nullable
 		alias.ListAlias = alias.ListAlias || out.ListAlias
+		if len(alias.Arguments) == 0 && len(out.Arguments) > 0 && alias.Operator == "" {
+			alias.Arguments = make([]*ast.TypeRef, len(out.Arguments))
+			for i, arg := range out.Arguments {
+				alias.Arguments[i] = e.resolveTypeRef(arg, env)
+			}
+		}
 		return alias
 	}
 	for i, arg := range out.Arguments {
-		out.Arguments[i] = e.resolveTypeRef(arg)
+		out.Arguments[i] = e.resolveTypeRef(arg, env)
 	}
 	return out
 }
 
-func (e *Evaluator) resolveParameters(params []ast.Parameter) []ast.Parameter {
+func (e *Evaluator) resolveParameters(params []ast.Parameter, env *runtime.Environment) []ast.Parameter {
 	out := make([]ast.Parameter, len(params))
 	for i, param := range params {
 		out[i] = param
-		out[i].Type = e.resolveTypeRef(param.Type)
+		out[i].Type = e.resolveTypeRef(param.Type, env)
 	}
 	return out
 }
 
-func (e *Evaluator) resolveFunctionSignatures(sigs []*ast.FunctionSignature) []*ast.FunctionSignature {
+func (e *Evaluator) resolveFunctionSignatures(sigs []*ast.FunctionSignature, env *runtime.Environment) []*ast.FunctionSignature {
 	out := make([]*ast.FunctionSignature, len(sigs))
 	for i, sig := range sigs {
 		copied := *sig
-		copied.Parameters = e.resolveParameters(sig.Parameters)
-		copied.ReturnType = e.resolveTypeRef(sig.ReturnType)
+		copied.Parameters = e.resolveParameters(sig.Parameters, env)
+		copied.ReturnType = e.resolveTypeRef(sig.ReturnType, env)
 		out[i] = &copied
 	}
 	return out

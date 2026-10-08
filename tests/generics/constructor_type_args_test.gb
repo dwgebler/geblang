@@ -1,7 +1,7 @@
 /**
  * @title Constructor explicit type-argument enforcement
  * @summary Explicit constructor type arguments constrain T-typed
- *          parameters at runtime: Box<string>(42) throws RuntimeError,
+ *          parameters at runtime: Box<string>(42) throws TypeError,
  *          inference stays open, covariant passing is accepted, and
  *          subclass constructors enforce through parent() chains.
  */
@@ -47,7 +47,7 @@ class ConstructorTypeArgsTest extends test.Test {
         let threw = false;
         try {
             let b = Box<string>(wrongValue);
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
             this.assertEquals("Box expects T for parameter 'value', got int", e.message);
         }
@@ -78,7 +78,7 @@ class ConstructorTypeArgsTest extends test.Test {
         let threw = false;
         try {
             let s = Sub<string>(wrongValue);
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
         }
         this.assertTrue(threw);
@@ -92,7 +92,7 @@ class ConstructorTypeArgsTest extends test.Test {
         let threw = false;
         try {
             let p = Pair<string, int>("k", wrongValue);
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
             this.assertEquals("Pair expects V for parameter 'value', got string", e.message);
         }

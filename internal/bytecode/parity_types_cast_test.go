@@ -356,7 +356,7 @@ io.println(pickStr() as string);
 let xs = [1.5];
 try {
     io.println(tag(xs[0]));
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("rejected");
 }
 `, "int 42\nstr ada\nbool true\n1\nx\nrejected\n")

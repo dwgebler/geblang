@@ -35,6 +35,7 @@ import (
 	"geblang/internal/native"
 	"geblang/internal/overload"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 
 	tomllib "github.com/BurntSushi/toml"
 	_ "github.com/go-sql-driver/mysql"
@@ -76,7 +77,6 @@ type Evaluator struct {
 	loading              map[string]bool
 	modulePrograms       map[string]*ast.Program
 	manifests            map[string]*packageManifest
-	typeAliases          map[string]*ast.TypeRef
 	natives              *native.Registry
 	builtins             map[string]map[string]builtinFunc
 	testClass            *runtime.Class
@@ -553,7 +553,7 @@ func newEvaluatorCore(stdout io.Writer, args []string, modulePaths []string) *Ev
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
 	e.builtins = e.builtinModules()
 	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer})
 	return e
@@ -799,7 +799,6 @@ func (e *Evaluator) childForCallback() *Evaluator {
 	child.importNames = maps.Clone(e.importNames)
 	child.modulePrograms = maps.Clone(e.modulePrograms)
 	child.manifests = maps.Clone(e.manifests)
-	child.typeAliases = maps.Clone(e.typeAliases)
 	child.testClass = e.testClass
 	child.httpRequestClass = e.httpRequestClass
 	child.httpResponseClass = e.httpResponseClass
@@ -1219,11 +1218,11 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 	case *ast.InitStatement:
 		return e.evalBlock(stmt.Body, env)
 	case *ast.TypeAliasStatement:
-		e.typeAliases[strings.ToLower(stmt.Name.Value)] = e.resolveTypeRef(stmt.Type)
+		env.DefineTypeAlias(stmt.Name.Value, e.resolveTypeRef(stmt.Type, env))
 		return signal{}, nil
 	case *ast.DeclarationStatement:
 		value := runtime.Value(runtime.Null{})
-		expectedType := e.resolveTypeRef(stmt.Type)
+		expectedType := e.resolveTypeRef(stmt.Type, env)
 		if stmt.Value != nil {
 			prevDecl := e.declAnnotation
 			e.declAnnotation = expectedType
@@ -1252,7 +1251,7 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 							if suffix != "" {
 								gotName = value.TypeName()
 							}
-							return signal{}, fmt.Errorf("type error: cannot assign %s to %s%s", gotName, expectedType.String(), suffix)
+							return signal{}, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("type error: cannot assign %s to %s%s", gotName, expectedType.String(), suffix)}
 						}
 						// Attach the reified element-type tag so subsequent
 						// reflect.typeBindings() and `instanceof list<T>`
@@ -1271,7 +1270,7 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		if stmt.Static {
 			return signal{}, fmt.Errorf("static functions are parsed but not evaluated yet")
 		}
-		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters), ReturnType: e.resolveTypeRef(stmt.ReturnType), Body: stmt.Body, Env: env, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: blockContainsYield(stmt.Body), DefinitionModule: e.currentModule, DefinitionLine: stmt.Token.Line, DefinitionColumn: stmt.Token.Column}
+		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters, env), ReturnType: e.resolveTypeRef(stmt.ReturnType, env), Body: stmt.Body, Env: env, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: blockContainsYield(stmt.Body), DefinitionModule: e.currentModule, DefinitionLine: stmt.Token.Line, DefinitionColumn: stmt.Token.Column}
 		decorated, err := e.applyCallableFunctionDecorators(fn, stmt.Decorators, env)
 		if err != nil {
 			return signal{}, err
@@ -1655,6 +1654,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			if err != nil {
 				return nil, err
 			}
+			typeName = typealias.ExpandString(typeName, e.typeAliasLookup(env))
 			fromTypeParam := false
 			if bound, ok := env.GetTypeBinding(typeName); ok {
 				typeName = bound
@@ -1687,7 +1687,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			}
 			leftBool, ok := left.(runtime.Bool)
 			if !ok {
-				return nil, fmt.Errorf("%s expects bool operands", expr.Operator)
+				return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("condition must be bool, got %s", left.TypeName())}
 			}
 			if expr.Operator == "&&" && !leftBool.Value {
 				return runtime.Bool{Value: false}, nil
@@ -1701,7 +1701,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			}
 			rightBool, ok := right.(runtime.Bool)
 			if !ok {
-				return nil, fmt.Errorf("%s expects bool operands", expr.Operator)
+				return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("condition must be bool, got %s", right.TypeName())}
 			}
 			return runtime.Bool{Value: rightBool.Value}, nil
 		}
@@ -1774,7 +1774,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		if err != nil {
 			return nil, err
 		}
-		target := e.resolveTypeRef(expr.Type)
+		target := e.resolveTypeRef(expr.Type, env)
 		// Nullable cast: `null as ?T` is null; `value as ?T` for
 		// non-null falls through to the underlying type's cast logic.
 		// Must check before the class-chain match below, otherwise
@@ -1799,7 +1799,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 					return nil, err
 				} else if handled {
 					if err := checkCastDunderReturn(target.Name, result); err != nil {
-						return nil, thrownError{value: e.withTrace(runtime.Error{Class: "RuntimeError", Message: err.Error()})}
+						return nil, thrownError{value: e.withTrace(runtime.Error{Class: "TypeError", Message: err.Error()})}
 					}
 					return result, nil
 				}
@@ -1812,7 +1812,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		// outer generic frame's concrete bindings. snapshotTypeBindings
 		// walks the env chain so all reachable bindings come along.
 		captured := snapshotEnvTypeBindings(env)
-		return runtime.Function{Parameters: expr.Parameters, ReturnType: e.resolveTypeRef(expr.ReturnType), Body: expr.Body, Env: env, Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured}, nil
+		return runtime.Function{Parameters: expr.Parameters, ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env, Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured}, nil
 	case *ast.AwaitExpression:
 		value, err := e.evalExpression(expr.Value, env)
 		if err != nil {
@@ -2964,7 +2964,7 @@ func (e *Evaluator) evalBoolCondition(expr ast.Expression, env *runtime.Environm
 	}
 	boolValue, ok := value.(runtime.Bool)
 	if !ok {
-		return false, fmt.Errorf("condition must be bool, got %s", value.TypeName())
+		return false, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("condition must be bool, got %s", value.TypeName())}
 	}
 	return boolValue.Value, nil
 }
@@ -4333,9 +4333,9 @@ func (e *Evaluator) evalIndexExpression(expr *ast.IndexExpression, env *runtime.
 			bound.Env = bindThis(method.Env, value)
 			return e.applyFunctionWithThis(bound, []runtime.Value{index}, value)
 		}
-		return nil, fmt.Errorf("%s is not indexable", left.TypeName())
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s is not indexable", left.TypeName())}
 	default:
-		return nil, fmt.Errorf("%s is not indexable", left.TypeName())
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s is not indexable", left.TypeName())}
 	}
 }
 
@@ -4373,7 +4373,7 @@ func (e *Evaluator) evalSliceExpression(left runtime.Value, rng *ast.RangeExpres
 		}
 		return runtime.Bytes{Value: out}, nil
 	default:
-		return nil, fmt.Errorf("%s does not support slicing", left.TypeName())
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s is not sliceable", left.TypeName())}
 	}
 }
 
@@ -4394,7 +4394,7 @@ func (e *Evaluator) sliceIndices(rng *ast.RangeExpression, length int, env *runt
 		step = s
 	}
 	if step == 0 {
-		return nil, fmt.Errorf("slice step cannot be zero")
+		return nil, runtime.ClassifiedError{Class: "ValueError", Message: "slice step cannot be zero"}
 	}
 	if step == 1 {
 		start, end, err := e.sliceBounds(rng, length, env)
@@ -4569,7 +4569,7 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, newValue runtime.Valu
 			i = len(value.Elements) + i
 		}
 		if i < 0 || i >= len(value.Elements) {
-			return fmt.Errorf("list index out of range")
+			return runtime.ClassifiedError{Class: "ValueError", Message: "list index out of range"}
 		}
 		value.Elements[i] = newValue
 		return nil
@@ -4589,9 +4589,9 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, newValue runtime.Valu
 			_, err := e.applyFunctionWithThis(bound, []runtime.Value{index, newValue}, value)
 			return err
 		}
-		return fmt.Errorf("%s does not support index assignment", left.TypeName())
+		return runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s does not support index assignment", left.TypeName())}
 	default:
-		return fmt.Errorf("%s does not support index assignment", left.TypeName())
+		return runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s does not support index assignment", left.TypeName())}
 	}
 }
 
@@ -5333,28 +5333,32 @@ func functionArgumentsMatchWithCallTypeArgs(fn runtime.Function, args []runtime.
 // functionArgumentsMatchError returns nil if all args match, or a descriptive error for the
 // first mismatched argument. The receiver's reified bindings constrain
 // class-level T params; explicit fn bindings win on collision.
+func functionCheckBindings(fn runtime.Function, receiver *runtime.Instance) map[string]string {
+	inherited := fn.TypeBindings
+	// Constructors validate at the construct site, not against the receiver.
+	isConstructor := fn.OwnerClass != nil && fn.OwnerClass.Name == fn.Name
+	if receiver == nil || isConstructor || len(receiver.TypeBindings) == 0 {
+		return inherited
+	}
+	if len(inherited) == 0 {
+		return receiver.TypeBindings
+	}
+	merged := make(map[string]string, len(inherited)+len(receiver.TypeBindings))
+	for k, v := range receiver.TypeBindings {
+		merged[k] = v
+	}
+	for k, v := range inherited {
+		merged[k] = v
+	}
+	return merged
+}
+
 func functionArgumentsMatchError(fn runtime.Function, args []runtime.Value, receiver *runtime.Instance) error {
 	if fn.Native != nil && len(fn.Parameters) == 0 {
 		return nil
 	}
 	typeParams := functionTypeParameterSetOrNil(fn)
-	inherited := fn.TypeBindings
-	// Constructors validate at the construct site, not against the receiver.
-	isConstructor := fn.OwnerClass != nil && fn.OwnerClass.Name == fn.Name
-	if receiver != nil && !isConstructor && len(receiver.TypeBindings) > 0 {
-		if len(inherited) == 0 {
-			inherited = receiver.TypeBindings
-		} else {
-			merged := make(map[string]string, len(inherited)+len(receiver.TypeBindings))
-			for k, v := range receiver.TypeBindings {
-				merged[k] = v
-			}
-			for k, v := range inherited {
-				merged[k] = v
-			}
-			inherited = merged
-		}
-	}
+	inherited := functionCheckBindings(fn, receiver)
 	isVariadic := len(fn.Parameters) > 0 && fn.Parameters[len(fn.Parameters)-1].Variadic
 	for i, arg := range args {
 		if arg == nil {
@@ -5374,7 +5378,7 @@ func functionArgumentsMatchError(fn runtime.Function, args []runtime.Value, rece
 			}
 			name := fn.Name
 			if name == "" {
-				name = "anonymous"
+				name = "<closure>"
 			}
 			// Methods report as Class.method, matching VM compiled names.
 			if receiver != nil && fn.OwnerClass != nil && fn.OwnerClass.Name != fn.Name {
@@ -5385,7 +5389,7 @@ func functionArgumentsMatchError(fn runtime.Function, args []runtime.Value, rece
 			if suffix != "" {
 				gotName = arg.TypeName()
 			}
-			return fmt.Errorf("%s expects %s for parameter '%s', got %s%s", name, paramTypeName, param.Name.Value, gotName, suffix)
+			return runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", name, paramTypeName, param.Name.Value, gotName, suffix)}
 		}
 	}
 	return nil
@@ -5465,6 +5469,9 @@ func (e *Evaluator) applyFunction(fn runtime.Function, args []runtime.Value) (ru
 // first element/entry.
 func (e *Evaluator) inferGenericBindingsFromTypeRef(spec *ast.TypeRef, value runtime.Value, typeParamSet map[string]bool, callEnv *runtime.Environment, this *runtime.Instance) {
 	if spec == nil || spec.Operator != "" || value == nil {
+		return
+	}
+	if _, isNull := value.(runtime.Null); isNull {
 		return
 	}
 	if len(spec.Arguments) == 0 {
@@ -5702,9 +5709,6 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	if sig.exited {
 		return exitValue{code: sig.exitCode}, nil
 	}
-	if sig.kind == "return" {
-		return sig.value, nil
-	}
 	if sig.kind == "break" || sig.kind == "continue" {
 		return nil, fmt.Errorf("%s cannot leave a function body", sig.kind)
 	}
@@ -5717,7 +5721,21 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	if sig.kind == "throw" && sig.thrown != nil {
 		return nil, thrownError{value: *sig.thrown}
 	}
-	return runtime.Null{}, nil
+	result := runtime.Value(runtime.Null{})
+	if sig.kind == "return" {
+		result = sig.value
+	}
+	if returnTypeChecked(fn) && !matchValueToTypeRefWith(functionTypeParameterSetOrNil(fn), functionCheckBindings(fn, this), result, fn.ReturnType) {
+		name := fn.Name
+		if name == "" {
+			name = "<closure>"
+		}
+		if this != nil && fn.OwnerClass != nil && fn.OwnerClass.Name != fn.Name {
+			name = fn.OwnerClass.Name + "." + fn.Name
+		}
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s expects %s return, got %s", name, fn.ReturnType.String(), descriptiveTypeName(result))}
+	}
+	return result, nil
 }
 
 func (e *Evaluator) lazyGenerator(fn runtime.Function, args []runtime.Value, this *runtime.Instance) *runtime.Generator {
@@ -5737,6 +5755,8 @@ func (e *Evaluator) lazyGenerator(fn runtime.Function, args []runtime.Value, thi
 			child.pendingEnumThis = enumThis
 			runner := fn
 			runner.IsGenerator = false
+			// The annotation describes the generator object, not the body's completion value.
+			runner.ReturnType = nil
 			child.pushYieldChannel(items, doneCh)
 			endThread := child.startDebugThread("generator")
 			go func() {
@@ -6115,7 +6135,7 @@ func (e *Evaluator) evalPrefix(operator string, right runtime.Value) (runtime.Va
 	case "!":
 		value, ok := right.(runtime.Bool)
 		if !ok {
-			return nil, fmt.Errorf("! expects bool, got %s", right.TypeName())
+			return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("! expects bool, got %s", right.TypeName())}
 		}
 		return runtime.Bool{Value: !value.Value}, nil
 	case "-":
@@ -6133,12 +6153,12 @@ func (e *Evaluator) evalPrefix(operator string, right runtime.Value) (runtime.Va
 				}
 				return result, nil
 			}
-			return nil, fmt.Errorf("- expects numeric value, got %s", right.TypeName())
+			return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("- expects numeric value, got %s", right.TypeName())}
 		}
 	case "~":
 		value, ok := right.(runtime.Int)
 		if !ok {
-			return nil, fmt.Errorf("~ expects int, got %s", right.TypeName())
+			return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("~ expects int, got %s", right.TypeName())}
 		}
 		return runtime.Int{Value: new(big.Int).Not(value.Value)}, nil
 	default:
@@ -6240,7 +6260,7 @@ func (e *Evaluator) evalContains(needle, container runtime.Value) (runtime.Value
 	case runtime.String:
 		s, ok := needle.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("in: left operand must be a string when the right operand is a string")
+			return nil, runtime.ClassifiedError{Class: "TypeError", Message: "in: left operand must be a string when the right operand is a string"}
 		}
 		return runtime.Bool{Value: strings.Contains(c.Value, s.Value)}, nil
 	case runtime.Range:
@@ -6255,9 +6275,9 @@ func (e *Evaluator) evalContains(needle, container runtime.Value) (runtime.Value
 			bound.Env = bindThis(method.Env, c)
 			return e.applyFunctionWithThis(bound, []runtime.Value{needle}, c)
 		}
-		return nil, fmt.Errorf("%s does not support 'in' (define __contains)", c.TypeName())
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s does not support 'in' (define __contains)", c.TypeName())}
 	default:
-		return nil, fmt.Errorf("'in' requires a list, dict, set, string, range, or an object with __contains, got %s", container.TypeName())
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("'in' requires a list, dict, set, string, range, or an object with __contains, got %s", container.TypeName())}
 	}
 }
 
@@ -6568,11 +6588,11 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 func evalBoolInfix(operator string, left runtime.Value, right runtime.Value) (runtime.Value, error) {
 	l, ok := left.(runtime.Bool)
 	if !ok {
-		return nil, fmt.Errorf("%s expects bool operands", operator)
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: "left operand must be bool"}
 	}
 	r, ok := right.(runtime.Bool)
 	if !ok {
-		return nil, fmt.Errorf("%s expects bool operands", operator)
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: "right operand must be bool"}
 	}
 	switch operator {
 	case "&&":
@@ -6654,7 +6674,7 @@ func intToFloatValue(v runtime.Int) runtime.Float {
 // decimalFloatArithError reports the one remaining precision wall: arithmetic
 // mixing decimal and float, which would silently lose decimal exactness.
 func decimalFloatArithError(operator string, left, right runtime.Value) error {
-	return fmt.Errorf("cannot mix decimal and float in %s (got %s and %s): cast one side - 'as float' drops decimal exactness, 'as decimal' adopts the float's imprecision", operator, left.TypeName(), right.TypeName())
+	return runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("cannot mix decimal and float in %s (got %s and %s): cast one side - 'as float' drops decimal exactness, 'as decimal' adopts the float's imprecision", operator, left.TypeName(), right.TypeName())}
 }
 
 // evalSmallIntInfix is the allocation-free integer fast path, mirroring
@@ -6751,12 +6771,12 @@ func evalIntInfix(operator string, left runtime.Int, right runtime.Int) (runtime
 		return runtime.Int{Value: new(big.Int).Xor(left.Value, right.Value)}, nil
 	case "<<":
 		if !right.Value.IsUint64() {
-			return nil, fmt.Errorf("shift amount must be a non-negative int, got %s", right.Value.String())
+			return nil, runtime.ClassifiedError{Class: "ValueError", Message: fmt.Sprintf("shift amount must be a non-negative int, got %s", right.Value.String())}
 		}
 		return runtime.Int{Value: new(big.Int).Lsh(left.Value, uint(right.Value.Uint64()))}, nil
 	case ">>":
 		if !right.Value.IsUint64() {
-			return nil, fmt.Errorf("shift amount must be a non-negative int, got %s", right.Value.String())
+			return nil, runtime.ClassifiedError{Class: "ValueError", Message: fmt.Sprintf("shift amount must be a non-negative int, got %s", right.Value.String())}
 		}
 		return runtime.Int{Value: new(big.Int).Rsh(left.Value, uint(right.Value.Uint64()))}, nil
 	default:
@@ -7038,10 +7058,10 @@ func indexInt(value runtime.Value) (int, error) {
 	}
 	intValue, ok := value.(runtime.Int)
 	if !ok {
-		return 0, fmt.Errorf("index must be int, got %s", value.TypeName())
+		return 0, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("index must be int, got %s", value.TypeName())}
 	}
 	if !intValue.Value.IsInt64() {
-		return 0, fmt.Errorf("index is out of range")
+		return 0, runtime.ClassifiedError{Class: "ValueError", Message: "index is out of range"}
 	}
 	return int(intValue.Value.Int64()), nil
 }
@@ -7051,7 +7071,7 @@ func listElement(value *runtime.List, i int) (runtime.Value, error) {
 		i = len(value.Elements) + i
 	}
 	if i < 0 || i >= len(value.Elements) {
-		return nil, fmt.Errorf("list index out of range")
+		return nil, runtime.ClassifiedError{Class: "ValueError", Message: "list index out of range"}
 	}
 	return value.Elements[i], nil
 }
@@ -7063,7 +7083,7 @@ func stringElement(value runtime.String, i int) (runtime.Value, error) {
 		i = n + i
 	}
 	if i < 0 || i >= n {
-		return nil, fmt.Errorf("string index out of range")
+		return nil, runtime.ClassifiedError{Class: "ValueError", Message: "string index out of range"}
 	}
 	return runtime.String{Value: ri.RuneAt(value.Value, i)}, nil
 }
@@ -7073,7 +7093,7 @@ func bytesElement(value runtime.Bytes, i int) (runtime.Value, error) {
 		i = len(value.Value) + i
 	}
 	if i < 0 || i >= len(value.Value) {
-		return nil, fmt.Errorf("bytes index out of range")
+		return nil, runtime.ClassifiedError{Class: "ValueError", Message: "bytes index out of range"}
 	}
 	return runtime.NewInt64(int64(value.Value[i])), nil
 }

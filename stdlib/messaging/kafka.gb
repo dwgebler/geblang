@@ -1,5 +1,6 @@
 module messaging.kafka;
 
+import messaging.contract;
 import bytes;
 import datetime;
 import json;
@@ -11,12 +12,12 @@ import kafka;
  * writer (producer) and one reader (consumer group member); they
  * stay open for the queue handle's lifetime.
  *
- * Duck-types `messaging.MessageQueue`. The "queue" abstraction
+ * The "queue" abstraction
  * maps onto a single Kafka topic with a stable consumer-group id;
  * publishing produces records and receiving fetches the next
  * record assigned to this group member.
  */
-export class KafkaQueue {
+export class KafkaQueue implements contract.MessageQueue {
     int writer;
     int reader;
     string topic;
@@ -109,7 +110,7 @@ func payloadToBytes(any payload): bytes {
  * groups, the difference vs the queue API is just that each
  * subscriber gets a fresh group id rather than sharing one.
  */
-export class KafkaTopic {
+export class KafkaTopic implements contract.MessageTopic {
     int writer;
     string topic;
     list<string> brokers;

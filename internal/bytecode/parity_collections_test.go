@@ -427,7 +427,7 @@ io.println(countAnimals(dogs));
 let list<int> ints = [1, 2, 3];
 try {
     countStrings(ints);
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("rejected");
 }
 `, "2\nrejected\n")

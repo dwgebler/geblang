@@ -43,7 +43,7 @@ class AnnotationTypeArgsTest extends test.Test {
         let threw = false;
         try {
             Box<int> wrong = Box(opaque("text"));
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
             this.assertEquals("Box expects T for parameter 'value', got string", e.message);
         }

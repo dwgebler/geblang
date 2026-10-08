@@ -1,0 +1,8 @@
+module alias_contract;
+
+export interface Client { func chat(): string; }
+
+export class Base {
+    func Base() {}
+    func hello(): string { return "base"; }
+}

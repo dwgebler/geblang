@@ -18,7 +18,7 @@ func UnknownMethodError(typeName, method string) error {
 
 // UnsupportedOperandsError is the canonical bad-binary-operand text on both backends.
 func UnsupportedOperandsError(operator, leftType, rightType string) error {
-	return fmt.Errorf("unsupported operands for %s: %s and %s", operator, leftType, rightType)
+	return runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("unsupported operands for %s: %s and %s", operator, leftType, rightType)}
 }
 
 func registerErrors(r *Registry) {

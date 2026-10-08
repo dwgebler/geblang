@@ -556,7 +556,7 @@ func (g *fuzzGen) unionForwardBlock() (decls string, calls []string) {
 	d.WriteString("    func __add(UBox|int o): UBox { return UBox(this.n + UBox.unwrap(o)); }\n}\n")
 	d.WriteString("func uLabel(string|int v): string { return \"${typeof(v)}:${v}\"; }\n")
 	d.WriteString("func uRelay(string|int v): string { return uLabel(v); }\n")
-	d.WriteString("func uWide(string|int|bool v): string { return typeof(v); }\n")
+	d.WriteString("func uWide(string|int|bool v): string { return typeof(v) as string; }\n")
 	d.WriteString("func uWiden(string|int v): string { return uWide(v); }\n")
 	d.WriteString("func uInt(int v): int { return v + 1; }\n")
 	d.WriteString("func uNarrow(string|int v): int { return uInt(v); }\n")

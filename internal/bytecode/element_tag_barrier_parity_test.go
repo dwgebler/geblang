@@ -131,7 +131,7 @@ any v = "x";
 try {
     let y = -v;
     io.println("no throw");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println(e.message);
 }
 `, "- expects numeric value, got string\n")

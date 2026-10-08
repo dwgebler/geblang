@@ -156,8 +156,8 @@ and `class`.
 |-------|-------------|
 | `Error` | Base class for all errors |
 | `RuntimeError` | General runtime failures |
-| `TypeError` | Type mismatch errors |
-| `ValueError` | Invalid value errors |
+| `TypeError` | Runtime type mismatches, including operands, casts, typed boundaries, and index types |
+| `ValueError` | Invalid values, including malformed conversions and out-of-range indices |
 | `IOError` | File and network I/O errors |
 | `ParseError` | Parsing failures |
 | `MatchError` | Non-exhaustive match |
@@ -334,10 +334,12 @@ For dictionary-oriented code, `errors.frames(e)` is shorthand for
 
 ## Runtime Failures
 
-Most runtime failures, such as invalid operations, unknown fields,
-bad argument types, and division by zero, are raised as catchable
-`RuntimeError` exceptions - identically on the evaluator and the bytecode
-VM (1.7.0). Parse, semantic, and startup failures are reported directly
+Runtime type mismatches raise `TypeError`. A supported conversion with invalid
+content and an out-of-range collection index raise `ValueError`. Other runtime
+faults, including division by zero and unknown fields, raise `RuntimeError`.
+These classes are siblings under `Error`, so use `catch (Error e)` for broad
+recovery and a specific class when handling one failure category. Parse,
+semantic, and startup failures are reported directly
 because the script has not reached a recoverable runtime point;
 stack-overflow and other unrecoverable conditions surface as
 `FatalError`, which `try`/`catch` never intercepts.
@@ -358,7 +360,7 @@ uncaught ValueError: x too big: 7
 Frames are innermost first. The innermost frame shows the line where the
 error happened; every caller frame shows the line of its call site; the
 final `<top level>` frame shows where top-level code entered the chain.
-Runtime faults use the same shape with the `RuntimeError` class. Method
+Runtime faults use the same shape with their error class. Method
 frames are qualified as `Class.method`, anonymous functions render as
 `<closure>`, and a deep tail-recursive run collapses into a single
 `at f (line 8) [x1000]` entry instead of a thousand identical lines.

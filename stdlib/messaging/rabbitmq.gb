@@ -1,5 +1,6 @@
 module messaging.rabbitmq;
 
+import messaging.contract;
 import amqp;
 import async;
 import bytes;
@@ -10,11 +11,8 @@ import json;
  * connection and one channel for the queue's lifetime, declares the
  * queue durably on construction, and routes publish / receive / ack
  * through the channel.
- *
- * Duck-types `messaging.MessageQueue`. The explicit `implements`
- * clause is omitted to avoid a circular module import.
  */
-export class RabbitQueue {
+export class RabbitQueue implements contract.MessageQueue {
     int conn;
     int ch;
     string queue;
@@ -147,7 +145,7 @@ func payloadToBytes(any payload): bytes {
  * the exchange; the queue lives only while the subscription is
  * active.
  */
-export class RabbitTopic {
+export class RabbitTopic implements contract.MessageTopic {
     int conn;
     int ch;
     string exchange;

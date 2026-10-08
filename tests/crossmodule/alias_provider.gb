@@ -1,0 +1,8 @@
+module alias_provider;
+
+import alias_contract;
+
+export class Provider implements alias_contract.Client {
+    func Provider() {}
+    func chat(): string { return "provider"; }
+}

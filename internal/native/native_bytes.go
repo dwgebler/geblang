@@ -117,7 +117,7 @@ func registerBytes(r *Registry) {
 
 func BytesToUTF8String(data []byte, label string) (runtime.String, error) {
 	if !utf8.Valid(data) {
-		return runtime.String{}, fmt.Errorf("%s data is not valid UTF-8", label)
+		return runtime.String{}, runtime.ClassifiedError{Class: "ValueError", Message: fmt.Sprintf("%s data is not valid UTF-8", label)}
 	}
 	return runtime.String{Value: string(data)}, nil
 }

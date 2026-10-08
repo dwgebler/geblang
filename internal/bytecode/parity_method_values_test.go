@@ -47,7 +47,7 @@ let f = R.reg;
 io.println(f(5));
 try {
     io.println(f("z"));
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("pinned-first");
 }
 `, "int:5\npinned-first\n")
@@ -173,7 +173,7 @@ let m = c.go;
 io.println(m(5));
 try {
     io.println(m("z"));
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("pinned-first");
 }
 `, "int:5\npinned-first\n")

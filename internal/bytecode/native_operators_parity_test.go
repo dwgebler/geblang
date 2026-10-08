@@ -30,7 +30,7 @@ let a = nd.array([1, 2]);
 try {
     let bad = a + "text";
     io.println("added");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "caught: unsupported operands for +: ndarray.NDArray and string\n")

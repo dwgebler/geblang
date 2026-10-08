@@ -15,7 +15,7 @@ io.println(pick("hi"));
 io.println(bare(42));
 try {
     io.println(bare(true));
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "int\nstring\nint\ncaught: type bool does not satisfy constraint string|int for type parameter T\n")
@@ -32,7 +32,7 @@ io.println(scored(Win()));
 io.println(scored(Dog()));
 try {
     io.println(scored(42));
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "Win\nDog\ncaught: type int does not satisfy constraint Scored|Animal for type parameter T\n")
@@ -51,7 +51,7 @@ io.println(s.value);
 try {
     let bad = Holder(true);
     io.println("constructed");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "7\nok\ncaught: type bool does not satisfy constraint string|int for type parameter T\n")
@@ -74,7 +74,7 @@ func both<T implements Named & Aged>(T v): string { return v.name(); }
 io.println(both(Person()));
 try {
     io.println(both(Tag()));
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "p\ncaught: type Tag does not satisfy constraint Named&Aged for type parameter T\n")

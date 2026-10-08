@@ -964,23 +964,81 @@ try {
 `, "boom\nboom\nRuntimeError\n")
 }
 
-// TestParityCastErrorIsCatchable guards that a failed `x as Y`
-// raises a catchable RuntimeError on both backends instead of
-// escaping as an uncatchable "bytecode runtime error" (VM
-// divergence pre-1.0.2: the VM emitted vm.runtimeError directly,
-// so a surrounding try/catch never saw the failure). Uses
-// list->int which has no defined cast.
 func TestParityCastErrorIsCatchable(t *testing.T) {
 	runParity(t, `import io;
 
 try {
     let n = [1, 2, 3] as int;
     io.println("unreached");
-} catch (RuntimeError e) {
-    io.println("caught: " + e.message);
+} catch (TypeError e) {
+    io.println("caught: " + e.class + ": " + e.message);
 }
 io.println("after");
-`, "caught: cannot cast list to int\nafter\n")
+`, "caught: TypeError: cannot cast list to int\nafter\n")
+}
+
+func TestParityRuntimeTypeAndValueErrorClasses(t *testing.T) {
+	runParity(t, `import io;
+any left = 1;
+any right = "2";
+func opaqueWrong(): any { return "x"; }
+func wrongReturn(): int { return opaqueWrong(); }
+try { let n = left + right; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let n = ~right; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let n = left & right; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+any negative = -1;
+try { let n = left << negative; } catch (ValueError e) { io.println(e.class + ": " + e.message); }
+try { let n = left in "abc"; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let n = "abc" as int; } catch (ValueError e) { io.println(e.class + ": " + e.message); }
+try { let n = [1] as int; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+any badIndex = "x";
+try { let n = [1][badIndex]; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let n = [1][4]; } catch (ValueError e) { io.println(e.class + ": " + e.message); }
+try { wrongReturn(); } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+`, "TypeError: unsupported operands for +: int and string\nTypeError: ~ expects int, got string\nTypeError: unsupported operands for &: int and string\nValueError: shift amount must be a non-negative int, got -1\nTypeError: in: left operand must be a string when the right operand is a string\nValueError: invalid integer literal \"abc\"\nTypeError: cannot cast list to int\nTypeError: index must be int, got string\nValueError: list index out of range\nTypeError: wrongReturn expects int return, got string\n")
+}
+
+func TestParityReviewedTypeErrorBoundaries(t *testing.T) {
+	runParity(t, `import io;
+func sometimes(bool choose): int { if (choose) { return 1; } }
+any number = 1;
+any text = "2";
+any yes = true;
+any no = false;
+try { sometimes(false); } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let result = number xor yes; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let result = number && yes; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let result = yes && number; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let result = number || yes; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let result = no || number; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let result = number[0:1]; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { number[0] = 2; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+try { let result = number < text; } catch (TypeError e) { io.println(e.class + ": " + e.message); }
+`, "TypeError: sometimes expects int return, got null\nTypeError: left operand must be bool\nTypeError: condition must be bool, got int\nTypeError: condition must be bool, got int\nTypeError: condition must be bool, got int\nTypeError: condition must be bool, got int\nTypeError: int is not sliceable\nTypeError: int does not support index assignment\nTypeError: cannot compare int and string\n")
+}
+
+func TestParityCrossModuleTypeAndValueErrorClasses(t *testing.T) {
+	dir := moduleDirFor(t, map[string]string{"donor": `module donor;
+export class Base {
+    func Base() {}
+    func inherited(): int { any value = "2"; return value + 1; }
+}
+export class Sub extends Base {
+    func Sub() { parent(); }
+    func own(): int { any value = "abc"; return value as int; }
+}
+export func takeInt(int value): int { return value; }
+`})
+	runParityModulesDir(t, dir, `import donor;
+import io;
+let base = donor.Base();
+let sub = donor.Sub();
+try { base.inherited(); } catch (TypeError e) { io.println("base " + e.class); }
+try { sub.inherited(); } catch (TypeError e) { io.println("inherited " + e.class); }
+try { sub.own(); } catch (ValueError e) { io.println("own " + e.class); }
+any bad = "x";
+try { donor.takeInt(bad); } catch (TypeError e) { io.println("function " + e.class); }
+`, "base TypeError\ninherited TypeError\nown ValueError\nfunction TypeError\n")
 }
 
 // TestParityCrossModuleThrowCatch guards a VM-only regression where a

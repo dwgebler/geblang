@@ -61,10 +61,10 @@ io.println(xs);
 `)
 	want := "ValueError: list.takeFirst on empty list\n" +
 		"ValueError: list.takeLast on empty list\n" +
-		"RuntimeError: list.takeAt: index out of range\n" +
-		"RuntimeError: list.takeAt: index out of range\n" +
-		"RuntimeError: list.takeAt: index out of range\n" +
-		"RuntimeError: list.takeAt: index must be int, got string\n" +
+		"ValueError: list.takeAt: index out of range\n" +
+		"ValueError: list.takeAt: index out of range\n" +
+		"ValueError: list.takeAt: index out of range\n" +
+		"TypeError: list.takeAt: index must be int, got string\n" +
 		"ImmutableError: cannot modify frozen list\n" +
 		"ImmutableError: cannot modify frozen list\n" +
 		"ImmutableError: cannot modify frozen list\n" +

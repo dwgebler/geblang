@@ -5,14 +5,15 @@ import (
 	"strings"
 
 	"geblang/internal/ast"
+	"geblang/internal/typealias"
 )
 
 // checkCrossModuleTypes flags a module-qualified type annotation
 // `m.Nope` where `m` is a resolved import but `Nope` is not in its
 // export set. It walks every type-bearing position and bails (stays
 // silent) on any uncertainty: an unknown alias, an unresolvable module,
-// or a facade. Membership uses the full export set, so a function name
-// in type position is tolerated rather than flagged.
+// Membership uses the full export set plus exported type aliases, so a
+// function name in type position is tolerated rather than flagged.
 func checkCrossModuleTypes(file string, program *ast.Program, opts Options) []Diagnostic {
 	aliases := collectImportAliases(program)
 	for name := range collectDeclaredNames(program) {
@@ -53,16 +54,14 @@ func (c *crossTypeCollector) visit(ref *ast.TypeRef) {
 	if !ok {
 		return
 	}
-	// A facade re-exports a surface beyond its static exports, so its
-	// qualified types cannot be validated without false positives.
-	if c.moduleReExports(alias) {
-		return
-	}
 	exports, ok := resolveExportSet(alias.canonical, alias.native, c.opts, c.cache)
 	if !ok {
 		return
 	}
 	if _, exists := exports[member]; exists {
+		return
+	}
+	if c.exportsTypeAlias(alias, member) {
 		return
 	}
 	c.diags = append(c.diags, Diagnostic{
@@ -78,27 +77,24 @@ func (c *crossTypeCollector) visit(ref *ast.TypeRef) {
 	})
 }
 
-// moduleReExports reports whether a source module contains any
-// `from M import N` statement, marking it a facade whose qualified-type
-// surface is broader than its static export set.
-func (c *crossTypeCollector) moduleReExports(alias importAlias) bool {
+func (c *crossTypeCollector) exportsTypeAlias(alias importAlias, member string) bool {
+	_, ok := c.typeAliasNames(alias)[member]
+	return ok
+}
+
+func (c *crossTypeCollector) typeAliasNames(alias importAlias) map[string]string {
 	if c.opts.Resolver == nil {
-		return false
+		return nil
 	}
 	path, err := c.opts.Resolver.Resolve(alias.canonical)
 	if err != nil {
-		return false
+		return nil
 	}
 	program, _, err := c.cache.load(path)
 	if err != nil || program == nil {
-		return false
+		return nil
 	}
-	for _, stmt := range program.Statements {
-		if _, ok := stmt.(*ast.FromImportStatement); ok {
-			return true
-		}
-	}
-	return false
+	return typealias.ExportedFromProgram(program, alias.canonical)
 }
 
 // collectTypeRefsStmt invokes fn for every TypeRef reachable from stmt,

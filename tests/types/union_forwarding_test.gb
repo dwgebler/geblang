@@ -66,7 +66,7 @@ func relay(string|int v): string {
 }
 
 func nullable(?string|int v): string {
-    return typeof(v);
+    return typeof(v) as string;
 }
 
 func widen(string|int v): string {
@@ -74,7 +74,7 @@ func widen(string|int v): string {
 }
 
 func wide(string|int|bool v): string {
-    return typeof(v);
+    return typeof(v) as string;
 }
 
 func subset(string|int v): string {
@@ -97,7 +97,7 @@ func unnarrowed(string|int v): int {
 }
 
 func generic(list<int>|string v): string {
-    return typeof(v);
+    return typeof(v) as string;
 }
 
 func genericRelay(list<int>|string v): string {
@@ -126,7 +126,7 @@ class UnionForwardingTest extends test.Test {
     @test
     func toNarrowerParameterIsCheckedAtRuntime(): void {
         this.assertEquals(2, unnarrowed(1));
-        this.assertThrowsOf(func(): int { return unnarrowed("x"); }, "RuntimeError", "onlyInt expects int");
+        this.assertThrowsOf(func(): int { return unnarrowed("x"); }, "TypeError", "onlyInt expects int");
     }
 
     @test

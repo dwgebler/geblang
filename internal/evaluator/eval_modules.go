@@ -11,6 +11,7 @@ import (
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"geblang/internal/semantic"
+	"geblang/internal/typealias"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,6 +152,10 @@ func (e *Evaluator) evalFromImportStatement(stmt *ast.FromImportStatement, env *
 		local := item.Local()
 		value, ok := module.Exports[name]
 		if !ok {
+			if _, isAlias := module.TypeAliases[name]; isAlias {
+				env.DefineTypeAlias(local, e.resolveTypeRef(&ast.TypeRef{Token: item.Name.Token, Name: canonical + "." + name}, env))
+				continue
+			}
 			if _, hasNative := e.builtins[canonical]; hasNative {
 				if v, found := e.resolveBuiltinExport(e.builtinModuleValue(canonical, "").Exports, e.builtins[canonical], canonical, name); found {
 					if err := env.DefineImported(local, v, canonical+"."+name); err != nil {
@@ -319,7 +324,7 @@ func (e *Evaluator) loadUserModule(canonical, alias string) (*runtime.Module, er
 	if err != nil {
 		return nil, fmt.Errorf("export module %s: %w", canonical, err)
 	}
-	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports}
+	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports, TypeAliases: typealias.ExportedFromProgram(program, canonical)}
 	e.modules[canonical] = module
 	return module, nil
 }
@@ -341,7 +346,9 @@ func (e *Evaluator) parseAnalyzedModule(canonical string, path string) (*ast.Pro
 		d := diags[0]
 		return nil, fmt.Errorf("module %s: %s:%d:%d: %s", canonical, path, d.Line, d.Column, d.Message)
 	}
-	if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
+	analyzer := semantic.New()
+	analyzer.SetTypeAliasLookup(typealias.ScopedLookup(program, canonical, e.sourceTypeAliasTargets().Target))
+	if diagnostics := analyzer.Analyze(program); len(diagnostics) > 0 {
 		errorMessages := make([]string, 0, len(diagnostics))
 		for _, diagnostic := range diagnostics {
 			if diagnostic.Severity == semantic.SeverityWarning {
@@ -554,6 +561,9 @@ func exportedValues(program *ast.Program, env *runtime.Environment) (map[string]
 	for _, stmt := range program.Statements {
 		exportStmt, ok := stmt.(*ast.ExportStatement)
 		if !ok {
+			continue
+		}
+		if _, isAlias := exportStmt.Statement.(*ast.TypeAliasStatement); isAlias {
 			continue
 		}
 		name := exportedStatementName(exportStmt.Statement)

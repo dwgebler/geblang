@@ -15,7 +15,7 @@ class Box<T> {
 try {
     let b = Box<string>(42);
     io.println("constructed");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "caught: Box expects T for parameter 'value', got int\n")
@@ -70,7 +70,7 @@ class Sub<T> extends Base<T> {
 try {
     let s = Sub<string>(42);
     io.println("constructed");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "caught: Sub expects T for parameter 'value', got int\n")
@@ -89,7 +89,7 @@ class Pair<K, V> {
 try {
     let p = Pair<string, int>("k", "not-int");
     io.println("constructed");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 let ok = Pair<string, int>("k", 7);
@@ -108,7 +108,7 @@ let b = Box<string>("hello");
 try {
     b.put(42);
     io.println("accepted");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 b.put("fine");
@@ -124,7 +124,7 @@ class Pen<T> {
     T occupant;
     func Pen(T occupant) { this.occupant = occupant; }
     func admit(T next): void { this.occupant = next; }
-    func tag<U>(U label): string { return typeof(label); }
+    func tag<U>(U label): string { return typeof(label) as string; }
 }
 let p = Pen<Animal>(Dog());
 p.admit(Dog());
@@ -148,7 +148,7 @@ let ib = IntBox(7);
 try {
     ib.put("nope");
     io.println("accepted");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 ib.put(9);
@@ -185,7 +185,7 @@ any raw = "not an int";
 try {
     Box<int> wrong = Box(raw);
     io.println("accepted: ${typeof(wrong.value)}");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 Box<int> ok = Box(5);
@@ -193,7 +193,7 @@ io.println(ok instanceof Box<int>);
 try {
     ok.put("still wrong");
     io.println("accepted");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 ok.put(9);
@@ -228,7 +228,7 @@ any raw = true;
 try {
     let c = Box<string>(raw);
     io.println("c: ${c.which}");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "a: int\nb: generic\ncaught: Box expects T for parameter 'value', got bool\n")
@@ -297,7 +297,7 @@ func wantInt(int n): int { return n; }
 io.println(wantInt(opaque(42)));
 try {
     io.println(wantInt(opaque("nope")));
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 let b = Box<string>(opaque("hi"));
@@ -315,7 +315,7 @@ any x = 42;
 try {
     let r = identity<string>(x);
     io.println("no throw");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "caught: identity expects T for parameter 'value', got int\n")
@@ -336,7 +336,7 @@ any x = 42;
 try {
     let r = Repo().pick<string>(x);
     io.println("no throw");
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "caught: Repo.pick expects T for parameter 'value', got int\n")

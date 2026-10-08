@@ -55,14 +55,14 @@ func IntFormatBase(value runtime.Value, base int) (string, error) {
 func StringParseBase(text string, base int, label string) (runtime.Value, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
-		return nil, fmt.Errorf("%s: empty string", label)
+		return nil, runtime.ClassifiedError{Class: "ValueError", Message: fmt.Sprintf("%s: empty string", label)}
 	}
 	if n, err := strconv.ParseInt(trimmed, base, 64); err == nil {
 		return runtime.SmallInt{Value: n}, nil
 	}
 	bi, ok := new(big.Int).SetString(trimmed, base)
 	if !ok {
-		return nil, fmt.Errorf("%s: invalid digit in %q for base %d", label, text, base)
+		return nil, runtime.ClassifiedError{Class: "ValueError", Message: fmt.Sprintf("%s: invalid digit in %q for base %d", label, text, base)}
 	}
 	if bi.IsInt64() {
 		return runtime.SmallInt{Value: bi.Int64()}, nil
@@ -175,7 +175,7 @@ func NumericCompare(left runtime.Value, right runtime.Value) (int, error) {
 		if r, ok := right.(runtime.String); ok {
 			return strings.Compare(l.Value, r.Value), nil
 		}
-		return 0, fmt.Errorf("cannot compare %s and %s", left.TypeName(), right.TypeName())
+		return 0, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("cannot compare %s and %s", left.TypeName(), right.TypeName())}
 	}
 	// Numbers compare by exact value across int/decimal/float: a finite float
 	// becomes its exact rational, so cross-type comparison is lossless and
@@ -198,7 +198,7 @@ func NumericCompare(left runtime.Value, right runtime.Value) (int, error) {
 			}
 		}
 	}
-	return 0, fmt.Errorf("cannot compare %s and %s", left.TypeName(), right.TypeName())
+	return 0, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("cannot compare %s and %s", left.TypeName(), right.TypeName())}
 }
 
 // NumericAbs returns the absolute value of a numeric runtime.Value.

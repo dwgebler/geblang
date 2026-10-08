@@ -107,6 +107,40 @@ export func findUser(string id): dict<string, any> {
 }
 ```
 
+### Exporting type aliases
+
+`export type` publishes a type alias that importers can use under the module's
+name. The alias is transparent: it means exactly its target in every type
+position, including parameter, return, variable, and field annotations, generic
+arguments, `implements`, `extends`, `instanceof`, and `as`.
+
+```gb
+module shop;
+
+import shop.contract;
+
+export type Client = contract.Client;
+export type Money = decimal;
+```
+
+```gb
+import shop;
+from shop import Money;
+
+class LocalClient implements shop.Client {
+    func LocalClient() {}
+    func charge(Money amount): bool { return true; }
+}
+```
+
+Aliases are type-only, so `shop.Client(...)` is not a constructor call. A common
+use is re-exporting an interface that lives in a leaf module, so implementations
+in other submodules can declare `implements` without importing the facade
+(which would be a circular import).
+
+A name brought in with `from M import N` is not part of the importing module's
+public surface. To re-export a type, declare an `export type` alias for it.
+
 When you run `geblang check` over a file or directory, module declarations are
 validated with the normal module resolver. If `module app.users;` resolves to a
 different file than the one declaring it, or if two checked files declare the

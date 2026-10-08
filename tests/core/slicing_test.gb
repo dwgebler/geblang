@@ -56,7 +56,7 @@ class SlicingTest extends test.Test {
         let threw = false;
         try {
             let bad = xs[::0];
-        } catch (RuntimeError e) {
+        } catch (ValueError e) {
             threw = true;
         }
         this.assertTrue(threw);

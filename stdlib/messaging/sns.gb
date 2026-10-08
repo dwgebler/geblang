@@ -1,5 +1,6 @@
 module messaging.sns;
 
+import messaging.contract;
 import bytes;
 import crypt;
 import datetime;
@@ -15,12 +16,8 @@ import messaging.sqs as sqs;
  * subscription itself is set up out of band, normally as a
  * one-time `aws sns subscribe ... --protocol sqs --endpoint
  * <queue-arn>` call.
- *
- * Duck-types `messaging.MessageTopic`; explicit `implements` is
- * omitted to break a circular import (the facade imports this
- * module to dispatch by driver).
  */
-export class SnsTopic {
+export class SnsTopic implements contract.MessageTopic {
     string region;
     string topicArn;
     string accessKey;
@@ -52,7 +49,7 @@ export class SnsTopic {
         }
     }
 
-    func request(string method, string params): dict<string, any> {
+    func request(string method, string params): http.Response {
         let endpoint = "https://sns." + this.region + ".amazonaws.com/";
         string host = "sns." + this.region + ".amazonaws.com";
         let now = datetime.nowUnix();

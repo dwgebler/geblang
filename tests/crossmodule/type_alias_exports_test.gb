@@ -1,0 +1,75 @@
+/**
+ * @title Exported type aliases
+ * @summary `export type` aliases are transparent in every type position across modules, and private aliases stay module-scoped.
+ */
+import test;
+import alias_facade;
+import alias_chain;
+from alias_facade import Bot, Money;
+
+class Page { func Page() {} }
+
+class Mine implements alias_facade.Client {
+    func Mine() {}
+    func chat(): string { return "mine"; }
+}
+
+class Robo implements Bot {
+    func Robo() {}
+    func chat(): string { return "robo"; }
+}
+
+class Kid extends alias_facade.Root {
+    func Kid() { parent(); }
+}
+
+func use(alias_facade.Client c): string { return c.chat(); }
+func useChain(alias_chain.Chained c): string { return c.chat(); }
+func cost(alias_facade.Money m): string { return "${m}"; }
+func ids(list raw): alias_facade.Ids { return raw; }
+func rows(list raw): alias_facade.Rows<string> { return raw; }
+func page(Page p): string { return "page"; }
+
+class TypeAliasExportsTest extends test.Test {
+    @test
+    func aliasedInterfaceAcceptsImplementations(): void {
+        this.assertEquals("provider", use(alias_facade.client()));
+        this.assertEquals("mine", use(Mine()));
+        this.assertEquals("robo", use(Robo()));
+        this.assertEquals("mine", useChain(Mine()));
+    }
+
+    @test
+    func aliasedPrimitivesAndCollectionsAreChecked(): void {
+        this.assertEquals("1.5000000000", cost(1.5));
+        list bad = ["x"];
+        this.assertThrowsOf(func(): void { cost(bad[0]); }, "TypeError", "cost expects decimal for parameter 'm', got string");
+        this.assertThrowsOf(func(): void { ids(["a"]); }, "TypeError", "ids expects list<int> return, got list<string>");
+        this.assertThrowsOf(func(): void { rows([1]); }, "TypeError", "rows expects list<string> return, got list<int>");
+        list raw = ["a"];
+        this.assertThrowsOf(func(): void { alias_facade.Ids xs = raw; }, "TypeError", "cannot assign list to list<int>");
+    }
+
+    @test
+    func aliasesWorkInExtendsInstanceofAndCasts(): void {
+        this.assertEquals("base", Kid().hello());
+        this.assertTrue(Mine() instanceof alias_facade.Client);
+        this.assertTrue(Robo() instanceof alias_facade.Bot);
+        this.assertTrue(Kid() instanceof alias_facade.Root);
+        this.assertFalse(5 instanceof alias_facade.Client);
+        any value = Mine();
+        alias_facade.Client c = value as alias_facade.Client;
+        this.assertEquals("mine", c.chat());
+    }
+
+    @test
+    func fromImportedAliasWidensIntLiterals(): void {
+        Money m = 2;
+        this.assertEquals("decimal", "${typeof(m)}");
+    }
+
+    @test
+    func privateAliasStaysInItsModule(): void {
+        this.assertEquals("page", page(Page()));
+    }
+}

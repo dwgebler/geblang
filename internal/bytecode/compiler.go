@@ -11,6 +11,7 @@ import (
 	"geblang/internal/desugar"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 )
 
 type Compiler struct {
@@ -62,7 +63,8 @@ type Compiler struct {
 	// fromImports: from-import local/alias name -> fully-qualified class name.
 	fromImports map[string]string
 	// nativeSymbols sources the compile-time dir(<moduleAlias>) member list.
-	nativeSymbols map[string]map[string]struct{}
+	nativeSymbols   map[string]map[string]struct{}
+	typeAliasLookup typealias.Lookup
 	// AssertionsDisabled elides assert(...) call sites at compile time
 	// (no code emitted; arguments are not evaluated). Set via the
 	// --no-assert CLI flag on `geblang` and `geblang build`.
@@ -104,6 +106,8 @@ type CompileOptions struct {
 	// NativeSymbols sources the compile-time dir(<moduleAlias>) member list;
 	// nil falls back to the runtime OpDir path.
 	NativeSymbols map[string]map[string]struct{}
+	// TypeAliasLookup expands imported exported type aliases for static checks only.
+	TypeAliasLookup typealias.Lookup
 }
 
 func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk, error) {
@@ -118,7 +122,8 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 		return Chunk{}, err
 	}
 	c := &Compiler{
-		nativeSymbols: opts.NativeSymbols,
+		nativeSymbols:   opts.NativeSymbols,
+		typeAliasLookup: opts.TypeAliasLookup,
 		chunk: Chunk{
 			SourceHash: SourceHash(source),
 			Compiler:   compilerVersion,
@@ -535,6 +540,7 @@ func (c *Compiler) populateFunctionSignature(index int64, fn *ast.FunctionStatem
 		}
 	}
 	info.ReturnType = c.bytecodeReturnType(fn.ReturnType)
+	info.ReturnCheckType = c.bytecodeReturnCheckType(fn.ReturnType)
 }
 
 func (c *Compiler) nextFunctionIndex(name string) int64 {
@@ -572,6 +578,12 @@ func (c *Compiler) resolveTypeRef(ref *ast.TypeRef) *ast.TypeRef {
 		resolved := cloneTypeRef(alias)
 		resolved.Nullable = resolved.Nullable || out.Nullable
 		resolved.ListAlias = resolved.ListAlias || out.ListAlias
+		if len(resolved.Arguments) == 0 && len(out.Arguments) > 0 && resolved.Operator == "" {
+			resolved.Arguments = make([]*ast.TypeRef, len(out.Arguments))
+			for i, arg := range out.Arguments {
+				resolved.Arguments[i] = c.resolveTypeRef(arg)
+			}
+		}
 		return resolved
 	}
 	for i, arg := range out.Arguments {
@@ -767,6 +779,11 @@ func (c *Compiler) currentExpectedType() string {
 		return ""
 	}
 	return c.expectedTypes[len(c.expectedTypes)-1]
+}
+
+// Source form with aliases resolved, matching the evaluator's messages.
+func (c *Compiler) bytecodeReturnCheckType(typ *ast.TypeRef) string {
+	return c.resolveTypeRef(typ).String()
 }
 
 func (c *Compiler) currentReturnType() string {

@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(80)
+	Version = uint16(81)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -381,8 +381,13 @@ type Chunk struct {
 	// OpGetGlobal / OpSetGlobal handlers can skip bounds checks.
 	GlobalCount int64
 	// Embeds pins every embed(...) file folded into a constant, so a cached chunk can revalidate against disk.
-	Embeds      []EmbedRecord
-	operandPool []int64 // contiguous backing store for all Instruction.Operands slices
+	Embeds []EmbedRecord
+	// ModuleAliases and FromImports let the runtime resolve imported type aliases written in this chunk.
+	ModuleAliases map[string]string
+	FromImports   map[string]string
+	// TypeAliasDeps pins imported aliases expanded at compile time so a cached chunk can revalidate them.
+	TypeAliasDeps map[string]string
+	operandPool   []int64 // contiguous backing store for all Instruction.Operands slices
 }
 
 // EmbedRecord pins one embedded file so a cached chunk revalidates it.
@@ -427,6 +432,7 @@ type FunctionInfo struct {
 	ParamTypes               []string
 	ParamDecorators          [][]runtime.DecoratorMetadata
 	ReturnType               string
+	ReturnCheckType          string // parameterized return type for runtime checks; ReturnType erases type args
 	DefaultConstants         []int64
 	UpvalueCount             int64
 	LocalCount               int64 // total local slots needed; pre-allocated at call entry
@@ -441,11 +447,12 @@ type FunctionInfo struct {
 	SharesParentFrame bool
 	// DefLine / DefColumn capture the source position of the `func`
 	// keyword for this function, exposed by reflect.location.
-	DefLine        int64
-	DefColumn      int64
-	Decorators     []runtime.DecoratorMetadata
-	paramTypeSpecs []vmTypeSpec
-	typeParamSet   map[string]bool
+	DefLine             int64
+	DefColumn           int64
+	Decorators          []runtime.DecoratorMetadata
+	paramTypeSpecs      []vmTypeSpec
+	frameMeta           *frameMeta
+	typeParamSet        map[string]bool
 	// False when every ParamTypes entry is "" or "any"; lets call
 	// entry skip the validation walk for dynamically-typed funcs.
 	requiresParamValidation bool
@@ -606,6 +613,8 @@ func Encode(chunk Chunk) ([]byte, error) {
 		}
 		out = binary.BigEndian.AppendUint16(out, uint16(len(function.ReturnType)))
 		out = append(out, []byte(function.ReturnType)...)
+		out = binary.BigEndian.AppendUint16(out, uint16(len(function.ReturnCheckType)))
+		out = append(out, []byte(function.ReturnCheckType)...)
 		out = binary.BigEndian.AppendUint16(out, uint16(len(function.DefaultConstants)))
 		for _, index := range function.DefaultConstants {
 			out = binary.BigEndian.AppendUint64(out, uint64(index))
@@ -815,6 +824,9 @@ func Encode(chunk Chunk) ([]byte, error) {
 		out = append(out, []byte(rec.Path)...)
 		out = append(out, rec.Hash[:]...)
 	}
+	out = appendStringMap(out, chunk.ModuleAliases)
+	out = appendStringMap(out, chunk.FromImports)
+	out = appendStringMap(out, chunk.TypeAliasDeps)
 	return out, nil
 }
 
@@ -900,6 +912,7 @@ func Decode(data []byte) (Chunk, error) {
 			}
 		}
 		function.ReturnType = string(reader.read(int(reader.u16())))
+		function.ReturnCheckType = string(reader.read(int(reader.u16())))
 		defaultCount := int(reader.u16())
 		function.DefaultConstants = make([]int64, 0, defaultCount)
 		for j := 0; j < defaultCount; j++ {
@@ -1077,6 +1090,9 @@ func Decode(data []byte) (Chunk, error) {
 		copy(rec.Hash[:], reader.read(32))
 		chunk.Embeds = append(chunk.Embeds, rec)
 	}
+	chunk.ModuleAliases = reader.stringMap()
+	chunk.FromImports = reader.stringMap()
+	chunk.TypeAliasDeps = reader.stringMap()
 	if reader.err != nil {
 		return Chunk{}, reader.err
 	}
@@ -1235,6 +1251,20 @@ func appendConstant(out []byte, value runtime.Value) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported bytecode constant %s", value.TypeName())
 	}
+}
+
+func appendStringMap(out []byte, values map[string]string) []byte {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out = binary.BigEndian.AppendUint16(out, uint16(len(keys)))
+	for _, key := range keys {
+		out = appendString(out, key)
+		out = appendString(out, values[key])
+	}
+	return out
 }
 
 func appendString(out []byte, value string) []byte {
@@ -1583,6 +1613,19 @@ func (r *byteReader) constant() runtime.Value {
 
 func (r *byteReader) string() string {
 	return string(r.read(int(r.u16())))
+}
+
+func (r *byteReader) stringMap() map[string]string {
+	count := int(r.u16())
+	if count == 0 {
+		return nil
+	}
+	values := make(map[string]string, count)
+	for i := 0; i < count; i++ {
+		key := r.string()
+		values[key] = r.string()
+	}
+	return values
 }
 
 func (r *byteReader) functionMetadata() *runtime.FunctionMetadata {

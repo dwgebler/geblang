@@ -6,6 +6,7 @@ import (
 	"geblang/internal/runtime"
 	"math"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -16,6 +17,7 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 	if err != nil {
 		return err
 	}
+	target = vm.expandInstanceofTarget(target)
 	value, err := vm.pop()
 	if err != nil {
 		return vm.callPropagate(instruction, err)
@@ -430,6 +432,7 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	target = vm.expandTypeAliases(target)
 	value, err := vm.pop()
 	if err != nil {
 		return 0, vm.callPropagate(instruction, err)
@@ -461,7 +464,7 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 				return 0, vm.callPropagate(instruction, err)
 			} else if handled {
 				if err := checkCastDunderReturn(target, result); err != nil {
-					return vm.throwTyped(instruction, ip, "RuntimeError", err.Error())
+					return vm.throwTyped(instruction, ip, "TypeError", err.Error())
 				}
 				vm.push(result)
 				return ip, nil
@@ -475,8 +478,7 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 	}
 	cast, err := castValue(value, target)
 	if err != nil {
-		// Cast failures are user-catchable as a thrown RuntimeError, matching the evaluator.
-		return vm.throwTyped(instruction, ip, "RuntimeError", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	vm.push(cast)
 	return ip, nil
@@ -736,6 +738,9 @@ func (vm *VM) matchValueToTypeStrWith(typeParams map[string]bool, inherited map[
 }
 
 func (vm *VM) matchValueToTypeSpecWith(typeParams map[string]bool, inherited map[string]string, value runtime.Value, spec vmTypeSpec) bool {
+	if _, isNull := value.(runtime.Null); isNull && spec.nullable {
+		return true
+	}
 	// Concrete bindings win over the bare-type-param accept, matching the
 	// evaluator: an explicit call-site binding (Box<string>(...)) constrains
 	// the function's own T rather than leaving it inference-open.
@@ -791,6 +796,12 @@ func parseVMTypeSpec(typ string) vmTypeSpec {
 		for _, b := range branches {
 			spec.args = append(spec.args, parseVMTypeSpec(b))
 		}
+		return spec
+	}
+	if elem, ok := strings.CutSuffix(raw, "[]"); ok && !strings.ContainsAny(elem, "<|&") {
+		// The `?` in `?T[]` marks the list nullable, not the element.
+		spec := vmTypeSpec{raw: raw, base: "list", baseLower: "list", nullable: strings.HasPrefix(elem, "?"), kind: vmTypeList}
+		spec.args = []vmTypeSpec{parseVMTypeSpec(strings.TrimPrefix(elem, "?"))}
 		return spec
 	}
 	baseTyp, innerTyp, hasInner := parseTypeStr(raw)
@@ -850,6 +861,9 @@ func vmTypeKindForBase(baseLower string) vmTypeKind {
 func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Value, spec vmTypeSpec) bool {
 	if typeParams[spec.baseLower] {
 		return true
+	}
+	if aliased, ok := vm.aliasedTypeSpec(spec); ok {
+		spec = aliased
 	}
 	if spec.kind == vmTypeAny {
 		return true
@@ -948,7 +962,7 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 				}
 				paramName := instance.Class.TypeParameters[i]
 				bound, ok := instance.TypeBindings[paramName]
-				if !ok || bound == "" {
+				if !ok || bound == "" || slices.ContainsFunc(instance.Class.TypeParameters, func(p string) bool { return strings.EqualFold(p, bound) }) {
 					continue
 				}
 				if !strings.EqualFold(bound, argSpec.base) {
@@ -1168,7 +1182,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		 * string representation. */
 		if v, ok := value.(runtime.Bytes); ok {
 			if !utf8.Valid(v.Value) {
-				return nil, fmt.Errorf("bytes value is not valid UTF-8")
+				return nil, runtime.ClassifiedError{Class: "ValueError", Message: "bytes value is not valid UTF-8"}
 			}
 			return runtime.String{Value: string(v.Value)}, nil
 		}
@@ -1182,7 +1196,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		case runtime.String:
 			value, err := runtime.NewIntLiteral(v.Value)
 			if err != nil {
-				return nil, err
+				return nil, runtime.ClassifiedError{Class: "ValueError", Message: err.Error()}
 			}
 			if value.Value.IsInt64() {
 				return runtime.SmallInt{Value: value.Value.Int64()}, nil
@@ -1213,9 +1227,17 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		case runtime.Int:
 			return native.IntToDecimal(v), nil
 		case runtime.Float:
-			return runtime.NewDecimalLiteral(strconv.FormatFloat(v.Value, 'g', -1, 64))
+			value, err := runtime.NewDecimalLiteral(strconv.FormatFloat(v.Value, 'g', -1, 64))
+			if err != nil {
+				return nil, runtime.ClassifiedError{Class: "ValueError", Message: err.Error()}
+			}
+			return value, nil
 		case runtime.String:
-			return runtime.NewDecimalLiteral(v.Value)
+			value, err := runtime.NewDecimalLiteral(v.Value)
+			if err != nil {
+				return nil, runtime.ClassifiedError{Class: "ValueError", Message: err.Error()}
+			}
+			return value, nil
 		}
 	case "float":
 		switch v := value.(type) {
@@ -1230,7 +1252,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		case runtime.String:
 			f, err := strconv.ParseFloat(v.Value, 64)
 			if err != nil {
-				return nil, err
+				return nil, runtime.ClassifiedError{Class: "ValueError", Message: err.Error()}
 			}
 			return runtime.Float{Value: f}, nil
 		}
@@ -1253,6 +1275,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 			case "false":
 				return runtime.Bool{Value: false}, nil
 			}
+			return nil, runtime.ClassifiedError{Class: "ValueError", Message: fmt.Sprintf("cannot cast %s to %s", value.TypeName(), target)}
 		case runtime.Null:
 			return runtime.Bool{Value: false}, nil
 		}
@@ -1290,7 +1313,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 			return runtime.Set{Elements: elements}, nil
 		}
 	}
-	return nil, fmt.Errorf("cannot cast %s to %s", value.TypeName(), target)
+	return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("cannot cast %s to %s", value.TypeName(), target)}
 }
 
 func primitiveConversionTarget(name string) (string, bool) {

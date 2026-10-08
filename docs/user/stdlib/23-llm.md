@@ -26,8 +26,9 @@ io.println("tokens: " + ((resp["usage"] as dict<string, any>)["totalTokens"] as 
 
 ## Client interface
 
-Every provider returns a value satisfying the `llm.Client`
-interface:
+Every provider implements the `llm.Client` interface (an alias of
+`llm.contract.Client`, the module that providers import to declare
+`implements`):
 
 | Method | Description |
 |--------|-------------|

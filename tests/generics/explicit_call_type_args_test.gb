@@ -20,7 +20,7 @@ class ExplicitCallTypeArgsTest extends test.Test {
         let threw = false;
         try {
             let r = identity<string>(x);
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
             this.assertTrue(e.message.contains("identity expects T for parameter 'value', got int"));
         }
@@ -38,7 +38,7 @@ class ExplicitCallTypeArgsTest extends test.Test {
         let threw = false;
         try {
             let r = Repo().pick<string>(x);
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
             this.assertTrue(e.message.contains("Repo.pick expects T for parameter 'value', got int"));
         }

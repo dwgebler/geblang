@@ -137,13 +137,14 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 				if pi < len(fn.ParamNames) {
 					paramName = fn.displayParamName(pi)
 				}
-				suffix := vm.collectionMismatchSuffixStr(arg, fn.ParamTypes[pi])
+				declared := vm.expandTypeAliases(fn.ParamTypes[pi])
+				suffix := vm.collectionMismatchSuffixStr(arg, declared)
 				gotName := vm.descriptiveRuntimeTypeName(arg)
 				if suffix != "" {
 					gotName = arg.TypeName()
 				}
-				msg := fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", classInfo.Name, fn.ParamTypes[pi], paramName, gotName, suffix)
-				return vm.throwTyped(instruction, ip, "RuntimeError", msg)
+				msg := fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", classInfo.Name, declared, paramName, gotName, suffix)
+				return vm.throwTyped(instruction, ip, "TypeError", msg)
 			}
 		}
 		vm.pendingTypeBindings = explicitBindings
@@ -1134,6 +1135,21 @@ func (vm *VM) resolveFrameTypeName(name string) string {
 	return name
 }
 
+// resolveBoundFrameTypeName reports false for an in-scope type parameter that has no binding.
+func (vm *VM) resolveBoundFrameTypeName(name string) (string, bool) {
+	if len(vm.frames) == 0 {
+		return name, true
+	}
+	frame := &vm.frames[len(vm.frames)-1]
+	if bound, ok := frame.typeBindings[name]; ok {
+		return bound, true
+	}
+	if frame.meta == nil {
+		return name, true
+	}
+	return name, !frame.meta.typeParams[strings.ToLower(name)]
+}
+
 func (vm *VM) classInfo(name string) (ClassInfo, bool) {
 	if cached, ok := vm.classInfoNameCache[name]; ok {
 		return cached, true
@@ -1611,7 +1627,7 @@ func (vm *VM) checkTypeParamConstraints(instruction Instruction, function *Funct
 		}
 		classInfo, found := vm.classInfo(boundName)
 		if !vm.constraintExprSatisfied(boundName, classInfo, found, expr) {
-			return vm.runtimeError(instruction, "type %s does not satisfy constraint %s for type parameter %s", boundName, stripOuterConstraintParens(strings.TrimSpace(expr)), paramName)
+			return vm.typedFault(instruction, "TypeError", fmt.Sprintf("type %s does not satisfy constraint %s for type parameter %s", boundName, stripOuterConstraintParens(strings.TrimSpace(expr)), paramName))
 		}
 	}
 	return nil

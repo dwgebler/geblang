@@ -1,7 +1,6 @@
 /**
  * @title Error model: catchable runtime faults vs FatalError
- * @summary Implicit runtime faults (division by zero, index out of
- * range, conversion failure) are catchable RuntimeError on both
+ * @summary Implicit runtime faults are catchable on both
  * backends. FatalError is a distinct, non-Error class that no
  * try/catch intercepts (the uncatchable behaviour is proven by the
  * Go parity test TestParityFatalErrorUncatchable, since catching it
@@ -20,14 +19,14 @@ class ErrorModelTest extends test.Test {
         this.assertThrowsOf(func(): void {
             let xs = [1, 2];
             let y = xs[9];
-        }, "RuntimeError");
+        }, "ValueError");
     }
 
     @test
     func conversionFailureIsCatchable(): void {
         this.assertThrowsOf(func(): void {
             let n = "abc".toInt();
-        }, "RuntimeError");
+        }, "ValueError");
     }
 
     @test
@@ -64,7 +63,7 @@ class ErrorModelTest extends test.Test {
         let threw = false;
         try {
             ["alpha"].map(func(string w): int { return w as int; });
-        } catch (RuntimeError e) {
+        } catch (ValueError e) {
             threw = true;
             this.assertEquals("invalid integer literal \"alpha\"", e.message);
         }

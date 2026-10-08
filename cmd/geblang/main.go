@@ -1241,13 +1241,14 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 	applyManifestCapabilities(filepath.Dir(sourcePath))
 	memwatch.Start()
 	// Keep advisory analysis warnings off the program's stdout (stderr instead).
-	analyze := crossModuleAnalyzer(sourcePath, program, modules.NewResolver([]string{filepath.Dir(sourcePath)}), os.Stderr, "warning: ")
+	scriptResolver := modules.NewResolver([]string{filepath.Dir(sourcePath)})
+	analyze := crossModuleAnalyzer(sourcePath, program, scriptResolver, os.Stderr, "warning: ")
 	// On the VM path the cross-module analysis runs inside the compile
 	// (cache-miss) step; track whether it ran so the eval fallback does
 	// not re-run it.
 	analyzedDuringCompile := false
 	if mode != executionEvaluatorOnly {
-		chunk, err := loadOrCompileBytecode(sourcePath, source, program, analyze)
+		chunk, err := loadOrCompileBytecode(sourcePath, source, program, analyze, scriptResolver)
 		analyzedDuringCompile = true
 		if err == nil {
 			traceExecution(trace, "vm", "")
@@ -1263,14 +1264,16 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 			loaderOpts := bcloader.Options{
 				Compile: func(canonical, sp string, src []byte, prog *ast.Program, modPaths []string) (bytecode.Chunk, error) {
 					resolverPaths := append([]string{filepath.Dir(sp)}, modPaths...)
-					an := crossModuleAnalyzer(sp, prog, modules.NewResolver(resolverPaths), stdout, fmt.Sprintf("warning: module %s: ", canonical))
-					return loadOrCompileBytecode(sp, src, prog, an)
+					moduleResolver := modules.NewResolver(resolverPaths)
+					an := crossModuleAnalyzer(sp, prog, moduleResolver, stdout, fmt.Sprintf("warning: module %s: ", canonical))
+					return loadOrCompileBytecode(sp, src, prog, an, moduleResolver)
 				},
 				LookupBuiltin: func(canonical, alias string) *runtime.Module {
 					return stateful.BuiltinModule(canonical, alias)
 				},
 			}
 			loader := bcloader.New(stdout, basePaths, stateful, loaderOpts)
+			bytecode.ResolveClassTypeAliases(&chunk, bcloader.SourceTypeAliasLookup(program, "", basePaths))
 			loader.SetMainChunk(chunk)
 			vm := bytecode.NewVMWithModuleLoader(chunk, stdout, loader)
 			defer vm.Cleanup()
@@ -1896,7 +1899,7 @@ func crossModuleAnalyzer(sourcePath string, program *ast.Program, resolver *modu
 	}
 }
 
-func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Program, analyze func() error) (bytecode.Chunk, error) {
+func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Program, analyze func() error, resolver *modules.Resolver) (bytecode.Chunk, error) {
 	cacheDir := bytecodeCacheDir()
 	cachePath := bytecode.CachePath(cacheDir, sourcePath, source, version)
 	// --no-assert mutates the compiled chunk in a way the cache key
@@ -1905,7 +1908,7 @@ func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Pro
 	if !bytecode.AssertionsDisabled {
 		if data, err := os.ReadFile(cachePath); err == nil {
 			chunk, err := bytecode.Decode(data)
-			if err == nil && chunk.Compiler == version && chunk.SourceHash == bytecode.SourceHash(source) && bytecode.EmbedsFresh(chunk, sourcePath) {
+			if err == nil && chunk.Compiler == version && chunk.SourceHash == bytecode.SourceHash(source) && bytecode.EmbedsFresh(chunk, sourcePath) && bytecode.TypeAliasDepsFresh(chunk, check.TypeAliasLookup(astProgram, resolver, nil)) {
 				return chunk, nil
 			}
 		}
@@ -1917,7 +1920,7 @@ func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Pro
 			return bytecode.Chunk{}, err
 		}
 	}
-	chunk, err := bytecode.CompileWithOptions(astProgram, source, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols()})
+	chunk, err := bytecode.CompileWithOptions(astProgram, source, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols(), TypeAliasLookup: check.TypeAliasLookup(astProgram, resolver, nil)})
 	if err != nil {
 		return bytecode.Chunk{}, err
 	}

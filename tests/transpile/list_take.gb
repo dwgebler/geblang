@@ -36,6 +36,6 @@ try {
 }
 try {
     ys.takeAt(5);
-} catch (RuntimeError e) {
+} catch (ValueError e) {
     io.println(e.message);
 }

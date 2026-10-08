@@ -19,7 +19,7 @@ class ReifiedRuntimeTest extends test.Test {
         list<any> src = [1, "two", 3];
         try {
             list<int> bad = src;
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
         }
         this.assertTrue(threw);
@@ -31,7 +31,7 @@ class ReifiedRuntimeTest extends test.Test {
         dict<string, any> src = {"a": "not an int"};
         try {
             dict<string, int> bad = src;
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
         }
         this.assertTrue(threw);
@@ -51,7 +51,7 @@ class ReifiedRuntimeTest extends test.Test {
         list<list<any>> src = [[1, 2], [3, "four"]];
         try {
             list<list<int>> bad = src;
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
         }
         this.assertTrue(threw);

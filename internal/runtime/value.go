@@ -831,6 +831,8 @@ type Module struct {
 	Name      string
 	Canonical string
 	Exports   map[string]Value
+	// TypeAliases maps exported `type` aliases to their target, with module qualifiers canonical.
+	TypeAliases map[string]string
 }
 
 func (v *Module) TypeName() string { return "module" }

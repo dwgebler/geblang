@@ -1,0 +1,67 @@
+module llm.contract;
+
+/**
+ * Provider-agnostic LLM client. One interface for chat
+ * completions, text embeddings, image analysis, and image
+ * generation across OpenAI, Anthropic, and AWS Bedrock.
+ *
+ * Choose a provider through `llm.client({"provider": "..."})`;
+ * the rest of the calling code stays the same regardless of which
+ * backend is wired up.
+ *
+ *     let c = llm.client({"provider": "anthropic", "apiKey": key});
+ *     let resp = c.chat([
+ *         {"role": "user", "content": "Summarise this..."}
+ *     ], {"model": "claude-opus-4-8", "maxTokens": 1024});
+ *     io.println(resp["content"]);
+ *
+ * The model field is a free-form string; pass whatever name the
+ * provider exposes. Providers do not validate it locally, so the
+ * caller is responsible for picking a model the account has
+ * access to.
+ */
+export interface Client {
+    /** Run a chat completion against `messages`. Each message is
+     *  a dict with `role` (one of "user", "assistant", "system")
+     *  and `content` (string). Returns
+     *  `{content, model, stopReason, usage}` where usage has
+     *  `inputTokens`, `outputTokens`, `totalTokens`. */
+    func chat(list<dict<string, any>> messages, dict<string, any> opts): dict<string, any>;
+
+    /** Embed a single text string into a dense vector.
+     *  Returns `{vector, model, usage}` with usage containing
+     *  `inputTokens`. */
+    func embed(string text, dict<string, any> opts): dict<string, any>;
+
+    /** Multimodal image analysis. `image` is the raw bytes of a
+     *  PNG / JPEG / WebP; `prompt` is the user instruction. Returns
+     *  the same shape as `chat` (content, model, usage). */
+    func analyzeImage(bytes image, string prompt, dict<string, any> opts): dict<string, any>;
+
+    /** Generate one or more images for `prompt`. Returns
+     *  `{images, model}` where `images` is a list of
+     *  `{bytes, format}` dicts (format is "png" / "jpeg"). */
+    func generateImage(string prompt, dict<string, any> opts): dict<string, any>;
+
+    /** List the models available to this account. Returns a list of
+     *  dicts, each with at least `id` plus provider-specific fields.
+     *  Default throws; providers with a listing endpoint override it. */
+    func models(): list<dict<string, any>> {
+        throw RuntimeError("llm: this client does not support models()");
+    }
+
+    /** Embed several texts in one call. Returns
+     *  `{vectors, model, usage}` where `vectors` is aligned to
+     *  `texts`. Default throws; providers with embeddings override it. */
+    func embedBatch(list<string> texts, dict<string, any> opts): dict<string, any> {
+        throw RuntimeError("llm: this client does not support embedBatch()");
+    }
+
+    /** Streaming chat. `callback` is invoked with each incremental
+     *  content delta (a string) as it arrives; returns the assembled
+     *  `{content, model, stopReason, usage}` once the stream ends.
+     *  Default throws; providers with streaming override it. */
+    func chatStream(list<dict<string, any>> messages, dict<string, any> opts, callable callback): dict<string, any> {
+        throw RuntimeError("llm: this client does not support chatStream()");
+    }
+}

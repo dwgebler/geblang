@@ -128,6 +128,8 @@ func lintMarkStatementIdentifiers(stmt ast.Statement, imports map[string]*lintIm
 		for _, member := range s.Members {
 			lintMarkStatementIdentifiers(member, imports)
 		}
+	case *ast.TypeAliasStatement:
+		lintMarkTypeRef(s.Type, imports)
 	case *ast.InterfaceStatement:
 		for _, typ := range s.Parents {
 			lintMarkTypeRef(typ, imports)

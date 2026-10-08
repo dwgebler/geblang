@@ -98,7 +98,7 @@ func runTestFileEvaluator(prep *preparedTest, allowFFI []string) (int64, int64, 
 func runTestFileVM(prep *preparedTest, path string, allowFFI []string) (int64, int64, int64, error) {
 	var out strings.Builder
 	basePaths := []string{prep.dir}
-	chunk, err := bytecode.CompileWithOptions(prep.program, prep.source, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols()})
+	chunk, err := bytecode.CompileWithOptions(prep.program, prep.source, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols(), TypeAliasLookup: check.TypeAliasLookup(prep.program, modules.NewResolver([]string{prep.dir}), nil)})
 	if err != nil {
 		return 0, 0, 0, vmTestCompileError(err)
 	}
@@ -115,14 +115,16 @@ func runTestFileVM(prep *preparedTest, path string, allowFFI []string) (int64, i
 		Compile: func(canonical, sp string, src []byte, prog *ast.Program, modPaths []string) (bytecode.Chunk, error) {
 			resolverPaths := append([]string{filepath.Dir(sp)}, modPaths...)
 			// Imported-module warnings go to stderr so the captured test output stays clean.
-			an := crossModuleAnalyzer(sp, prog, modules.NewResolver(resolverPaths), os.Stderr, fmt.Sprintf("warning: module %s: ", canonical))
-			return loadOrCompileBytecode(sp, src, prog, an)
+			moduleResolver := modules.NewResolver(resolverPaths)
+			an := crossModuleAnalyzer(sp, prog, moduleResolver, os.Stderr, fmt.Sprintf("warning: module %s: ", canonical))
+			return loadOrCompileBytecode(sp, src, prog, an, moduleResolver)
 		},
 		LookupBuiltin: func(canonical, alias string) *runtime.Module {
 			return stateful.BuiltinModule(canonical, alias)
 		},
 	}
 	loader := bcloader.New(&out, basePaths, stateful, loaderOpts)
+	bytecode.ResolveClassTypeAliases(&chunk, bcloader.SourceTypeAliasLookup(prep.program, "", basePaths))
 	loader.SetMainChunk(chunk)
 	vm := bytecode.NewVMWithModuleLoader(chunk, &out, loader)
 	defer vm.Cleanup()

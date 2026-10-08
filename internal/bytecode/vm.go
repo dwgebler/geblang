@@ -95,6 +95,7 @@ type VM struct {
 	generatorYield       chan vmGeneratorItem
 	generatorDone        <-chan struct{}
 	typeSpecCache        map[string]vmTypeSpec
+	typeAliasCache       map[typeAliasKey]typeAliasEntry
 	typeAssertSpecs      map[int64]vmTypeSpec
 	callArgsFree         [][]runtime.Value
 	// pendingTypeBindings carries an inherited type-binding map from a
@@ -293,6 +294,8 @@ type callFrame struct {
 	generator      chan vmGeneratorItem
 	generatorDone  <-chan struct{}
 	functionName   string
+	meta           *frameMeta
+	returnBindings map[string]string
 	callLine       int // callLine is the frame's entry call site; stable across tail reuse.
 	// tailRepeat/tailCallLine track self-tail-call frame reuse for the [xN] trace collapse.
 	tailRepeat       int
@@ -1324,7 +1327,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			result, err := vm.contains(needle, container)
 			if err != nil {
-				return vm.runtimeError(*instruction, "%s", err.Error())
+				return vm.callPropagate(*instruction, err)
 			}
 			vm.push(result)
 		case OpSetIndex:
@@ -2150,7 +2153,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			b, ok := value.AsBool()
 			if !ok {
-				return vm.runtimeError(*instruction, "jump condition must be bool")
+				return vm.typedFault(*instruction, "TypeError", fmt.Sprintf("condition must be bool, got %s", value.ToValue().TypeName()))
 			}
 			if !b {
 				ip = int(instruction.Operands[0]) - 1
@@ -2188,6 +2191,9 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			// generator channel.
 			frameIdx := len(vm.frames) - 1
 			slot := &vm.frames[frameIdx]
+			if meta := slot.meta; meta != nil && meta.returnSpec != nil && !(meta.returnSpec.kind == vmTypeInt && valueVM.Kind == runtime.VMKindSmallInt) && !vm.matchVMValueToTypeSpecWith(meta.typeParams, slot.returnBindings, valueVM, *meta.returnSpec) {
+				return vm.typedFault(*instruction, "TypeError", fmt.Sprintf("%s expects %s return, got %s", slot.functionName, vm.expandTypeAliases(meta.returnSpec.raw), vm.descriptiveRuntimeTypeName(valueVM.ToValue())))
+			}
 			returnIP := slot.returnIP
 			returnOverride := slot.returnOverride
 			isErrorClass := slot.isErrorClass
@@ -2457,10 +2463,14 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					if !pOK || !tOK {
 						return vm.runtimeError(*instruction, "OpSetTypeBindings: constants must be strings")
 					}
+					resolved, bound := vm.resolveBoundFrameTypeName(typeName.Value)
+					if !bound {
+						continue
+					}
 					if instance.TypeBindings == nil {
 						instance.TypeBindings = map[string]string{}
 					}
-					instance.TypeBindings[paramName.Value] = vm.resolveFrameTypeName(typeName.Value)
+					instance.TypeBindings[paramName.Value] = resolved
 				}
 			}
 		case OpPlantCallTypeBindings:
@@ -2492,7 +2502,9 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				if !pOK || !tOK {
 					return vm.runtimeError(*instruction, "OpPlantCallTypeBindings: constants must be strings")
 				}
-				vm.pendingTypeBindings[paramName.Value] = vm.resolveFrameTypeName(typeName.Value)
+				if resolved, bound := vm.resolveBoundFrameTypeName(typeName.Value); bound {
+					vm.pendingTypeBindings[paramName.Value] = resolved
+				}
 			}
 		case OpPlantCallTypeArgs:
 			if len(instruction.Operands) < 1 {
@@ -2533,11 +2545,11 @@ func (vm *VM) boolXor(instruction Instruction) error {
 	}
 	l, ok := left.(runtime.Bool)
 	if !ok {
-		return vm.runtimeError(instruction, "left operand must be bool")
+		return vm.typedFault(instruction, "TypeError", "left operand must be bool")
 	}
 	r, ok := right.(runtime.Bool)
 	if !ok {
-		return vm.runtimeError(instruction, "right operand must be bool")
+		return vm.typedFault(instruction, "TypeError", "right operand must be bool")
 	}
 	vm.push(runtime.Bool{Value: l.Value != r.Value})
 	return nil
@@ -2553,7 +2565,7 @@ func (vm *VM) not(instruction Instruction, ip int) (int, error) {
 	}
 	boolValue, ok := value.(runtime.Bool)
 	if !ok {
-		return 0, vm.runtimeError(instruction, "! expects bool")
+		return 0, vm.typedFault(instruction, "TypeError", fmt.Sprintf("! expects bool, got %s", value.TypeName()))
 	}
 	vm.push(runtime.Bool{Value: !boolValue.Value})
 	return ip, nil
@@ -2588,7 +2600,7 @@ func (vm *VM) negate(instruction Instruction, ip int) (int, error) {
 			vm.push(result)
 			return ip, nil
 		}
-		return 0, vm.runtimeError(instruction, "- expects numeric value, got %s", value.TypeName())
+		return 0, vm.typedFault(instruction, "TypeError", fmt.Sprintf("- expects numeric value, got %s", value.TypeName()))
 	}
 	return ip, nil
 }
@@ -2981,6 +2993,9 @@ func (vm *VM) importFrom(instruction Instruction) error {
 		} else {
 			v, ok := module.Exports[name]
 			if !ok {
+				if _, isAlias := module.TypeAliases[name]; isAlias {
+					continue
+				}
 				return vm.runtimeError(instruction, "from %s import %s: %s is not exported", canonical, name, name)
 			}
 			value = v
@@ -3347,7 +3362,7 @@ func (vm *VM) binaryNumericValues(instruction Instruction, left runtime.Value, r
 		vm.push(result)
 		return nil
 	}
-	return vm.runtimeError(instruction, "%s", native.UnsupportedOperandsError(binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName()).Error())
+	return vm.callPropagate(instruction, native.UnsupportedOperandsError(binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName()))
 }
 
 func intToFloatVal(v runtime.Value) runtime.Float {
@@ -3358,7 +3373,7 @@ func intToFloatVal(v runtime.Value) runtime.Float {
 // decimalFloatArithError reports the precision wall: arithmetic mixing decimal
 // and float, which would silently lose decimal exactness. Comparisons are fine.
 func (vm *VM) decimalFloatArithError(instruction Instruction, left, right runtime.Value) error {
-	return vm.runtimeError(instruction, "cannot mix decimal and float in %s (got %s and %s): cast one side - 'as float' drops decimal exactness, 'as decimal' adopts the float's imprecision", binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName())
+	return vm.typedFault(instruction, "TypeError", fmt.Sprintf("cannot mix decimal and float in %s (got %s and %s): cast one side - 'as float' drops decimal exactness, 'as decimal' adopts the float's imprecision", binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName()))
 }
 
 // compareJumpIntFallback handles the fused integer compare-and-branch opcodes
@@ -3736,6 +3751,16 @@ func binaryOpSymbol(op Op) string {
 		return "%"
 	case OpPow:
 		return "**"
+	case OpBitAnd:
+		return "&"
+	case OpBitOr:
+		return "|"
+	case OpBitXor:
+		return "^"
+	case OpLShift:
+		return "<<"
+	case OpRShift:
+		return ">>"
 	default:
 		return fmt.Sprintf("opcode %d", op)
 	}
@@ -4005,13 +4030,8 @@ func (vm *VM) add(instruction Instruction, ip int) (int, error) {
 	if nextIP, handled, err := vm.callBinaryOperatorMethod(instruction, ip, leftV, rightV); handled || err != nil {
 		return nextIP, err
 	}
-	if l, ok := leftV.(runtime.String); ok {
-		r, ok := rightV.(runtime.String)
-		if !ok {
-			return 0, vm.runtimeError(instruction, "right operand must be string")
-		}
-		vm.push(runtime.String{Value: l.Value + r.Value})
-		return ip, nil
+	if _, ok := leftV.(runtime.String); ok {
+		return 0, vm.callPropagate(instruction, native.UnsupportedOperandsError("+", leftV.TypeName(), rightV.TypeName()))
 	}
 	if err := vm.binaryNumericValues(instruction, leftV, rightV); err != nil {
 		return 0, err
@@ -4038,7 +4058,7 @@ func (vm *VM) contains(needle, container runtime.Value) (runtime.Value, error) {
 	case runtime.String:
 		s, ok := needle.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("in: left operand must be a string when the right operand is a string")
+			return nil, runtime.ClassifiedError{Class: "TypeError", Message: "in: left operand must be a string when the right operand is a string"}
 		}
 		return runtime.Bool{Value: strings.Contains(c.Value, s.Value)}, nil
 	case runtime.Range:
@@ -4051,9 +4071,9 @@ func (vm *VM) contains(needle, container runtime.Value) (runtime.Value, error) {
 		if vm.hasInstanceMethod(c, "__contains") {
 			return vm.CallMethod(c, "__contains", []runtime.Value{needle})
 		}
-		return nil, fmt.Errorf("%s does not support 'in' (define __contains)", c.TypeName())
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s does not support 'in' (define __contains)", c.TypeName())}
 	default:
-		return nil, fmt.Errorf("'in' requires a list, dict, set, string, range, or an object with __contains, got %s", container.TypeName())
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("'in' requires a list, dict, set, string, range, or an object with __contains, got %s", container.TypeName())}
 	}
 }
 
@@ -4076,7 +4096,7 @@ func (vm *VM) index(instruction Instruction) error {
 			i = len(value.Elements) + i
 		}
 		if i < 0 || i >= len(value.Elements) {
-			return vm.runtimeError(instruction, "list index out of range")
+			return vm.typedFault(instruction, "ValueError", "list index out of range")
 		}
 		vm.push(value.Elements[i])
 	case runtime.String:
@@ -4090,7 +4110,7 @@ func (vm *VM) index(instruction Instruction) error {
 			i = n + i
 		}
 		if i < 0 || i >= n {
-			return vm.runtimeError(instruction, "string index out of range")
+			return vm.typedFault(instruction, "ValueError", "string index out of range")
 		}
 		vm.push(runtime.String{Value: ri.RuneAt(value.Value, i)})
 	case runtime.Bytes:
@@ -4102,7 +4122,7 @@ func (vm *VM) index(instruction Instruction) error {
 			i = len(value.Value) + i
 		}
 		if i < 0 || i >= len(value.Value) {
-			return vm.runtimeError(instruction, "bytes index out of range")
+			return vm.typedFault(instruction, "ValueError", "bytes index out of range")
 		}
 		vm.push(runtime.NewInt64(int64(value.Value[i])))
 	case runtime.Dict:
@@ -4121,9 +4141,9 @@ func (vm *VM) index(instruction Instruction) error {
 			vm.push(result)
 			return nil
 		}
-		return vm.runtimeError(instruction, "%s is not indexable", left.TypeName())
+		return vm.typedFault(instruction, "TypeError", fmt.Sprintf("%s is not indexable", left.TypeName()))
 	default:
-		return vm.runtimeError(instruction, "%s is not indexable", left.TypeName())
+		return vm.typedFault(instruction, "TypeError", fmt.Sprintf("%s is not indexable", left.TypeName()))
 	}
 	return nil
 }
@@ -4157,7 +4177,7 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 			i = len(value.Elements) + i
 		}
 		if i < 0 || i >= len(value.Elements) {
-			return 0, vm.runtimeError(instruction, "list index out of range")
+			return 0, vm.typedFault(instruction, "ValueError", "list index out of range")
 		}
 		value.Elements[i] = newValue
 	case runtime.Dict:
@@ -4179,9 +4199,9 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 			vm.push(newValue)
 			return ip, nil
 		}
-		return 0, vm.runtimeError(instruction, "%s does not support index assignment", left.TypeName())
+		return 0, vm.typedFault(instruction, "TypeError", fmt.Sprintf("%s does not support index assignment", left.TypeName()))
 	default:
-		return 0, vm.runtimeError(instruction, "%s does not support index assignment", left.TypeName())
+		return 0, vm.typedFault(instruction, "TypeError", fmt.Sprintf("%s does not support index assignment", left.TypeName()))
 	}
 	vm.push(newValue)
 	return ip, nil
@@ -4238,7 +4258,7 @@ func (vm *VM) slice(instruction Instruction) error {
 		}
 		vm.push(runtime.Bytes{Value: out})
 	default:
-		return vm.runtimeError(instruction, "%s is not sliceable", left.TypeName())
+		return vm.typedFault(instruction, "TypeError", fmt.Sprintf("%s is not sliceable", left.TypeName()))
 	}
 	return nil
 }
@@ -4257,7 +4277,7 @@ func sliceIndices(startValue runtime.Value, endValue runtime.Value, stepValue ru
 		step = s
 	}
 	if step == 0 {
-		return nil, fmt.Errorf("slice step cannot be zero")
+		return nil, runtime.ClassifiedError{Class: "ValueError", Message: "slice step cannot be zero"}
 	}
 	if step == 1 {
 		start, end, err := sliceBounds(startValue, endValue, exclusive, length)
@@ -4777,12 +4797,13 @@ func (vm *VM) typeAssert(instruction Instruction) error {
 		spec = vm.typeSpec(typeStr.Value)
 	}
 	if !vm.matchValueToTypeSpec(nil, value, spec) {
-		suffix := vm.collectionMismatchSuffixStr(value, typeStr.Value)
+		declared := vm.expandTypeAliases(typeStr.Value)
+		suffix := vm.collectionMismatchSuffixStr(value, declared)
 		gotName := vm.descriptiveRuntimeTypeName(value)
 		if suffix != "" {
 			gotName = value.TypeName()
 		}
-		return vm.runtimeError(instruction, "type error: cannot assign %s to %s%s", gotName, typeStr.Value, suffix)
+		return vm.typedFault(instruction, "TypeError", fmt.Sprintf("type error: cannot assign %s to %s%s", gotName, declared, suffix))
 	}
 	// Attach the reified element-type tag so reflect.typeBindings() and
 	// `instanceof list<T>` see the declared bindings on the tagged value.
@@ -5616,11 +5637,11 @@ func indexInt(value runtime.Value) (int, error) {
 		return int(v.Value), nil
 	case runtime.Int:
 		if !v.Value.IsInt64() {
-			return 0, fmt.Errorf("index is out of range")
+			return 0, runtime.ClassifiedError{Class: "ValueError", Message: "index is out of range"}
 		}
 		return int(v.Value.Int64()), nil
 	}
-	return 0, fmt.Errorf("index must be int, got %s", value.TypeName())
+	return 0, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("index must be int, got %s", value.TypeName())}
 }
 
 // push wraps a runtime.Value into a VMValue and appends it to the stack.
@@ -5716,7 +5737,7 @@ func (vm *VM) bitwiseInfix(instruction Instruction, ip int) (int, error) {
 	lb, lok := native.IntValueToBigInt(left)
 	rb, rok := native.IntValueToBigInt(right)
 	if !lok || !rok {
-		return 0, vm.runtimeError(instruction, "bitwise operators require int operands, got %s and %s", left.TypeName(), right.TypeName())
+		return 0, vm.callPropagate(instruction, native.UnsupportedOperandsError(binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName()))
 	}
 	var result *big.Int
 	switch instruction.Op {
@@ -5728,12 +5749,12 @@ func (vm *VM) bitwiseInfix(instruction Instruction, ip int) (int, error) {
 		result = new(big.Int).Xor(lb, rb)
 	case OpLShift:
 		if !rb.IsUint64() {
-			return 0, vm.runtimeError(instruction, "shift amount must be a non-negative int")
+			return 0, vm.typedFault(instruction, "ValueError", fmt.Sprintf("shift amount must be a non-negative int, got %s", rb.String()))
 		}
 		result = new(big.Int).Lsh(lb, uint(rb.Uint64()))
 	case OpRShift:
 		if !rb.IsUint64() {
-			return 0, vm.runtimeError(instruction, "shift amount must be a non-negative int")
+			return 0, vm.typedFault(instruction, "ValueError", fmt.Sprintf("shift amount must be a non-negative int, got %s", rb.String()))
 		}
 		result = new(big.Int).Rsh(lb, uint(rb.Uint64()))
 	}
@@ -5765,7 +5786,7 @@ func (vm *VM) bitwiseNot(instruction Instruction, ip int) (int, error) {
 	}
 	intVal, ok := native.IntValueToBigInt(value)
 	if !ok {
-		return 0, vm.runtimeError(instruction, "~ requires int, got %s", value.TypeName())
+		return 0, vm.typedFault(instruction, "TypeError", fmt.Sprintf("~ expects int, got %s", value.TypeName()))
 	}
 	result := new(big.Int).Not(intVal)
 	if result.IsInt64() {
@@ -6104,11 +6125,28 @@ func (vm *VM) runtimeError(instruction Instruction, format string, args ...any) 
 	}
 }
 
+func (vm *VM) typedFault(instruction Instruction, class, message string) error {
+	value := vm.withErrorStackTrace(runtime.Error{Class: class, Message: message}, int(instruction.Line))
+	return vmThrownError{err: value}
+}
+
 // callPropagate keeps a callee's sys.exit terminating instead of reframing it as a runtime fault.
 func (vm *VM) callPropagate(instruction Instruction, err error) error {
 	var exitErr ExitError
 	if errors.As(err, &exitErr) {
 		return exitErr
+	}
+	var thrown vmThrownError
+	if errors.As(err, &thrown) {
+		return thrown
+	}
+	var typed vmTypedError
+	if errors.As(err, &typed) {
+		return vm.typedFault(instruction, typed.class, typed.message)
+	}
+	var classified runtime.TypedError
+	if errors.As(err, &classified) {
+		return vm.typedFault(instruction, classified.ErrorClass(), runtime.NewRecoverableError(err).Message)
 	}
 	return vm.runtimeError(instruction, "%s", err.Error())
 }

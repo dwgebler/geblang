@@ -1,5 +1,6 @@
 module llm.anthropic;
 
+import llm.contract;
 import bytes;
 import encoding;
 import http;
@@ -15,7 +16,7 @@ import json;
  * abstraction can fail fast and let callers route around the
  * limitation (e.g. embed via OpenAI, then chat via Anthropic).
  */
-export class AnthropicClient {
+export class AnthropicClient implements contract.Client {
     string apiKey;
     string endpoint;
     string apiVersion;

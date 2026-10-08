@@ -101,6 +101,14 @@ func (s *cloneState) cloneEnvironment(env *Environment) *Environment {
 	cloned := &Environment{}
 	s.envs[env] = cloned
 	cloned.outer = s.cloneEnvironment(env.outer)
+	env.mu.RLock()
+	if len(env.typeAliases) > 0 {
+		cloned.typeAliases = make(map[string]*ast.TypeRef, len(env.typeAliases))
+		for name, target := range env.typeAliases {
+			cloned.typeAliases[name] = target
+		}
+	}
+	env.mu.RUnlock()
 	// The memo above breaks recursion before any re-entry into this
 	// environment, so visiting under the read lock cannot self-deadlock.
 	env.ForEachBinding(func(name string, binding Binding) {

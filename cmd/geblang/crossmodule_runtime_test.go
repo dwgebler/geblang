@@ -201,7 +201,7 @@ export func main(list<string> args): void {
     try {
         bytes.toString(bytes.fromHex("61ff62"));
         io.println("accepted");
-    } catch (RuntimeError e) {
+    } catch (ValueError e) {
         io.println(e.getMessage().contains("not valid UTF-8"));
     }
 }

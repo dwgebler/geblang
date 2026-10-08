@@ -26,7 +26,7 @@ class AnyReturnTypedContextTest extends test.Test {
         let threw = false;
         try {
             wantInt(opaque("nope"));
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
             this.assertEquals("wantInt expects int for parameter 'n', got string", e.message);
         }
@@ -40,7 +40,7 @@ class AnyReturnTypedContextTest extends test.Test {
         let threw = false;
         try {
             let bad = Box<string>(opaque(42));
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
         }
         this.assertTrue(threw);

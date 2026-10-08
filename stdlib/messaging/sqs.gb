@@ -1,5 +1,6 @@
 module messaging.sqs;
 
+import messaging.contract;
 import bytes;
 import crypt;
 import datetime;
@@ -12,12 +13,8 @@ import json;
  * API (query-string-form Action calls) signed with AWS Signature
  * V4. No long-lived connection: each call is an independent HTTPS
  * request to the queue URL.
- *
- * Duck-types `messaging.MessageQueue`; the explicit `implements`
- * clause is omitted to break a parser-level circular import (the
- * facade module imports this one to dispatch by driver).
  */
-export class SqsQueue {
+export class SqsQueue implements contract.MessageQueue {
     string queueUrl;
     string region;
     string accessKey;
@@ -100,7 +97,7 @@ export class SqsQueue {
          * persistent connections (RabbitMQ, Kafka). */
     }
 
-    func request(string method, string params): dict<string, any> {
+    func request(string method, string params): http.Response {
         string host = hostFromUrl(this.queueUrl);
         string path = pathFromUrl(this.queueUrl);
         let now = datetime.nowUnix();

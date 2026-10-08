@@ -17,13 +17,13 @@ let invalid = bytes.fromHex("61ff62");
 try {
     bytes.toString(invalid);
     io.println("module accepted");
-} catch (RuntimeError e) {
+} catch (ValueError e) {
     io.println(e.getMessage().contains("not valid UTF-8"));
 }
 try {
     invalid.toString();
     io.println("method accepted");
-} catch (RuntimeError e) {
+} catch (ValueError e) {
     io.println(e.getMessage().contains("not valid UTF-8"));
 }
 `, "true\ntrue\n")

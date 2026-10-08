@@ -197,7 +197,7 @@ func (l *Lowerer) emitListTake(name string, obj ast.Expression, sliceTy, elemTy 
 	case "takeAt":
 		l.w.WriteString("__i := int(")
 		l.lowerExpression(args[0].Value)
-		l.w.WriteString("); if __i < 0 { __i += len(*__p) }; if __i < 0 || __i >= len(*__p) { panic(transpilert.NewError(\"RuntimeError\", \"list.takeAt: index out of range\")) }; ")
+		l.w.WriteString("); if __i < 0 { __i += len(*__p) }; if __i < 0 || __i >= len(*__p) { panic(transpilert.NewError(\"ValueError\", \"list.takeAt: index out of range\")) }; ")
 	default:
 		l.w.WriteString("if len(*__p) == 0 { panic(transpilert.NewError(\"ValueError\", \"list." + name + " on empty list\")) }; __i := 0; ")
 		if name == "takeLast" {

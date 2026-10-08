@@ -35,7 +35,7 @@ class ConstraintUnionsTest extends test.Test {
         let threw = false;
         try {
             bare(true);
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
             this.assertEquals("type bool does not satisfy constraint string|int for type parameter T", e.message);
         }
@@ -55,7 +55,7 @@ class ConstraintUnionsTest extends test.Test {
         let threw = false;
         try {
             let bad = Holder(true);
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
         }
         this.assertTrue(threw);

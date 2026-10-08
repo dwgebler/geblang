@@ -40,13 +40,13 @@ func relay(string|int v): string {
     return label(v);
 }
 func nullable(?string|int v): string {
-    return typeof(v);
+    return typeof(v) as string;
 }
 func widen(string|int v): string {
     return nullable(v);
 }
 func wide(string|int|bool v): string {
-    return typeof(v);
+    return typeof(v) as string;
 }
 func subset(string|int v): string {
     return wide(v);
@@ -61,7 +61,7 @@ func narrowed(string|int v): int {
     return -1;
 }
 func generic(list<int>|string v): string {
-    return typeof(v);
+    return typeof(v) as string;
 }
 func genericRelay(list<int>|string v): string {
     return generic(v);
@@ -87,7 +87,7 @@ let lambda = func(string|int v): string { return label(v); };
 io.println(lambda(8));
 try {
     onlyInt(relay(1) as any);
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println(e.message);
 }
 `)

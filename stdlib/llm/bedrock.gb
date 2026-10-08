@@ -1,5 +1,6 @@
 module llm.bedrock;
 
+import llm.contract;
 import bytes;
 import crypt;
 import datetime;
@@ -21,7 +22,7 @@ import json;
  * needing them can use the raw `invoke()` helper to POST a
  * provider-specific payload to InvokeModel directly.
  */
-export class BedrockClient {
+export class BedrockClient implements contract.Client {
     string region;
     string accessKey;
     string secretKey;

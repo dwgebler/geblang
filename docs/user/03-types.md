@@ -162,6 +162,10 @@ exact types from silent precision loss:
   fast but drops the decimal's exactness; `as decimal` keeps an exact type but
   adopts the float's binary imprecision.
 
+An integer literal written where a `float` or `decimal` is expected takes that
+type: `float f = 3;` stores the `float` `3`, and `return 2;` in a function
+declared `decimal` returns the `decimal` `2.0000000000`.
+
 Because `/` is true division, its result is a `decimal` (or `float`) even when it
 divides evenly, so `int n = a / b` is a compile-time error. Use `//` (floor
 division) for an integer result, `int n = a // b`, or truncate explicitly with
@@ -251,13 +255,13 @@ func lookup(string key): User | NotFoundError {
 ```
 
 When a mismatching value reaches the function boundary, the runtime
-throws a `RuntimeError` with the expected and actual types:
+throws a `TypeError` with the expected and actual types:
 
 ```
 get expects int | string for parameter 'id', got bool
 ```
 
-Catch with the standard `try` / `catch (RuntimeError e)` form - but only when
+Catch with `try` / `catch (TypeError e)` - but only when
 the mismatch is genuinely runtime-opaque (the value arrives through an
 `any`-typed or otherwise dynamic path). A bad value the compiler can already
 see at the call site (`get(true)`) is reported as a static error and aborts
@@ -284,11 +288,38 @@ func double(int n): int { return n * 2; }
 func twice(int | string v): int { return double(v); }
 
 twice(21);      # 42
-twice("x");     # RuntimeError: double expects int for parameter 'n', got string
+twice("x");     # TypeError: double expects int for parameter 'n', got string
 ```
 
 A call is only a static error when no branch of the union could match
 the parameter.
+
+### Runtime return checks
+
+Every return annotation other than `void` and `any` is checked at runtime,
+using the same rules as parameter checks. This covers primitives, collections
+and their element types, classes, interfaces, enums, `func`, unions, and
+nullable types. A mismatch the compiler cannot see raises a `TypeError`:
+
+```gb
+interface Shape { func area(): int; }
+class Dog { func Dog() {} }
+
+func ids(list raw): list<int> { return raw; }
+func first(list items): Shape { return items[0]; }
+
+ids(["a"]);       # TypeError: ids expects list<int> return, got list<string>
+first([Dog()]);   # TypeError: first expects Shape return, got Dog
+```
+
+A function that falls off the end without returning returns `null`, which
+fails a non-nullable return annotation such as `Dog` or `int`.
+
+A return type that is a bare type parameter `T` is checked against the type
+bound for it: the receiver's binding (`Box<string>`) or an explicit call type
+argument (`first<string>(...)`). When `T` is unbound, any value is accepted.
+A type parameter nested inside a collection, such as `list<T>`, is not checked
+element by element. Generator functions are not checked.
 
 ## Casts And Type Checks
 
@@ -441,10 +472,10 @@ type error: cannot assign list<string> to list<int>
 If you need a custom error message you can inspect elements yourself before
 calling or assigning.
 
-These checks do not make primitive collections permanently typed containers.
-After a value has been accepted at a boundary, normal collection mutation
-methods still operate on the mutable runtime value. Re-check at the next typed
-boundary, or validate before mutation when the collection is shared widely.
+Typed boundaries attach a tag to primitive collections. Direct writes check
+that tag, including writes through a wider type such as `list<any>`. Nested
+collection writes check only the outer element kind; re-check nested values at
+a typed boundary when their inner element types matter.
 
 ### Reified generics on user-defined classes
 
@@ -587,7 +618,13 @@ type Money = decimal;
 type IntList = int[];
 ```
 
-Aliases document intent but do not create distinct runtime types.
+Aliases document intent but do not create distinct runtime types. An alias
+means exactly its target everywhere a type is written, including `instanceof`
+and `as`, and an alias declared without type arguments can be given some:
+`type Rows = list;` makes `Rows<int>` mean `list<int>`.
+
+An alias is private to the module that declares it. Use `export type` to make
+an alias available to importers (see Modules And Packages).
 
 ## Ranges and lists
 
@@ -759,7 +796,7 @@ class Box<T> {
 }
 
 let ok  = Box<string>("hello");   # fine
-let bad = Box<string>(42);        # RuntimeError: Box expects T for parameter 'value', got int
+let bad = Box<string>(42);        # TypeError: Box expects T for parameter 'value', got int
 ```
 
 Subtype arguments still pass (`Pen<Animal>(Dog())` is fine), and a call
@@ -774,7 +811,7 @@ same way, against the instance's reified bindings:
 
 ```gb
 let b = Box<string>("hello");
-b.put(42);    # RuntimeError: Box.put expects T for parameter 'value', got int
+b.put(42);    # TypeError: Box.put expects T for parameter 'value', got int
 ```
 
 This applies to inherited methods too: with `class IntBox extends Box<int>`,
@@ -886,8 +923,8 @@ list<int> ints = [1, 2, 3];
 countStrings(ints);    # static + runtime error: list<int> is not list<string>
 ```
 
-Covariant passing is *sound* because every typed collection carries its
-reified element tag and enforces it on every write - `push`, `insert`,
+Direct covariant writes are checked against the collection's reified element
+tag - `push`, `insert`,
 `prepend`, `unshift`, index assignment, `list.set`, dict key and value
 writes, and `set.add`. A function that received your `list<Dog>` through a
 `list<Animal>` parameter cannot smuggle a `Cat` into it; the write throws
@@ -913,11 +950,13 @@ The write barrier checks the *outer* element type only. Writing into a
 ints (declaration-time element checking goes deeper; per-write checking
 is shallow to keep mutation cheap).
 
-Covariance is convenient but, combined with mutation, is not fully
-sound: a function that takes `list<Animal>` could insert a `Cat` into a
-list the caller declared as `list<Dog>`. Re-validate at the next typed
-boundary, or copy, when a collection is both shared and mutated across a
-covariant boundary.
+Nested element tags are not fully checked on mutation. A value that is a
+`list<string>` can be pushed into a `list<list<int>>` through a dynamic value;
+the outer write only checks that it is a list. Nullable element tags also
+report the base type through `instanceof` and `reflect.typeBindings`: a
+`list<?int>` containing `null` currently satisfies `instanceof list<int>` and
+reports `T` as `int`. Re-validate nested or nullable contents when those
+distinctions matter.
 
 ### Container types
 
@@ -977,7 +1016,7 @@ func pick<T implements string|int>(T v): T { return v; }
 
 pick(42);      # ok: int branch
 pick("ada");   # ok: string branch
-pick(true);    # RuntimeError: type bool does not satisfy constraint string|int for type parameter T
+pick(true);    # TypeError: type bool does not satisfy constraint string|int for type parameter T
 ```
 
 When the constraint is not an interface, the `implements` keyword can be
@@ -993,7 +1032,7 @@ class Holder<T string|int> {
 }
 
 Holder(7);        # ok, T = int
-Holder(true);     # RuntimeError: constraint violated at construction
+Holder(true);     # TypeError: constraint violated at construction
 ```
 
 ### Generics on methods and interfaces

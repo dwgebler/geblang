@@ -1,0 +1,35 @@
+/**
+ * @title Cross-module concrete return checks
+ * @summary Return annotations on imported functions and inherited methods are checked on both backends.
+ */
+import test;
+import return_check_donor as donor;
+
+class Local implements donor.Shape { func Local() {} func area(): int { return 1; } }
+func mine(list xs): donor.Shape { return xs[0]; }
+
+class ReturnCheckCrossModuleTest extends test.Test {
+    @test
+    func importedFunctionMismatch(): void {
+        this.assertThrowsOf(func(): void { donor.scores(); }, "TypeError", "scores expects dict<string, int> return, got dict<string,string>");
+    }
+
+    @test
+    func ownAndInheritedMethodMismatch(): void {
+        this.assertThrowsOf(func(): void { donor.Base().ids(); }, "TypeError", "Base.ids expects list<int> return, got list<string>");
+        this.assertThrowsOf(func(): void { donor.Sub().ids(); }, "TypeError", "Base.ids expects list<int> return, got list<string>");
+    }
+
+    @test
+    func inheritedClassLiteralWidening(): void {
+        this.assertEquals("float", "${typeof(donor.Sub().ratio())}");
+    }
+
+    @test
+    func crossModuleInterfaceReturns(): void {
+        this.assertTrue(donor.asShape([Local()]) instanceof donor.Shape);
+        this.assertThrowsOf(func(): void { donor.asShape([donor.Dog()]); }, "TypeError", "asShape expects Shape return, got Dog");
+        this.assertTrue(mine([donor.Square()]) instanceof donor.Shape);
+        this.assertThrowsOf(func(): void { mine([donor.Dog()]); }, "TypeError", "mine expects donor.Shape return, got Dog");
+    }
+}

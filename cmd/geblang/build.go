@@ -220,7 +220,7 @@ func runBuild(args []string) {
 					os.Exit(1)
 				}
 			}
-			chunk, err := bytecode.CompileWithOptions(prog, src, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols()})
+			chunk, err := bytecode.CompileWithOptions(prog, src, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols(), TypeAliasLookup: check.TypeAliasLookup(prog, resolver, nil)})
 			if err == nil {
 				encoded, err := bytecode.Encode(chunk)
 				if err == nil {

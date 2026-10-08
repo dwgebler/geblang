@@ -40,7 +40,7 @@ class SubscriptDundersTest extends test.Test {
         let threw = false;
         try {
             let v = p["x"];
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
         }
         this.assertTrue(threw);

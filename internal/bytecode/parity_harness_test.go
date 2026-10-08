@@ -38,14 +38,17 @@ func newHarnessLoader(stdout io.Writer, stateful bytecode.StatefulNativeCaller) 
 				d := diags[0]
 				return bytecode.Chunk{}, fmt.Errorf("fold module %s: %s:%d:%d: %s", canonical, sourcePath, d.Line, d.Column, d.Message)
 			}
-			if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
+			aliases := bcloader.SourceTypeAliasLookup(program, canonical, append([]string{filepath.Dir(sourcePath)}, modulePaths...))
+			analyzer := semantic.New()
+			analyzer.SetTypeAliasLookup(aliases)
+			if diagnostics := analyzer.Analyze(program); len(diagnostics) > 0 {
 				messages := make([]string, 0, len(diagnostics))
 				for _, d := range diagnostics {
 					messages = append(messages, d.Message)
 				}
 				return bytecode.Chunk{}, fmt.Errorf("analyze module %s: %s", canonical, strings.Join(messages, "\n"))
 			}
-			return bytecode.Compile(program, source, canonical)
+			return bytecode.CompileWithOptions(program, source, canonical, bytecode.CompileOptions{TypeAliasLookup: aliases})
 		},
 		LookupBuiltin: func(canonical, alias string) *runtime.Module {
 			if e, ok := stateful.(*evaluator.Evaluator); ok {
@@ -118,10 +121,12 @@ func runParityModulesDir(t *testing.T, dir string, mainSource string, want strin
 		t.Fatalf("evaluator error: %v", err)
 	}
 
-	chunk, err := bytecode.Compile(program, []byte(mainSource), "parity")
+	aliases := bcloader.SourceTypeAliasLookup(program, "", []string{dir})
+	chunk, err := bytecode.CompileWithOptions(program, []byte(mainSource), "parity", bytecode.CompileOptions{TypeAliasLookup: aliases})
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
+	bytecode.ResolveClassTypeAliases(&chunk, aliases)
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
 	loader := newHarnessLoader(&vmOut, stateful)

@@ -34,7 +34,7 @@ class StringBytesCastTest extends test.Test {
         try {
             let s = bad as string;
             this.fail("should have thrown on invalid UTF-8");
-        } catch (RuntimeError e) {
+        } catch (ValueError e) {
             this.assertContains(e.getMessage(), "not valid UTF-8");
         }
     }

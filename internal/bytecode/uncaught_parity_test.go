@@ -202,7 +202,7 @@ func pick(list<int> xs): int {
 
 io.println(pick([1, 2, 3]));
 `,
-			want: `uncaught RuntimeError: list index out of range
+			want: `uncaught ValueError: list index out of range
   at pick (line 4)
   at <top level> (line 7)`,
 		},
@@ -482,7 +482,7 @@ func TestUncaughtHofClosureErrorNotDoubled(t *testing.T) {
 let xs = ["alpha", "beta"];
 io.println(xs.map(func(string w): int { return (w as int) + 1; }));
 `
-	want := `uncaught RuntimeError: invalid integer literal "alpha"
+	want := `uncaught ValueError: invalid integer literal "alpha"
   at <closure> (line 3)
   at <top level> (line 3)`
 	evGot, vmGot := uncaughtOnBothBackends(t, src)

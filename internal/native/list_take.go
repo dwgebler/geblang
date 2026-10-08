@@ -6,14 +6,8 @@ import (
 	"geblang/internal/runtime"
 )
 
-// classedError crosses the native boundary as the named Geblang class on both backends.
-type classedError struct{ class, msg string }
-
-func (e *classedError) Error() string      { return e.msg }
-func (e *classedError) ErrorClass() string { return e.class }
-
 func errFrozenList() error {
-	return &classedError{class: "ImmutableError", msg: "cannot modify frozen list"}
+	return runtime.ClassifiedError{Class: "ImmutableError", Message: "cannot modify frozen list"}
 }
 
 // ListShift removes the first element in place; a no-op on an empty list.
@@ -42,7 +36,7 @@ func ListTake(list *runtime.List, method string, args []runtime.Value) (runtime.
 			return nil, errFrozenList()
 		}
 		if len(list.Elements) == 0 {
-			return nil, &classedError{class: "ValueError", msg: "list." + method + " on empty list"}
+			return nil, runtime.ClassifiedError{Class: "ValueError", Message: "list." + method + " on empty list"}
 		}
 		if method == "takeLast" {
 			i = len(list.Elements) - 1
@@ -53,17 +47,17 @@ func ListTake(list *runtime.List, method string, args []runtime.Value) (runtime.
 		}
 		n, ok := IntValueToBigInt(args[0])
 		if !ok {
-			return nil, fmt.Errorf("list.takeAt: index must be int, got %s", args[0].TypeName())
+			return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("list.takeAt: index must be int, got %s", args[0].TypeName())}
 		}
 		if !n.IsInt64() {
-			return nil, fmt.Errorf("list.takeAt: index out of range")
+			return nil, runtime.ClassifiedError{Class: "ValueError", Message: "list.takeAt: index out of range"}
 		}
 		idx := n.Int64()
 		if idx < 0 {
 			idx += int64(len(list.Elements))
 		}
 		if idx < 0 || idx >= int64(len(list.Elements)) {
-			return nil, fmt.Errorf("list.takeAt: index out of range")
+			return nil, runtime.ClassifiedError{Class: "ValueError", Message: "list.takeAt: index out of range"}
 		}
 		i = int(idx)
 	default:

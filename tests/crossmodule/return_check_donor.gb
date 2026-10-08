@@ -1,0 +1,18 @@
+module return_check_donor;
+
+export class Base {
+    func Base() {}
+    func ids(): list<int> { list x = ["s"]; return x; }
+}
+
+export class Sub extends Base {
+    func Sub() { parent(); }
+    func ratio(): float { return 2; }
+}
+
+export func scores(): dict<string, int> { dict x = {"a": "b"}; return x; }
+
+export interface Shape { func area(): int; }
+export class Square implements Shape { func Square() {} func area(): int { return 4; } }
+export class Dog { func Dog() {} }
+export func asShape(list xs): Shape { return xs[0]; }

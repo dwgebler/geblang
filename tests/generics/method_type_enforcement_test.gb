@@ -2,7 +2,7 @@
  * @title Method type-parameter enforcement
  * @summary T-typed method parameters are enforced against the
  *          instance's reified bindings: put(42) on a Box<string>
- *          throws RuntimeError. Covariant arguments pass, a method's
+ *          throws TypeError. Covariant arguments pass, a method's
  *          own type parameters stay inference-open, extends-clause
  *          bindings enforce on inherited methods, and inferred
  *          (unbound) instances stay unconstrained.
@@ -36,7 +36,7 @@ class MethodTypeEnforcementTest extends test.Test {
         let threw = false;
         try {
             b.put(42);
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
             this.assertEquals("Box.put expects T for parameter 'value', got int", e.message);
         }
@@ -71,7 +71,7 @@ class MethodTypeEnforcementTest extends test.Test {
         let threw = false;
         try {
             ib.put("nope");
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
         }
         this.assertTrue(threw);

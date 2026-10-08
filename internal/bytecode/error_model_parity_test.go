@@ -18,7 +18,7 @@ func catch_(callable f): string {
 io.println(catch_(func(): void { let x = 1 / 0; }));
 io.println(catch_(func(): void { let xs = [1, 2]; let y = xs[9]; }));
 io.println(catch_(func(): void { let n = "abc".toInt(); }));
-`, "RuntimeError\nRuntimeError\nRuntimeError\n")
+`, "RuntimeError\nValueError\nValueError\n")
 }
 
 // TestParityFatalErrorUncatchable proves a FatalError bypasses every

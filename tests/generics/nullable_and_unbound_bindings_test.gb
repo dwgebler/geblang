@@ -1,0 +1,41 @@
+/**
+ * @title Nullable type parameters and unresolved bindings
+ * @summary `?T` accepts null on a bound generic, nullable parameters still infer bindings, and unresolved parameters are omitted from type bindings.
+ */
+import test;
+import reflect;
+
+class Box<T> {
+    T v;
+    func Box(T v) { this.v = v; }
+    func put(?T x): string { return "ok"; }
+    func none(): ?T { return null; }
+}
+
+class Pair<T, E> {
+    ?T left;
+    ?E right;
+    func Pair(?T left, ?E right) { this.left = left; this.right = right; }
+}
+
+func rightOnly<T, E>(E value): Pair<T, E> { return Pair(null, value); }
+func leftOnly<T, E>(T value): Pair<T, E> { return Pair(value, null); }
+
+class NullableAndUnboundBindingsTest extends test.Test {
+    @test
+    func nullableBoundParameterAcceptsNull(): void {
+        Box<int> b = Box(1);
+        this.assertEquals("ok", b.put(null));
+        this.assertEquals(null, b.none());
+        any s = "x";
+        this.assertThrowsOf(func(): void { b.put(s); }, "TypeError", "Box.put expects ?T for parameter 'x', got string");
+    }
+
+    @test
+    func unresolvedBindingsAreOmitted(): void {
+        this.assertEquals({"E": "string"}, reflect.typeBindings(rightOnly("bad")));
+        this.assertEquals({"T": "int"}, reflect.typeBindings(leftOnly(1)));
+        this.assertEquals({"T": "string"}, reflect.typeBindings(Pair("x", null)));
+        this.assertEquals({}, reflect.typeBindings(Pair(null, null)));
+    }
+}

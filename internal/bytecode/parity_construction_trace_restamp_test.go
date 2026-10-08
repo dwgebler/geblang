@@ -96,7 +96,7 @@ func makeBox(): any {
 
 makeBox();
 `)
-	want := "uncaught RuntimeError: Box expects T for parameter 'value', got string\n  at makeBox (line 4)\n  at <top level> (line 7)"
+	want := "uncaught TypeError: Box expects T for parameter 'value', got string\n  at makeBox (line 4)\n  at <top level> (line 7)"
 	if evGot != want {
 		t.Fatalf("evaluator mismatch:\n got %q\nwant %q", evGot, want)
 	}

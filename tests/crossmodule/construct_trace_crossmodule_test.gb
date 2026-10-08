@@ -87,7 +87,7 @@ class ConstructTraceCrossModuleTest extends test.Test {
     func genericConstructorTypeMismatchHasCallerLine(): void {
         try {
             makeGenericBox();
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             let frames = e.stackTrace().frames();
             this.assertEquals("makeGenericBox", frames[0].function());
             this.assertEquals(29, frames[0].line());

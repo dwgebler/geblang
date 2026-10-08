@@ -109,6 +109,19 @@ func New(l *lexer.Lexer) *Parser {
 	return p
 }
 
+// ParseTypeRef parses a standalone type expression such as `?list<int>` or `mod.Client`.
+func ParseTypeRef(source string) (*ast.TypeRef, error) {
+	p := New(lexer.New(source))
+	ref := p.parseTypeRefFromCurrent()
+	if len(p.errors) == 0 && !p.peekTokenIs(token.EOF) {
+		p.errors = append(p.errors, fmt.Sprintf("unexpected %s after type", p.peekToken.Literal))
+	}
+	if len(p.errors) > 0 || ref == nil {
+		return nil, fmt.Errorf("invalid type %q: %s", source, strings.Join(p.errors, "; "))
+	}
+	return ref, nil
+}
+
 // Comments returns the source comments captured by the lexer (used by the formatter; the AST itself ignores comments).
 func (p *Parser) Comments() []lexer.Comment { return p.l.Comments() }
 

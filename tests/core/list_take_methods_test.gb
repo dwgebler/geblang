@@ -74,8 +74,8 @@ class ListTakeMethodsTest extends test.Test {
     @test
     func takeAtOutOfRangeRaises(): void {
         list<int> xs = [1];
-        this.assertEquals("RuntimeError: list.takeAt: index out of range", this.errorClass(func(): void { xs.takeAt(1); }));
-        this.assertEquals("RuntimeError: list.takeAt: index out of range", this.errorClass(func(): void { xs.takeAt(-2); }));
+        this.assertEquals("ValueError: list.takeAt: index out of range", this.errorClass(func(): void { xs.takeAt(1); }));
+        this.assertEquals("ValueError: list.takeAt: index out of range", this.errorClass(func(): void { xs.takeAt(-2); }));
         this.assertEquals([1], xs);
     }
 

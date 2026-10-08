@@ -360,7 +360,7 @@ any raw = "not an int";
 try {
     Box<int> wrong = Box(raw);
     io.println(wrong.isT());
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println("caught: " + e.message);
 }
 `, "true\ntrue\ncaught: Box expects T for parameter 'v', got string\n")

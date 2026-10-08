@@ -106,13 +106,13 @@ class TryCatchTest extends test.Test {
 
     @test
     func castFailureIsCatchable(): void {
-        /* A failed `x as Y` is a catchable RuntimeError. Pre-1.0.2 the
+        /* A failed `x as Y` is a catchable TypeError. Pre-1.0.2 the
          * VM let it escape as an uncatchable "bytecode runtime error".
          * list->int has no defined cast on either backend. */
         try {
             let n = [1, 2, 3] as int;
             this.fail("cast should have thrown");
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             this.assertEquals("cannot cast list to int", e.getMessage());
         }
     }

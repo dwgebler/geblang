@@ -1,0 +1,110 @@
+/**
+ * @title Concrete return type checks
+ * @summary Concrete return annotations are checked at runtime, including collection element types, and int literals widen to float and decimal.
+ */
+import test;
+
+type Ints = list<int>;
+
+func strings(): list<int> { list x = ["s"]; return x; }
+func pairs(): dict<string, int> { dict x = {"a": "b"}; return x; }
+func alias(): Ints { list x = ["s"]; return x; }
+func arrayForm(): int[] { list x = ["s"]; return x; }
+func either(): list<int> | string { list x = [1.5]; return x; }
+func maybe(): ?int[] { return null; }
+func ints(): list<int> { list x = [1, 2]; return x; }
+func ratio(): float { return 2; }
+func amount(): decimal { return 2; }
+
+class Reader {
+    func count(): int { any v = "s"; return v as string; }
+}
+class FileReader extends Reader {}
+
+interface Shape { func area(): int; }
+class Square implements Shape { func Square() {} func area(): int { return 4; } }
+class Dog { func Dog() {} }
+enum Color { Red, Green }
+class Holder<T> {
+    T value;
+    func Holder(T value) { this.value = value; }
+    func wrong(): T { list raw = [5]; return raw[0]; }
+}
+
+func asShape(list xs): Shape { return xs[0]; }
+func asSquare(list xs): Square { return xs[0]; }
+func asMaybeDog(list xs): ?Dog { return xs[0]; }
+func asColor(list xs): Color { return xs[0]; }
+func first<T>(list xs): T { return xs[0]; }
+func fallsThrough(bool give): Dog { if (give) { return Dog(); } }
+
+class ReturnTypeChecksTest extends test.Test {
+    @test
+    func collectionElementMismatchRaisesTypeError(): void {
+        this.assertThrowsOf(func(): void { strings(); }, "TypeError", "strings expects list<int> return, got list<string>");
+        this.assertThrowsOf(func(): void { pairs(); }, "TypeError", "pairs expects dict<string, int> return, got dict<string,string>");
+        this.assertThrowsOf(func(): void { alias(); }, "TypeError", "alias expects list<int> return, got list<string>");
+        this.assertThrowsOf(func(): void { arrayForm(); }, "TypeError", "arrayForm expects int[] return, got list<string>");
+        this.assertThrowsOf(func(): void { either(); }, "TypeError", "either expects list<int> | string return, got list<decimal>");
+    }
+
+    @test
+    func matchingCollectionsPass(): void {
+        this.assertEquals([1, 2], ints());
+        this.assertEquals(null, maybe());
+    }
+
+    @test
+    func methodMismatchNamesTheDeclaringClass(): void {
+        this.assertThrowsOf(func(): void { Reader().count(); }, "TypeError", "Reader.count expects int return, got string");
+        this.assertThrowsOf(func(): void { FileReader().count(); }, "TypeError", "Reader.count expects int return, got string");
+    }
+
+    @test
+    func intLiteralsWidenToFloatAndDecimal(): void {
+        this.assertEquals("float", "${typeof(ratio())}");
+        this.assertEquals("decimal", "${typeof(amount())}");
+        float f = 3;
+        decimal d = 3;
+        ?float nf = 4;
+        this.assertEquals("float", "${typeof(f)}");
+        this.assertEquals("decimal", "${typeof(d)}");
+        this.assertEquals("float", "${typeof(nf)}");
+        this.assertEquals("3.0000000000", "${d}");
+    }
+
+    @test
+    func nonBoolConditionsRaiseTypeError(): void {
+        any n = 5;
+        this.assertThrowsOf(func(): void { if (n) { return; } }, "TypeError", "condition must be bool, got int");
+        this.assertThrowsOf(func(): void { while (n) { break; } }, "TypeError", "condition must be bool, got int");
+        this.assertThrowsOf(func(): void { any r = n ? 1 : 2; }, "TypeError", "condition must be bool, got int");
+        this.assertThrowsOf(func(): void { any r = !n; }, "TypeError", "! expects bool, got int");
+    }
+
+    @test
+    func classAndInterfaceReturnsAreChecked(): void {
+        this.assertTrue(asShape([Square()]) instanceof Shape);
+        this.assertThrowsOf(func(): void { asShape([Dog()]); }, "TypeError", "asShape expects Shape return, got Dog");
+        this.assertThrowsOf(func(): void { asSquare([Dog()]); }, "TypeError", "asSquare expects Square return, got Dog");
+        this.assertThrowsOf(func(): void { asSquare([null]); }, "TypeError", "asSquare expects Square return, got null");
+        this.assertEquals(null, asMaybeDog([null]));
+        this.assertThrowsOf(func(): void { fallsThrough(false); }, "TypeError", "fallsThrough expects Dog return, got null");
+        this.assertEquals(Color.Red, asColor([Color.Red]));
+        this.assertThrowsOf(func(): void { asColor([1]); }, "TypeError", "asColor expects Color return, got int");
+    }
+
+    @test
+    func boundTypeParameterReturnsAreChecked(): void {
+        Holder<string> held = Holder("x");
+        this.assertThrowsOf(func(): void { held.wrong(); }, "TypeError", "Holder.wrong expects T return, got int");
+        this.assertThrowsOf(func(): void { first<string>([1]); }, "TypeError", "first expects T return, got int");
+        this.assertEquals(1, first([1]));
+    }
+
+    @test
+    func closureErrorsNameTheClosure(): void {
+        func bad = func(): int { any v = "a"; return v; };
+        this.assertThrowsOf(func(): void { bad(); }, "TypeError", "<closure> expects int return, got string");
+    }
+}

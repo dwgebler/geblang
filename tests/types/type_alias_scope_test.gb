@@ -1,0 +1,35 @@
+/**
+ * @title Local type aliases
+ * @summary Local aliases expand in instanceof, casts, and declarations, and an alias written without type arguments accepts them.
+ */
+import test;
+
+type Ints = list<int>;
+type Num = int;
+type Rows = list;
+
+class Dog { func Dog() {} }
+type Pup = Dog;
+
+class TypeAliasScopeTest extends test.Test {
+    @test
+    func instanceofAndCastsSeeTheTarget(): void {
+        any xs = [1];
+        this.assertTrue(xs instanceof Ints);
+        this.assertTrue(5 instanceof Num);
+        this.assertTrue(Dog() instanceof Pup);
+        any d = Dog();
+        Pup p = d as Pup;
+        this.assertTrue(p instanceof Dog);
+    }
+
+    @test
+    func aliasTypedDeclarationsCheckElements(): void {
+        list raw = ["a"];
+        this.assertThrowsOf(func(): void { Ints xs = raw; }, "TypeError", "cannot assign list to list<int>");
+        list ints = [1];
+        this.assertThrowsOf(func(): void { Rows<string> r = ints; }, "TypeError", "cannot assign list to list<string>");
+        Ints ok = [1, 2];
+        this.assertEquals([1, 2], ok);
+    }
+}

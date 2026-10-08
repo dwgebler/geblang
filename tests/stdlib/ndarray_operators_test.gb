@@ -47,7 +47,7 @@ class NDArrayOperatorsTest extends test.Test {
         let threw = false;
         try {
             let bad = a + text;
-        } catch (RuntimeError e) {
+        } catch (TypeError e) {
             threw = true;
         }
         this.assertTrue(threw);

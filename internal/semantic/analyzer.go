@@ -7,6 +7,7 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/native"
 	"geblang/internal/token"
+	"geblang/internal/typealias"
 )
 
 // Severity is the importance of a semantic diagnostic. SeverityError
@@ -78,6 +79,13 @@ type Analyzer struct {
 	// recording (the transpiler's type source). Nil in every normal
 	// path, so analysis behaviour and cost are unchanged.
 	exprTypes map[ast.Expression]ExprType
+	// typeAliasLookup resolves exported type aliases of imported modules; nil leaves qualified names opaque.
+	typeAliasLookup typealias.Lookup
+}
+
+// SetTypeAliasLookup installs the resolver for imported modules' exported type aliases. Call before Analyze.
+func (a *Analyzer) SetTypeAliasLookup(lookup typealias.Lookup) {
+	a.typeAliasLookup = lookup
 }
 
 // SetClassSurfaceResolver installs the cross-module class member
@@ -2647,6 +2655,9 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 		return typeInfo{}
 	case *ast.CallExpression:
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
+			if ident.Value == "typeof" {
+				return typeInfo{name: "Type", known: true}
+			}
 			if _, ok := a.classes[ident.Value]; ok {
 				info := typeInfo{name: ident.Value, known: true}
 				if len(expr.TypeArguments) > 0 {
@@ -3110,6 +3121,11 @@ func (a *Analyzer) parameterBindingType(param ast.Parameter) typeInfo {
 func (a *Analyzer) typeInfoFromRef(ref *ast.TypeRef) typeInfo {
 	if ref == nil || ref.Operator != "" {
 		return typeInfo{}
+	}
+	if a.typeAliasLookup != nil {
+		if expanded := typealias.Expand(ref, a.typeAliasLookup); expanded != ref {
+			return a.typeInfoFromRef(expanded)
+		}
 	}
 	var args []typeInfo
 	if len(ref.Arguments) > 0 {
