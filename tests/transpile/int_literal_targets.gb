@@ -1,0 +1,43 @@
+import io;
+
+/* Integer literals take float and decimal targets: declarations, returns, args, fields, ternaries. */
+class Account {
+    float rate = 0.0f;
+    decimal balance = 0.0;
+
+    func Account(decimal opening) {
+        this.balance = opening;
+    }
+
+    func setRate(float r): float {
+        this.rate = r;
+        return this.rate;
+    }
+}
+
+func half(float x): float { return x / 2.0f; }
+func keep(decimal d, float y): decimal { return d; }
+func sign(bool b): float { return b ? 1 : -1; }
+
+bool on = true;
+bool off = false;
+decimal d = 3;
+decimal n = -4;
+float f = off ? 1 : (on ? 2 : 3);
+io.println("${d} ${n} ${f / 4.0f}");
+io.println("${half(3)} ${keep(5, 2)} ${keep(on ? -1 : 2, on ? 3 : 4)}");
+io.println("${sign(true) / 4.0f} ${sign(false) / 4.0f}");
+let account = Account(7);
+io.println("${account.balance} ${account.setRate(on ? 8 : 9) / 16.0f}");
+account.rate = off ? 5 : 6;
+float z = 0.0f;
+z = on ? 1 : 2;
+io.println("${account.rate / 4.0f} ${z / 4.0f}");
+func guarded(bool b): float {
+    try {
+        return b ? 1 : 2;
+    } catch (Error e) {
+        return 0.0f;
+    }
+}
+io.println("${guarded(true) / 4.0f} ${guarded(false) / 4.0f}");

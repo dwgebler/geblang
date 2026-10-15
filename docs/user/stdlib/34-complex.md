@@ -6,6 +6,7 @@ operator overloads.
 
 ```gb
 import complex;
+import io;
 
 let z = complex.of(3.0, 4.0);
 io.println("${z}");   /* 3+4i */

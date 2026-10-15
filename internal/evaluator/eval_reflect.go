@@ -731,6 +731,9 @@ func reflectSetField(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 	if instance.Fields == nil {
 		instance.Fields = map[string]runtime.Value{}
 	}
+	if err := checkFieldWrite(instance, name.Value, args[2]); err != nil {
+		return nil, err
+	}
 	instance.Fields[name.Value] = args[2]
 	return instance, nil
 }
@@ -1138,6 +1141,7 @@ func boundReflectMethodFunction(label string, overloads []runtime.Function, inst
 		metadataSource = overloads[0]
 	}
 	return runtime.Function{
+		Bound:      &runtime.BoundMethod{Label: label, Overloads: overloads, Instance: instance},
 		Name:       metadataSource.Name,
 		Parameters: append([]ast.Parameter(nil), metadataSource.Parameters...),
 		ReturnType: metadataSource.ReturnType,

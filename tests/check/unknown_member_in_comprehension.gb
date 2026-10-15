@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown module member used inside a
+ *          comprehension.
+ */
+import json;
+
+let values = [x for x in json.decode("[1, 2]")];

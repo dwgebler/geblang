@@ -53,6 +53,8 @@ type TypeRef struct {
 	Left      *TypeRef
 	Operator  string
 	Right     *TypeRef
+	// ResolvedModule is the canonical module a qualified name's prefix imports, set by the evaluator.
+	ResolvedModule string
 }
 
 func (t *TypeRef) String() string {
@@ -1374,4 +1376,20 @@ func (*TernaryExpression) expressionNode()        {}
 func (e *TernaryExpression) TokenLiteral() string { return e.Token.Literal }
 func (e *TernaryExpression) String() string {
 	return "(" + e.Condition.String() + " ? " + e.ThenExpr.String() + " : " + e.ElseExpr.String() + ")"
+}
+
+// IsIntegerLiteral reports whether expr is an integer literal, optionally negated, or a conditional of two.
+func IsIntegerLiteral(expr Expression) bool {
+	switch e := expr.(type) {
+	case *PrefixExpression:
+		if e.Operator == "-" {
+			_, ok := e.Right.(*IntegerLiteral)
+			return ok
+		}
+	case *TernaryExpression:
+		return IsIntegerLiteral(e.ThenExpr) && IsIntegerLiteral(e.ElseExpr)
+	case *IntegerLiteral:
+		return true
+	}
+	return false
 }

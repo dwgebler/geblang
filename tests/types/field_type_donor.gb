@@ -1,0 +1,38 @@
+module field_type_donor;
+
+export class Base {
+    int count;
+    ?string note;
+
+    func Base() {
+        this.count = 0;
+    }
+
+    func setCount(any value): void {
+        this.count = value;
+    }
+}
+
+export class Holder<T> {
+    T item;
+
+    func setItem(any value): void {
+        this.item = value;
+    }
+}
+
+export enum Shade {
+    Light, Dark;
+}
+
+export class Tally {
+    static int count = 0;
+
+    static func bump(): void {
+        Tally.count = Tally.count + 1;
+    }
+
+    static func current(): int {
+        return Tally.count;
+    }
+}

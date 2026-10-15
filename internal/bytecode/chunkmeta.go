@@ -115,3 +115,31 @@ func (meta *chunkSharedMeta) prepare(chunk Chunk) {
 		meta.requiresCallSitePolymorphism = hasPoly
 	})
 }
+
+// StaticValueAt reads a static member of this chunk, including writes made by the chunk's VMs.
+func (c Chunk) StaticValueAt(constIdx int64) runtime.Value {
+	if meta := c.sharedMeta; meta != nil {
+		meta.staticMu.RLock()
+		v, ok := meta.staticOverlay[constIdx]
+		meta.staticMu.RUnlock()
+		if ok {
+			return v
+		}
+	}
+	return c.Constants[constIdx]
+}
+
+// WriteStaticValue stores a static member of this chunk where the chunk's VMs read it.
+func (c Chunk) WriteStaticValue(constIdx int64, value runtime.Value) {
+	meta := c.sharedMeta
+	if meta == nil {
+		c.Constants[constIdx] = value
+		return
+	}
+	meta.staticMu.Lock()
+	if meta.staticOverlay == nil {
+		meta.staticOverlay = map[int64]runtime.Value{}
+	}
+	meta.staticOverlay[constIdx] = value
+	meta.staticMu.Unlock()
+}

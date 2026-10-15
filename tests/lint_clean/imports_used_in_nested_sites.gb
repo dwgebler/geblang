@@ -1,0 +1,48 @@
+/**
+ * @category Tests
+ * @summary geblang check --strict MUST NOT report an import as unused when its
+ *          only uses sit inside with, select, comprehensions, formatted
+ *          interpolation, destructors, enum methods or interface defaults.
+ */
+import file;
+import io;
+import json;
+import math;
+import datetime;
+import async.channel as ch;
+
+func readFirst(string path): string {
+    with (f = file.open(path, "r")) {
+        return f.readLine() ?? "";
+    }
+    return "";
+}
+
+func squares(): list<int> {
+    return [x * x for x in json.parse("[1, 2, 3]") as list<int>];
+}
+
+func positives(list<int> xs): set<int> {
+    return {x for x in xs if x > math.abs(0)};
+}
+
+func pi(): string {
+    return "${math.pi:.2f}";
+}
+
+func drain(ch.Channel<int> c): void {
+    select {
+        case let v = c.recv(): { io.println(v); }
+        default: { }
+    }
+}
+
+class Resource {
+    func ~Resource() { io.println("closed"); }
+}
+
+enum Level {
+    Low, High;
+
+    func stamp(): int { return datetime.nowUnix(); }
+}

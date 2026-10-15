@@ -304,6 +304,7 @@ io.println("Tax: " + tax.format(2));   # Tax: 4.00
 
 ```gb
 import math;
+import io;
 
 io.println(math.floor(2.9 as decimal));   # 2
 io.println(math.round(2.5 as decimal));   # 3
@@ -502,6 +503,46 @@ io.println(!(9 in [1, 2, 3]));     # true
 
 User classes can support `in` by implementing `__contains` (see the classes
 chapter); `for x in collection` loops are unaffected by the operator.
+
+### Identity: `is` and `is not`
+
+`==` compares values; `is` asks whether two references are the same object.
+For instances, lists, dicts, sets, function values, tasks, and generators, `x is
+y` is `true` only when both name one object, so a change made through one is
+seen through the other. Two equal but separately built values are `==` without
+being `is`. `is not` is the negation.
+
+```gb
+import io;
+
+class Point {
+    int x;
+    func Point(int x) { this.x = x; }
+}
+
+let a = Point(1);
+let b = a;
+io.println(a is b);              # true  (same object)
+io.println(a is Point(1));       # false (equal fields, different object)
+io.println(a == Point(1));       # true
+
+let items = [1, 2];
+let alias = items;
+alias.push(3);
+io.println(items is alias);      # true
+io.println(items is [1, 2, 3]);  # false
+io.println(items is not alias);  # false
+```
+
+Numbers, strings, `bool`, `bytes`, enum members, and `null` have no object
+identity to observe, so `is` compares them by type and value: `1 is 1` and
+`"a" is "a"` are `true`, while `1 is 1.0f` is `false` even though `1 == 1.0f`.
+
+A function value is identical to its copies. A named function or static method
+is identical to itself wherever it is referenced (`helper is helper`). Each
+evaluation of an anonymous `func` literal, and each `obj.method` binding,
+creates a new value, so `obj.method is obj.method` is `false`; keep the value in
+a variable to compare it later.
 
 The ternary operator `condition ? then_expr : else_expr` is a compact inline
 conditional. The condition must be a `bool` - values are never implicitly

@@ -1,0 +1,12 @@
+/**
+ * @category Tests
+ * @summary geblang check --strict MUST flag a statement after return inside
+ *          a with body.
+ */
+func first(): int {
+    with (x = 1) {
+        return x;
+        let y = 2;
+    }
+    return 0;
+}

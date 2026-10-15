@@ -39,6 +39,7 @@ itself is a compile-time error. To introspect a module by name at runtime, use
 
 ```gb
 import math;
+import reflect;
 
 let r = math.sqrt(16.0);        # ok: qualified member access
 let names = dir(math);          # ok: list a module's members
@@ -59,6 +60,7 @@ from crypt import passwordHash;
 from crypt import passwordHash, passwordVerify;
 from crypt import passwordVerify as verify;
 from bytes import toHex as hex;
+import io;
 
 let h = passwordHash("hunter2");
 io.println(verify("hunter2", h));   # true
@@ -251,6 +253,7 @@ export func get(): int { return n; }
 
 ```gb
 import counter;
+import io;
 counter.bump();
 counter.bump();
 io.println(counter.get());   # 2 on both `geblang test` and a built binary

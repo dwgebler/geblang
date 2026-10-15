@@ -203,7 +203,7 @@ io.println(ok.value);
 
 func TestParityGenericCtorOverloadResolvedByExplicitTypeArgs(t *testing.T) {
 	// Explicit type args break overload-selection ties: Box<string>(42)
-	// resolves to Box(int value) (T=string excludes the int), a string
+	// resolves to Box(int value), whose int store into T=string is rejected; a string
 	// resolves to the generic constructor, and an argument matching
 	// neither reports the precise per-parameter mismatch against the
 	// surviving generic candidate.
@@ -220,8 +220,12 @@ class Box<T> {
         this.which = "int";
     }
 }
-let a = Box<string>(42);
-io.println("a: ${a.which}");
+try {
+    let a = Box<string>(42);
+    io.println("a: ${a.which}");
+} catch (TypeError e) {
+    io.println("a caught: " + e.message);
+}
 let b = Box<string>("hi");
 io.println("b: ${b.which}");
 any raw = true;
@@ -231,7 +235,7 @@ try {
 } catch (TypeError e) {
     io.println("caught: " + e.message);
 }
-`, "a: int\nb: generic\ncaught: Box expects T for parameter 'value', got bool\n")
+`, "a caught: cannot assign int to T field Box.value\nb: generic\ncaught: Box expects T for parameter 'value', got bool\n")
 }
 
 func TestParityGenericInstanceofBindings(t *testing.T) {

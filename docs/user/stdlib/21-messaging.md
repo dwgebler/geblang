@@ -165,10 +165,15 @@ for a tight latency budget; use the long-polling `receive(20000)`
 pattern from SQS instead if you want broker-side waiting.
 
 The lower-level `amqp` module (`amqp.dial`, `amqp.channel`,
-`amqp.declareQueue`, `amqp.publish`, `amqp.get`, `amqp.ack`,
-`amqp.close`) is available for cases the `MessageQueue` facade
-doesn't cover (custom exchange topologies, QoS prefetch, multiple
-consumers per channel).
+`amqp.declareQueue`, `amqp.declareExchange`, `amqp.queueBind`,
+`amqp.publish`, `amqp.get`, `amqp.ack`, `amqp.close`) is available for
+cases the `MessageQueue` facade doesn't cover (custom exchange topologies,
+QoS prefetch, multiple consumers per channel).
+
+`amqp.declareExchange(channel, name, kind, opts?)` declares an exchange of
+kind `direct`, `fanout`, `topic` or `headers` (`opts.durable` defaults to
+`true`, `opts.autoDelete` to `false`), and
+`amqp.queueBind(channel, queue, exchange, routingKey)` binds a queue to it.
 
 ## STOMP specifics (ActiveMQ + RabbitMQ-via-plugin)
 

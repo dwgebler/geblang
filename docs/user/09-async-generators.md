@@ -27,6 +27,7 @@ io.println(task.await());
 
 ```gb
 import async;
+import io;
 
 let worker = async.run(func(): int {
     return 42;
@@ -333,6 +334,7 @@ your own `async func` around synchronous calls:
 
 ```gb
 import async.io as aio;
+import io;
 
 let configTask = aio.readText("config/app.json");
 let templateTask = aio.readText("templates/page.html");
@@ -372,6 +374,7 @@ import async;
 import async.net as anet;
 import bytes;
 import net;
+import io;
 
 let listener = await anet.listenTcp("127.0.0.1:0");
 let address = net.localAddr(listener);
@@ -513,6 +516,7 @@ exposes the `Channel<T>` class.
 ```gb
 import async;
 import async.channel as ch;
+import io;
 
 let c = ch.Channel<int>(0);   # 0 = unbuffered handoff
 async.run(func(): void {
@@ -704,6 +708,7 @@ for (url in urls) {
 
 ```gb
 import async.atomic as atomic;
+import io;
 let hits = atomic.AtomicInt(0);
 # in many tasks:
 hits.add(1);
@@ -734,6 +739,7 @@ Make shared access explicit with the tools above:
 
   ```gb
   import async.sync as sync;
+  import async;
   let m = sync.Mutex();
   async.run(func(): void {
       m.lock();
@@ -751,6 +757,7 @@ Make shared access explicit with the tools above:
 
   ```gb
   import store;
+  import async;
   let s = store.Store();
   async.run(func(): void { s.incr("done"); });   # atomic, no lost updates
   ```

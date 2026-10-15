@@ -26,10 +26,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 	savedHofLine := e.hofCallLine
 	e.hofCallLine = e.currentLine
 	defer func() { e.hofCallLine = savedHofLine }()
+	literalMask := e.literalArgMask
+	e.literalArgMask = nil
 	if class, ok := receiver.(*runtime.Class); ok {
 		methods := lookupStaticMethodOverloads(class, name)
 		if len(methods) > 0 {
-			method, err := selectOverload(class.Name+"."+name, methods, args)
+			method, args, err := selectOverloadWithLiterals(class.Name+"."+name, methods, args, literalMask, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -43,7 +45,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 	if instance, ok := receiver.(*runtime.Instance); ok {
 		methods := lookupMethodOverloads(instance.Class, name)
 		if len(methods) > 0 {
-			method, err := selectOverload(instance.Class.Name+"."+name, methods, args)
+			method, args, err := selectOverloadWithLiterals(instance.Class.Name+"."+name, methods, args, literalMask, instance)
 			if err != nil {
 				return nil, err
 			}

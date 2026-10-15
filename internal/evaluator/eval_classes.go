@@ -5,6 +5,7 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/runtime"
 	"strings"
+	"sync"
 )
 
 func (e *Evaluator) applyCallableFunctionDecorators(fn runtime.Function, decorators []ast.Decorator, env *runtime.Environment) (runtime.Function, error) {
@@ -487,7 +488,7 @@ func streamInterface(name string, methods []methodSpec) *runtime.Interface {
 }
 
 func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment) (*runtime.EnumDef, error) {
-	enum := &runtime.EnumDef{Name: stmt.Name.Value}
+	enum := &runtime.EnumDef{Name: stmt.Name.Value, Module: e.currentModule}
 	if stmt.BackingType != nil {
 		enum.BackingType = stmt.BackingType.Name
 	}
@@ -705,6 +706,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 		Methods:              map[string][]runtime.Function{},
 		StaticMethods:        map[string][]runtime.Function{},
 		StaticValues:         map[string]runtime.Value{},
+		FieldChecks:          &sync.Map{},
 		Env:                  env,
 		DefinitionModule:     e.currentModule,
 		DefinitionLine:       stmt.Token.Line,
@@ -765,13 +767,23 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 				continue
 			}
 			if member.Kind == "static const" || member.Kind == "static let" {
+				staticType := e.resolveTypeRef(member.Type, env)
+				if staticType != nil {
+					if class.StaticTypes == nil {
+						class.StaticTypes = map[string]*ast.TypeRef{}
+					}
+					class.StaticTypes[member.Name.Value] = staticType
+				}
 				value := runtime.Value(runtime.Null{})
 				if member.Value != nil {
-					evaluated, err := e.evalExpression(member.Value, env)
+					evaluated, err := e.evalExpressionWithExpectedType(member.Value, env, staticType)
 					if err != nil {
 						return nil, err
 					}
 					value = evaluated
+					if err := checkStaticWrite(class, member.Name.Value, value); err != nil {
+						return nil, err
+					}
 				}
 				class.StaticValues[member.Name.Value] = value
 				continue
@@ -787,7 +799,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 				class.ImmutableFields = append(class.ImmutableFields, member.Name.Value)
 				fieldDecs = withoutImmutableDecoratorEval(member.Decorators)
 			}
-			class.Fields = append(class.Fields, runtime.Field{Name: member.Name.Value, Type: member.Type, Default: member.Value, Doc: member.Doc, Decorators: fieldDecs})
+			class.Fields = append(class.Fields, runtime.Field{Name: member.Name.Value, Type: member.Type, CheckType: e.resolveTypeRef(member.Type, env), Default: member.Value, Doc: member.Doc, Decorators: fieldDecs})
 		case *ast.FunctionStatement:
 			target := "method"
 			if member.Static {
@@ -1121,6 +1133,7 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 			}
 		}
 	}
+	runtime.ResolveInheritedTypeBindings(instance)
 	if err := e.initializeFields(instance, class); err != nil {
 		return nil, err
 	}
@@ -1145,6 +1158,7 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 	if _, err := e.applyOverloadedFunction(class.Name, class.Constructors, call, env, instance, nil); err != nil {
 		return nil, err
 	}
+	runtime.ResolveInheritedTypeBindings(instance)
 	if err := e.checkClassTypeParamConstraints(class, instance.TypeBindings); err != nil {
 		return nil, err
 	}
@@ -1445,8 +1459,11 @@ func (e *Evaluator) initializeFields(instance *runtime.Instance, class *runtime.
 	for _, field := range class.Fields {
 		value := runtime.Value(runtime.Null{})
 		if field.Default != nil {
-			evaluated, err := e.evalExpression(field.Default, fieldEnv)
+			evaluated, err := e.evalExpressionWithExpectedType(field.Default, fieldEnv, field.CheckType)
 			if err != nil {
+				return err
+			}
+			if err := checkFieldWrite(instance, field.Name, evaluated); err != nil {
 				return err
 			}
 			value = evaluated
@@ -1587,6 +1604,11 @@ func (e *Evaluator) resolveTypeRef(ref *ast.TypeRef, env *runtime.Environment) *
 	}
 	for i, arg := range out.Arguments {
 		out.Arguments[i] = e.resolveTypeRef(arg, env)
+	}
+	if dot := strings.LastIndexByte(out.Name, '.'); dot > 0 {
+		if canonical, imported := e.importNames[out.Name[:dot]]; imported {
+			out.ResolvedModule = canonical
+		}
 	}
 	return out
 }

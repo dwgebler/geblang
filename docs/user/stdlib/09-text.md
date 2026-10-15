@@ -518,6 +518,7 @@ SPDX-style name: `"NFC"`, `"NFD"`, `"NFKC"`, or `"NFKD"`.
 
 ```gb
 import unicode;
+import io;
 
 let nfd = "é";                 # e + U+0301 combining acute (2 code points)
 let nfc = unicode.normalize(nfd, "NFC");

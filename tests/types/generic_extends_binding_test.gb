@@ -1,0 +1,93 @@
+/**
+ * @title Generic bindings through extends clauses and method type parameters (1.37.1)
+ * @summary A class that passes its own type parameter to its parent binds the
+ * parent's parameter, so inherited members accept the bound type, within a
+ * module and across modules. A method's own type parameter hides the class's
+ * parameter of the same name.
+ */
+import test;
+import generic_extends_donor as donor;
+
+class Box<T> {
+    T item;
+
+    func put(T v): void {
+        this.item = v;
+    }
+
+    func id<T>(T x): string {
+        T copy = x;
+        return typeof(copy) as string;
+    }
+
+    func keep(T x): string {
+        return typeof(x) as string;
+    }
+}
+
+class Leaf<U> extends Box<U> {
+    func Leaf() {}
+
+    func viaParent(U v): void {
+        parent.put(v);
+    }
+}
+
+class Pair<A> extends Box<list<A>> {}
+
+class Sub<V> extends Leaf<V> {}
+
+class RemoteLeaf<U> extends donor.Box<U> {
+    func RemoteLeaf() {}
+}
+
+class RemoteSub<V> extends donor.Pair<V> {}
+
+class GenericExtendsBindingTest extends test.Test {
+
+    @test
+    func ownParameterBindsParent(): void {
+        let leaf = Leaf<decimal>();
+        leaf.put(2.5);
+        this.assertEquals("decimal", typeof(leaf.item) as string);
+        leaf.viaParent(3.5);
+        this.assertEquals(3.5, leaf.item);
+    }
+
+    @test
+    func compoundAndMultiLevelBindings(): void {
+        let pair = Pair<int>();
+        pair.put([1, 2]);
+        this.assertEquals([1, 2], pair.item);
+        let sub = Sub<string>();
+        sub.put("x");
+        this.assertEquals("x", sub.item);
+        this.assertThrowsOf(func(): void { sub.put(5); }, "TypeError", "Box.put expects T for parameter 'v', got int");
+        any wrong = ["no"];
+        this.assertThrowsOf(func(): void { pair.put(wrong); }, "TypeError", "Box.put expects T for parameter 'v', got list<string>");
+    }
+
+    @test
+    func crossModuleParent(): void {
+        let leaf = RemoteLeaf<decimal>();
+        leaf.put(2.5);
+        this.assertEquals("decimal", typeof(leaf.item) as string);
+        let sub = RemoteSub<string>();
+        sub.put("y");
+        this.assertEquals("y", sub.item);
+        this.assertThrows(func(): void { sub.put(5); });
+    }
+
+    @test
+    func methodTypeParameterShadowsClass(): void {
+        let box = Box<float>();
+        let n = 5;
+        this.assertEquals("int", box.id(n));
+        this.assertEquals("int", box.id(5));
+        this.assertEquals("int", box.id<int>(n));
+        this.assertEquals("string", box.id("s"));
+        this.assertEquals("float", box.keep(2));
+        this.assertThrowsOf(func(): void { box.keep(n); }, "TypeError", "Box.keep expects T for parameter 'x', got int");
+        this.assertEquals("int", RemoteLeaf<decimal>().id(5));
+    }
+}

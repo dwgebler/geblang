@@ -131,11 +131,18 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 		if !ok {
 			return v, nil
 		}
-		for _, fieldName := range classInfo.FieldNames {
+		for i, fieldName := range classInfo.FieldNames {
 			key := runtime.String{Value: fieldName}
 			entry, hit := dict.GetEntry(native.DictKey(key))
 			if hit {
-				instance.Fields[fieldName] = entry.Value
+				value := entry.Value
+				if i < len(classInfo.FieldCheckTypes) && classInfo.FieldCheckTypes[i] != "" {
+					value = native.ConvertParsedNumbers(value, classInfo.FieldCheckTypes[i])
+				}
+				if msg, ok := vm.fieldWriteMismatch(instance, fieldName, value); !ok {
+					return nil, runtime.ClassifiedError{Class: "TypeError", Message: msg}
+				}
+				instance.Fields[fieldName] = value
 			}
 		}
 		return instance, nil
@@ -146,7 +153,7 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 	}
 	ctor := vm.chunk.Functions[ctorIndex]
 	args := make([]runtime.Value, 0, len(ctor.ParamNames))
-	for _, paramName := range ctor.ParamNames {
+	for i, paramName := range ctor.ParamNames {
 		// Skip the implicit "this" receiver, which the compiler
 		// prepends to method/constructor parameter lists.
 		if paramName == "this" {
@@ -157,7 +164,11 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 		if !ok {
 			return nil, fmt.Errorf("deserialize %s: missing field %q", class.Name, paramName)
 		}
-		args = append(args, entry.Value)
+		value := entry.Value
+		if i < len(ctor.ParamTypes) {
+			value = native.ConvertParsedNumbers(value, vm.expandTypeAliases(ctor.ParamTypes[i]))
+		}
+		args = append(args, value)
 	}
 	return vm.ConstructClass(class.Index, args)
 }

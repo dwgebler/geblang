@@ -670,7 +670,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"serverCert":         Fn([]string{"Server server"}, "?string", "Returns the server's TLS certificate as PEM (so a client can trust it via tls.caCerts), or null for a plain-HTTP server."),
 		"fetchAll":           Fn([]string{"list<any> requests", "dict<string, any> options = {}"}, "list<Response>", "Performs multiple requests (dict specs or Builders) concurrently; options.limit caps concurrency."),
 		"getAll":             Fn([]string{"list<string> urls", "dict<string, any> options = {}"}, "list<Response>", "Performs parallel GETs for a list of urls; options.limit caps concurrency."),
-		"fetchStream":        Fn([]string{"string url", "dict<string, any> options = {}"}, "FetchStream", "Streams a response body incrementally."),
+		"fetchStream":        Fn([]string{"list<any> requests"}, "FetchStream", "Performs multiple requests (dict specs or Builders) concurrently and yields each Response as it completes."),
 		"parseJson":          Fn([]string{"Response response"}, "any", "Parses a response body as JSON."),
 	}, Classes: map[string]string{
 		"Request":        "Incoming HTTP request. Fields: method, path, query, remoteAddr, body, headers.",
@@ -679,10 +679,16 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"Builder":        "Fluent request builder. Start with http.build(url) and chain header/body/send/timeoutMs/etc.",
 		"CookieJar":      "Cookie jar shared across requests. Build via http.newCookieJar().",
 		"Cookie":         "HTTP cookie with name, value, and attributes.",
-		"FetchStream":    "Streaming response body. Returned by http.fetchStream(url).",
+		"FetchStream":    "Completion-ordered results of http.fetchStream(requests); each Response carries index and url.",
 		"StreamResponse": "Incremental response body reader from http.requestStream(opts); read() yields lines until null at EOF.",
 		"Headers":        "Case-insensitive collection of HTTP header values.",
 	}, ClassMethods: map[string]map[string]FunctionDoc{
+		"FetchStream": {
+			"next":      Fn([]string{}, "?Response", "Blocks for the next completed Response, or null once all have been read."),
+			"nextAsync": Fn([]string{}, "Task<?Response>", "Awaitable form of next()."),
+			"remaining": Fn([]string{}, "int", "Number of Responses not yet read."),
+			"done":      Fn([]string{}, "bool", "True once every Response has been read."),
+		},
 		"StreamResponse": {
 			"read":    Fn([]string{}, "?string", "Returns the next line of the response body, or null at end of stream."),
 			"status":  Fn([]string{}, "int", "The HTTP status code of the response."),
@@ -1128,7 +1134,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"post":            Fn([]string{"App app", "string path", "func handler"}, "App", "Adds a POST route."),
 		"handle":          Fn([]string{"App app", "Request request"}, "Response", "Handles a request."),
 		"withHeader":      Fn([]string{"Response response", "string name", "string value"}, "Response", "Returns a response with a header."),
-		"parseMultipart":  Fn([]string{"Request request"}, "dict<string, any>", "Parses a multipart/form-data request body into {fields, files}."),
+		"parseMultipart":  Fn([]string{"dict<string, any> request"}, "dict<string, any>", "Parses a multipart/form-data request body into {fields, files}."),
 		"serveFileMarker": Fn([]string{"dict<string, any> descriptor"}, "any", "Wraps a file descriptor in an unforgeable native marker the HTTP writer recognises for file serving."),
 		"serveFilePath":   Fn([]string{"any marker"}, "string", "Reads the file path from a serve-file marker, or an empty string for any other value."),
 	}},

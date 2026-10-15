@@ -191,6 +191,9 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		if instance.Fields == nil {
 			instance.Fields = map[string]runtime.Value{}
 		}
+		if msg, ok := vm.fieldWriteMismatch(instance, name.Value, args[2]); !ok {
+			return nil, runtime.ClassifiedError{Class: "TypeError", Message: msg}
+		}
 		instance.Fields[name.Value] = args[2]
 		return instance, nil
 	case "fields", "methods", "staticMethods", "parent", "interfaces", "className":
@@ -519,7 +522,8 @@ func (vm *VM) reflectBoundMethodCallable(class runtime.BytecodeClass, key string
 	}
 	vm.noteEscape()
 	return runtime.Function{
-		Name: key,
+		Identity: runtime.NewFunctionIdentity(),
+		Name:     key,
 		Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 			functionIndex, err := vm.selectRuntimeFunction(Instruction{}, key, indices, args, 1)
 			if err != nil {
@@ -555,7 +559,8 @@ func (vm *VM) reflectedRuntimeInstanceMethod(fn, key string, instance *runtime.I
 		method := methods[0]
 		loader := vm.moduleLoader
 		callable = runtime.Function{
-			Name: metadata.Name,
+			Identity: runtime.NewFunctionIdentity(),
+			Name:     metadata.Name,
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				if method.Native == nil {
 					return nil, fmt.Errorf("reflected method is not callable")
@@ -580,6 +585,7 @@ func (vm *VM) reflectedRuntimeInstanceMethod(fn, key string, instance *runtime.I
 }
 
 func (vm *VM) reflectStaticMethodCallable(class runtime.BytecodeClass, key string) runtime.Value {
+	identity := runtime.StableFunctionIdentity("reflect-static:" + class.Module + "." + class.Name + "." + key)
 	// A "" module is the entry chunk; foreign whenever this VM is an imported module, so route through the loader (which resolves "" to the main chunk).
 	if class.Module != vm.moduleName {
 		if vm.moduleLoader == nil || len(class.StaticMetadata[key]) == 0 {
@@ -587,7 +593,8 @@ func (vm *VM) reflectStaticMethodCallable(class runtime.BytecodeClass, key strin
 		}
 		vm.noteEscape()
 		return runtime.Function{
-			Name: key,
+			Identity: identity,
+			Name:     key,
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				return vm.moduleLoader.CallModuleStaticMethod(class, key, vm.wrapStatefulNativeArgs("", "", args), vm)
 			},
@@ -602,7 +609,8 @@ func (vm *VM) reflectStaticMethodCallable(class runtime.BytecodeClass, key strin
 	}
 	vm.noteEscape()
 	return runtime.Function{
-		Name: key,
+		Identity: identity,
+		Name:     key,
 		Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 			functionIndex, err := vm.selectRuntimeFunction(Instruction{}, key, indices, args, 0)
 			if err != nil {

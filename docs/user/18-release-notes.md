@@ -1,5 +1,107 @@
 # Release Notes
 
+## 1.37.1
+
+### Fixes
+
+- The REPL reports runtime faults in an evaluated expression with their class
+  (`TypeError`, `ValueError`, ...) instead of `RuntimeError`, matching scripts
+  and tests.
+- `geblang check` now analyses code inside `with` and `select` blocks,
+  comprehensions, `${value:spec}` interpolations, enum methods, destructors,
+  interface default methods, closures, parameter defaults, and decorator
+  arguments. Unknown module members, unknown qualified types, and unknown
+  `instanceof` types in those places are reported instead of failing only at
+  run time.
+- `geblang check` no longer reports an import as unused when its only uses are
+  in those places or in a module-qualified decorator (`@mod.Name`), and it
+  reports unreachable statements inside them.
+- A name bound by a match case, a `with` block, or a comprehension now shadows
+  an import of the same name in `geblang check`, so `json.size()` on a local
+  named `json` is no longer reported as an unknown module member.
+- Field types are now enforced at run time on both backends. Writing a value of
+  the wrong type to a typed field throws `TypeError`
+  (`cannot assign string to int field User.age`), whether it comes from an
+  assignment, a method or constructor, a field default, a static field,
+  `reflect.setField`, or `parseAs`. Previously any value was stored. `null` is
+  accepted only by nullable fields, type aliases are resolved, and a field of
+  generic type `T` is checked against the binding of the class that declares
+  it (`class Child<T> extends Base<int>` checks `Base`'s field against `int`).
+  Code that stored a decimal literal in a `float` field (`this.rate = 0.0`) now
+  fails; write `0.0f`.
+- `geblang check` and the compiler report a field write whose value type is
+  known and cannot fit the declared field type, such as
+  `account.balance = "lots"` on an `int` field.
+- Assignments to a field or list/dict element evaluate the target (object and
+  index) before the assigned value on both backends, left to right.
+- `json.parseAs`, `yaml.parseAs`, and `toml.parseAs` convert a parsed number to
+  the numeric type of its field or constructor parameter (`10` into a `decimal`
+  or `float`, `3.0` into an `int`, including elements of numeric lists and
+  dicts). These and `xml.parseAs` throw `TypeError` naming the field for any
+  other mismatch instead of storing the value unchanged.
+- An integer literal, including a negated one such as `-1` and a conditional
+  of two literals (`on ? 1 : 2`), takes the type of a `float` or `decimal`
+  target: a field or static field (`this.total = 0`), a field default (plain or
+  negated literal), a declaration (`float x = -1` now stores a `float`), a
+  return value, or a positional or named argument of a function, constructor,
+  `parent(...)` or `parent.method(...)` call, static method, or method
+  (`half(3)`), including a generic `T` parameter bound to `float` or `decimal`
+  directly or through an `extends` clause. An `int` overload is still preferred,
+  and among overloads that need converting the fewest conversions wins. Literals
+  are not typed for variadic or enum-method parameters. On the bytecode VM a call
+  to a closure value, or to a function, constructor, or method of another
+  module, still rejects the `int`.
+- On the bytecode VM, a static field of a class from another module can be
+  assigned (`lib.Holder.count = 4`), and reads see writes made by the module's
+  own code.
+- The tree-walking evaluator no longer crashes intermittently when async tasks
+  call the same bound method (`reflect.methodBound`) concurrently.
+- On the tree-walking evaluator, a parameter or field typed with a
+  module-qualified enum (`palette.Color`) rejects a same-named enum from a
+  different module, as the VM does.
+- The bytecode VM accepts negative numeric literals as field, static, and
+  parameter defaults (`decimal offset = -2`).
+- On the bytecode VM, a parameter or field typed with an enum from another
+  module (`palette.Color`) accepts that enum's values.
+- `geblang build --native` lowers the new field rules: an integer literal written
+  to a `float` or `decimal` field compiles, and a value typed `any` written to a
+  scalar field is checked with the same `TypeError`.
+- `geblang build --native` compiles an integer literal, negated literal, or
+  conditional of two literals passed, assigned, declared, or returned where a
+  `float` or `decimal` is expected (`decimal d = 3;`, `half(on ? 1 : 2)`),
+  instead of failing in the Go build.
+- On the bytecode VM, a method overridden in another module's subclass is
+  called when the receiver's declared type is a non-exported class with an
+  exported descendant; previously the base method ran.
+- A generic class that passes its own type parameter to its parent
+  (`class Leaf<U> extends Box<U>`) binds the parent's `T`, so inherited methods
+  and fields accept a `U` value (`Leaf<decimal>().put(2.5)`) on both backends.
+- A method that declares its own type parameter with the same name as its
+  class's (`func id<T>(T x)` in `class Box<T>`) uses its own `T`, so
+  `Box<float>().id(5)` accepts the `int`. Explicit type arguments on such a call
+  (`b.id<int>(n)`) work on the bytecode VM as on the evaluator.
+- `is` and `is not` compare object identity on both backends: two references to
+  one instance, list, dict, set, or function value are identical, and equal but
+  separately built values are not. Previously the bytecode VM reported a list or
+  dict as not identical to itself and the evaluator compared collections by
+  value. Numbers, strings, and other value kinds compare by type and value
+  (`1 is 1.0f` is `false`). The operators are now documented.
+- On the bytecode VM, a parameter typed with a local collection alias
+  (`type Nums = list<float>`) checks the collection's elements, and `parseAs`
+  converts numbers for a constructor parameter of that type.
+- Editor signatures for `http.fetchStream` (takes a list of requests) and
+  `web.parseMultipart` (takes a request dict) are corrected, and `FetchStream`
+  methods now appear in completion.
+
+### Documentation
+
+- The `crypt` hash functions are documented as returning a lowercase hex
+  `string`; `crypt.hmacSha256Bytes`, `http.fetchStream`, `web.parseMultipart`,
+  `datetime.nowInstant`, `amqp.declareExchange`, and `amqp.queueBind` are now
+  documented.
+- Self-contained code examples in the manual now import every module they
+  use.
+
 ## 1.37.0
 
 ### Language

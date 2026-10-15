@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/native"
+	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"math"
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -738,6 +740,13 @@ func matchValueToTypeRefWith(typeParams map[string]bool, inherited map[string]st
 			// Substitute the concrete type and re-check via the
 			// existing path.
 			substituted := &ast.TypeRef{Token: typ.Token, Name: bound, Nullable: typ.Nullable}
+			if strings.ContainsAny(bound, "<>|&?[") {
+				if parsed, ok := parsedBoundTypeRef(bound); ok {
+					copied := *parsed
+					copied.Nullable = copied.Nullable || typ.Nullable
+					substituted = &copied
+				}
+			}
 			return matchValueToTypeRef(typeParams, value, substituted)
 		}
 	}
@@ -839,6 +848,9 @@ func valueMatchesTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 	if isGeneratorTypeName(typeName) {
 		_, ok := value.(*runtime.Generator)
 		return ok
+	}
+	if ev, ok := value.(runtime.EnumVariant); ok && typ.ResolvedModule != "" && ev.Enum.Module != "" && !strings.EqualFold(typ.ResolvedModule, ev.Enum.Module) && typeNamesEqual(ev.Enum.Name, typ.Name) {
+		return false
 	}
 	if typeNamesEqual(value.TypeName(), typ.Name) {
 		if instance, ok := value.(*runtime.Instance); ok && !instanceMatchesTypeArgs(typeParams, instance, typ) {
@@ -1195,4 +1207,20 @@ func (e *Evaluator) typeParamInScope(name string) bool {
 		}
 	}
 	return false
+}
+
+var boundTypeRefs sync.Map
+
+// parsedBoundTypeRef caches compound binding strings; callers must copy before mutating.
+func parsedBoundTypeRef(bound string) (*ast.TypeRef, bool) {
+	if cached, ok := boundTypeRefs.Load(bound); ok {
+		ref, _ := cached.(*ast.TypeRef)
+		return ref, ref != nil
+	}
+	parsed, err := parser.ParseTypeRef(bound)
+	if err != nil {
+		parsed = nil
+	}
+	boundTypeRefs.Store(bound, parsed)
+	return parsed, parsed != nil
 }

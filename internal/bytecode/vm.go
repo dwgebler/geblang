@@ -108,6 +108,10 @@ type VM struct {
 	// OpPlantCallTypeArgs into the immediately following OpMethodCall,
 	// which consumes (or drops) them at entry.
 	pendingCallTypeArgs []string
+	pendingLiteralArgs  []bool
+	fieldTypes          map[fieldTypeKey]*fieldTypeList
+	fieldTypesClass     *runtime.Class
+	fieldTypesFields    *fieldTypeList
 	// destructibleInstances tracks instances of classes that declare
 	// `func ~ClassName()`. The sweep in Cleanup() invokes their
 	// destructors in reverse-creation order. `del x` removes the
@@ -558,7 +562,7 @@ func (vm *VM) displayString(value runtime.Value) (string, error) {
 			return "", err
 		} else if handled {
 			if err := checkCastDunderReturn("string", result); err != nil {
-				return "", err
+				return "", runtime.ClassifiedError{Class: "TypeError", Message: err.Error()}
 			}
 			return result.(runtime.String).Value, nil
 		}
@@ -1771,12 +1775,17 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					}
 				}
 			}
+			var identity *runtime.FunctionIdentity
+			if upvalueCount == 0 && fn.Name == "<closure>" {
+				identity = runtime.NewFunctionIdentity()
+			}
 			vm.push(runtime.BytecodeClosure{
 				FunctionIndex: funcIndex,
 				Name:          fn.Name,
 				Module:        vm.moduleName,
 				Upvalues:      upvalues,
 				TypeBindings:  capturedBindings,
+				Identity:      identity,
 			})
 		case OpMakeOverloaded:
 			if len(instruction.Operands) == 0 {
@@ -2472,6 +2481,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					}
 					instance.TypeBindings[paramName.Value] = resolved
 				}
+				runtime.ResolveInheritedTypeBindings(instance)
 			}
 		case OpPlantCallTypeBindings:
 			// Stages explicit `<TypeArgs>` from a generic function call's
@@ -2506,6 +2516,15 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					vm.pendingTypeBindings[paramName.Value] = resolved
 				}
 			}
+		case OpPlantIntLiteralArgs:
+			mask := []bool{}
+			for _, position := range instruction.Operands[1:] {
+				for int64(len(mask)) <= position {
+					mask = append(mask, false)
+				}
+				mask[position] = true
+			}
+			vm.pendingLiteralArgs = mask
 		case OpPlantCallTypeArgs:
 			if len(instruction.Operands) < 1 {
 				return vm.runtimeError(*instruction, "OpPlantCallTypeArgs: missing operands")
@@ -2907,7 +2926,7 @@ func (vm *VM) identical(instruction Instruction) error {
 	if err != nil {
 		return vm.callPropagate(instruction, err)
 	}
-	vm.push(runtime.Bool{Value: valuesIdentical(left, right)})
+	vm.push(runtime.Bool{Value: runtime.ValuesIdentical(left, right)})
 	return nil
 }
 

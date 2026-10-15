@@ -9,6 +9,7 @@ strict, well-formed XML.
 
 ```gb
 import html;
+import io;
 
 let doc = html.parse(pageSource);
 let heading = doc.selectFirst("h1").text();
@@ -110,6 +111,7 @@ Extract every link with its text:
 
 ```gb
 import html;
+import io;
 
 let doc = html.parse(pageSource);
 for (a in doc.select("a[href]")) {
@@ -135,6 +137,7 @@ Read the article title a redirect resolved to (with the HTTP client):
 ```gb
 import html;
 import http;
+import io;
 
 let resp = http.get("https://en.wikipedia.org/wiki/Special:Random");
 let title = html.parse(resp.text()).selectFirst("h1").text();

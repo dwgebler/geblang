@@ -256,6 +256,7 @@ honoured there.
 
 ```gb
 import errors;
+import io;
 
 # Check error class hierarchy
 let err = AppError("bad input");

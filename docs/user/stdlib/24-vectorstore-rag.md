@@ -71,6 +71,7 @@ search is well off the interpreted path.
 
 ```gb
 import vectorstore;
+import io;
 
 let store = vectorstore.MemoryVectorStore();
 store.add("cats", [0.1, 0.2, 0.9], {"text": "about cats"});

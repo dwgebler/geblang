@@ -16,6 +16,7 @@ All hash functions accept a `string` and return a lowercase hex-encoded `string`
 
 ```gb
 import crypt;
+import io;
 
 io.println(crypt.sha256("hello"));
 # 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
@@ -48,8 +49,8 @@ io.println(crypt.crc32("hello"));   # 907060870
 
 ### HMAC
 
-`crypt.hmacSha256(secret, message)` computes an HMAC using SHA-256. Both
-arguments are strings; the result is a lowercase hex string:
+`crypt.hmacSha256(secret, message)` computes an HMAC using SHA-256. Each
+argument may be a `string` or `bytes`; the result is a lowercase hex string:
 
 ```gb
 let sig = crypt.hmacSha256("my-secret-key", "the message");
@@ -59,6 +60,20 @@ io.println(sig);
 # Verify by recomputing and comparing with constant-time equality
 let ok = secrets.constantTimeEqual(sig, crypt.hmacSha256("my-secret-key", "the message"));
 io.println(ok);   # true
+```
+
+`crypt.hmacSha256Bytes(secret, message)` takes the same arguments and returns
+the raw 32-byte digest as `bytes`, for protocols that expect a binary or
+Base64-encoded signature:
+
+```gb
+import crypt;
+import io;
+
+let raw = crypt.hmacSha256Bytes("my-secret-key", "the message");
+io.println(raw.length);       # 32
+io.println(raw.toBase64());   # Base64 signature
+io.println(raw.toHex() == crypt.hmacSha256("my-secret-key", "the message"));   # true
 ```
 
 HMAC-SHA256 is the standard algorithm for webhook signature verification,
@@ -552,6 +567,7 @@ Supported content encryption (`opts.enc`): `A256GCM` only.
 ```gb
 import crypt;
 import bytes;
+import io;
 
 let cek    = bytes.fromHex(crypt.randomHex(32));   # 32-byte Content Encryption Key
 let token  = crypt.jweEncrypt("payload data", cek, {
@@ -597,6 +613,7 @@ nonce and ciphertext.
 import crypt;
 import bytes;
 import secrets;
+import io;
 
 let key = secrets.randomBytes(32);            # 32-byte AES-256 key
 let enc = crypt.aesEncrypt(key, "secret data");

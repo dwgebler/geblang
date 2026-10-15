@@ -7,6 +7,7 @@ Import `dotenv` for `.env`-style environment files.
 ```gb
 import dotenv;
 import sys;
+import io;
 
 # Load a .env file and apply it to the process environment
 dotenv.loadAndApply(".env");
@@ -134,6 +135,7 @@ for sample extension servers in Python and Go.
 
 ```gb
 import ext;
+import io;
 
 let handle = ext.connect("/tmp/my-extension.sock");
 # or, if the extension listens on a port:
@@ -221,6 +223,7 @@ receive `bytes` values. The slot marshalling is invisible.
 ```gb
 import ext;
 import bytes;
+import io;
 
 let conn = ext.connect("127.0.0.1:9103");
 

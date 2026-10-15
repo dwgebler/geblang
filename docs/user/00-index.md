@@ -341,7 +341,7 @@ let tasks = [
     async.run(func(): int { return heavyWork(2); }),
     async.run(func(): int { return heavyWork(3); }),
 ];
-io.println(async.all(tasks));   # three cores, one wall-clock unit
+io.println(await async.all(tasks));   # three cores, one wall-clock unit
 ```
 
 What that means against the neighbours:
@@ -400,7 +400,7 @@ chapter covers the full surface.
 
 ## Status
 
-Geblang is at version 1.37.0 and under active development, with
+Geblang is at version 1.37.1 and under active development, with
 regular minor releases since 1.0 (see the release notes chapter for
 the full history). The bytecode VM is the default execution path; the
 tree-walking evaluator backs the test runner and acts as a

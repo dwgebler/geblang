@@ -151,6 +151,24 @@ func (g *classGraph) methodSignatures(className, methodLower string) ([]semantic
 	return nil, nil, false
 }
 
+// typeRefNamesAny reports whether ref mentions any of names (a class's type parameters).
+func typeRefNamesAny(ref *ast.TypeRef, names []string) bool {
+	if ref == nil || len(names) == 0 {
+		return false
+	}
+	for _, name := range names {
+		if strings.EqualFold(ref.Name, name) {
+			return true
+		}
+	}
+	for _, arg := range ref.Arguments {
+		if typeRefNamesAny(arg, names) {
+			return true
+		}
+	}
+	return typeRefNamesAny(ref.Left, names) || typeRefNamesAny(ref.Right, names)
+}
+
 // fieldType returns the declared type of a field, walking ancestors; ok=false on any uncertainty.
 func (g *classGraph) fieldType(className, fieldLower string) (*ast.TypeRef, bool) {
 	seen := map[string]bool{}
@@ -164,7 +182,7 @@ func (g *classGraph) fieldType(className, fieldLower string) (*ast.TypeRef, bool
 			return nil, false
 		}
 		if ref, found := decl.FieldTypes[fieldLower]; found {
-			if ref == nil {
+			if ref == nil || typeRefNamesAny(ref, decl.TypeParams) {
 				return nil, false
 			}
 			return ref, true

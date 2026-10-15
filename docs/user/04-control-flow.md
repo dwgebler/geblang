@@ -114,6 +114,7 @@ For lazy range iteration over large sequences, import `collections` and use
 
 ```gb
 import collections;
+import io;
 
 for (i in collections.range(0, 5, 1)) {
     io.println(i);

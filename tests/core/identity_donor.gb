@@ -1,0 +1,27 @@
+module identity_donor;
+
+export class Holder {
+    any item;
+
+    func Holder(any item) {
+        this.item = item;
+    }
+
+    func holds(any other): bool {
+        return this.item is other;
+    }
+}
+
+export func helper(): int {
+    return 1;
+}
+
+export let shared = [1, 2];
+
+export func sharedRef(): list<int> {
+    return shared;
+}
+
+export func same(any a, any b): bool {
+    return a is b;
+}

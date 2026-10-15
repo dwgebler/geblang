@@ -12,6 +12,7 @@ Import `http` for client calls and simple servers.
 
 ```gb
 import http;
+import io;
 
 let response = http.get("https://example.com");
 io.println(response["status"]);
@@ -142,6 +143,7 @@ When every request is a plain GET, pass the URLs directly:
 
 ```gb
 import async;
+import http;
 
 let pages = await http.getAll([
     "https://example.com/page/1",
@@ -193,6 +195,34 @@ The batch never throws because one request failed, so a single bad entry
 does not lose the others; check `response.isError()` first, as above.
 
 A configured client exposes the same `fetchAll` for connection-pool reuse.
+
+`http.fetchStream(requests)` takes the same list of builders or request-spec
+dicts but hands back each `Response` as soon as it completes, instead of
+waiting for the whole batch. It returns a `FetchStream`:
+
+| Method | Description |
+|--------|-------------|
+| `next()` | Blocks for the next completed `Response`, or returns `null` once every one has been read. |
+| `nextAsync()` | Awaitable form of `next()`. |
+| `remaining()` | How many responses have not been read yet. |
+| `done()` | `true` once every response has been read. |
+
+Responses arrive in completion order, not input order. Each one carries
+`response["index"]` (its position in the input list) and `response["url"]`.
+Failed requests follow the same `isError()` rules as `fetchAll`.
+
+```gb
+let stream = http.fetchStream([
+    http.request(usersUrl),
+    {"method": "GET", "url": teamsUrl}
+]);
+while (!stream.done()) {
+    let response = stream.next();
+    io.println("request ${response["index"]} finished: ${response.status()}");
+}
+```
+
+A configured client exposes the same `fetchStream`.
 
 ### Client-side response streaming (1.24.0)
 
@@ -736,6 +766,7 @@ binary protocols. Backed by Go's `net/netip`.
 
 ```gb
 import net;
+import io;
 
 let allow = ["10.0.0.0/8", "192.168.0.0/16", "127.0.0.1/32"];
 
@@ -833,6 +864,7 @@ Import `url` to parse, construct, and transform URLs:
 
 ```gb
 import url;
+import io;
 
 let u = url.URL("https://example.com:8080/search?q=hello#results");
 io.println(u.scheme());    # https

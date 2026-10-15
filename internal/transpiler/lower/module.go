@@ -18,30 +18,31 @@ type Module struct {
 	entryMainWantsArgs  bool
 	entryMainReturnsInt bool
 
-	imports        map[string]struct{}
-	mainBody       *emit.Writer
-	topDecls       *emit.Writer
-	knownStdlib    map[string]string
-	helpers        map[string]struct{}
-	userModules    map[string]string
-	sourceModules  map[string]struct{}
-	userModuleRet  map[string]*types.Type
-	classes        map[string]struct{}
-	enums          map[string][]string
-	interfaces     map[string]struct{}
-	interfaceDecls map[string]*ast.InterfaceStatement
-	taggedVariants map[string]int
-	classMethods   map[string]map[string]struct{}
-	classFields    map[string]map[string]string
-	decoratedFuncs map[string]struct{}
-	funcReturns    map[string]*types.Type
-	calleeParams   map[string][]string
-	classParents   map[string]string
-	classDecls     map[string]*ast.ClassStatement
-	typeAliases    map[string]*ast.TypeRef
-	calleeDefaults map[string][]ast.Expression
-	calleeVariadic map[string]bool
-	fromImports    map[string]FromImportTarget
+	imports          map[string]struct{}
+	mainBody         *emit.Writer
+	topDecls         *emit.Writer
+	knownStdlib      map[string]string
+	helpers          map[string]struct{}
+	userModules      map[string]string
+	sourceModules    map[string]struct{}
+	userModuleRet    map[string]*types.Type
+	classes          map[string]struct{}
+	enums            map[string][]string
+	interfaces       map[string]struct{}
+	interfaceDecls   map[string]*ast.InterfaceStatement
+	taggedVariants   map[string]int
+	classMethods     map[string]map[string]struct{}
+	classFields      map[string]map[string]string
+	decoratedFuncs   map[string]struct{}
+	funcReturns      map[string]*types.Type
+	calleeParams     map[string][]string
+	classParents     map[string]string
+	classDecls       map[string]*ast.ClassStatement
+	typeAliases      map[string]*ast.TypeRef
+	calleeDefaults   map[string][]ast.Expression
+	calleeVariadic   map[string]bool
+	calleeParamTypes map[string][]*ast.TypeRef
+	fromImports      map[string]FromImportTarget
 }
 
 // FromImportTarget resolves a from-imported local name to its origin module and
@@ -267,15 +268,28 @@ func (m *Module) CalleeParams(key string) ([]string, bool) {
 	return p, ok
 }
 
-// RegisterCalleeSignature records default-arg expressions (nil per param with
-// none) and whether the last param is variadic, keyed by the emitted Go name.
-func (m *Module) RegisterCalleeSignature(key string, defaults []ast.Expression, variadic bool) {
+// RegisterCalleeSignature records a callee's default-arg expressions, declared
+// param types, and whether the last param is variadic, keyed by the emitted Go name.
+func (m *Module) RegisterCalleeSignature(key string, params []ast.Parameter) {
 	if m.calleeDefaults == nil {
 		m.calleeDefaults = map[string][]ast.Expression{}
 		m.calleeVariadic = map[string]bool{}
+		m.calleeParamTypes = map[string][]*ast.TypeRef{}
 	}
-	m.calleeDefaults[key] = defaults
-	m.calleeVariadic[key] = variadic
+	m.calleeDefaults[key] = paramDefaults(params)
+	m.calleeVariadic[key] = lastVariadic(params)
+	refs := make([]*ast.TypeRef, len(params))
+	for i, param := range params {
+		refs[i] = param.Type
+	}
+	m.calleeParamTypes[key] = refs
+}
+
+func (m *Module) CalleeParamTypes(key string) []*ast.TypeRef {
+	if m.calleeParamTypes == nil {
+		return nil
+	}
+	return m.calleeParamTypes[key]
 }
 
 func (m *Module) CalleeDefaults(key string) []ast.Expression {

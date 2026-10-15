@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -25,6 +27,7 @@ import (
 
 type page struct {
 	Source string
+	Origin string
 	Output string
 	Title  string
 	HTML   string
@@ -115,11 +118,59 @@ func main() {
 			fatal(err)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(outDir, manualCSSFile), []byte(manualCSS), 0o644); err != nil {
+		fatal(err)
+	}
 	if pages[0].Output != "index.html" {
 		if err := writeRedirect(outDir, pages[0].Output); err != nil {
 			fatal(err)
 		}
 	}
+	if canonicalBase != "" {
+		if err := os.WriteFile(filepath.Join(outDir, "sitemap.xml"), []byte(sitemapXML(pages, gitLastModified)), 0o644); err != nil {
+			fatal(err)
+		}
+	}
+}
+
+// pageURL is the absolute URL of a page under --base-url.
+func pageURL(p page) string {
+	base := strings.TrimRight(canonicalBase, "/")
+	out := filepath.ToSlash(p.Output)
+	if out == "index.html" {
+		return base + "/"
+	}
+	return base + "/" + out
+}
+
+func sitemapXML(pages []page, lastModified func(string) string) string {
+	var b strings.Builder
+	b.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+	b.WriteString("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n")
+	for _, p := range pages {
+		// The agent guide is published for tools, not as a manual page for search.
+		if strings.EqualFold(filepath.Base(p.Output), "AGENTS.html") {
+			continue
+		}
+		b.WriteString("  <url><loc>" + html.EscapeString(pageURL(p)) + "</loc>")
+		if p.Origin != "" {
+			if date := lastModified(p.Origin); date != "" {
+				b.WriteString("<lastmod>" + date + "</lastmod>")
+			}
+		}
+		b.WriteString("</url>\n")
+	}
+	b.WriteString("</urlset>\n")
+	return b.String()
+}
+
+// gitLastModified returns the last commit date (YYYY-MM-DD) touching path, or "" outside git.
+func gitLastModified(path string) string {
+	out, err := exec.Command("git", "log", "-1", "--format=%cs", "--", path).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func parseExtraArgs(args []string) ([]string, string) {
@@ -147,6 +198,20 @@ func parseExtraArgs(args []string) ([]string, string) {
 			}
 			continue
 		}
+		if args[i] == "--site-name" {
+			if i+1 < len(args) {
+				siteName = args[i+1]
+				i++
+			}
+			continue
+		}
+		if args[i] == "--og-image" {
+			if i+1 < len(args) {
+				ogImage = args[i+1]
+				i++
+			}
+			continue
+		}
 		if args[i] == "--base-url" {
 			if i+1 < len(args) {
 				canonicalBase = args[i+1]
@@ -166,6 +231,8 @@ var (
 	searchURL     string
 	searchScope   string
 	canonicalBase string
+	siteName      = "Geblang"
+	ogImage       string
 )
 
 func searchFormHTML() string {
@@ -199,6 +266,7 @@ func loadAPIPages(sources []string) ([]page, error) {
 		output := filepath.ToSlash(filepath.Join("api", apiSlug(source)+".html"))
 		pages = append(pages, page{
 			Source: source,
+			Origin: source,
 			Output: output,
 			Title:  title,
 			HTML:   markdownToHTML(markdown.Bytes()),
@@ -354,7 +422,7 @@ func exampleIndexPage(root string, examples []exampleDoc) page {
 	if currentCategory != "" {
 		body.WriteString(`</div>`)
 	}
-	return page{Source: "examples", Output: "examples/index.html", Title: "Examples", HTML: body.String(), Depth: 0}
+	return page{Source: "examples", Origin: root, Output: "examples/index.html", Title: "Examples", HTML: body.String(), Depth: 0}
 }
 
 func exampleGroupPages(root string, examples []exampleDoc) []page {
@@ -381,6 +449,7 @@ func exampleGroupPages(root string, examples []exampleDoc) []page {
 		body.WriteString(`</div>`)
 		pages = append(pages, page{
 			Source: filepath.ToSlash(filepath.Join("examples", name)),
+			Origin: filepath.Join(root, name),
 			Output: exampleGroupOutputPath(name),
 			Title:  title,
 			HTML:   body.String(),
@@ -439,6 +508,7 @@ func examplePage(example exampleDoc) page {
 	body.WriteString(`<pre><code class="language-gb">` + html.EscapeString(example.Code) + `</code></pre>`)
 	return page{
 		Source: filepath.ToSlash(filepath.Join("examples", example.Rel)),
+		Origin: filepath.Join(example.Root, example.Rel),
 		Output: exampleOutputPath(example.Rel),
 		Title:  example.Title,
 		HTML:   body.String(),
@@ -550,6 +620,7 @@ func loadPages(srcDir string) ([]page, error) {
 		out := outputPath(rel)
 		pages = append(pages, page{
 			Source: file,
+			Origin: file,
 			Output: out,
 			Title:  title,
 			HTML:   markdownToHTML(content),
@@ -692,7 +763,7 @@ func writePage(outDir string, pages []page, index int) error {
 }
 
 func writeRedirect(outDir, target string) error {
-	content := "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0; url=" + html.EscapeString(target) + "\"><a href=\"" + html.EscapeString(target) + "\">Geblang Reference Manual</a>"
+	content := "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0; url=" + html.EscapeString(target) + "\"><a href=\"" + html.EscapeString(target) + "\">" + html.EscapeString(siteName) + " Reference Manual</a>"
 	return os.WriteFile(filepath.Join(outDir, "index.html"), []byte(content), 0o644)
 }
 
@@ -700,13 +771,93 @@ func canonicalLinkHTML(current page) string {
 	if canonicalBase == "" {
 		return ""
 	}
-	base := strings.TrimRight(canonicalBase, "/")
-	out := filepath.ToSlash(current.Output)
-	href := base + "/" + out
-	if out == "index.html" {
-		href = base + "/"
+	return "\n  <link rel=\"canonical\" href=\"" + html.EscapeString(pageURL(current)) + "\">"
+}
+
+var paragraphPattern = regexp.MustCompile(`(?s)<p(?:\s[^>]*)?>(.*?)</p>`)
+
+// pageDescription joins the leading prose paragraphs into a search-snippet-sized summary.
+func pageDescription(body string) string {
+	const want, limit = 100, 155
+	text := ""
+	for _, m := range paragraphPattern.FindAllStringSubmatch(body, -1) {
+		para := strings.ReplaceAll(html.UnescapeString(tagPattern.ReplaceAllString(m[1], "")), "`", "")
+		para = strings.Join(strings.Fields(para), " ")
+		if para == "" || strings.HasSuffix(para, ":") {
+			continue
+		}
+		text = strings.TrimSpace(text + " " + para)
+		if len(text) >= want {
+			break
+		}
 	}
-	return "\n  <link rel=\"canonical\" href=\"" + html.EscapeString(href) + "\">"
+	if len(text) <= limit {
+		return text
+	}
+	cut := strings.LastIndex(text[:limit], " ")
+	if cut <= 0 {
+		cut = limit
+	}
+	return strings.TrimRight(text[:cut], " ,;:.") + "..."
+}
+
+func pageMetaHTML(current page) string {
+	title := current.Title + " - " + siteName + " Manual"
+	desc := pageDescription(current.HTML)
+	var b strings.Builder
+	meta := func(attr, key, value string) {
+		b.WriteString("\n  <meta " + attr + "=\"" + key + "\" content=\"" + html.EscapeString(value) + "\">")
+	}
+	if desc != "" {
+		meta("name", "description", desc)
+	}
+	meta("property", "og:type", "article")
+	meta("property", "og:site_name", siteName+" Manual")
+	meta("property", "og:title", title)
+	if desc != "" {
+		meta("property", "og:description", desc)
+	}
+	card := "summary"
+	if ogImage != "" {
+		card = "summary_large_image"
+		meta("property", "og:image", ogImage)
+		meta("name", "twitter:image", ogImage)
+	}
+	meta("name", "twitter:card", card)
+	meta("name", "twitter:title", title)
+	if desc != "" {
+		meta("name", "twitter:description", desc)
+	}
+	if canonicalBase == "" {
+		return b.String()
+	}
+	url := pageURL(current)
+	meta("property", "og:url", url)
+	home := pageURL(page{Output: "index.html"})
+	manual := siteName + " Reference Manual"
+	article := map[string]any{
+		"@context":   "https://schema.org",
+		"@type":      "TechArticle",
+		"headline":   current.Title,
+		"url":        url,
+		"inLanguage": "en",
+		"isPartOf":   map[string]any{"@type": "CreativeWork", "name": manual, "url": home},
+	}
+	if desc != "" {
+		article["description"] = desc
+	}
+	crumbs := []map[string]any{{"@type": "ListItem", "position": 1, "name": manual, "item": home}}
+	if url != home {
+		crumbs = append(crumbs, map[string]any{"@type": "ListItem", "position": 2, "name": current.Title, "item": url})
+	}
+	breadcrumb := map[string]any{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": crumbs}
+	for _, data := range []any{article, breadcrumb} {
+		encoded, err := json.Marshal(data)
+		if err == nil {
+			b.WriteString("\n  <script type=\"application/ld+json\">" + string(encoded) + "</script>")
+		}
+	}
+	return b.String()
 }
 
 func layout(pages []page, current page, prev, next *page) string {
@@ -748,47 +899,13 @@ func layout(pages []page, current page, prev, next *page) string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>` + html.EscapeString(current.Title) + ` - Geblang Manual</title>` + canonicalLinkHTML(current) + `
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <style>
-    body { background: #f7f8fa; }
-    .navbar { border-bottom: 1px solid rgba(255,255,255,.12); }
-    .manual-shell { max-width: 1240px; }
-    .sidebar { position: sticky; top: 5rem; max-height: calc(100vh - 6rem); overflow: auto; }
-    .content { background: #fff; border: 1px solid #dee2e6; border-radius: .5rem; }
-    .content h1, .content h2, .content h3 { scroll-margin-top: 5rem; }
-    .content h1 { margin-bottom: 1rem; }
-    .content h2 { margin-top: 2rem; padding-top: .5rem; border-top: 1px solid #edf0f2; }
-    .list-group-item.nav-depth-1 { padding-left: 1.75rem; font-size: .94rem; }
-    .list-group-item.nav-depth-2 { padding-left: 2.5rem; font-size: .9rem; }
-    .toc-wrap { position: sticky; top: 5rem; max-height: calc(100vh - 6rem); overflow: auto; }
-    .toc-title { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: #6c757d; font-weight: 600; margin-bottom: .5rem; }
-    .toc-list { list-style: none; padding-left: 0; margin: 0; border-left: 1px solid #dee2e6; }
-    .toc-item a { display: block; padding: .2rem 0 .2rem .75rem; font-size: .85rem; color: #495057; text-decoration: none; border-left: 2px solid transparent; margin-left: -1px; }
-    .toc-item a:hover { color: #0d6efd; border-left-color: #0d6efd; }
-    .toc-item.toc-sub a { padding-left: 1.5rem; font-size: .82rem; color: #6c757d; }
-    pre { background: #15171a; color: #f8f9fa; padding: 1rem; border-radius: .5rem; overflow: auto; }
-    code { color: #b02a37; }
-    pre code { color: inherit; }
-    pre code.language-gb, pre code.language-geblang { color: #d6deeb; }
-    .hl-comment { color: #6a9955; font-style: italic; }
-    .hl-string { color: #ecc48d; }
-    .hl-keyword { color: #c792ea; }
-    .hl-declaration { color: #82aaff; }
-    .hl-type { color: #ffcb6b; }
-    .hl-number { color: #f78c6c; }
-    .hl-constant { color: #ff9cac; }
-    .hl-function { color: #addb67; }
-    .hl-decorator { color: #7fdbca; }
-    .hl-operator { color: #89ddff; }
-    blockquote { margin: 1.25rem 0; padding: 1rem 1.25rem; border-left: .35rem solid #0d6efd; background: #f1f6ff; color: #24344d; border-radius: 0 .5rem .5rem 0; }
-    blockquote > :last-child { margin-bottom: 0; }
-  </style>
+  <title>` + html.EscapeString(current.Title) + ` - ` + html.EscapeString(siteName) + ` Manual</title>` + canonicalLinkHTML(current) + pageMetaHTML(current) + `
+  <link rel="stylesheet" href="` + relHref(current.Output, manualCSSFile) + `">
 </head>
 <body>
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid manual-shell">
-      <a class="navbar-brand fw-semibold" href="` + relHref(current.Output, "index.html") + `">Geblang Reference Manual</a>` + searchFormHTML() + `
+      <a class="navbar-brand fw-semibold" href="` + relHref(current.Output, "index.html") + `">` + html.EscapeString(siteName) + ` Reference Manual</a>` + searchFormHTML() + `
       <span class="navbar-text d-none d-xl-inline">Static manual and source API reference</span>
     </div>
   </nav>

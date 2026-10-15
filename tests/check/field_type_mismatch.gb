@@ -1,0 +1,13 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a write whose value type cannot fit the
+ *          declared field type.
+ */
+class Account {
+    int balance;
+    float rate;
+}
+
+let account = Account();
+account.balance = "lots";
+account.rate = 0.5;

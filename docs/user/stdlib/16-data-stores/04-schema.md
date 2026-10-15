@@ -11,6 +11,7 @@ for request payloads, configuration dictionaries, CLI inputs, and tests.
 
 ```gb
 import schema;
+import io;
 
 let result = schema.validate(
     {"name": "Ada", "roles": ["admin"]},
@@ -80,6 +81,7 @@ Use `schema.validator` when the same schema is applied repeatedly.
 
 ```gb
 import schema.validator as sv;
+import io;
 
 let validator = sv.of({
     "type": "object",

@@ -7,6 +7,7 @@ components.
 
 ```gb
 import config;
+import io;
 
 let cfg = config.layer([
     {"debug": false, "db": {"host": "localhost", "port": 5432}},

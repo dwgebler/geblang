@@ -1,0 +1,21 @@
+module int_literal_runtime_callee_donor;
+
+export func third(float x): float {
+    return x / 3.0f;
+}
+
+export class Gauge {
+    float level;
+
+    func Gauge(float level) {
+        this.level = level;
+    }
+
+    func times(float factor): float {
+        return this.level * factor;
+    }
+
+    static func empty(float level): Gauge {
+        return Gauge(level);
+    }
+}

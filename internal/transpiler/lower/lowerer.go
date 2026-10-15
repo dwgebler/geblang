@@ -331,7 +331,7 @@ func (l *Lowerer) preregisterTopLevel(stmts []ast.Statement) {
 			l.Module.RegisterFunctionReturnType(emit.MangleIdent(fn.Name.Value), ret)
 			key := l.NamePrefix + emit.MangleIdent(fn.Name.Value)
 			l.Module.RegisterCalleeParams(key, paramNames(fn.Parameters))
-			l.Module.RegisterCalleeSignature(key, paramDefaults(fn.Parameters), lastVariadic(fn.Parameters))
+			l.Module.RegisterCalleeSignature(key, fn.Parameters)
 			l.moduleTopLevel[fn.Name.Value] = true
 		}
 		if decl, ok := s.(*ast.DeclarationStatement); ok {

@@ -164,7 +164,24 @@ exact types from silent precision loss:
 
 An integer literal written where a `float` or `decimal` is expected takes that
 type: `float f = 3;` stores the `float` `3`, and `return 2;` in a function
-declared `decimal` returns the `decimal` `2.0000000000`.
+declared `decimal` returns the `decimal` `2.0000000000`. The same applies to a
+field assignment or default (`this.total = 0;` or `decimal total = 0;` on a
+`decimal` field, static fields included) and to an argument for a `float` or
+`decimal` parameter, positional or named in any order (`half(3)`,
+`half(k: 2, x: 3)`), including `parent(...)` and `parent.method(...)` calls, and
+to a parameter whose type is a generic `T` bound to `float` or `decimal`
+(`Box<float>(1)`, or `T` bound through an `extends Box<float>` clause). A
+negated literal such as `-1`, and a conditional whose branches are both literals
+(`on ? 1 : 2`), count as literals; a field default must be a plain or negated
+literal. When an overload takes an `int`, the `int` overload is chosen, and when
+several overloads need converting, the one needing the fewest conversions wins;
+a named argument is typed only when every overload agrees on its parameter type.
+Only literals are typed this way: an `int` variable passed or assigned where a
+`float` is declared is a `TypeError`. Literals are not typed for a variadic
+parameter, an enum method's parameter, or a named argument to a generic `T`
+parameter. On the bytecode VM, a call to a closure value, or to a function,
+constructor, or method of another module (including a `parent` call into it),
+does not type the literal and rejects the `int`.
 
 Because `/` is true division, its result is a `decimal` (or `float`) even when it
 divides evenly, so `int n = a / b` is a compile-time error. Use `//` (floor
@@ -485,6 +502,7 @@ name to the concrete type it was bound with:
 
 ```gb
 import reflect;
+import io;
 
 class Box<T> {
     T value;
@@ -541,6 +559,7 @@ let both = bytes.concat([raw, hex]);           # join two byte sequences
 
 ```gb
 import bytes;
+import io;
 
 let data = bytes.fromString("Geblang");
 io.println(data.length);        # 7  (property form)
@@ -557,17 +576,20 @@ io.println(data.get(0));        # 71 (ASCII 'G')
 
 ### Common patterns
 
-**Cryptography and hashing**: hash and sign functions in the `crypt` module
-return `bytes`. Pass them directly to `bytes.toHex()` or `bytes.toBase64()` for
-storage or transport:
+**Cryptography and hashing**: the `crypt` hash functions return a lowercase hex
+`string`, ready for storage or comparison. For the raw digest as `bytes` (for
+example to Base64-encode it), decode the hex with `bytes.fromHex`, or use
+`crypt.hmacSha256Bytes` for HMACs:
 
 ```gb
 import crypt;
 import bytes;
+import io;
 
-let hash = crypt.sha256("password123");
-io.println(hash.toHex());     # hex digest
-io.println(hash.toBase64());  # Base64 digest
+let hex = crypt.sha256("password123");
+io.println(hex);                                # hex digest
+io.println(bytes.fromHex(hex).toBase64());      # Base64 digest
+io.println(crypt.hmacSha256Bytes("key", "msg").toBase64());
 ```
 
 **Compression**: `compress.gzip` takes and returns `bytes`:
@@ -769,6 +791,7 @@ container, validator, or wrapper is parameterized with:
 
 ```gb
 import reflect;
+import io;
 
 class Container<T> {
     list<T> items = [];

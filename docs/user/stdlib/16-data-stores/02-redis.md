@@ -6,6 +6,7 @@ queues backed by Redis lists, simple counters, and framework integrations.
 
 ```gb
 import redis;
+import io;
 
 let client = redis.connect("127.0.0.1:6379");
 defer client.close();

@@ -160,6 +160,7 @@ application as values with helper methods.
 
 ```gb
 import pathlib;
+import io;
 
 let p = pathlib.of("/tmp/data/report.csv");
 io.println(p.stem());

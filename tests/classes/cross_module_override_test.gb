@@ -1,0 +1,29 @@
+/**
+ * @title Overrides of a non-exported base reached through an exported subclass (1.37.1)
+ * @summary A method declared on a module-private base class and overridden by
+ * another module's subclass of an exported descendant dispatches to the
+ * override, whether called through the base-typed variable or through this.
+ */
+import test;
+import cross_module_override_donor as donor;
+
+class Custom extends donor.Kid {
+    func describe(float x): string {
+        return "custom";
+    }
+}
+
+class CrossModuleOverrideTest extends test.Test {
+
+    @test
+    func overrideIsCalledThroughBaseType(): void {
+        this.assertEquals("base", donor.run(donor.Kid()));
+        this.assertEquals("custom", donor.run(Custom()));
+    }
+
+    @test
+    func overrideIsCalledThroughThis(): void {
+        this.assertEquals("custom", Custom().viaThis());
+        this.assertEquals("base", donor.Kid().viaThis());
+    }
+}

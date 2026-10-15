@@ -32,6 +32,7 @@ Decimal values retain their exact digits during rounding and formatting.
 
 ```gb
 import locale;
+import io;
 
 io.println(locale.formatNumber(12345.67, "de"));          /* 12.345,67 */
 io.println(locale.formatCurrency(1234.5, "EUR", "fr")); /* amount then euro sign */
@@ -54,6 +55,7 @@ integer in locale collation order. Set `ignoreCase` or `numeric` to true in
 ```gb
 import datetime;
 import locale;
+import io;
 
 let instant = datetime.Instant("2024-07-04T23:30:00Z");
 io.println(locale.formatDate(instant, "en-GB", "full", "Europe/London"));
@@ -85,6 +87,7 @@ template execution.
 
 ```gb
 import i18n;
+import io;
 
 let messages = {
     "en": {"files": {"one": "{count} file", "other": "{count} files"}},

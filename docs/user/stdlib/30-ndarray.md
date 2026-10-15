@@ -7,6 +7,7 @@ numeric work in the NumPy mould.
 
 ```gb
 import ndarray as nd;
+import io;
 
 let a = nd.array([[1.0, 2.0], [3.0, 4.0]]);
 io.println(a.shape());        # [2, 2]

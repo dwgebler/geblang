@@ -151,6 +151,8 @@ io.println(reflect.function("missing"));   # null
 
 ```gb
 import http;
+import io;
+import reflect;
 
 let request = reflect.class("http.Request");
 io.println(reflect.className(request));   # Request
@@ -162,6 +164,8 @@ expression. Unknown members return `null`:
 
 ```gb
 import math;
+import io;
+import reflect;
 
 let sqrt = reflect.function("math.sqrt");
 io.println(sqrt(16.0));                       # 4
@@ -287,9 +291,10 @@ io.println(reflect.getField(d, "breed"));   # Lab
 io.println(reflect.getField(d, "missing")); # null
 ```
 
-`reflect.setField(instance, name, value)` writes a named field. It is permissive
-by design: the assignment succeeds even if the field was not declared, which is
-what dynamic binding code (PATCH-style partial updates, deserializers) needs.
+`reflect.setField(instance, name, value)` writes a named field. It accepts a
+field that was not declared, which is what dynamic binding code (PATCH-style
+partial updates, deserializers) needs. A declared field keeps its type: a value
+of the wrong type throws `TypeError`, exactly as a normal assignment does.
 
 ```gb
 reflect.setField(d, "name", "Fido");
@@ -375,6 +380,8 @@ classes):
 #   export class Thing { int n; func Thing(int n) { this.n = n; } }
 
 import mymod;
+import io;
+import reflect;
 
 let m = reflect.module("mymod");
 io.println(reflect.exports(m));   # ["Thing", "add", "sub"]

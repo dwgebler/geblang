@@ -560,9 +560,38 @@ func receiverTypeBindings(function *FunctionInfo, first runtime.Value) map[strin
 		return nil
 	}
 	if inst, ok := first.(*runtime.Instance); ok {
-		return inst.TypeBindings
+		return withoutShadowedTypeParams(inst.TypeBindings, function.TypeParameters)
 	}
 	return nil
+}
+
+// withoutShadowedTypeParams drops class bindings that a method-level generic of the same name hides.
+func withoutShadowedTypeParams(bindings map[string]string, params []string) map[string]string {
+	if len(bindings) == 0 || len(params) < 2 {
+		return bindings
+	}
+	var out map[string]string
+	for _, param := range params {
+		if !shadowsClassTypeParameter(params, param) {
+			continue
+		}
+		for key := range bindings {
+			if !strings.EqualFold(key, param) {
+				continue
+			}
+			if out == nil {
+				out = make(map[string]string, len(bindings))
+				for k, v := range bindings {
+					out[k] = v
+				}
+			}
+			delete(out, key)
+		}
+	}
+	if out == nil {
+		return bindings
+	}
+	return out
 }
 
 // mergedTypeBindings overlays primary on secondary (primary wins).
@@ -2686,11 +2715,18 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 		if !ok {
 			return v, nil
 		}
-		for _, fieldName := range classInfo.FieldNames {
+		for i, fieldName := range classInfo.FieldNames {
 			key := runtime.String{Value: fieldName}
 			entry, hit := dict.GetEntry(native.DictKey(key))
 			if hit {
-				instance.Fields[fieldName] = entry.Value
+				value := entry.Value
+				if i < len(classInfo.FieldCheckTypes) && classInfo.FieldCheckTypes[i] != "" {
+					value = native.ConvertParsedNumbers(value, classInfo.FieldCheckTypes[i])
+				}
+				if msg, ok := vm.fieldWriteMismatch(instance, fieldName, value); !ok {
+					return nil, runtime.ClassifiedError{Class: "TypeError", Message: msg}
+				}
+				instance.Fields[fieldName] = value
 			}
 		}
 		return instance, nil
@@ -2701,7 +2737,7 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 	}
 	ctor := vm.chunk.Functions[ctorIndex]
 	args := make([]runtime.Value, 0, len(ctor.ParamNames))
-	for _, paramName := range ctor.ParamNames {
+	for i, paramName := range ctor.ParamNames {
 		// Skip the implicit "this" receiver the compiler prepends to constructor parameter lists.
 		if paramName == "this" {
 			continue
@@ -2711,7 +2747,11 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 		if !hit {
 			return nil, fmt.Errorf("deserialize %s: missing field %q", class.Name, paramName)
 		}
-		args = append(args, entry.Value)
+		value := entry.Value
+		if i < len(ctor.ParamTypes) {
+			value = native.ConvertParsedNumbers(value, vm.expandTypeAliases(ctor.ParamTypes[i]))
+		}
+		args = append(args, value)
 	}
 	return vm.ConstructClass(class.Index, args)
 }

@@ -120,6 +120,7 @@ For callback-style scheduling (fire-once or repeating), import
 
 ```gb
 import time.scheduler as sched;
+import io;
 
 # Fire once after 500ms; cancellable.
 let t = sched.Timer(500, func(): void {

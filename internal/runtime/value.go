@@ -695,7 +695,18 @@ func (v *Generator) Close() {
 	}
 }
 
+// BoundMethod is a method bound to its receiver, dispatched on whichever evaluator calls it.
+type BoundMethod struct {
+	Label     string
+	Overloads []Function
+	Instance  *Instance
+}
+
 type Function struct {
+	// Bound, when set, is the reflected method this function invokes on the calling evaluator.
+	Bound *BoundMethod
+	// Identity distinguishes separately created closures and method values for `is`.
+	Identity             *FunctionIdentity
 	Name                 string
 	Doc                  string
 	TypeParameters       []string
@@ -869,6 +880,8 @@ type BytecodeClosure struct {
 	Name          string
 	Module        string
 	Upvalues      []Value
+	// Identity distinguishes separately created capture-free function literals for `is`.
+	Identity *FunctionIdentity
 	// TypeBindings captures the enclosing generic function's type
 	// parameter bindings at the moment the closure was created. When
 	// the closure later runs, these bindings are planted into its call
@@ -1292,10 +1305,14 @@ func IsBuiltinTypeName(name string) bool {
 }
 
 type Field struct {
-	Name    string
-	Type    *ast.TypeRef
-	Default ast.Expression
-	Doc     string // docblock (## or /** */) immediately before the field, surfaced via reflect.fields.
+	Name string
+	Type *ast.TypeRef
+	// TypeName is the declared type for VM-built classes, which carry no AST.
+	TypeName string
+	// CheckType is Type with aliases resolved, used for runtime write checks.
+	CheckType *ast.TypeRef
+	Default   ast.Expression
+	Doc       string // docblock (## or /** */) immediately before the field, surfaced via reflect.fields.
 	// Decorators is the list of @-prefixed annotations applied to
 	// the field declaration inside a class body. They are pure
 	// metadata - the runtime never executes them automatically;
@@ -1326,7 +1343,11 @@ type Class struct {
 	MethodMetadata  map[string][]FunctionMetadata
 	StaticMetadata  map[string][]FunctionMetadata
 	StaticValues    map[string]Value
-	Constructors    []Function
+	// StaticTypes holds the alias-resolved declared type of each typed static field.
+	StaticTypes map[string]*ast.TypeRef
+	// FieldChecks caches resolved field types for runtime write checks; nil disables caching.
+	FieldChecks  *sync.Map
+	Constructors []Function
 	// Destructor is the optional `func ~ClassName()` cleanup method.
 	// Nil when the class doesn't declare one. The runtime invokes it
 	// at `with`-block exit (and via explicit cleanup paths added by

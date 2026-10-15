@@ -1079,6 +1079,9 @@ func (vm *VM) runtimeValueMatchesTypeSpec(value runtime.Value, spec vmTypeSpec) 
 		return false
 	}
 	if ev, ok := value.(runtime.EnumVariant); ok {
+		if strings.EqualFold(ev.Enum.Name, stripped) && vm.qualifierNamesModule(spec.base, ev.Enum.Module) {
+			return true
+		}
 		for _, iface := range ev.Enum.Implements {
 			if strings.EqualFold(iface, stripped) {
 				return true
@@ -1328,4 +1331,160 @@ func primitiveConversionTarget(name string) (string, bool) {
 		return "bool", true
 	}
 	return "", false
+}
+
+// qualifierNamesModule reports whether a `mod.Name` type's qualifier (resolved through import aliases) is module.
+func (vm *VM) qualifierNamesModule(qualified, module string) bool {
+	dot := strings.LastIndexByte(qualified, '.')
+	if dot < 0 || module == "" {
+		return true
+	}
+	prefix := qualified[:dot]
+	if canonical, ok := vm.importScopeChunk().ModuleAliases[prefix]; ok {
+		prefix = canonical
+	}
+	return strings.EqualFold(prefix, module)
+}
+
+// selectRuntimeFunctionLiterals types int-literal args by float/decimal params of the chosen or fewest-conversion overload.
+func (vm *VM) selectRuntimeFunctionLiterals(instruction Instruction, name string, indices []int64, args []runtime.Value, paramOffset int, literals []bool, bindings map[string]string) (int64, error) {
+	index, err := vm.selectRuntimeFunction(instruction, name, indices, args, paramOffset)
+	if literals == nil {
+		return index, err
+	}
+	if err == nil {
+		vm.typeLiteralArgs(vm.curMod.Chunk.Functions[index], args, paramOffset, literals, bindings)
+		return index, nil
+	}
+	best, bestCount, tied := int64(-1), -1, false
+	var bestArgs []runtime.Value
+	for _, candidate := range indices {
+		if candidate < 0 || int(candidate) >= len(vm.curMod.Chunk.Functions) {
+			continue
+		}
+		function := vm.curMod.Chunk.Functions[candidate]
+		min, max, variadic := bytecodeFunctionArityRange(function, paramOffset)
+		if len(args) < min || (!variadic && len(args) > max) {
+			continue
+		}
+		converted := append([]runtime.Value(nil), args...)
+		count := vm.typeLiteralArgs(function, converted, paramOffset, literals, bindings)
+		if count == 0 || !vm.runtimeArgumentsMatch(function, converted, paramOffset) {
+			continue
+		}
+		switch {
+		case bestCount < 0 || count < bestCount:
+			best, bestCount, bestArgs, tied = candidate, count, converted, false
+		case count == bestCount:
+			tied = true
+		}
+	}
+	if best < 0 || tied {
+		return index, err
+	}
+	copy(args, bestArgs)
+	return best, nil
+}
+
+func (vm *VM) typeLiteralArgs(function FunctionInfo, args []runtime.Value, paramOffset int, literals []bool, bindings map[string]string) int {
+	count := 0
+	for i := range args {
+		position := i + paramOffset
+		if i >= len(literals) || !literals[i] || position >= len(function.ParamTypes) {
+			continue
+		}
+		target := strings.TrimPrefix(vm.expandTypeAliases(function.ParamTypes[position]), "?")
+		if bound, ok := bindings[target]; ok && bound != "" && !shadowsClassTypeParameter(function.TypeParameters, target) {
+			target = strings.TrimPrefix(vm.expandTypeAliases(bound), "?")
+		}
+		if target != "float" && target != "decimal" {
+			continue
+		}
+		switch args[i].(type) {
+		case runtime.SmallInt, runtime.Int:
+			if converted, err := castValue(args[i], target); err == nil {
+				args[i] = converted
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// typeNamedLiteralArgs types int literals whose float/decimal parameter every overload of a local method agrees on.
+func (vm *VM) typeNamedLiteralArgs(receiver runtime.Value, method string, args []runtime.Value, names []string, literals []bool) {
+	instance, ok := receiver.(*runtime.Instance)
+	if !ok || instance.Class == nil || instance.Class.Module != vm.moduleName {
+		return
+	}
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return
+	}
+	indices, ok := vm.lookupMethod(classInfo, method)
+	if !ok || len(indices) == 0 {
+		return
+	}
+	for i := range args {
+		if i >= len(literals) || !literals[i] {
+			continue
+		}
+		agreed := ""
+		for _, index := range indices {
+			if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
+				agreed = ""
+				break
+			}
+			typ := namedArgParamType(vm.curMod.Chunk.Functions[index], names, i)
+			if typ != "" {
+				typ = strings.TrimPrefix(vm.expandTypeAliases(typ), "?")
+			}
+			if (typ != "float" && typ != "decimal") || (agreed != "" && agreed != typ) {
+				agreed = ""
+				break
+			}
+			agreed = typ
+		}
+		if agreed == "" {
+			continue
+		}
+		switch args[i].(type) {
+		case runtime.SmallInt, runtime.Int:
+			if converted, err := castValue(args[i], agreed); err == nil {
+				args[i] = converted
+			}
+		}
+	}
+}
+
+func namedArgParamType(function FunctionInfo, names []string, argIndex int) string {
+	if names[argIndex] != "" {
+		for p := 1; p < len(function.ParamNames) && p < len(function.ParamTypes); p++ {
+			if strings.EqualFold(function.ParamNames[p], names[argIndex]) {
+				return function.ParamTypes[p]
+			}
+		}
+		return ""
+	}
+	position := 1
+	for i := 0; i < argIndex; i++ {
+		if names[i] == "" {
+			position++
+		}
+	}
+	if position < len(function.ParamTypes) {
+		return function.ParamTypes[position]
+	}
+	return ""
+}
+
+// shadowsClassTypeParameter reports a method-level generic that reuses a class type parameter's name.
+func shadowsClassTypeParameter(params []string, name string) bool {
+	count := 0
+	for _, param := range params {
+		if strings.EqualFold(param, name) {
+			count++
+		}
+	}
+	return count > 1
 }

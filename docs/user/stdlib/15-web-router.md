@@ -23,6 +23,26 @@ level web application support by responsibility:
 - `before(app, middleware)`, `use(app, middleware)`, `after(app, middleware)`
 - `handle(app, request)`
 - `withHeader(response, name, value)`
+- `parseMultipart(request)`
+
+`web.parseMultipart(request)` decodes a `multipart/form-data` request body.
+The request dict needs a `headers` entry whose `Content-Type` carries the
+boundary, and a `body` (string or bytes). It returns
+`{"fields": dict<string, string>, "files": dict<string, dict>}`, where each
+file entry is `{"filename", "contentType", "bytes"}`. A body that is not
+multipart, or a missing boundary, throws, so a handler can catch it and
+answer `400`:
+
+```gb
+import io;
+import web;
+
+let form = web.parseMultipart(request);
+let title = form["fields"]["title"];
+let upload = form["files"]["document"];
+io.println("${upload["filename"]} (${upload["contentType"]})");
+let content = upload["bytes"];
+```
 
 ## Routing And HTTP Helpers
 
@@ -402,6 +422,7 @@ router.mountWithOptions(api, AdminController(), {"sessionStore": sessions});
 
 ```gb
 import web.testing as webtest;
+import io;
 
 let client = webtest.client(app);
 let response = client.get("/api/users");

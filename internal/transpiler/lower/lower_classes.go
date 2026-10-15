@@ -523,7 +523,7 @@ func (l *Lowerer) checkEnumMethodEmittable(s *ast.EnumStatement, methodName stri
 func (l *Lowerer) registerEnumMethodSignature(enumGoName string, m *ast.FunctionStatement) {
 	key := methodCalleeKey(enumGoName, m.Name.Value)
 	l.Module.RegisterCalleeParams(key, paramNames(m.Parameters))
-	l.Module.RegisterCalleeSignature(key, paramDefaults(m.Parameters), lastVariadic(m.Parameters))
+	l.Module.RegisterCalleeSignature(key, m.Parameters)
 }
 
 func (l *Lowerer) emitEnumMethod(enumGbName, enumGoName string, m *ast.FunctionStatement) {
@@ -663,12 +663,12 @@ func (l *Lowerer) lowerClass(s *ast.ClassStatement) {
 
 		if constructor != nil {
 			l.Module.RegisterCalleeParams("New"+className, paramNames(constructor.Parameters))
-			l.Module.RegisterCalleeSignature("New"+className, paramDefaults(constructor.Parameters), lastVariadic(constructor.Parameters))
+			l.Module.RegisterCalleeSignature("New"+className, constructor.Parameters)
 		}
 		for _, m := range staticMethods {
 			key := className + "_" + emit.MangleIdent(m.Name.Value)
 			l.Module.RegisterCalleeParams(key, paramNames(m.Parameters))
-			l.Module.RegisterCalleeSignature(key, paramDefaults(m.Parameters), lastVariadic(m.Parameters))
+			l.Module.RegisterCalleeSignature(key, m.Parameters)
 		}
 		l.emitConstructor(className, s.Name.Value, parentName, s.Generics, constructor, fields)
 		for _, f := range fields {
@@ -1110,7 +1110,7 @@ func (l *Lowerer) emitParamList(w *emit.Writer, params []ast.Parameter, paramTyp
 func (l *Lowerer) registerMethodSignature(className string, m *ast.FunctionStatement) {
 	key := methodCalleeKey(className, m.Name.Value)
 	l.Module.RegisterCalleeParams(key, paramNames(m.Parameters))
-	l.Module.RegisterCalleeSignature(key, paramDefaults(m.Parameters), lastVariadic(m.Parameters))
+	l.Module.RegisterCalleeSignature(key, m.Parameters)
 }
 
 func methodCalleeKey(className, method string) string {

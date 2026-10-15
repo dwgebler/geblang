@@ -11,6 +11,7 @@ a spec dict and returns the parsed values:
 ```gb
 import cli;
 import sys;
+import io;
 
 let opts = cli.parseArgs(sys.args(), {
     "name":    {"type": "string",  "short": "n", "required": true},
@@ -142,6 +143,8 @@ needs a reusable command tree:
 
 ```gb
 import cli.command as cmd;
+import io;
+import sys;
 
 let deploy = cmd.newCommand("deploy", "Deploy the application")
     .option(cmd.newOption("env",  "string").required().help("Target environment"))

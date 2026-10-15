@@ -222,6 +222,21 @@ func (g *fuzzGen) classBlock() (decls string, calls []string) {
 	d.WriteString("  func Box(T v) { this.item = v; }\n")
 	d.WriteString("  func get(): T { return this.item; }\n")
 	d.WriteString("  func put(T v): void { this.item = v; }\n")
+	d.WriteString("  func ident<T>(T x): string { return typeof(x) as string; }\n")
+	d.WriteString("}\n")
+	// Extends-clause binding, parent calls into a bound T, and float literal args (1.37.1).
+	d.WriteString("class Wrap<U> extends Box<U> {\n")
+	d.WriteString("  func Wrap(U v) { parent(v); }\n")
+	d.WriteString("  func again(U v): void { parent.put(v); }\n")
+	d.WriteString("}\n")
+	d.WriteString("class FloatWrap extends Box<float> {\n")
+	d.WriteString("  func FloatWrap() { parent(1); }\n")
+	d.WriteString("  func reset(): float { parent.put(2); return this.item; }\n")
+	d.WriteString("}\n")
+	d.WriteString("class Scale {\n")
+	d.WriteString("  float f;\n")
+	d.WriteString("  func Scale() { this.f = 0.0f; }\n")
+	d.WriteString("  func set(float x, int k = 1): float { this.f = x; return this.f * 2.0f; }\n")
 	d.WriteString("}\n")
 	ctors := []string{"Base", "Sub", "Leaf"}
 	c := ctors[g.rng.Intn(len(ctors))]
@@ -234,6 +249,7 @@ func (g *fuzzGen) classBlock() (decls string, calls []string) {
 		"io.println(inst.n);", // field read (inherited)
 		"io.println(inst instanceof Base);",
 		"let bx = Box("+g.intLit()+"); io.println(bx.get());",
+		"let same = inst; let ids = [inst.n]; let ids2 = ids; io.println(\"${inst is same} ${inst is "+c+"("+g.intLit()+")} ${ids is ids2} ${ids is [inst.n]} ${inst.value is inst.value}\");",
 	)
 	// Explicit type-arg enforcement + binding-aware instanceof (1.20.0):
 	// matching constructions succeed, mismatching constructor and method
@@ -246,6 +262,14 @@ func (g *fuzzGen) classBlock() (decls string, calls []string) {
 			"let gb = Box<int>("+g.intLit()+"); io.println(gb.get()); io.println(gb instanceof Box<int>); io.println(gb instanceof Box<string>);",
 			wrap("let gbad = Box<string>("+g.intLit()+");"),
 			wrap("let gm = Box<int>("+g.intLit()+"); gm.put("+g.stringLit()+");"),
+		)
+	}
+	if g.rng.Intn(2) == 0 {
+		calls = append(calls,
+			"let wr = Wrap<int>("+g.intLit()+"); wr.again("+g.intLit()+"); io.println(wr.get());",
+			wrap("let wb = Wrap<int>("+g.intLit()+"); wb.put("+g.stringLit()+");"),
+			"io.println(Box<string>("+g.stringLit()+").ident("+g.intLit()+"));",
+			"io.println(Scale().set(k: 2, x: "+g.intLit()+")); io.println(FloatWrap().reset());",
 		)
 	}
 	return d.String(), calls

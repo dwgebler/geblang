@@ -6,6 +6,7 @@ degrees. Distances use a mean Earth radius of 6371 km.
 
 ```gb
 import geo;
+import io;
 
 let d = geo.haversineDistance(51.5074, -0.1278, 48.8566, 2.3522);
 io.println("${d} km");   /* ~343.56 km (London to Paris) */

@@ -1355,6 +1355,7 @@ func (a *Analyzer) checkMethodCallArgs(call *ast.CallExpression, selector *ast.S
 		return
 	}
 	args := make([]typeInfo, 0, len(call.Arguments))
+	literals := make([]bool, 0, len(call.Arguments))
 	for _, arg := range call.Arguments {
 		if arg.Name != nil || arg.Spread {
 			return
@@ -1364,9 +1365,13 @@ func (a *Analyzer) checkMethodCallArgs(call *ast.CallExpression, selector *ast.S
 			return
 		}
 		args = append(args, argType)
+		literals = append(literals, ast.IsIntegerLiteral(arg.Value))
 	}
 	for _, sig := range sigs {
 		if a.methodOverloadPossible(args, sig, classTypeParams) {
+			return
+		}
+		if typed, ok := intLiteralArgsTyped(args, literals, sig); ok && a.methodOverloadPossible(typed, sig, classTypeParams) {
 			return
 		}
 	}
@@ -1409,6 +1414,27 @@ func (a *Analyzer) methodOverloadPossible(args []typeInfo, sig MethodSignature, 
 		}
 	}
 	return a.callArgumentsCompatible(args, params, sig.Required)
+}
+
+// intLiteralArgsTyped retypes integer-literal arguments to the float/decimal parameter they target.
+func intLiteralArgsTyped(args []typeInfo, literals []bool, sig MethodSignature) ([]typeInfo, bool) {
+	typed := append([]typeInfo(nil), args...)
+	changed := false
+	for i, literal := range literals {
+		if !literal || i >= len(sig.Params) || sig.Params[i] == nil {
+			continue
+		}
+		param := sig.Params[i]
+		if param.Operator != "" || len(param.Arguments) > 0 {
+			continue
+		}
+		switch strings.ToLower(param.Name) {
+		case "float", "decimal":
+			typed[i] = typeInfo{name: strings.ToLower(param.Name), known: true}
+			changed = true
+		}
+	}
+	return typed, changed
 }
 
 // refMentionsTypeParam reports whether a type reference (anywhere in its
@@ -1613,6 +1639,36 @@ func (a *Analyzer) checkAssignable(target *ast.TypeRef, expr ast.Expression, mes
 	}
 }
 
+// overloadsWithTypedIntLiterals retypes int-literal args to float/decimal params, keeping the fewest conversions.
+func (a *Analyzer) overloadsWithTypedIntLiterals(call *ast.CallExpression, args []typeInfo, overloads []methodInfo, expected typeInfo) []methodInfo {
+	var best []methodInfo
+	bestCount := -1
+	for _, overload := range overloads {
+		typed := append([]typeInfo(nil), args...)
+		count := 0
+		for i, arg := range call.Arguments {
+			if i >= len(overload.parameters) || !ast.IsIntegerLiteral(arg.Value) {
+				continue
+			}
+			switch overload.parameters[i].name {
+			case "float", "decimal":
+				typed[i] = typeInfo{name: overload.parameters[i].name, known: true}
+				count++
+			}
+		}
+		if count == 0 || !a.callArgumentsCompatible(typed, overload.parameters, overload.minArgs) || !a.returnTypeCompatible(expected, overload.returnType) {
+			continue
+		}
+		switch {
+		case bestCount < 0 || count < bestCount:
+			best, bestCount = []methodInfo{overload}, count
+		case count == bestCount:
+			best = append(best, overload)
+		}
+	}
+	return best
+}
+
 func (a *Analyzer) validateCallExpression(expr ast.Expression, expected typeInfo) {
 	call, ok := expr.(*ast.CallExpression)
 	if !ok {
@@ -1655,6 +1711,9 @@ func (a *Analyzer) validateCallExpression(expr ast.Expression, expected typeInfo
 			continue
 		}
 		matches = append(matches, overload)
+	}
+	if len(matches) == 0 {
+		matches = a.overloadsWithTypedIntLiterals(call, args, overloads, expected)
 	}
 	if len(matches) == 0 {
 		a.errorf("no matching overload for %s returning %s", ident.Value, expected.display())
@@ -1759,6 +1818,15 @@ func (a *Analyzer) checkConstructorCallBindings(call *ast.CallExpression, ident 
 			return
 		}
 		if a.callArgumentsCompatible(args, substituted, ctor.minArgs) {
+			return
+		}
+		typed := append([]typeInfo(nil), args...)
+		for i, arg := range call.Arguments {
+			if i < len(substituted) && ast.IsIntegerLiteral(arg.Value) && (substituted[i].name == "float" || substituted[i].name == "decimal") {
+				typed[i] = typeInfo{name: substituted[i].name, known: true}
+			}
+		}
+		if a.callArgumentsCompatible(typed, substituted, ctor.minArgs) {
 			return
 		}
 		if expected == "" && len(args) >= ctor.minArgs && len(args) <= len(ctor.parameters) {
@@ -2473,6 +2541,10 @@ func (a *Analyzer) markBindingDestroyed(name string) bool {
 
 func (a *Analyzer) analyzeAssignment(expr *ast.AssignmentExpression) {
 	a.analyzeExpression(expr.Value)
+	if selector, ok := expr.Left.(*ast.SelectorExpression); ok {
+		a.checkFieldAssignment(selector, expr.Value)
+		return
+	}
 	ident, ok := expr.Left.(*ast.Identifier)
 	if !ok {
 		return
@@ -2497,9 +2569,38 @@ func (a *Analyzer) analyzeAssignment(expr *ast.AssignmentExpression) {
 	}
 }
 
+// checkFieldAssignment flags a write whose statically known value type cannot fit the declared field type.
+func (a *Analyzer) checkFieldAssignment(selector *ast.SelectorExpression, value ast.Expression) {
+	if selector.Name == nil || a.classFieldType == nil {
+		return
+	}
+	recv := a.expressionTypeName(selector.Object)
+	if !recv.known || recv.nullable {
+		return
+	}
+	ref, ok := a.classFieldType(recv.name, strings.ToLower(selector.Name.Value))
+	if !ok || ref == nil {
+		return
+	}
+	if alias, isAlias := a.aliases[strings.ToLower(ref.Name)]; (isAlias && !alias.known) || !a.typeInfoFromRef(ref).known {
+		return
+	}
+	actual := a.expressionTypeName(value)
+	if !actual.known || strings.EqualFold(actual.name, "any") {
+		return
+	}
+	before := len(a.diagnostics)
+	a.checkAssignable(ref, value, fmt.Sprintf("cannot assign %s to %s field %s.%s", actual.display(), ref.String(), recv.name, selector.Name.Value))
+	for i := before; i < len(a.diagnostics); i++ {
+		if a.diagnostics[i].Line == 0 {
+			a.diagnostics[i].Line = selector.Name.Token.Line
+			a.diagnostics[i].Column = selector.Name.Token.Column
+		}
+	}
+}
+
 func isNumericLiteralWidening(target string, expr ast.Expression) bool {
-	_, ok := expr.(*ast.IntegerLiteral)
-	return ok && (target == "decimal" || target == "float")
+	return ast.IsIntegerLiteral(expr) && (target == "decimal" || target == "float")
 }
 
 // narrowingsForCondition returns (consequenceNarrowing, alternativeNarrowing).

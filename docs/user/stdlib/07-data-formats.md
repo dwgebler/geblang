@@ -23,6 +23,7 @@ Import `json`:
 
 ```gb
 import json;
+import io;
 
 let data = json.parse('{"name":"Ada","roles":["admin"]}');
 io.println(data["name"]);                    # Ada
@@ -115,6 +116,7 @@ Import `yaml`:
 
 ```gb
 import yaml;
+import io;
 
 let cfg = yaml.parse("server:\n  port: 8080\n");
 io.println(cfg["server"]["port"] as string);   # 8080
@@ -132,6 +134,7 @@ TOML is typically configuration-sized and does not expose a streaming reader.
 
 ```gb
 import toml;
+import io;
 
 let cfg = toml.parse('[database]\nurl = "postgres://localhost/app"\n');
 io.println(cfg["database"]["url"]);
@@ -162,6 +165,7 @@ user-defined class instances. By default the call emits the
 
 ```gb
 import json;
+import io;
 
 class Point {
     int x;
@@ -204,10 +208,15 @@ io.println(o.shipTo.postcode);   # EC1
 io.println(o.stops[0].postcode); # W1
 ```
 
-Fields typed `any` (or a primitive) keep their raw parsed value, a
-class with `__deserialize` controls its own nested handling, and a
-value whose shape does not match the field (for example a string where
-an object is declared) is left as-is.
+Fields typed `any` keep their raw parsed value, and a class with
+`__deserialize` controls its own nested handling. JSON, YAML, and TOML do
+not distinguish float from decimal, so a parsed number converts to the
+numeric type of its field or constructor parameter: `10` fills a `decimal`
+or `float`, `1.5` fills a `float`, `3.0` fills an `int`, and elements of
+`list<float>` or `dict<string, decimal>` convert the same way. Any other
+mismatch (a string where an `int` or an object is declared, or `2.5` for an
+`int`) throws `TypeError` naming the field, such as
+`cannot assign string to int field Plain.age`.
 
 The same conventions apply to `yaml.parseAs`, `toml.parseAs`, and
 `xml.parseAs`. See chapter 6's *Serialisation* section for details.
@@ -307,6 +316,7 @@ as their value; `key` carries a string; `value` carries the parsed scalar.
 
 ```gb
 import json;
+import io;
 
 let r = json.reader("[1, 2, 3]");
 let ev = r.next();
@@ -326,6 +336,7 @@ Pull-style with `hasNext()`:
 
 ```gb
 import json;
+import io;
 
 let r = json.reader('{"a": 1}');
 while (r.hasNext()) {
@@ -360,6 +371,7 @@ data before using it.
 
 ```gb
 import schema;
+import io;
 
 let userSchema = {
     "type": "object",

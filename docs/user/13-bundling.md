@@ -702,6 +702,7 @@ to `geblang build` if it reports something unsupported.
   supported), and `int / int`, whose result is an exact decimal: cast an
   operand to `float` instead.
 - Partial-application `_` placeholder arguments: use a typed wrapper function instead.
+- The identity operators `is` and `is not`.
 
 ### Performance note
 

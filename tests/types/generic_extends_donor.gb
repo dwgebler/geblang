@@ -1,0 +1,15 @@
+module generic_extends_donor;
+
+export class Box<T> {
+    T item;
+
+    func put(T v): void {
+        this.item = v;
+    }
+
+    func id<T>(T x): string {
+        return typeof(x) as string;
+    }
+}
+
+export class Pair<A> extends Box<A> {}

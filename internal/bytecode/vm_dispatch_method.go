@@ -370,6 +370,8 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	// Consumed here so planted type args cannot leak into a later call.
 	callTypeArgs := vm.pendingCallTypeArgs
 	vm.pendingCallTypeArgs = nil
+	literalArgs := vm.pendingLiteralArgs
+	vm.pendingLiteralArgs = nil
 	nameIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
 	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
@@ -513,7 +515,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			}
 			return vm.throwTyped(instruction, ip, "RuntimeError", fmt.Sprintf("unknown method %s.%s", instance.Class.Name, nameValue.Value))
 		}
-		functionIndex, err := vm.selectRuntimeFunction(instruction, nameValue.Value, indices, args, 1)
+		functionIndex, err := vm.selectRuntimeFunctionLiterals(instruction, nameValue.Value, indices, args, 1, literalArgs, instance.TypeBindings)
 		if err != nil {
 			return 0, err
 		}
@@ -1013,6 +1015,8 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 	if !ok {
 		return 0, vm.runtimeError(instruction, "method name constant must be string")
 	}
+	literalArgs := vm.pendingLiteralArgs
+	vm.pendingLiteralArgs = nil
 	args := make([]runtime.Value, argc)
 	for i := argc - 1; i >= 0; i-- {
 		value, err := vm.pop()
@@ -1036,6 +1040,9 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 	receiver, err := vm.pop()
 	if err != nil {
 		return 0, vm.callPropagate(instruction, err)
+	}
+	if literalArgs != nil {
+		vm.typeNamedLiteralArgs(receiver, nameValue.Value, args, names, literalArgs)
 	}
 	return vm.dispatchNamedCall(instruction, ip, receiver, nameValue.Value, args, names)
 }

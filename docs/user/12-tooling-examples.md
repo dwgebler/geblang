@@ -6,6 +6,7 @@ Use `args` or `cli` for command-line interfaces:
 
 ```gb
 import cli;
+import sys;
 
 let parsed = cli.parseArgs(sys.args(), {
     "name": {"type": "string", "required": true},

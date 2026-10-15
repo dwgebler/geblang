@@ -120,6 +120,8 @@ type Evaluator struct {
 	// `parent(msg)` inside e.g. AppError's body always dispatches to Error,
 	// not back to AppError, regardless of the runtime class of `this`.
 	classStack []*runtime.Class
+	// literalArgMask carries a selector call's integer-literal argument positions into evalMethodCall.
+	literalArgMask []bool
 	// destructibleInstances tracks instances of classes that
 	// declare a `func ~ClassName()` destructor. The sweep at
 	// Cleanup() time invokes their destructors in reverse-creation
@@ -642,7 +644,14 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 			key := runtime.String{Value: field.Name}
 			entry, hit := dict.GetEntry(native.DictKey(key))
 			if hit {
-				instance.Fields[field.Name] = entry.Value
+				value := entry.Value
+				if declared := field.CheckType; declared != nil {
+					value = native.ConvertParsedNumbers(value, declared.String())
+				}
+				if err := checkFieldWrite(instance, field.Name, value); err != nil {
+					return nil, err
+				}
+				instance.Fields[field.Name] = value
 			}
 		}
 		return instance, nil
@@ -657,7 +666,11 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 		key := runtime.String{Value: paramName}
 		entry, ok := dict.GetEntry(native.DictKey(key))
 		if ok {
-			args = append(args, entry.Value)
+			value := entry.Value
+			if param.Type != nil {
+				value = native.ConvertParsedNumbers(value, param.Type.String())
+			}
+			args = append(args, value)
 			continue
 		}
 		if param.Default != nil {
@@ -703,7 +716,7 @@ func (e *Evaluator) displayString(value runtime.Value) (string, error) {
 		return "", err
 	} else if handled {
 		if err := checkCastDunderReturn("string", result); err != nil {
-			return "", thrownError{value: e.withTrace(runtime.Error{Class: "RuntimeError", Message: err.Error()})}
+			return "", thrownError{value: e.withTrace(runtime.Error{Class: "TypeError", Message: err.Error()})}
 		}
 		return result.(runtime.String).Value, nil
 	}
@@ -713,7 +726,7 @@ func (e *Evaluator) displayString(value runtime.Value) (string, error) {
 			return "", err
 		}
 		if err := checkCastDunderReturn("string", result); err != nil {
-			return "", thrownError{value: e.withTrace(runtime.Error{Class: "RuntimeError", Message: err.Error()})}
+			return "", thrownError{value: e.withTrace(runtime.Error{Class: "TypeError", Message: err.Error()})}
 		}
 		return result.(runtime.String).Value, nil
 	}
@@ -817,11 +830,21 @@ func (e *Evaluator) childForCallback() *Evaluator {
 	// cookie jars) are created on the parent at setup and resolved here via the
 	// parent chain during request handling. Continue the parent's id counters
 	// so a handle the child creates can never shadow a parent handle's id.
+	e.webMu.Lock()
 	child.nextWebID = e.nextWebID
+	e.webMu.Unlock()
+	e.dbMu.Lock()
 	child.nextDBID = e.nextDBID
+	e.dbMu.Unlock()
+	e.logMu.Lock()
 	child.nextLogID = e.nextLogID
+	e.logMu.Unlock()
+	e.httpClientMu.Lock()
 	child.nextHTTPClientID = e.nextHTTPClientID
+	e.httpClientMu.Unlock()
+	e.httpCookieJarMu.Lock()
 	child.nextCookieJarID = e.nextCookieJarID
+	e.httpCookieJarMu.Unlock()
 	child.debug = e.debug
 	child.threadID = e.threadID // goroutine spawns override this with a fresh id
 	child.debugSuppressed = e.debugSuppressed
@@ -1637,7 +1660,11 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 	case *ast.RangeExpression:
 		return e.evalRangeExpression(expr, env)
 	case *ast.PrefixExpression:
-		right, err := e.evalExpression(expr.Right, env)
+		var operandExpected *ast.TypeRef
+		if expr.Operator == "-" && ast.IsIntegerLiteral(expr) {
+			operandExpected = expected
+		}
+		right, err := e.evalExpressionWithExpectedType(expr.Right, env, operandExpected)
 		if err != nil {
 			return nil, err
 		}
@@ -1725,21 +1752,31 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		}
 		return e.evalInfix(expr.Operator, left, right)
 	case *ast.AssignmentExpression:
-		value, err := e.evalExpression(expr.Value, env)
-		if err != nil {
+		// Selector and index targets evaluate left to right (target, then value), matching the VM.
+		var value runtime.Value
+		evalValue := func() (runtime.Value, error) {
+			v, err := e.evalExpression(expr.Value, env)
+			value = v
+			return v, err
+		}
+		switch left := expr.Left.(type) {
+		case *ast.IndexExpression:
+			if err := e.assignIndex(left, evalValue, env); err != nil {
+				return nil, err
+			}
+			return value, nil
+		case *ast.SelectorExpression:
+			if err := e.assignSelector(left, evalValue, ast.IsIntegerLiteral(expr.Value), env); err != nil {
+				return nil, err
+			}
+			return value, nil
+		}
+		if _, err := evalValue(); err != nil {
 			return nil, err
 		}
 		switch left := expr.Left.(type) {
 		case *ast.Identifier:
 			if err := env.Assign(left.Value, value); err != nil {
-				return nil, err
-			}
-		case *ast.IndexExpression:
-			if err := e.assignIndex(left, value, env); err != nil {
-				return nil, err
-			}
-		case *ast.SelectorExpression:
-			if err := e.assignSelector(left, value, env); err != nil {
 				return nil, err
 			}
 		case *ast.ListLiteral:
@@ -1812,7 +1849,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		// outer generic frame's concrete bindings. snapshotTypeBindings
 		// walks the env chain so all reachable bindings come along.
 		captured := snapshotEnvTypeBindings(env)
-		return runtime.Function{Parameters: expr.Parameters, ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env, Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured}, nil
+		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: expr.Parameters, ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env, Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured}, nil
 	case *ast.AwaitExpression:
 		value, err := e.evalExpression(expr.Value, env)
 		if err != nil {
@@ -1878,9 +1915,9 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			return nil, err
 		}
 		if b {
-			return e.evalExpression(expr.ThenExpr, env)
+			return e.evalExpressionWithExpectedType(expr.ThenExpr, env, expected)
 		}
-		return e.evalExpression(expr.ElseExpr, env)
+		return e.evalExpressionWithExpectedType(expr.ElseExpr, env, expected)
 	default:
 		return nil, fmt.Errorf("unsupported expression %T", expr)
 	}
@@ -2427,8 +2464,10 @@ func errorParent(class string) string {
 }
 
 func (e *Evaluator) errorParent(class string) string {
-	if parent, ok := e.errorClassParents[class]; ok {
-		return parent
+	for cur := e; cur != nil; cur = cur.parent {
+		if parent, ok := cur.errorClassParents[class]; ok {
+			return parent
+		}
 	}
 	switch class {
 	case "TimeoutError", "TlsError":
@@ -3383,6 +3422,7 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 			bound.Env = bindThis(method.Env, instance)
 			// this is captured on bound.Env; don't also forward the caller's this when this value is invoked inside another method.
 			bound.ForwardThis = false
+			bound.Identity = runtime.NewFunctionIdentity()
 			return bound, nil
 		}
 		if method, ok := lookupMethod(instance.Class, "__get"); ok {
@@ -4261,6 +4301,7 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 	if call.Token.Line > 0 {
 		e.currentLine = call.Token.Line
 	}
+	e.literalArgMask = intLiteralMask(call)
 	return e.evalMethodCall(receiver, name, args)
 }
 
@@ -4544,12 +4585,16 @@ func (e *Evaluator) sliceBounds(rng *ast.RangeExpression, length int, env *runti
 	return start, end, nil
 }
 
-func (e *Evaluator) assignIndex(expr *ast.IndexExpression, newValue runtime.Value, env *runtime.Environment) error {
+func (e *Evaluator) assignIndex(expr *ast.IndexExpression, evalValue func() (runtime.Value, error), env *runtime.Environment) error {
 	left, err := e.evalExpression(expr.Left, env)
 	if err != nil {
 		return err
 	}
 	index, err := e.evalExpression(expr.Index, env)
+	if err != nil {
+		return err
+	}
+	newValue, err := evalValue()
 	if err != nil {
 		return err
 	}
@@ -4595,8 +4640,12 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, newValue runtime.Valu
 	}
 }
 
-func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, newValue runtime.Value, env *runtime.Environment) error {
+func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, evalValue func() (runtime.Value, error), intLiteral bool, env *runtime.Environment) error {
 	object, err := e.evalExpression(expr.Object, env)
+	if err != nil {
+		return err
+	}
+	newValue, err := evalValue()
 	if err != nil {
 		return err
 	}
@@ -4614,6 +4663,12 @@ func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, newValue runtim
 		}
 		newValue = transformed
 		if instance.HasField(expr.Name.Value) {
+			if intLiteral {
+				newValue = literalFieldValue(instance, expr.Name.Value, newValue)
+			}
+			if err := checkFieldWrite(instance, expr.Name.Value, newValue); err != nil {
+				return err
+			}
 			instance.SetField(expr.Name.Value, newValue)
 			return nil
 		}
@@ -4632,6 +4687,12 @@ func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, newValue runtim
 		// works).
 		for cur := class; cur != nil; cur = cur.Parent {
 			if _, present := cur.StaticValues[expr.Name.Value]; present {
+				if intLiteral {
+					newValue = literalStaticValue(cur, expr.Name.Value, newValue)
+				}
+				if err := checkStaticWrite(cur, expr.Name.Value, newValue); err != nil {
+					return err
+				}
 				cur.StaticValues[expr.Name.Value] = newValue
 				return nil
 			}
@@ -4972,7 +5033,7 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 	// expected return type. If all candidate overloads agree on a parameter type
 	// for a given position, propagate it when evaluating that argument so that
 	// nested overloaded calls (e.g. use(make())) can resolve unambiguously.
-	hints := overloadParamTypeHints(overloads, len(call.Arguments), expected)
+	hints := overloadParamTypeHints(overloads, call.Arguments, expected)
 	provided, err := e.evalDetailedCallArgumentsWithHints(call, env, hints)
 	if err != nil {
 		return nil, err
@@ -5009,6 +5070,19 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 		}
 	}
 	if len(matches) == 0 {
+		if mask := intLiteralMask(call); mask != nil {
+			positional := make([]runtime.Value, len(provided))
+			for i, arg := range provided {
+				positional[i] = arg.value
+			}
+			if typed, converted, ok := overloadWithTypedLiterals(overloads, positional, mask, this); ok {
+				matches = []runtime.Function{typed}
+				matchedArgs = [][]runtime.Value{converted}
+				matchedDropped = []int{0}
+			}
+		}
+	}
+	if len(matches) == 0 {
 		return nil, fmt.Errorf("no matching overload for %s", label)
 	}
 	if len(matches) > 1 {
@@ -5041,6 +5115,11 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 		}
 	}
 	chosen := matches[0]
+	if this != nil {
+		if mask := intLiteralMask(call); mask != nil {
+			typeLiteralArgs(chosen, matchedArgs[0], mask, this)
+		}
+	}
 	if len(call.TypeArguments) > 0 && len(chosen.TypeParameters) > 0 {
 		merged := map[string]string{}
 		for k, v := range chosen.TypeBindings {
@@ -5067,38 +5146,26 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 // overloadParamTypeHints returns a per-position expected TypeRef when every
 // overload that could match the outer expected return type agrees on the
 // parameter type at that position.  A nil entry means no consensus.
-func overloadParamTypeHints(overloads []runtime.Function, argc int, expected *ast.TypeRef) []*ast.TypeRef {
-	if argc == 0 {
+func overloadParamTypeHints(overloads []runtime.Function, args []ast.CallArgument, expected *ast.TypeRef) []*ast.TypeRef {
+	if len(args) == 0 {
 		return nil
 	}
-	hints := make([]*ast.TypeRef, argc)
-	for i := range hints {
-		var agreed *ast.TypeRef
-		first := true
-		for _, fn := range overloads {
-			if !functionReturnMatchesExpected(fn, expected) {
-				continue
-			}
-			if i >= len(fn.Parameters) {
-				agreed = nil
-				first = false
-				continue
-			}
-			param := fn.Parameters[i]
-			if param.Type == nil || param.Type.Name == "any" || param.Type.Operator != "" {
-				agreed = nil
-				first = false
-				continue
-			}
-			if first {
-				agreed = param.Type
-				first = false
-			} else if agreed == nil || param.Type.Name != agreed.Name {
-				agreed = nil
-				break
+	var hints []*ast.TypeRef
+	first := true
+	for _, fn := range overloads {
+		if !functionReturnMatchesExpected(fn, expected) {
+			continue
+		}
+		own := namedCallParamHints(fn.Parameters, args)
+		if first {
+			hints, first = own, false
+			continue
+		}
+		for i, hint := range hints {
+			if hint != nil && (own[i] == nil || own[i].Name != hint.Name) {
+				hints[i] = nil
 			}
 		}
-		hints[i] = agreed
 	}
 	return hints
 }
@@ -5340,11 +5407,12 @@ func functionCheckBindings(fn runtime.Function, receiver *runtime.Instance) map[
 	if receiver == nil || isConstructor || len(receiver.TypeBindings) == 0 {
 		return inherited
 	}
+	own := withoutShadowedTypeParams(receiver.TypeBindings, fn.TypeParameters)
 	if len(inherited) == 0 {
-		return receiver.TypeBindings
+		return own
 	}
-	merged := make(map[string]string, len(inherited)+len(receiver.TypeBindings))
-	for k, v := range receiver.TypeBindings {
+	merged := make(map[string]string, len(inherited)+len(own))
+	for k, v := range own {
 		merged[k] = v
 	}
 	for k, v := range inherited {
@@ -5406,7 +5474,7 @@ func (e *Evaluator) evalFunctionCallArguments(fn runtime.Function, call *ast.Cal
 	if !hasNamed {
 		return e.evalCallArgumentsWithHints(call, env, fn.Parameters)
 	}
-	provided, err := e.evalDetailedCallArguments(call, env)
+	provided, err := e.evalDetailedCallArgumentsWithHints(call, env, namedCallParamHints(fn.Parameters, call.Arguments))
 	if err != nil {
 		return nil, err
 	}
@@ -5415,6 +5483,33 @@ func (e *Evaluator) evalFunctionCallArguments(fn runtime.Function, call *ast.Cal
 		return nil, err
 	}
 	return args, nil
+}
+
+// namedCallParamHints maps each call argument (positional or named) to its parameter's declared type.
+func namedCallParamHints(params []ast.Parameter, args []ast.CallArgument) []*ast.TypeRef {
+	hints := make([]*ast.TypeRef, len(args))
+	position := 0
+	for i, arg := range args {
+		if arg.Spread {
+			break
+		}
+		var param *ast.Parameter
+		if arg.Name != nil {
+			for j := range params {
+				if params[j].Name != nil && strings.EqualFold(params[j].Name.Value, arg.Name.Value) {
+					param = &params[j]
+					break
+				}
+			}
+		} else if position < len(params) {
+			param = &params[position]
+			position++
+		}
+		if param != nil && param.Type != nil && param.Type.Operator == "" && param.Type.Name != "any" {
+			hints[i] = param.Type
+		}
+	}
+	return hints
 }
 
 func (e *Evaluator) evalCallArgumentsWithHints(call *ast.CallExpression, env *runtime.Environment, params []ast.Parameter) ([]runtime.Value, error) {
@@ -5571,10 +5666,21 @@ func (e *Evaluator) applyFunctionWithThis(fn runtime.Function, args []runtime.Va
 	if fn.Async {
 		return e.startAsyncFunction(fn, args, this), nil
 	}
+	if fn.Bound != nil {
+		return e.applyBoundMethod(fn.Bound, args)
+	}
 	if fn.Native != nil {
 		return fn.Native(this, args)
 	}
 	return e.applyFunctionWithThisSync(fn, args, this)
+}
+
+func (e *Evaluator) applyBoundMethod(bound *runtime.BoundMethod, args []runtime.Value) (runtime.Value, error) {
+	method, err := selectOverload(bound.Label, bound.Overloads, args)
+	if err != nil {
+		return nil, err
+	}
+	return e.applyFunctionWithThis(method, args, bound.Instance)
 }
 
 // applyEnumMethod invokes an enum instance method with `this` bound to the
@@ -5593,6 +5699,9 @@ func (e *Evaluator) applyEnumMethod(fn runtime.Function, args []runtime.Value, r
 func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtime.Value, this *runtime.Instance) (runtime.Value, error) {
 	if fn.IsGenerator {
 		return e.lazyGenerator(fn, args, this), nil
+	}
+	if fn.Bound != nil {
+		return e.applyBoundMethod(fn.Bound, args)
 	}
 	if fn.Native != nil {
 		return fn.Native(this, args)
@@ -5963,7 +6072,7 @@ func (e *Evaluator) freezeDeferredCall(expr ast.Expression, env *runtime.Environ
 		return nil, err
 	}
 	frozen.Callee = frozenCallee
-	hints := overloadParamTypeHints(overloadsFromValue(calleeValue), len(call.Arguments), nil)
+	hints := overloadParamTypeHints(overloadsFromValue(calleeValue), call.Arguments, nil)
 	frozen.Arguments = make([]ast.CallArgument, len(call.Arguments))
 	for i, arg := range call.Arguments {
 		var hint *ast.TypeRef
@@ -6214,7 +6323,7 @@ func (e *Evaluator) evalInfix(operator string, left runtime.Value, right runtime
 		return runtime.Bool{Value: equal}, nil
 	}
 	if operator == "is" || operator == "is not" {
-		same := valuesIdentical(left, right)
+		same := runtime.ValuesIdentical(left, right)
 		if operator == "is not" {
 			same = !same
 		}
@@ -6516,22 +6625,6 @@ func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, 
 		return true, nil
 	}
 	return primitiveEqual(left, right), nil
-}
-
-func valuesIdentical(left runtime.Value, right runtime.Value) bool {
-	switch l := left.(type) {
-	case *runtime.Instance:
-		r, ok := right.(*runtime.Instance)
-		return ok && l == r
-	case *runtime.Class:
-		r, ok := right.(*runtime.Class)
-		return ok && l == r
-	case runtime.Null:
-		_, ok := right.(runtime.Null)
-		return ok
-	default:
-		return primitiveEqual(left, right)
-	}
 }
 
 func primitiveEqual(left runtime.Value, right runtime.Value) bool {

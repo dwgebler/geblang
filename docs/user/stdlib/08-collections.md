@@ -779,6 +779,7 @@ Backed by a ring buffer that doubles in capacity when full.
 
 ```gb
 import deque;
+import io;
 
 let d = deque.Deque<int>();
 d.pushBack(1); d.pushBack(2); d.pushBack(3);
@@ -848,6 +849,7 @@ expires entries lazily on access.
 
 ```gb
 import lrucache;
+import io;
 
 let c = lrucache.LruCache<string, int>(100);   # capacity = 100
 c.put("a", 1);
@@ -920,6 +922,7 @@ element is always at the head; `pop()` and `peek()` return it.
 
 ```gb
 import priorityq;
+import io;
 
 let q = priorityq.PriorityQueue<int>();
 q.push(3); q.push(1); q.push(2);

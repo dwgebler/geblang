@@ -1,0 +1,33 @@
+# @vm-divergence: int-literal-runtime-callee
+/**
+ * @title Integer literals to runtime-resolved callees (evaluator semantics)
+ * @summary The evaluator types an integer literal by a float/decimal parameter
+ * even when the callee is only known at run time (a closure value or another
+ * module's function, constructor, method, or static method). The VM types
+ * literals at compile time, so these calls
+ * still reject the int there; tracked in KNOWN_DIVERGENCES.md.
+ */
+import test;
+import int_literal_runtime_callee_donor as donor;
+
+class IntLiteralRuntimeCalleeTest extends test.Test {
+
+    @test
+    func closureValue(): void {
+        let double = func(float x): float { return x * 2.0f; };
+        this.assertEquals(4.0f, double(2));
+    }
+
+    @test
+    func crossModuleFunction(): void {
+        this.assertEquals(1.0f, donor.third(3));
+    }
+
+    @test
+    func crossModuleClassMembers(): void {
+        let gauge = donor.Gauge(2);
+        this.assertEquals("float", typeof(gauge.level) as string);
+        this.assertEquals(6.0f, gauge.times(3));
+        this.assertEquals("float", typeof(donor.Gauge.empty(1).level) as string);
+    }
+}

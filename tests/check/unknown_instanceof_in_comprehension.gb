@@ -1,0 +1,6 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown instanceof type inside a
+ *          comprehension filter.
+ */
+let kept = [x for x in [1, 2] if x instanceof Nope];

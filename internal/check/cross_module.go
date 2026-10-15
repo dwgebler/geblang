@@ -147,14 +147,9 @@ func checkCrossModuleSymbols(file string, program *ast.Program, opts Options) []
 	if len(aliases) == 0 {
 		return diagsWithFile(diags, file)
 	}
-	for _, stmt := range program.Statements {
-		switch stmt.(type) {
-		case *ast.ImportStatement, *ast.FromImportStatement:
-			continue
-		}
-		diags = append(diags, walkStatementForCrossModule(stmt, aliases, opts, cache)...)
-	}
-	return diagsWithFile(diags, file)
+	collector := &crossModuleCollector{aliases: aliases, opts: opts, cache: cache}
+	(&astVisitor{expr: collector.visit}).program(program)
+	return diagsWithFile(append(diags, collector.diags...), file)
 }
 
 // checkFromImportSymbols flags each `from M import N` whose N is not
@@ -260,105 +255,11 @@ func collectImportAliases(program *ast.Program) map[string]importAlias {
 	return out
 }
 
-// collectDeclaredNames gathers every name introduced by a local
-// declaration, parameter, loop variable, destructuring target, or catch
-// binding anywhere in the program. Used to detect module-name shadowing.
+// collectDeclaredNames gathers every name a binding construct introduces anywhere in the program.
 func collectDeclaredNames(program *ast.Program) map[string]bool {
 	names := map[string]bool{}
-	for _, stmt := range program.Statements {
-		collectNamesStmt(stmt, names)
-	}
+	(&astVisitor{binding: func(name string) { names[name] = true }}).program(program)
 	return names
-}
-
-func addName(id *ast.Identifier, names map[string]bool) {
-	if id != nil && id.Value != "" {
-		names[id.Value] = true
-	}
-}
-
-func addParams(params []ast.Parameter, names map[string]bool) {
-	for _, p := range params {
-		addName(p.Name, names)
-		collectNamesExpr(p.Default, names)
-	}
-}
-
-func collectNamesStmt(stmt ast.Statement, names map[string]bool) {
-	switch s := stmt.(type) {
-	case *ast.ExportStatement:
-		collectNamesStmt(s.Statement, names)
-	case *ast.DeclarationStatement:
-		addName(s.Name, names)
-		collectNamesExpr(s.Value, names)
-	case *ast.DestructuringStatement:
-		for _, n := range s.Names {
-			addName(n, names)
-		}
-		collectNamesExpr(s.Value, names)
-	case *ast.ExpressionStatement:
-		collectNamesExpr(s.Expression, names)
-	case *ast.ReturnStatement:
-		collectNamesExpr(s.Value, names)
-	case *ast.YieldStatement:
-		collectNamesExpr(s.Value, names)
-	case *ast.SimpleStatement:
-		collectNamesExpr(s.Value, names)
-	case *ast.IfStatement:
-		collectNamesExpr(s.Condition, names)
-		collectNamesBlock(s.Consequence, names)
-		for _, clause := range s.ElseIfs {
-			collectNamesExpr(clause.Condition, names)
-			collectNamesBlock(clause.Body, names)
-		}
-		collectNamesBlock(s.Alternative, names)
-	case *ast.WhileStatement:
-		collectNamesBlock(s.Body, names)
-	case *ast.ForStatement:
-		for _, n := range s.VarNames {
-			addName(n, names)
-		}
-		collectNamesStmt(s.Init, names)
-		collectNamesBlock(s.Body, names)
-	case *ast.FunctionStatement:
-		addParams(s.Parameters, names)
-		collectNamesBlock(s.Body, names)
-	case *ast.ClassStatement:
-		for _, member := range s.Members {
-			collectNamesStmt(member, names)
-		}
-	case *ast.TryStatement:
-		collectNamesBlock(s.Body, names)
-		for _, clause := range s.Catches {
-			addName(clause.Name, names)
-			collectNamesBlock(clause.Body, names)
-		}
-		collectNamesBlock(s.Finally, names)
-	case *ast.MatchStatement:
-		for _, clause := range s.Cases {
-			collectNamesBlock(clause.Body, names)
-		}
-	case *ast.InitStatement:
-		collectNamesBlock(s.Body, names)
-	}
-}
-
-func collectNamesBlock(block *ast.BlockStatement, names map[string]bool) {
-	if block == nil {
-		return
-	}
-	for _, stmt := range block.Statements {
-		collectNamesStmt(stmt, names)
-	}
-}
-
-// collectNamesExpr only recurses into expressions that can introduce
-// new bindings (function literals); other expression shapes are skipped.
-func collectNamesExpr(expr ast.Expression, names map[string]bool) {
-	if fn, ok := expr.(*ast.FunctionLiteral); ok {
-		addParams(fn.Parameters, names)
-		collectNamesBlock(fn.Body, names)
-	}
 }
 
 func joinPath(path []string) string {
@@ -370,12 +271,6 @@ func joinPath(path []string) string {
 		out += "." + p
 	}
 	return out
-}
-
-func walkStatementForCrossModule(stmt ast.Statement, aliases map[string]importAlias, opts Options, cache *ModuleCache) []Diagnostic {
-	collector := &crossModuleCollector{aliases: aliases, opts: opts, cache: cache}
-	walkStmt(stmt, collector)
-	return collector.diags
 }
 
 type crossModuleCollector struct {
@@ -424,141 +319,4 @@ func (c *crossModuleCollector) symbolExists(alias importAlias, name string) bool
 	}
 	_, exists := exports[name]
 	return exists
-}
-
-// walkStmt drives expression visits across statement shapes; mirrors
-// the recursion the lint pass uses, kept narrow to selector expressions.
-func walkStmt(stmt ast.Statement, c *crossModuleCollector) {
-	switch s := stmt.(type) {
-	case *ast.ExportStatement:
-		walkStmt(s.Statement, c)
-	case *ast.DeclarationStatement:
-		walkExpr(s.Value, c)
-	case *ast.DestructuringStatement:
-		walkExpr(s.Value, c)
-	case *ast.ExpressionStatement:
-		walkExpr(s.Expression, c)
-	case *ast.ReturnStatement:
-		walkExpr(s.Value, c)
-	case *ast.YieldStatement:
-		walkExpr(s.Value, c)
-	case *ast.SimpleStatement:
-		walkExpr(s.Value, c)
-	case *ast.IfStatement:
-		walkExpr(s.Condition, c)
-		walkBlock(s.Consequence, c)
-		for _, clause := range s.ElseIfs {
-			walkExpr(clause.Condition, c)
-			walkBlock(clause.Body, c)
-		}
-		walkBlock(s.Alternative, c)
-	case *ast.WhileStatement:
-		walkExpr(s.Condition, c)
-		walkBlock(s.Body, c)
-	case *ast.ForStatement:
-		walkStmt(s.Init, c)
-		walkExpr(s.Condition, c)
-		walkStmt(s.Update, c)
-		walkExpr(s.Iterable, c)
-		walkBlock(s.Body, c)
-	case *ast.FunctionStatement:
-		walkBlock(s.Body, c)
-	case *ast.ClassStatement:
-		for _, member := range s.Members {
-			walkStmt(member, c)
-		}
-	case *ast.TryStatement:
-		walkBlock(s.Body, c)
-		for _, clause := range s.Catches {
-			walkBlock(clause.Body, c)
-		}
-		walkBlock(s.Finally, c)
-	case *ast.MatchStatement:
-		walkExpr(s.Expr, c)
-		for _, clause := range s.Cases {
-			walkExpr(clause.Guard, c)
-			walkExpr(clause.Value, c)
-			walkBlock(clause.Body, c)
-		}
-	case *ast.InitStatement:
-		walkBlock(s.Body, c)
-	}
-}
-
-func walkBlock(block *ast.BlockStatement, c *crossModuleCollector) {
-	if block == nil {
-		return
-	}
-	for _, stmt := range block.Statements {
-		walkStmt(stmt, c)
-	}
-}
-
-func walkExpr(expr ast.Expression, c *crossModuleCollector) {
-	if expr == nil {
-		return
-	}
-	c.visit(expr)
-	switch e := expr.(type) {
-	case *ast.SpreadExpression:
-		walkExpr(e.Value, c)
-	case *ast.InterpolatedString:
-		for _, part := range e.Parts {
-			walkExpr(part, c)
-		}
-	case *ast.PrefixExpression:
-		walkExpr(e.Right, c)
-	case *ast.PostfixExpression:
-		walkExpr(e.Left, c)
-	case *ast.InfixExpression:
-		walkExpr(e.Left, c)
-		walkExpr(e.Right, c)
-	case *ast.AssignmentExpression:
-		walkExpr(e.Left, c)
-		walkExpr(e.Value, c)
-	case *ast.SelectorExpression:
-		walkExpr(e.Object, c)
-	case *ast.CallExpression:
-		walkExpr(e.Callee, c)
-		for _, arg := range e.Arguments {
-			walkExpr(arg.Value, c)
-		}
-	case *ast.IndexExpression:
-		walkExpr(e.Left, c)
-		walkExpr(e.Index, c)
-	case *ast.ListLiteral:
-		for _, element := range e.Elements {
-			walkExpr(element, c)
-		}
-	case *ast.DictLiteral:
-		for _, pair := range e.Entries {
-			walkExpr(pair.Key, c)
-			walkExpr(pair.Value, c)
-		}
-	case *ast.SetLiteral:
-		for _, element := range e.Elements {
-			walkExpr(element, c)
-		}
-	case *ast.RangeExpression:
-		walkExpr(e.Start, c)
-		walkExpr(e.End, c)
-		walkExpr(e.Step, c)
-	case *ast.FunctionLiteral:
-		walkBlock(e.Body, c)
-	case *ast.MatchExpression:
-		walkExpr(e.Expr, c)
-		for _, clause := range e.Cases {
-			walkExpr(clause.Guard, c)
-			walkExpr(clause.Value, c)
-			walkBlock(clause.Body, c)
-		}
-	case *ast.AwaitExpression:
-		walkExpr(e.Value, c)
-	case *ast.CastExpression:
-		walkExpr(e.Value, c)
-	case *ast.TernaryExpression:
-		walkExpr(e.Condition, c)
-		walkExpr(e.ThenExpr, c)
-		walkExpr(e.ElseExpr, c)
-	}
 }

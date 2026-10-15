@@ -30,6 +30,8 @@ stream to ship logs to a TCP/TLS log collector.
 
 ```gb
 import streams;
+import io;
+import log;
 let buf = streams.memory();
 let capture = log.toStream(buf);
 log.info(capture, "captured", {"k": "v"});

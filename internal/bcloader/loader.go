@@ -698,9 +698,32 @@ func (l *Loader) ModuleClassDescendsFrom(module, className, targetSimpleName str
 }
 
 func (l *Loader) StaticValueForModuleClass(module, className, name string) (runtime.Value, bool) {
-	chunk, ok := l.chunkFor(module)
+	chunk, idx, _, _, ok := l.staticSlot(module, className, name)
 	if !ok {
 		return nil, false
+	}
+	return chunk.StaticValueAt(idx), true
+}
+
+// StaticSlotForModuleClass reports a module class static's declared type and owning class, for checked writes.
+func (l *Loader) StaticSlotForModuleClass(module, className, name string) (string, string, bool) {
+	_, _, declared, owner, ok := l.staticSlot(module, className, name)
+	return declared, owner, ok
+}
+
+// SetStaticValueForModuleClass writes a module class static where the module's own code reads it.
+func (l *Loader) SetStaticValueForModuleClass(module, className, name string, value runtime.Value) bool {
+	chunk, idx, _, _, ok := l.staticSlot(module, className, name)
+	if ok {
+		chunk.WriteStaticValue(idx, value)
+	}
+	return ok
+}
+
+func (l *Loader) staticSlot(module, className, name string) (bytecode.Chunk, int64, string, string, bool) {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return bytecode.Chunk{}, 0, "", "", false
 	}
 	for i := range chunk.Classes {
 		if !strings.EqualFold(chunk.Classes[i].Name, className) {
@@ -708,19 +731,19 @@ func (l *Loader) StaticValueForModuleClass(module, className, name string) (runt
 		}
 		for ci := chunk.Classes[i]; ; {
 			if idx, present := ci.StaticValues[name]; present && idx >= 0 && int(idx) < len(chunk.Constants) {
-				return chunk.Constants[idx], true
+				return chunk, idx, ci.StaticTypes[name], ci.Name, true
 			}
 			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
 				ci = chunk.Classes[ci.ParentIndex]
 				continue
 			}
 			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
-				return l.StaticValueForModuleClass(ci.ParentName[:dot], ci.ParentName[dot+1:], name)
+				return l.staticSlot(ci.ParentName[:dot], ci.ParentName[dot+1:], name)
 			}
-			return nil, false
+			return bytecode.Chunk{}, 0, "", "", false
 		}
 	}
-	return nil, false
+	return bytecode.Chunk{}, 0, "", "", false
 }
 
 func (l *Loader) CallModuleStaticMethodByName(module, className, methodName string, args []runtime.Value) (runtime.Value, bool, error) {
@@ -1132,4 +1155,13 @@ func (l *Loader) RuntimeClassFor(module string, className string) (*runtime.Clas
 	l.releaseModuleVM(pool, vm, nil)
 	l.runtimeClasses.Store(cacheKey, rc)
 	return rc, rc != nil
+}
+
+// ModuleAliasesFor returns the import aliases a module's own source uses, to resolve its qualified types.
+func (l *Loader) ModuleAliasesFor(module string) map[string]string {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return nil
+	}
+	return chunk.ModuleAliases
 }

@@ -26,6 +26,7 @@ and return `int`. `math.trunc(n)` truncates toward zero and returns `float`.
 
 ```gb
 import math;
+import io;
 
 io.println(math.floor(2.9));    # 2
 io.println(math.ceil(2.1));     # 3
@@ -332,10 +333,12 @@ supported.
 
 ```gb
 import datetime;
+import io;
 
 let ts = datetime.nowUnix();             # int: current Unix seconds
 let parts = datetime.now();              # dict with year, month, day, etc.
 let instant = datetime.Instant();        # Instant object for the current moment
+let same = datetime.nowInstant();        # equivalent to datetime.Instant()
 
 io.println(ts);
 io.println(parts["year"]);
@@ -631,6 +634,7 @@ Full chained example - schedule a reminder for 9 AM next Monday:
 
 ```gb
 import datetime;
+import io;
 
 func nextMonday(datetime.Instant from): datetime.Instant {
     let parts = from.parts();
@@ -772,6 +776,7 @@ Import `datetime.period` as a separate source module:
 ```gb
 import datetime;
 import datetime.period as period;
+import io;
 
 let lastJanuary = datetime.Instant(2024, 1, 31, 9, 0, 0);
 io.println(period.Period(0, 1).addTo(lastJanuary).formatRFC3339());
@@ -854,6 +859,7 @@ by `time.monotonic()`, so it is immune to wall-clock jumps.
 ```gb
 import time.stopwatch as sw;
 import io;
+import time;
 
 let s = sw.Stopwatch();
 # ... work block A ...
@@ -1061,6 +1067,7 @@ computes their next firing times. Hand-rolled, no Go dependency.
 ```gb
 import cron;
 import time;
+import io;
 
 if (cron.isValid(userSpec)) {
     let next = cron.nextAfter(userSpec, time.unix());

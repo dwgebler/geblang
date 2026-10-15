@@ -1,0 +1,439 @@
+/**
+ * @title Typed fields are enforced on every runtime write (1.37.1)
+ * @summary A value that does not match a field's declared type throws
+ * TypeError whether it arrives by assignment, compound assignment, a
+ * method, a closure, inheritance across modules, reflect.setField, or
+ * parseAs. Nullable fields accept null; non-null fields do not.
+ */
+import test;
+import json;
+import yaml;
+import toml;
+import reflect;
+import field_type_donor as donor;
+import field_type_other_donor as other;
+
+class Account {
+    int balance;
+    ?string owner;
+    list<int> history = [];
+
+    func Account(int balance) {
+        this.balance = balance;
+    }
+
+    func deposit(any amount): void {
+        this.balance = amount;
+    }
+}
+
+class Savings extends Account {
+    float rate;
+
+    func Savings() {
+        parent(0);
+        this.rate = 0.0f;
+    }
+}
+
+class Child extends donor.Base {
+    func Child() {
+        parent();
+    }
+}
+
+class Box<T> {
+    T value;
+
+    func Box(T value) {
+        this.value = value;
+    }
+
+    func replace(any next): void {
+        this.value = next;
+    }
+}
+
+class Ledger {
+    decimal total;
+    float rate;
+}
+
+class BadInit {
+    int size;
+
+    func BadInit(any size) {
+        this.size = size;
+    }
+}
+
+type Cash = decimal;
+type Ints = list<int>;
+type Label = int | string;
+
+class Wallet {
+    Cash balance;
+    Ints history = [];
+    Label tag;
+}
+
+class Defaults {
+    float ratio = 1;
+    decimal offset = -2;
+    ?float maybe = 3;
+}
+
+class Counters {
+    static int count = 0;
+    static float rate = 1;
+}
+
+class Base<T> {
+    T item;
+
+    func setItem(any value): void {
+        this.item = value;
+    }
+}
+
+class Shadow<T> extends Base<int> {
+    T extra;
+
+    func setExtra(any value): void {
+        this.extra = value;
+    }
+}
+
+class Pass<U> extends Base<U> {
+}
+
+class RemoteHolder extends donor.Holder<string> {
+}
+
+class Palette {
+    donor.Shade shade;
+}
+
+class Priced {
+    decimal amount;
+    float rate;
+    int qty;
+    list<float> weights = [];
+}
+
+class PricedCtor {
+    float rate;
+
+    func PricedCtor(float rate) {
+        this.rate = rate;
+    }
+}
+
+class Nested<T> {
+    T item;
+
+    func Nested(T item) {
+        this.item = item;
+    }
+}
+
+class ListOf<U> extends Nested<list<U>> {
+    func ListOf(list<U> items) {
+        parent(items);
+    }
+}
+
+class Ints extends Nested<list<int>> {
+    func Ints() {
+        parent([1]);
+    }
+}
+
+class MaybeText extends Nested<?string> {
+    func MaybeText() {
+        parent(null);
+    }
+}
+
+class Tagged {
+    Label label;
+
+    func Tagged() {
+        this.label = 1;
+    }
+}
+
+class Exact {
+    decimal d;
+}
+
+class Ratio {
+    float r;
+}
+
+class Plain {
+    string name;
+    int age;
+}
+
+class FieldTypeEnforcementTest extends test.Test {
+
+    func expectTypeError(callable action, string message): void {
+        try {
+            action();
+            this.fail("expected TypeError: " + message);
+        } catch (TypeError e) {
+            this.assertEquals(message, e.message);
+        }
+    }
+
+    @test
+    func directWriteFromAnyIsChecked(): void {
+        let account = Account(10);
+        any text = "lots";
+        this.expectTypeError(func(): void { account.balance = text; },
+            "cannot assign string to int field Account.balance");
+        this.assertEquals(10, account.balance);
+    }
+
+    @test
+    func matchingWritesStillWork(): void {
+        let account = Account(10);
+        any amount = 25;
+        account.balance = amount;
+        account.balance += 5;
+        this.assertEquals(30, account.balance);
+    }
+
+    @test
+    func decimalValueIsNotAFloat(): void {
+        let savings = Savings();
+        any half = 0.5;
+        this.expectTypeError(func(): void { savings.rate = half; },
+            "cannot assign decimal to float field Savings.rate");
+        savings.rate = 0.5f;
+        this.assertEquals(0.5f, savings.rate);
+    }
+
+    @test
+    func integerLiteralTakesNumericFieldType(): void {
+        let ledger = Ledger();
+        ledger.total = 0;
+        ledger.rate = 2;
+        this.assertEquals("decimal", typeof(ledger.total) as string);
+        this.assertEquals("float", typeof(ledger.rate) as string);
+        any count = 2;
+        this.expectTypeError(func(): void { ledger.rate = count; },
+            "cannot assign int to float field Ledger.rate");
+    }
+
+    @test
+    func constructorWriteIsChecked(): void {
+        this.expectTypeError(func(): void { BadInit("big"); },
+            "cannot assign string to int field BadInit.size");
+    }
+
+    @test
+    func methodWriteIsChecked(): void {
+        let account = Account(1);
+        this.expectTypeError(func(): void { account.deposit("x"); },
+            "cannot assign string to int field Account.balance");
+    }
+
+    @test
+    func nullOnlyFitsNullableFields(): void {
+        let account = Account(1);
+        any nothing = null;
+        account.owner = nothing;
+        this.assertNull(account.owner);
+        this.expectTypeError(func(): void { account.balance = nothing; },
+            "cannot assign null to int field Account.balance");
+    }
+
+    @test
+    func collectionFieldChecksElements(): void {
+        let account = Account(1);
+        any mixed = [1, "two"];
+        this.expectTypeError(func(): void { account.history = mixed; },
+            "cannot assign list to list<int> field Account.history (element at index 1 is string)");
+    }
+
+    @test
+    func inheritedFieldIsCheckedOnSubclass(): void {
+        let savings = Savings();
+        any text = "high";
+        this.expectTypeError(func(): void { savings.balance = text; },
+            "cannot assign string to int field Savings.balance");
+        this.expectTypeError(func(): void { savings.rate = text; },
+            "cannot assign string to float field Savings.rate");
+    }
+
+    @test
+    func crossModuleInheritedFieldIsChecked(): void {
+        let child = Child();
+        any text = "many";
+        this.expectTypeError(func(): void { child.count = text; },
+            "cannot assign string to int field Child.count");
+        this.expectTypeError(func(): void { child.setCount(text); },
+            "cannot assign string to int field Child.count");
+        child.setCount(3);
+        this.assertEquals(3, child.count);
+    }
+
+    @test
+    func genericFieldUsesBoundType(): void {
+        let box = Box<int>(1);
+        this.expectTypeError(func(): void { box.replace("one"); },
+            "cannot assign string to T field Box.value");
+        box.replace(2);
+        this.assertEquals(2, box.value);
+    }
+
+    @test
+    func reflectSetFieldIsChecked(): void {
+        let account = Account(1);
+        this.expectTypeError(func(): void { reflect.setField(account, "balance", "x"); },
+            "cannot assign string to int field Account.balance");
+        reflect.setField(account, "balance", 7);
+        this.assertEquals(7, account.balance);
+    }
+
+    @test
+    func aliasTypedFieldsAcceptTheirTarget(): void {
+        let wallet = Wallet();
+        wallet.balance = 2.5;
+        wallet.history = [1, 2];
+        any word = "w";
+        wallet.tag = word;
+        any whole = 1;
+        wallet.tag = whole;
+        this.assertEquals("decimal", typeof(wallet.balance) as string);
+        any fraction = 1.5;
+        this.expectTypeError(func(): void { wallet.tag = fraction; },
+            "cannot assign decimal to int | string field Wallet.tag");
+    }
+
+    @test
+    func literalDefaultsTakeTheFieldType(): void {
+        let d = Defaults();
+        this.assertEquals("float", typeof(d.ratio) as string);
+        this.assertEquals("decimal", typeof(d.offset) as string);
+        this.assertEquals("float", typeof(d.maybe) as string);
+        d.ratio = -4;
+        this.assertEquals("float", typeof(d.ratio) as string);
+    }
+
+    @test
+    func staticFieldsAreChecked(): void {
+        Counters.rate = 3;
+        this.assertEquals("float", typeof(Counters.rate) as string);
+        any text = "x";
+        this.expectTypeError(func(): void { Counters.count = text; },
+            "cannot assign string to int field Counters.count");
+        Counters.count = 5;
+        this.assertEquals(5, Counters.count);
+    }
+
+    @test
+    func inheritedGenericFieldUsesDeclaringBinding(): void {
+        let shadow = Shadow<string>();
+        shadow.setItem(5);
+        this.expectTypeError(func(): void { shadow.setItem("s"); },
+            "cannot assign string to T field Shadow.item");
+        shadow.setExtra("s");
+        this.expectTypeError(func(): void { shadow.setExtra(5); },
+            "cannot assign int to T field Shadow.extra");
+        let pass = Pass<float>();
+        pass.setItem(1.5f);
+        this.expectTypeError(func(): void { pass.setItem(1); },
+            "cannot assign int to T field Pass.item");
+    }
+
+    @test
+    func crossModuleGenericParentBinding(): void {
+        let remote = RemoteHolder();
+        remote.setItem("s");
+        this.expectTypeError(func(): void { remote.setItem(5); },
+            "cannot assign int to T field RemoteHolder.item");
+    }
+
+    @test
+    func crossModuleEnumField(): void {
+        let palette = Palette();
+        palette.shade = donor.Shade.Dark;
+        this.assertEquals(donor.Shade.Dark, palette.shade);
+    }
+
+    @test
+    func parseAsConvertsNumbersToFieldTypes(): void {
+        let p = json.parseAs("{\"amount\": 10, \"rate\": 1.5, \"qty\": 3.0, \"weights\": [1, 2.5]}", Priced);
+        this.assertEquals("decimal", typeof(p.amount) as string);
+        this.assertEquals("float", typeof(p.rate) as string);
+        this.assertEquals("int", typeof(p.qty) as string);
+        this.assertEquals("float", typeof(p.weights[0]) as string);
+        let y = yaml.parseAs("amount: 2\nrate: 2\nqty: 4\n", Priced);
+        this.assertEquals("float", typeof(y.rate) as string);
+        this.expectTypeError(func(): void { json.parseAs("{\"qty\": 2.5}", Priced); },
+            "cannot assign decimal to int field Priced.qty");
+        let c = json.parseAs("{\"rate\": 2}", PricedCtor);
+        this.assertEquals("float", typeof(c.rate) as string);
+    }
+
+    @test
+    func compoundGenericArguments(): void {
+        this.assertEquals([1, 2], ListOf<int>([1, 2]).item);
+        this.assertEquals([1], Ints().item);
+        this.assertNull(MaybeText().item);
+    }
+
+    @test
+    func unionAliasFieldAcceptsLiterals(): void {
+        let tagged = Tagged();
+        tagged.label = "s";
+        this.assertEquals("s", tagged.label);
+    }
+
+    @test
+    func parseAsFloatToDecimalIsExact(): void {
+        this.assertTrue(yaml.parseAs("d: 0.1\n", Exact).d == 0.1);
+    }
+
+    @test
+    func sameNamedEnumFromAnotherModuleIsRejected(): void {
+        let palette = Palette();
+        any wrong = other.Shade.Dark;
+        this.expectTypeError(func(): void { palette.shade = wrong; },
+            "cannot assign Shade to donor.Shade field Palette.shade");
+    }
+
+    @test
+    func conditionalLiteralTakesFieldType(): void {
+        bool on = true;
+        let ratio = Ratio();
+        ratio.r = on ? 1 : 2;
+        this.assertEquals("float", typeof(ratio.r) as string);
+    }
+
+    @test
+    func crossModuleStaticsAreLiveAndChecked(): void {
+        donor.Tally.bump();
+        this.assertEquals(donor.Tally.current(), donor.Tally.count);
+        donor.Tally.count = 40;
+        this.assertEquals(40, donor.Tally.current());
+        any text = "x";
+        this.expectTypeError(func(): void { donor.Tally.count = text; },
+            "cannot assign string to int field Tally.count");
+    }
+
+    @test
+    func parseAsRejectsMismatchedFields(): void {
+        let ok = json.parseAs("{\"name\": \"Mara\", \"age\": 34}", Plain);
+        this.assertEquals(34, ok.age);
+        this.expectTypeError(func(): void { json.parseAs("{\"name\": \"Devi\", \"age\": \"unknown\"}", Plain); },
+            "cannot assign string to int field Plain.age");
+        this.expectTypeError(func(): void { yaml.parseAs("name: Devi\nage: unknown\n", Plain); },
+            "cannot assign string to int field Plain.age");
+        this.expectTypeError(func(): void { toml.parseAs("name = \"Devi\"\nage = \"unknown\"\n", Plain); },
+            "cannot assign string to int field Plain.age");
+    }
+}

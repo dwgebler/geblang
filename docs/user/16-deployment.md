@@ -143,6 +143,7 @@ and goroutine snapshots from inside the running program:
 
 ```gb
 import profiler;
+import io;
 
 let snap = profiler.snapshot();
 doWork();
@@ -197,6 +198,7 @@ Benchmark micro-suspects with the `benchmarks/` harness or the stdlib
 
 ```gb
 import time;
+import io;
 
 let t = time.now();
 doWork();

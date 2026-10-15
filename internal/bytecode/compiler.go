@@ -3,6 +3,8 @@ package bytecode
 import (
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -729,6 +731,9 @@ func (c *Compiler) bytecodeTypeNameForParam(typ *ast.TypeRef, typeParams []strin
 	if typ == nil {
 		return base
 	}
+	if typ.Operator == "" {
+		typ = c.resolveTypeRef(typ)
+	}
 	// T[] syntax: ListAlias=true, Arguments is empty, Name holds the element type.
 	if typ.ListAlias && len(typ.Arguments) == 0 && typ.Name != "" && !strings.EqualFold(typ.Name, "list") {
 		return "list<" + typ.Name + ">"
@@ -898,6 +903,17 @@ func typeNameFromExpression(expr ast.Expression) (string, error) {
 
 func (c *Compiler) constantValueFromExpression(expr ast.Expression) (runtime.Value, error) {
 	switch expr := expr.(type) {
+	case *ast.PrefixExpression:
+		if expr.Operator == "-" {
+			switch expr.Right.(type) {
+			case *ast.IntegerLiteral, *ast.DecimalLiteral, *ast.FloatLiteral:
+				positive, err := c.constantValueFromExpression(expr.Right)
+				if err != nil {
+					return nil, err
+				}
+				return negateNumericConstant(positive)
+			}
+		}
 	case *ast.IntegerLiteral:
 		value, err := runtime.NewIntLiteral(expr.Value)
 		if err != nil {
@@ -1045,4 +1061,21 @@ func IsParityError(err error) bool {
 	}
 	var pe parityError
 	return errors.As(err, &pe)
+}
+
+func negateNumericConstant(value runtime.Value) (runtime.Value, error) {
+	switch v := value.(type) {
+	case runtime.SmallInt:
+		if v.Value != math.MinInt64 {
+			return runtime.SmallInt{Value: -v.Value}, nil
+		}
+		return runtime.Int{Value: new(big.Int).Neg(big.NewInt(v.Value))}, nil
+	case runtime.Int:
+		return runtime.Int{Value: new(big.Int).Neg(v.Value)}, nil
+	case runtime.Decimal:
+		return runtime.Decimal{Value: new(big.Rat).Neg(v.Value)}, nil
+	case runtime.Float:
+		return runtime.Float{Value: -v.Value}, nil
+	}
+	return nil, fmt.Errorf("cannot negate %s constant", value.TypeName())
 }

@@ -102,6 +102,7 @@ try {
 
 ```gb
 import stats;
+import io;
 
 let d = stats.poisson(4.0);
 let s = d.sample(10000, {"seed": 42});

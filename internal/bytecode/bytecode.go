@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(81)
+	Version = uint16(86)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -335,6 +335,8 @@ const (
 	OpDeferCallableCallSpread
 	// OpDisplayString pops a value and pushes its interpolation rendering (displayString: __string dunder or Inspect), not the `as string` cast.
 	OpDisplayString
+	// OpPlantIntLiteralArgs {count, argIndex...} stages the integer-literal argument positions of the next OpMethodCall.
+	OpPlantIntLiteralArgs
 )
 
 type Instruction struct {
@@ -447,12 +449,12 @@ type FunctionInfo struct {
 	SharesParentFrame bool
 	// DefLine / DefColumn capture the source position of the `func`
 	// keyword for this function, exposed by reflect.location.
-	DefLine             int64
-	DefColumn           int64
-	Decorators          []runtime.DecoratorMetadata
-	paramTypeSpecs      []vmTypeSpec
-	frameMeta           *frameMeta
-	typeParamSet        map[string]bool
+	DefLine        int64
+	DefColumn      int64
+	Decorators     []runtime.DecoratorMetadata
+	paramTypeSpecs []vmTypeSpec
+	frameMeta      *frameMeta
+	typeParamSet   map[string]bool
 	// False when every ParamTypes entry is "" or "any"; lets call
 	// entry skip the validation walk for dynamically-typed funcs.
 	requiresParamValidation bool
@@ -486,6 +488,8 @@ type ClassInfo struct {
 	// each field, or "" when untyped. Populated at compile time so
 	// reflect.fields can report types without re-reading the AST.
 	FieldTypes []string
+	// FieldCheckTypes parallels FieldNames with alias-expanded types for runtime write checks.
+	FieldCheckTypes []string
 	// FieldDocs parallels FieldNames - each field's docblock (or "") for reflect.fields.
 	FieldDocs []string
 	// FieldDecorators parallels FieldNames - the metadata for any
@@ -498,9 +502,11 @@ type ClassInfo struct {
 	ConstructorIndices []int64
 	// DestructorIndex is the function index of `func ~ClassName()`,
 	// or -1 when the class has no destructor.
-	DestructorIndex  int64
-	Methods          map[string][]int64
-	StaticValues     map[string]int64
+	DestructorIndex int64
+	Methods         map[string][]int64
+	StaticValues    map[string]int64
+	// StaticTypes holds the alias-expanded declared type of each typed static field.
+	StaticTypes      map[string]string
 	StaticMethods    map[string][]int64
 	Implements       []string
 	Decorators       []runtime.DecoratorMetadata
@@ -683,6 +689,12 @@ func Encode(chunk Chunk) ([]byte, error) {
 			}
 			out = binary.BigEndian.AppendUint16(out, uint16(len(fieldType)))
 			out = append(out, []byte(fieldType)...)
+			checkType := ""
+			if i < len(class.FieldCheckTypes) {
+				checkType = class.FieldCheckTypes[i]
+			}
+			out = binary.BigEndian.AppendUint16(out, uint16(len(checkType)))
+			out = append(out, []byte(checkType)...)
 			fieldDoc := ""
 			if i < len(class.FieldDocs) {
 				fieldDoc = class.FieldDocs[i]
@@ -709,6 +721,13 @@ func Encode(chunk Chunk) ([]byte, error) {
 			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
 			out = append(out, []byte(name)...)
 			out = binary.BigEndian.AppendUint64(out, uint64(index))
+		}
+		out = binary.BigEndian.AppendUint16(out, uint16(len(class.StaticTypes)))
+		for name, typ := range class.StaticTypes {
+			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
+			out = append(out, []byte(name)...)
+			out = binary.BigEndian.AppendUint16(out, uint16(len(typ)))
+			out = append(out, []byte(typ)...)
 		}
 		out = binary.BigEndian.AppendUint16(out, uint16(len(class.StaticMethods)))
 		for name, indices := range class.StaticMethods {
@@ -961,11 +980,13 @@ func Decode(data []byte) (Chunk, error) {
 		class.FieldNames = make([]string, 0, fieldCount)
 		class.FieldDefaults = make([]int64, 0, fieldCount)
 		class.FieldTypes = make([]string, 0, fieldCount)
+		class.FieldCheckTypes = make([]string, 0, fieldCount)
 		class.FieldDocs = make([]string, 0, fieldCount)
 		for j := 0; j < fieldCount; j++ {
 			class.FieldNames = append(class.FieldNames, string(reader.read(int(reader.u16()))))
 			class.FieldDefaults = append(class.FieldDefaults, int64(reader.u64()))
 			class.FieldTypes = append(class.FieldTypes, string(reader.read(int(reader.u16()))))
+			class.FieldCheckTypes = append(class.FieldCheckTypes, string(reader.read(int(reader.u16()))))
 			class.FieldDocs = append(class.FieldDocs, string(reader.read(int(reader.u16()))))
 		}
 		constructorCount := int(reader.u16())
@@ -987,6 +1008,14 @@ func Decode(data []byte) (Chunk, error) {
 		staticValueCount := int(reader.u16())
 		for j := 0; j < staticValueCount; j++ {
 			class.StaticValues[string(reader.read(int(reader.u16())))] = int64(reader.u64())
+		}
+		staticTypeCount := int(reader.u16())
+		if staticTypeCount > 0 {
+			class.StaticTypes = make(map[string]string, staticTypeCount)
+		}
+		for j := 0; j < staticTypeCount; j++ {
+			name := string(reader.read(int(reader.u16())))
+			class.StaticTypes[name] = string(reader.read(int(reader.u16())))
 		}
 		staticMethodCount := int(reader.u16())
 		for j := 0; j < staticMethodCount; j++ {

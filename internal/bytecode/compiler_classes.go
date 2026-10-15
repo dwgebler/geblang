@@ -268,6 +268,14 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 		switch member := member.(type) {
 		case *ast.DeclarationStatement:
 			if member.Kind == "static const" || member.Kind == "static let" {
+				staticType := ""
+				if member.Type != nil {
+					staticType = c.expandRecordedTypeAlias(c.resolveTypeRef(member.Type).String())
+					if class.StaticTypes == nil {
+						class.StaticTypes = map[string]string{}
+					}
+					class.StaticTypes[member.Name.Value] = staticType
+				}
 				value := runtime.Value(runtime.Null{})
 				if member.Value != nil {
 					parsed, err := c.constantValueFromExpression(member.Value)
@@ -275,6 +283,9 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 						return c.withStatementLocation(member, fmt.Errorf("bytecode compiler only supports literal static %s values", strings.TrimPrefix(member.Kind, "static ")))
 					}
 					value = parsed
+					if ast.IsIntegerLiteral(member.Value) {
+						value = typedIntLiteralConstant(value, staticType)
+					}
 				}
 				class.StaticValues[member.Name.Value] = int64(len(c.chunk.Constants))
 				c.chunk.Constants = append(c.chunk.Constants, value)
@@ -285,10 +296,13 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			}
 			class.FieldNames = append(class.FieldNames, member.Name.Value)
 			fieldType := ""
+			checkType := ""
 			if member.Type != nil {
 				fieldType = member.Type.String()
+				checkType = c.expandRecordedTypeAlias(c.resolveTypeRef(member.Type).String())
 			}
 			class.FieldTypes = append(class.FieldTypes, fieldType)
+			class.FieldCheckTypes = append(class.FieldCheckTypes, checkType)
 			class.FieldDocs = append(class.FieldDocs, member.Doc)
 			/* Field decorators ride alongside the field at compile time
 			 * so reflect.fields can surface them at runtime without
@@ -311,6 +325,9 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			value, err := c.constantValueFromExpression(member.Value)
 			if err != nil {
 				return c.withStatementLocation(member, fmt.Errorf("bytecode compiler only supports literal class field defaults"))
+			}
+			if ast.IsIntegerLiteral(member.Value) {
+				value = typedIntLiteralConstant(value, checkType)
 			}
 			class.FieldDefaults = append(class.FieldDefaults, int64(len(c.chunk.Constants)))
 			c.chunk.Constants = append(c.chunk.Constants, value)
@@ -673,6 +690,10 @@ func (c *Compiler) classHasSubclassOverriding(classIndex int64, methodName strin
 				if _, hasMethod := sub.Methods[lowered]; hasMethod {
 					return true
 				}
+				// An exported descendant can be subclassed and the method overridden by another module.
+				if c.exportedClasses[strings.ToLower(sub.Name)] {
+					return true
+				}
 				break
 			}
 			ancestor = c.chunk.Classes[ancestor].ParentIndex
@@ -1019,4 +1040,28 @@ func (c *Compiler) classExtendsBuiltinError(classInfo ClassInfo) bool {
 		}
 		classInfo = c.chunk.Classes[classInfo.ParentIndex]
 	}
+}
+
+// typedIntLiteralConstant converts an integer literal constant to a float or decimal target type.
+func typedIntLiteralConstant(value runtime.Value, target string) runtime.Value {
+	switch strings.TrimPrefix(target, "?") {
+	case "float", "decimal":
+		if converted, err := castValue(value, strings.TrimPrefix(target, "?")); err == nil {
+			return converted
+		}
+	}
+	return value
+}
+
+// staticFieldType is the declared type of a static field, searching the same-chunk parent chain.
+func (c *Compiler) staticFieldType(classIndex int64, name string) string {
+	for ci := classIndex; ci >= 0 && int(ci) < len(c.chunk.Classes); ci = c.chunk.Classes[ci].ParentIndex {
+		if typ, ok := c.chunk.Classes[ci].StaticTypes[name]; ok {
+			return typ
+		}
+		if _, ok := c.chunk.Classes[ci].StaticValues[name]; ok {
+			return ""
+		}
+	}
+	return ""
 }

@@ -53,6 +53,7 @@ import async;
 import async.net as anet;
 import bytes;
 import net;
+import io;
 
 let listener = await anet.listenTcp("127.0.0.1:0");
 let address = net.localAddr(listener);

@@ -265,16 +265,18 @@ consuming loop's `catch`.
 
 ```gb
 import async;
+import io;
 
 func work(int n): int { return n * n; }
 
 let t1 = async.run(func(): int { return work(1); });
 let t2 = async.run(func(): int { return work(2); });
-io.println(async.all([t1, t2]));        # parallel on real cores
+io.println(await async.all([t1, t2])); # [1, 4], computed in parallel
 ```
 
 ```gb
 import async.channel as ch;
+import io;
 
 let c = ch.Channel<int>(8);
 c.send(1);
@@ -406,6 +408,7 @@ with (f = io.open("data.txt")) {
 # the with-binding (f) does not escape the block
 
 import profiler;
+import io;
 let t = profiler.timer();
 with (t) { doWork(); }
 io.println(t.elapsedMs());

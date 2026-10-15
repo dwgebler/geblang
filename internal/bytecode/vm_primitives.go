@@ -1848,22 +1848,6 @@ func vmHeaderNameValue(method string, args []runtime.Value) (string, string, err
 	return http.CanonicalHeaderKey(name.Value), value.Value, nil
 }
 
-func valuesIdentical(left runtime.Value, right runtime.Value) bool {
-	switch leftValue := left.(type) {
-	case *runtime.Instance:
-		rightValue, ok := right.(*runtime.Instance)
-		return ok && leftValue == rightValue
-	case *runtime.Class:
-		rightValue, ok := right.(*runtime.Class)
-		return ok && leftValue == rightValue
-	case runtime.Null:
-		_, ok := right.(runtime.Null)
-		return ok
-	default:
-		return primitiveEqual(left, right)
-	}
-}
-
 func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 	switch leftValue := left.(type) {
 	case runtime.Set:

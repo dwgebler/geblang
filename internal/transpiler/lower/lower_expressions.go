@@ -155,17 +155,133 @@ func (l *Lowerer) lowerAssignment(e *ast.AssignmentExpression) {
 	if sel, ok := e.Left.(*ast.SelectorExpression); ok && !sel.Optional && l.isHierarchyFieldAccess(sel.Object, sel.Name.Value) {
 		l.lowerExpression(sel.Object)
 		l.w.WriteString("." + fieldSetter(sel.Name.Value) + "(")
-		l.lowerExpression(e.Value)
+		l.lowerFieldValue(sel, l.fieldDeclaredType(sel), e.Value)
 		l.w.WriteString(")")
 		return
 	}
 	l.lowerExpression(e.Left)
 	l.w.WriteString(" = ")
-	if leftTy := l.inferExpressionType(e.Left); leftTy != nil && leftTy.Nullable {
+	leftTy := l.inferExpressionType(e.Left)
+	if sel, ok := e.Left.(*ast.SelectorExpression); ok && !sel.Optional {
+		if field := l.fieldDeclaredType(sel); field != nil {
+			leftTy = field
+		}
+		l.lowerFieldValue(sel, leftTy, e.Value)
+		return
+	}
+	if leftTy != nil && leftTy.Nullable {
 		l.lowerIntoNullable(leftTy, e.Value)
 		return
 	}
-	l.lowerExpression(e.Value)
+	l.lowerValueAs(leftTy, e.Value)
+}
+
+// fieldDeclaredType resolves the declared type of an instance field written through sel, or nil.
+func (l *Lowerer) fieldDeclaredType(sel *ast.SelectorExpression) *types.Type {
+	recv := l.inferExpressionType(sel.Object)
+	if recv == nil || recv.Kind != types.KindClass || recv.Name == "" {
+		return nil
+	}
+	for _, field := range l.fieldSet(recv.Name) {
+		if field.Name.Value == sel.Name.Value && field.Type != nil {
+			return l.resolveTypeRef(field.Type)
+		}
+	}
+	return nil
+}
+
+// lowerFieldValue lowers a value written to a typed field: literals take the field's type and untyped values are checked.
+func (l *Lowerer) lowerFieldValue(sel *ast.SelectorExpression, field *types.Type, value ast.Expression) {
+	if field == nil || field.Kind == types.KindAny || field.Kind == types.KindUnknown || field.Kind == types.KindTypeParam {
+		l.lowerExpression(value)
+		return
+	}
+	if field.Nullable {
+		if valTy := l.inferExpressionType(value); valTy != nil && (valTy.Kind == types.KindAny || valTy.Kind == types.KindUnknown) && !isNullLiteral(value) {
+			l.errAt(sel.Token.Line, sel.Token.Column, "assigning an untyped value to nullable field "+sel.Name.Value+" is not supported by --native",
+				"give the value the field's declared type before assigning it")
+			l.w.WriteString("nil")
+			return
+		}
+		l.lowerIntoNullable(field, value)
+		return
+	}
+	if valTy := l.inferExpressionType(value); valTy != nil && (valTy.Kind == types.KindAny || valTy.Kind == types.KindUnknown) && !isNullLiteral(value) {
+		helper := ""
+		switch field.Kind {
+		case types.KindInt:
+			helper = "ExpectFieldIntFast"
+			if l.Module.IntMode == types.IntModeBigInt {
+				helper = "ExpectFieldInt"
+			}
+		case types.KindFloat:
+			helper = "ExpectFieldFloat"
+		case types.KindDecimal:
+			helper = "ExpectFieldDecimal"
+		case types.KindString:
+			helper = "ExpectFieldString"
+		case types.KindBool:
+			helper = "ExpectFieldBool"
+		}
+		if helper == "" {
+			l.errAt(sel.Token.Line, sel.Token.Column, "assigning an untyped value to field "+sel.Name.Value+" is not supported by --native",
+				"give the value the field's declared type before assigning it")
+			l.w.WriteString("nil")
+			return
+		}
+		owner := sel.Name.Value
+		if recv := l.inferExpressionType(sel.Object); recv != nil && recv.Name != "" {
+			owner = recv.Name + "." + owner
+		}
+		l.requireUncaughtHandler()
+		l.Module.AddImport(types.OrderedDictImport)
+		l.w.WriteString("transpilert." + helper + "(")
+		l.lowerExpression(value)
+		l.w.WriteString(", " + strconv.Quote(owner) + ")")
+		return
+	}
+	l.withExpectedType(field, func() { l.lowerValueAs(field, value) })
+}
+
+// lowerValueAs lowers value for a typed target, giving integer literals the target's float or decimal type.
+func (l *Lowerer) lowerValueAs(target *types.Type, value ast.Expression) {
+	if target == nil || target.Nullable || (target.Kind != types.KindFloat && target.Kind != types.KindDecimal) || !ast.IsIntegerLiteral(value) {
+		l.lowerExpression(value)
+		return
+	}
+	if ternary, ok := value.(*ast.TernaryExpression); ok {
+		goTy := types.ToGo(target, l.Module.IntMode)
+		l.Module.AddTypeImports(goTy)
+		l.w.WriteString("func() " + goTy.Source + " { if ")
+		l.lowerExpression(ternary.Condition)
+		l.w.WriteString(" { return ")
+		l.lowerValueAs(target, ternary.ThenExpr)
+		l.w.WriteString(" }; return ")
+		l.lowerValueAs(target, ternary.ElseExpr)
+		l.w.WriteString(" }()")
+		return
+	}
+	literal, ok := intConstantValue(value)
+	if !ok {
+		l.lowerExpression(value)
+		return
+	}
+	if target.Kind == types.KindDecimal {
+		l.Module.AddImport("math/big")
+		l.Module.RequireHelper("gbDecimalLit")
+		l.w.WriteString("gbDecimalLit(" + strconv.Quote(literal.String()) + ")")
+		return
+	}
+	l.w.WriteString("float64(" + literal.String() + ")")
+}
+
+// lowerArgAs lowers a call argument against the callee's declared parameter type at index i.
+func (l *Lowerer) lowerArgAs(refs []*ast.TypeRef, i int, value ast.Expression) {
+	if i < len(refs) && refs[i] != nil && ast.IsIntegerLiteral(value) {
+		l.lowerValueAs(l.resolveTypeRef(refs[i]), value)
+		return
+	}
+	l.lowerExpression(value)
 }
 
 func (l *Lowerer) lowerInterpolated(e *ast.InterpolatedString) {
@@ -1063,8 +1179,16 @@ func (l *Lowerer) emitArgsKnown(calleeKey string, args []ast.CallArgument, param
 			break
 		}
 	}
+	refs := l.Module.CalleeParamTypes(calleeKey)
 	if !hasNamed && !variadic && len(args) >= len(params) {
-		l.emitPositionalArgs(args)
+		l.w.WriteString("(")
+		for i, a := range args {
+			if i > 0 {
+				l.w.WriteString(", ")
+			}
+			l.lowerArgAs(refs, i, a.Value)
+		}
+		l.w.WriteString(")")
 		return
 	}
 
@@ -1114,11 +1238,15 @@ func (l *Lowerer) emitArgsKnown(calleeKey string, args []ast.CallArgument, param
 	}
 	l.w.WriteString("(")
 	emitted := 0
-	for _, expr := range append(append([]ast.Expression{}, ordered...), tail...) {
+	for i, expr := range append(append([]ast.Expression{}, ordered...), tail...) {
 		if emitted > 0 {
 			l.w.WriteString(", ")
 		}
-		l.lowerExpression(expr)
+		if i < fixed {
+			l.lowerArgAs(refs, i, expr)
+		} else {
+			l.lowerExpression(expr)
+		}
 		emitted++
 	}
 	l.w.WriteString(")")

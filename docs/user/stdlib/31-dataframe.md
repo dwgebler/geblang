@@ -7,6 +7,7 @@ SQL. Numeric columns bridge to `ndarray` for compute.
 
 ```gb
 import dataframe as df;
+import io;
 
 let users = df.readCsv("users.csv", {"types": {"age": "int"}});
 let adults = users

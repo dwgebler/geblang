@@ -40,6 +40,7 @@ x[0] = 99;   # throws ImmutableError: cannot modify frozen list
 
 ```gb
 import freeze;
+import io;
 
 let x = freeze.shallow({"key": "value"});
 try {
@@ -123,6 +124,7 @@ When you need a fully independent copy, use a deep copy.
 
 ```gb
 import clone;
+import io;
 
 let a = [[1], [2]];
 let b = a.deepCopy();
@@ -158,6 +160,7 @@ it.
 
 ```gb
 import maps;
+import io;
 
 class CaseInsensitiveHeaders implements maps.DictInterface {
     dict<string, string> store;

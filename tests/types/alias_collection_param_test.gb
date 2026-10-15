@@ -1,0 +1,43 @@
+/**
+ * @title Collection type aliases on parameters (1.37.1)
+ * @summary A parameter typed with a local alias of a collection type checks the
+ * collection's elements, and parseAs converts numbers for a constructor
+ * parameter of that type.
+ */
+import test;
+import json;
+
+type Nums = list<float>;
+
+class Reading {
+    Nums xs;
+
+    func Reading(Nums xs) {
+        this.xs = xs;
+    }
+}
+
+func total(Nums values): float {
+    float sum = 0.0f;
+    for (v in values) {
+        sum = sum + v;
+    }
+    return sum;
+}
+
+class AliasCollectionParamTest extends test.Test {
+
+    @test
+    func elementsAreChecked(): void {
+        this.assertEquals(3.0f, total([1.0f, 2.0f]));
+        any wrong = ["a"];
+        this.assertThrowsOf(func(): void { total(wrong); }, "TypeError", "total expects list<float> for parameter 'values', got list (element at index 0 is string)");
+    }
+
+    @test
+    func parseAsConvertsConstructorParameter(): void {
+        let reading = json.parseAs("{\"xs\": [1, 2]}", Reading);
+        this.assertEquals("float", typeof(reading.xs[0]) as string);
+        this.assertEquals(3.0f, total(reading.xs));
+    }
+}

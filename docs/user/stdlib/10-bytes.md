@@ -31,6 +31,7 @@ slices.
 
 ```gb
 import bytes;
+import io;
 
 let data = bytes.fromString("hello");
 io.println(bytes.toHex(data));
@@ -75,6 +76,7 @@ Other base encodings (binary-oriented - decoders return `bytes`):
 
 ```gb
 import secrets;
+import encoding;
 
 let totpSecret = encoding.base32Encode(secrets.randomBytes(20));
 let walletId   = encoding.base58Encode(secrets.randomBytes(16));
@@ -138,6 +140,7 @@ argument.
 ```gb
 import binary;
 import bytes;
+import io;
 
 let header = binary.pack(">IHB", 0xDEADBEEF, 1024, 7);
 io.println(bytes.toHex(header));        /* deadbeef040007 */
@@ -167,6 +170,7 @@ Import `compress`:
 ```gb
 import bytes;
 import compress;
+import io;
 
 let packed = compress.gzip(bytes.fromString("payload"));
 io.println(bytes.toString(compress.gunzip(packed)));
@@ -193,6 +197,7 @@ name so output is deterministic.
 ```gb
 import archive;
 import bytes;
+import io;
 
 let raw = archive.zipWrite([
     {"name": "hello.txt", "data": "hello world"},
@@ -231,6 +236,7 @@ safe. Entry names must be relative forward-slash paths without traversal.
 ```gb
 import archive;
 import bytes;
+import io;
 
 let writer = archive.create("backup.tar.gz", "tar.gz");
 writer.addDir("data");

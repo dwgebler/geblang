@@ -34,6 +34,8 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 	// Consumed before field initializers can inherit or clear them.
 	explicitBindings := vm.pendingTypeBindings
 	vm.pendingTypeBindings = nil
+	literalArgs := vm.pendingLiteralArgs
+	vm.pendingLiteralArgs = nil
 	if !raw {
 		if decorated, ok := vm.decoratedClasses[classIndex]; ok {
 			switch dec := decorated.(type) {
@@ -91,6 +93,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 		}
 		ci = parent
 	}
+	runtime.ResolveInheritedTypeBindings(instance)
 	if err := vm.initializeFields(instruction, instance, classIndex); err != nil {
 		return 0, err
 	}
@@ -121,6 +124,9 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 	functionIndex, err := vm.selectRuntimeFunctionWith(instruction, classInfo.Name, classInfo.ConstructorIndices, args, 1, explicitBindings)
 	if err != nil {
 		return 0, err
+	}
+	if literalArgs != nil {
+		vm.typeLiteralArgs(vm.curMod.Chunk.Functions[functionIndex], args, 1, literalArgs, mergedTypeBindings(explicitBindings, instance.TypeBindings))
 	}
 	if len(explicitBindings) > 0 {
 		fn := &vm.curMod.Chunk.Functions[functionIndex]
@@ -185,6 +191,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 				instance.TypeBindings[name] = typeName
 			}
 		}
+		runtime.ResolveInheritedTypeBindings(instance)
 	}
 	return nextIP, nil
 }
@@ -202,6 +209,11 @@ func (vm *VM) runtimeFieldsForClass(classInfo ClassInfo) []runtime.Field {
 	fields := make([]runtime.Field, 0, len(classInfo.FieldNames))
 	for i, name := range classInfo.FieldNames {
 		field := runtime.Field{Name: name}
+		if i < len(classInfo.FieldCheckTypes) && classInfo.FieldCheckTypes[i] != "" {
+			field.TypeName = classInfo.FieldCheckTypes[i]
+		} else if i < len(classInfo.FieldTypes) {
+			field.TypeName = classInfo.FieldTypes[i]
+		}
 		if i < len(classInfo.FieldDecorators) && len(classInfo.FieldDecorators[i]) > 0 {
 			field.DecoratorMeta = append([]runtime.DecoratorMetadata(nil), classInfo.FieldDecorators[i]...)
 		}
@@ -538,6 +550,10 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 	if err != nil {
 		return 0, vm.callPropagate(instruction, err)
 	}
+	if class, ok := receiver.(runtime.BytecodeClass); ok {
+		intLiteral := len(instruction.Operands) > 1 && instruction.Operands[1] == setFieldIntLiteral
+		return vm.setClassStatic(instruction, ip, class, name, value, intLiteral)
+	}
 	instance, ok := receiver.(*runtime.Instance)
 	if !ok {
 		return 0, vm.runtimeError(instruction, "%s has no field %s", receiver.TypeName(), name)
@@ -554,6 +570,12 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 			return vm.propagateModuleError(instruction, ip, err)
 		}
 		value = transformed
+	}
+	if len(instruction.Operands) > 1 && instruction.Operands[1] == setFieldIntLiteral {
+		value = vm.literalFieldValue(instance, name, value)
+	}
+	if msg, ok := vm.fieldWriteMismatch(instance, name, value); !ok {
+		return vm.throwTyped(instruction, ip, "TypeError", msg)
 	}
 	if vm.fieldLookupValid && vm.fieldLookupClass == instance.Class && vm.fieldLookupName == name && vm.fieldLookupOnClass {
 		instance.SetField(name, value)
@@ -598,6 +620,8 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 	}
 	classIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
+	literalArgs := vm.pendingLiteralArgs
+	vm.pendingLiteralArgs = nil
 	instance, args, err := vm.popInstanceAndArgs(instruction, argc)
 	if err != nil {
 		return 0, err
@@ -654,7 +678,7 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 		vm.push(runtime.Null{})
 		return ip, nil
 	}
-	functionIndex, err := vm.selectRuntimeFunction(instruction, parent.Name, parent.ConstructorIndices, args, 1)
+	functionIndex, err := vm.selectRuntimeFunctionLiterals(instruction, parent.Name, parent.ConstructorIndices, args, 1, literalArgs, instance.TypeBindings)
 	if err != nil {
 		return 0, err
 	}
@@ -674,6 +698,8 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
 	argc := int(instruction.Operands[2])
+	literalArgs := vm.pendingLiteralArgs
+	vm.pendingLiteralArgs = nil
 	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 		return 0, vm.runtimeError(instruction, "method name constant out of range")
 	}
@@ -693,7 +719,7 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 		if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.curMod.Chunk.Classes) {
 			parent := vm.curMod.Chunk.Classes[classInfo.ParentIndex]
 			if indices, ok := vm.lookupMethod(parent, name.Value); ok {
-				functionIndex, err := vm.selectRuntimeFunction(instruction, name.Value, indices, args, 1)
+				functionIndex, err := vm.selectRuntimeFunctionLiterals(instruction, name.Value, indices, args, 1, literalArgs, instance.TypeBindings)
 				if err != nil {
 					return 0, err
 				}
@@ -728,7 +754,7 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 	if !ok {
 		return 0, vm.runtimeError(instruction, "unknown parent method %s.%s", parent.Name, name.Value)
 	}
-	functionIndex, err := vm.selectRuntimeFunction(instruction, name.Value, indices, args, 1)
+	functionIndex, err := vm.selectRuntimeFunctionLiterals(instruction, name.Value, indices, args, 1, literalArgs, instance.TypeBindings)
 	if err != nil {
 		return 0, err
 	}
@@ -872,10 +898,12 @@ func (vm *VM) staticMethodValue(indices []int64) runtime.Value {
 func (vm *VM) decoratedStaticValue(funcIndex int64, name string) runtime.Value {
 	loader := vm.moduleLoader
 	module := vm.moduleName
+	identity := runtime.StableFunctionIdentity(fmt.Sprintf("static:%s#%d", module, funcIndex))
 	if loader == nil {
 		vm.noteEscape()
 		return runtime.Function{
-			Name: name,
+			Identity: identity,
+			Name:     name,
 			Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				res, err, _ := vm.callBoundDecoratedValue(nil, funcIndex, args)
 				return res, err
@@ -883,7 +911,8 @@ func (vm *VM) decoratedStaticValue(funcIndex int64, name string) runtime.Value {
 		}
 	}
 	return runtime.Function{
-		Name: name,
+		Identity: identity,
+		Name:     name,
 		Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 			return loader.CallModuleMethodValue(module, funcIndex, nil, args, nil)
 		},
@@ -932,7 +961,8 @@ func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcInd
 	if loader == nil {
 		vm.noteEscape()
 		return runtime.Function{
-			Name: name,
+			Identity: runtime.NewFunctionIdentity(),
+			Name:     name,
 			Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				if res, err, handled := vm.callBoundDecoratedValue(instance, funcIndex, args); handled {
 					return res, err
@@ -942,7 +972,8 @@ func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcInd
 		}
 	}
 	return runtime.Function{
-		Name: name,
+		Identity: runtime.NewFunctionIdentity(),
+		Name:     name,
 		Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 			return loader.CallModuleMethodValue(module, funcIndex, instance, args, nil)
 		},
@@ -953,9 +984,10 @@ func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcInd
 }
 
 func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
-	if len(instruction.Operands) != 2 {
+	if len(instruction.Operands) != 2 && len(instruction.Operands) != 3 {
 		return 0, vm.fatalError(instruction, "static assignment instruction has invalid operands")
 	}
+	intLiteral := len(instruction.Operands) == 3 && instruction.Operands[2] == setFieldIntLiteral
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
 	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
@@ -974,9 +1006,15 @@ func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
 	for ci := classIndex; ci >= 0; {
 		classInfo := vm.curMod.Chunk.Classes[ci]
 		if constIdx, present := classInfo.StaticValues[name]; present && constIdx >= 0 && int(constIdx) < vm.constantsLen() {
+			if declared := classInfo.StaticTypes[name]; declared != "" && !vm.matchValueToTypeStrWith(nil, nil, value, declared) {
+				return vm.throwTyped(instruction, ip, "TypeError", vm.fieldMismatchMessage(value, declared, classInfo.Name, name))
+			}
 			vm.writeStaticValue(constIdx, value)
 			vm.push(value)
 			return ip, nil
+		}
+		if classInfo.ParentIndex < 0 && strings.Contains(classInfo.ParentName, ".") {
+			return vm.setClassStatic(instruction, ip, runtime.BytecodeClass{Name: classInfo.Name, Module: vm.moduleName}, name, value, intLiteral)
 		}
 		ci = classInfo.ParentIndex
 	}
@@ -1537,15 +1575,16 @@ func (vm *VM) RuntimeClassValue(classIndex int64) *runtime.Class {
 	}
 	classInfo := vm.curMod.Chunk.Classes[classIndex]
 	return &runtime.Class{
-		Name:           classInfo.Name,
-		Module:         vm.moduleName,
-		TypeParameters: append([]string(nil), classInfo.TypeParameters...),
-		Methods:        vm.runtimeMethodWrappers(classIndex),
-		MethodMetadata: vm.classFunctionMetadata(classInfo.Methods, "method", 1),
-		StaticMetadata: vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0),
-		Parent:         vm.runtimeClassForParent(classInfo),
-		Implements:     vm.runtimeInterfacesForClass(classInfo),
-		Fields:         vm.runtimeFieldsForClass(classInfo),
+		Name:            classInfo.Name,
+		Module:          vm.moduleName,
+		TypeParameters:  append([]string(nil), classInfo.TypeParameters...),
+		Methods:         vm.runtimeMethodWrappers(classIndex),
+		MethodMetadata:  vm.classFunctionMetadata(classInfo.Methods, "method", 1),
+		StaticMetadata:  vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0),
+		Parent:          vm.runtimeClassForParent(classInfo),
+		ParentArguments: append([]string(nil), classInfo.ParentArguments...),
+		Implements:      vm.runtimeInterfacesForClass(classInfo),
+		Fields:          vm.runtimeFieldsForClass(classInfo),
 	}
 }
 

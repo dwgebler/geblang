@@ -203,6 +203,7 @@ caller can decide whether to retry / buffer.
 
 ```gb
 import trace;
+import log;
 
 let span = trace.start("checkout");
 trace.end(span);

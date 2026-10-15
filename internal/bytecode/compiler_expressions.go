@@ -6,6 +6,7 @@ import (
 	argbinding "geblang/internal/binding"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
+	"geblang/internal/token"
 	"geblang/internal/typealias"
 	"math"
 	"math/big"
@@ -448,7 +449,11 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		}
 		return nil
 	case *ast.PrefixExpression:
-		if err := c.compileExpression(expr.Right); err != nil {
+		operandExpected := ""
+		if expr.Operator == "-" && ast.IsIntegerLiteral(expr) {
+			operandExpected = c.currentExpectedType()
+		}
+		if err := c.compileExpressionWithExpected(expr.Right, operandExpected); err != nil {
 			return err
 		}
 		switch expr.Operator {
@@ -526,11 +531,12 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					return fmt.Errorf("%s has no parent class", currentClass.Name)
 				}
 				var orderedArgs []ast.Expression
+				selectedCtor := int64(-1)
 				if !isBuiltinErrorParent && !isCrossModuleParent {
 					parent := c.chunk.Classes[currentClass.ParentIndex]
 					if len(parent.ConstructorIndices) > 0 {
 						var err error
-						_, orderedArgs, err = c.selectFunctionIndicesCallIgnoringReturn(parent.Name, parent.ConstructorIndices, expr.Arguments, 1)
+						selectedCtor, orderedArgs, err = c.selectFunctionIndicesCallIgnoringReturn(parent.Name, parent.ConstructorIndices, expr.Arguments, 1)
 						if err != nil {
 							return err
 						}
@@ -558,11 +564,10 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				} else {
 					c.emitAt(OpGetGlobal, expr.Token.Line, expr.Token.Column, resolved.slot)
 				}
-				for _, arg := range orderedArgs {
-					if err := c.compileExpression(arg); err != nil {
-						return err
-					}
+				if err := c.compileParentCallArguments(selectedCtor, orderedArgs, expr); err != nil {
+					return err
 				}
+				c.emitPlantIntLiteralArgs(expr, false)
 				c.emitAt(OpCallParentConstructor, expr.Token.Line, expr.Token.Column, c.classStack[len(c.classStack)-1], int64(len(orderedArgs)))
 				return nil
 			}
@@ -736,6 +741,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				// Plant explicit `<TypeArgs>` before construction so the
 				// constructor's argument validation sees the caller's bindings.
 				c.emitPlantCallTypeBindings(expr, classInfo.TypeParameters)
+				c.emitPlantIntLiteralArgs(expr, false)
 				c.emitAt(OpConstructClass, expr.Token.Line, expr.Token.Column, classIndex, int64(len(orderedArgs)))
 				// Explicit type arguments on the call site (e.g. `Container<T>(...)`)
 				// pin the reified bindings on the freshly-constructed instance, so
@@ -890,6 +896,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					return fmt.Errorf("%s has no parent class", currentClass.Name)
 				}
 				var orderedArgs []ast.Expression
+				selectedMethod := int64(-1)
 				crossModuleAncestor := ""
 				if !isCrossModuleParent {
 					parent := c.chunk.Classes[currentClass.ParentIndex]
@@ -904,7 +911,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						}
 					} else {
 						var err error
-						_, orderedArgs, err = c.selectFunctionIndicesCall(selector.Name.Value, indices, expr.Arguments, 1)
+						selectedMethod, orderedArgs, err = c.selectFunctionIndicesCall(selector.Name.Value, indices, expr.Arguments, 1)
 						if err != nil {
 							return err
 						}
@@ -931,13 +938,15 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				} else {
 					c.emitAt(OpGetGlobal, expr.Token.Line, expr.Token.Column, resolved.slot)
 				}
-				for _, arg := range orderedArgs {
-					if err := c.compileExpression(arg); err != nil {
-						return err
-					}
+				if crossModuleAncestor != "" || isCrossModuleParent {
+					selectedMethod = -1
+				}
+				if err := c.compileParentCallArguments(selectedMethod, orderedArgs, expr); err != nil {
+					return err
 				}
 				nameIndex := int64(len(c.chunk.Constants))
 				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: selector.Name.Value})
+				c.emitPlantIntLiteralArgs(expr, false)
 				c.emitAt(OpCallParentMethod, expr.Token.Line, expr.Token.Column, c.classStack[len(c.classStack)-1], nameIndex, int64(len(orderedArgs)))
 				return nil
 			}
@@ -1024,10 +1033,8 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					if err := c.compileExpression(selector.Object); err != nil {
 						return err
 					}
-					for _, arg := range expr.Arguments {
-						if err := c.compileExpression(arg.Value); err != nil {
-							return err
-						}
+					if err := c.compileOrderedArguments(c.chunk.Functions[fnIndex], positionalArguments(expr.Arguments), 1, expr.Token.Line, expr.Token.Column); err != nil {
+						return err
 					}
 					c.emitPlantCallTypeBindings(expr, c.chunk.Functions[fnIndex].TypeParameters)
 					c.emitAt(OpCallResolvedMethod, expr.Token.Line, expr.Token.Column, fnIndex, int64(len(expr.Arguments)))
@@ -1055,8 +1062,9 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				}
 				return nil
 			}
-			for _, arg := range expr.Arguments {
-				if err := c.compileExpression(arg.Value); err != nil {
+			literalHints := c.methodLiteralHints(selector, expr.Arguments)
+			for i, arg := range expr.Arguments {
+				if err := c.compileExpressionWithExpected(arg.Value, literalHints[i]); err != nil {
 					return err
 				}
 			}
@@ -1072,6 +1080,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					}
 					operands = append(operands, argNameIndex)
 				}
+				c.emitPlantIntLiteralArgs(expr, true)
 				c.emitAt(OpMethodCallNamed, expr.Token.Line, expr.Token.Column, operands...)
 				if selector.Optional {
 					c.patchJump(optionalJump)
@@ -1079,6 +1088,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				return nil
 			}
 			c.emitPlantCallTypeArgs(expr)
+			c.emitPlantIntLiteralArgs(expr, false)
 			c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 			if selector.Optional {
 				c.patchJump(optionalJump)
@@ -1216,12 +1226,13 @@ func (c *Compiler) compileTernaryExpression(node *ast.TernaryExpression) error {
 	if err != nil {
 		return err
 	}
-	if err := c.compileExpression(node.ThenExpr); err != nil {
+	expected := c.currentExpectedType()
+	if err := c.compileExpressionWithExpected(node.ThenExpr, expected); err != nil {
 		return err
 	}
 	jumpPos := c.emitJump(OpJump, node.Token.Line, node.Token.Column)
 	c.patchJump(jumpFalsePos)
-	if err := c.compileExpression(node.ElseExpr); err != nil {
+	if err := c.compileExpressionWithExpected(node.ElseExpr, expected); err != nil {
 		return err
 	}
 	c.patchJump(jumpPos)
@@ -2352,11 +2363,15 @@ func (c *Compiler) compileAssignmentExpression(expr *ast.AssignmentExpression) e
 		if object, ok := left.Object.(*ast.Identifier); ok {
 			if _, resolvedName := c.resolveName(object.Value); !resolvedName {
 				if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok && c.chunk.Classes[classIndex].Name == object.Value {
-					if err := c.compileExpression(expr.Value); err != nil {
+					if err := c.compileExpressionWithExpected(expr.Value, c.staticFieldType(classIndex, left.Name.Value)); err != nil {
 						return err
 					}
 					nameIndex := int64(len(c.chunk.Constants))
 					c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: left.Name.Value})
+					if ast.IsIntegerLiteral(expr.Value) {
+						c.emitAt(OpSetStaticValue, expr.Token.Line, expr.Token.Column, classIndex, nameIndex, setFieldIntLiteral)
+						return nil
+					}
 					c.emitAt(OpSetStaticValue, expr.Token.Line, expr.Token.Column, classIndex, nameIndex)
 					return nil
 				}
@@ -2370,6 +2385,10 @@ func (c *Compiler) compileAssignmentExpression(expr *ast.AssignmentExpression) e
 		}
 		nameIndex := int64(len(c.chunk.Constants))
 		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: left.Name.Value})
+		if ast.IsIntegerLiteral(expr.Value) {
+			c.emitAt(OpSetField, expr.Token.Line, expr.Token.Column, nameIndex, setFieldIntLiteral)
+			return nil
+		}
 		c.emitAt(OpSetField, expr.Token.Line, expr.Token.Column, nameIndex)
 		return nil
 	case *ast.ListLiteral:
@@ -2628,6 +2647,9 @@ func (c *Compiler) selectFunctionIndicesCallBound(name string, indices []int64, 
 		}
 	}
 	if len(matches) == 0 {
+		if index, ordered, ok := c.selectWithTypedIntLiterals(indices, args, paramOffset); ok {
+			return index, ordered, nil
+		}
 		if msg := c.overloadMismatchDetail(name, indices, args, paramOffset); msg != "" {
 			return 0, nil, fmt.Errorf("%s", msg)
 		}
@@ -2637,6 +2659,55 @@ func (c *Compiler) selectFunctionIndicesCallBound(name string, indices []int64, 
 		return 0, nil, parityErrorf("ambiguous overload for %s; the evaluator resolves it at runtime, the bytecode VM resolves overloads at compile time", name)
 	}
 	return matches[0], orderedMatches[0], nil
+}
+
+// selectWithTypedIntLiterals retries selection with float/decimal-typed int literals, preferring the fewest conversions.
+func (c *Compiler) selectWithTypedIntLiterals(indices []int64, args []ast.CallArgument, paramOffset int) (int64, []ast.Expression, bool) {
+	found := int64(-1)
+	var foundOrdered []ast.Expression
+	best, tied := -1, false
+	for _, index := range indices {
+		function := c.chunk.Functions[index]
+		ordered, err := c.orderFunctionArguments(function, args, paramOffset)
+		if err != nil {
+			continue
+		}
+		typed, conversions := c.typedIntLiteralArgs(function, ordered, paramOffset)
+		if conversions == 0 || !c.staticArgumentsMayMatch(function, typed, paramOffset) {
+			continue
+		}
+		switch {
+		case best < 0 || conversions < best:
+			found, foundOrdered, best, tied = index, ordered, conversions, false
+		case conversions == best:
+			tied = true
+		}
+	}
+	if found < 0 || tied {
+		return 0, nil, false
+	}
+	return found, foundOrdered, true
+}
+
+func (c *Compiler) typedIntLiteralArgs(function FunctionInfo, args []ast.Expression, paramOffset int) ([]ast.Expression, int) {
+	typed := append([]ast.Expression(nil), args...)
+	conversions := 0
+	for i, arg := range args {
+		if !ast.IsIntegerLiteral(arg) || i+paramOffset >= len(function.ParamTypes) {
+			continue
+		}
+		line, column := expressionLocation(arg)
+		tok := token.Token{Line: line, Column: column}
+		switch strings.TrimPrefix(c.expandRecordedTypeAlias(function.ParamTypes[i+paramOffset]), "?") {
+		case "float":
+			typed[i] = &ast.FloatLiteral{Token: tok, Value: "0f"}
+			conversions++
+		case "decimal":
+			typed[i] = &ast.DecimalLiteral{Token: tok, Value: "0.0"}
+			conversions++
+		}
+	}
+	return typed, conversions
 }
 
 // overloadMismatchDetail mirrors the evaluator's per-parameter error for the
@@ -3574,4 +3645,152 @@ func (c *Compiler) selectFunctionCallSpread(name string) (int64, error) {
 		return 0, fmt.Errorf("cannot use spread with overloaded function %s", name)
 	}
 	return indices[0], nil
+}
+
+// compileParentCallArguments compiles parent-call arguments with the selected overload's parameter types when known.
+func (c *Compiler) compileParentCallArguments(selected int64, args []ast.Expression, expr *ast.CallExpression) error {
+	if selected >= 0 && int(selected) < len(c.chunk.Functions) {
+		return c.compileOrderedArguments(c.parentBoundFunction(selected), args, 1, expr.Token.Line, expr.Token.Column)
+	}
+	for _, arg := range args {
+		if err := c.compileExpression(arg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// parentBoundFunction substitutes extends-clause type arguments into an ancestor method's parameter types.
+func (c *Compiler) parentBoundFunction(selected int64) FunctionInfo {
+	function := c.chunk.Functions[selected]
+	if len(c.classStack) == 0 {
+		return function
+	}
+	bindings := map[string]string{}
+	for ci := c.classStack[len(c.classStack)-1]; ci >= 0 && int(ci) < len(c.chunk.Classes); {
+		class := c.chunk.Classes[ci]
+		parent := class.ParentIndex
+		if parent < 0 || int(parent) >= len(c.chunk.Classes) {
+			return function
+		}
+		next := map[string]string{}
+		for i, param := range c.chunk.Classes[parent].TypeParameters {
+			if i < len(class.ParentArguments) {
+				arg := strings.TrimSpace(class.ParentArguments[i])
+				if bound, ok := bindings[strings.ToLower(arg)]; ok {
+					arg = bound
+				}
+				next[strings.ToLower(param)] = arg
+			}
+		}
+		bindings = next
+		if classOwnsFunction(c.chunk.Classes[parent], selected) {
+			break
+		}
+		ci = parent
+	}
+	if len(bindings) == 0 {
+		return function
+	}
+	types := append([]string(nil), function.ParamTypes...)
+	for i, typ := range types {
+		if bound, ok := bindings[strings.ToLower(typ)]; ok && !shadowsClassTypeParameter(function.TypeParameters, typ) {
+			types[i] = bound
+		}
+	}
+	function.ParamTypes = types
+	return function
+}
+
+func classOwnsFunction(class ClassInfo, index int64) bool {
+	for _, ctor := range class.ConstructorIndices {
+		if ctor == index {
+			return true
+		}
+	}
+	for _, indices := range class.Methods {
+		for _, candidate := range indices {
+			if candidate == index {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// methodLiteralHints types int-literal method args when every reachable override agrees on float or decimal.
+func (c *Compiler) methodLiteralHints(selector *ast.SelectorExpression, args []ast.CallArgument) []string {
+	hints := make([]string, len(args))
+	hasLiteral := false
+	for _, arg := range args {
+		if arg.Name != nil || arg.Spread {
+			return hints
+		}
+		hasLiteral = hasLiteral || ast.IsIntegerLiteral(arg.Value)
+	}
+	if !hasLiteral {
+		return hints
+	}
+	typeName := c.expressionStaticType(selector.Object)
+	classIndex, ok := c.classes[strings.ToLower(typeName)]
+	if !ok || typeName == "" || c.exportedClasses[strings.ToLower(typeName)] {
+		return hints
+	}
+	method := strings.ToLower(selector.Name.Value)
+	var candidates []int64
+	for ci := classIndex; ci >= 0 && int(ci) < len(c.chunk.Classes); ci = c.chunk.Classes[ci].ParentIndex {
+		if indices, ok := c.chunk.Classes[ci].Methods[method]; ok {
+			candidates = append(candidates, indices...)
+			break
+		}
+	}
+	for i := range c.chunk.Classes {
+		for ancestor := c.chunk.Classes[i].ParentIndex; ancestor >= 0 && int(ancestor) < len(c.chunk.Classes); ancestor = c.chunk.Classes[ancestor].ParentIndex {
+			if ancestor == classIndex {
+				if c.exportedClasses[strings.ToLower(c.chunk.Classes[i].Name)] {
+					return make([]string, len(args))
+				}
+				candidates = append(candidates, c.chunk.Classes[i].Methods[method]...)
+				break
+			}
+		}
+	}
+	for i, arg := range args {
+		if !ast.IsIntegerLiteral(arg.Value) {
+			continue
+		}
+		agreed := ""
+		for _, index := range candidates {
+			fn := c.chunk.Functions[index]
+			if fn.Variadic || len(fn.ParamTypes) != len(args)+1 {
+				continue
+			}
+			typ := strings.TrimPrefix(c.expandRecordedTypeAlias(fn.ParamTypes[i+1]), "?")
+			if (typ != "float" && typ != "decimal") || (agreed != "" && agreed != typ) {
+				agreed = ""
+				break
+			}
+			agreed = typ
+		}
+		hints[i] = agreed
+	}
+	return hints
+}
+
+// emitPlantIntLiteralArgs stages a method call's integer-literal argument positions for runtime overload selection.
+func (c *Compiler) emitPlantIntLiteralArgs(expr *ast.CallExpression, allowNamed bool) {
+	operands := []int64{0}
+	for i, arg := range expr.Arguments {
+		if (arg.Name != nil && !allowNamed) || arg.Spread {
+			return
+		}
+		if ast.IsIntegerLiteral(arg.Value) {
+			operands = append(operands, int64(i))
+		}
+	}
+	if len(operands) == 1 {
+		return
+	}
+	operands[0] = int64(len(operands) - 1)
+	c.emitAt(OpPlantIntLiteralArgs, expr.Token.Line, expr.Token.Column, operands...)
 }

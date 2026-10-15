@@ -63,7 +63,7 @@ func (s *Session) Eval(program *ast.Program) (SessionResult, error) {
 				if errors.As(err, &thrown) {
 					return SessionResult{}, uncaughtFromThrown(thrown.value)
 				}
-				return SessionResult{}, &runtime.UncaughtError{Class: "RuntimeError", Message: err.Error()}
+				return SessionResult{}, sessionUncaught(err)
 			}
 			if exit, ok := value.(exitValue); ok {
 				return SessionResult{ExitCode: exit.code, Exited: true}, nil
@@ -99,7 +99,7 @@ func (s *Session) Eval(program *ast.Program) (SessionResult, error) {
 				if errors.As(err, &thrown) {
 					return SessionResult{}, uncaughtFromThrown(thrown.value)
 				}
-				return SessionResult{}, &runtime.UncaughtError{Class: "RuntimeError", Message: err.Error()}
+				return SessionResult{}, sessionUncaught(err)
 			}
 			sig, err = s.evaluator.runAndPopDefers(signal{})
 			if err != nil {
@@ -245,4 +245,10 @@ func (s *Session) StdlibMemberNames(name string) []string {
 
 func (s *Session) Close() error {
 	return s.evaluator.Cleanup()
+}
+
+// sessionUncaught keeps the class of a classified runtime fault (TypeError, ValueError, ...).
+func sessionUncaught(err error) *runtime.UncaughtError {
+	failure := runtime.NewRecoverableError(err)
+	return &runtime.UncaughtError{Class: failure.Class, Message: failure.Message}
 }

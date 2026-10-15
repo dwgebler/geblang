@@ -44,7 +44,7 @@ func (l *Lowerer) lowerReturn(s *ast.ReturnStatement) {
 		}
 		l.w.WriteString("return 1, ")
 		if s.Value != nil {
-			l.lowerExpression(s.Value)
+			l.lowerValueAs(l.currentReturnType, s.Value)
 		} else {
 			l.w.WriteString(tryZeroExpr(l.tryCtl.retGo))
 		}
@@ -61,7 +61,7 @@ func (l *Lowerer) lowerReturn(s *ast.ReturnStatement) {
 		l.w.WriteLine("")
 		return
 	}
-	l.lowerExpression(s.Value)
+	l.lowerValueAs(l.currentReturnType, s.Value)
 	l.w.WriteLine("")
 }
 
@@ -1000,7 +1000,7 @@ func (l *Lowerer) lowerInlineDeclaration(s *ast.DeclarationStatement) {
 		l.w.WriteString(")")
 		return
 	}
-	l.withExpectedType(declared, func() { l.lowerExpression(s.Value) })
+	l.withExpectedType(declared, func() { l.lowerValueAs(declared, s.Value) })
 }
 
 func (l *Lowerer) lowerIf(s *ast.IfStatement) {
@@ -1069,7 +1069,7 @@ func (l *Lowerer) lowerDeclaration(s *ast.DeclarationStatement) {
 			if declared.Nullable {
 				l.lowerIntoNullable(declared, s.Value)
 			} else {
-				l.withExpectedType(declared, func() { l.lowerExpression(s.Value) })
+				l.withExpectedType(declared, func() { l.lowerValueAs(declared, s.Value) })
 			}
 		}
 		l.w.WriteLine("")
@@ -1146,7 +1146,7 @@ func (l *Lowerer) lowerModuleVar(s *ast.DeclarationStatement) {
 		case declared != nil && declared.Nullable:
 			l.lowerIntoNullable(declared, s.Value)
 		case hasType:
-			l.withExpectedType(declared, func() { l.lowerExpression(s.Value) })
+			l.withExpectedType(declared, func() { l.lowerValueAs(declared, s.Value) })
 		default:
 			l.lowerExpression(s.Value)
 		}

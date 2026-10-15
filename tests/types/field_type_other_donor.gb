@@ -1,0 +1,5 @@
+module field_type_other_donor;
+
+export enum Shade {
+    Light, Dark;
+}

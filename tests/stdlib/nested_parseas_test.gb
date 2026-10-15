@@ -3,7 +3,7 @@
  * @summary A field whose declared type is a user class (or a list / dict
  * of one) is recursively deserialized into an instance, including when the
  * nested class is declared in another module. Primitive and `any` fields
- * stay raw, and shape mismatches are left untouched.
+ * stay raw, and a value that does not match its field type is a TypeError.
  */
 import test;
 import json;
@@ -63,9 +63,13 @@ class NestedParseAsTest extends test.Test {
     }
 
     @test
-    func shapeMismatchIsLeftRaw(): void {
-        let o = json.parseAs("{\"name\":\"n\",\"wrong\":\"notadict\"}", Outer);
-        this.assertEquals("string", reflect.className(o.wrong));
+    func shapeMismatchIsTypeError(): void {
+        try {
+            json.parseAs("{\"name\":\"n\",\"wrong\":\"notadict\"}", Outer);
+            this.fail("expected TypeError");
+        } catch (TypeError e) {
+            this.assertEquals("cannot assign string to Inner field Outer.wrong", e.message);
+        }
     }
 
     @test

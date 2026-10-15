@@ -116,6 +116,7 @@ Use the `dotenv` module when loading `.env` files:
 
 ```gb
 import dotenv;
+import io;
 
 if (io.exists(".env")) {
     dotenv.loadAndApply(".env");
@@ -295,6 +296,7 @@ The process module wraps the same underlying functionality in `Result` and
 
 ```gb
 import process;
+import io;
 
 let result = process.run("git", ["status", "--short"]);
 if (result.isOk()) {

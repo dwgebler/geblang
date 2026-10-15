@@ -32,6 +32,21 @@ class User {
 }
 ```
 
+A field's declared type is enforced at run time on every write: assignment
+(including from an `any` value), writes inside methods and constructors, field
+defaults, static fields, `reflect.setField`, and `parseAs`. Type aliases are
+resolved, so a `Cash balance;` field with `type Cash = decimal;` accepts a
+decimal. A value of the wrong type
+throws `TypeError` (`cannot assign string to int field User.age`), and `null`
+is only accepted by a nullable field (`?string`). A field of generic type `T`
+is checked against the instance's bound type (`Box<int>` accepts only `int`); a
+collection field such as `list<T>` is checked as a list, without checking its
+elements against the binding.
+Fields that have not been assigned yet still start as `null`. When the value's
+type is known before the program runs (`account.balance = "lots"` on an `int`
+field), `geblang check` and the compiler report the error up front; values typed
+`any` are checked when the write happens.
+
 Keep constructors focused on valid initialization. Use named static factories
 or module functions when construction needs parsing, I/O, or fallback behavior.
 
@@ -1283,6 +1298,7 @@ No opt-in is needed for plain data classes.
 
 ```gb
 import json;
+import io;
 
 class Point {
     int x;

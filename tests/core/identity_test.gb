@@ -1,0 +1,116 @@
+/**
+ * @title Identity with is and is not (1.37.1)
+ * @summary `is` is true only for two references to the same object: instances,
+ * lists, dicts, sets, and function values compare by object, value kinds by
+ * type and value. The result is the same inside methods, constructors,
+ * callbacks, and across modules.
+ */
+import test;
+import identity_donor as donor;
+
+class Point {
+    int x;
+
+    func Point(int x) {
+        this.x = x;
+    }
+
+    func sameAs(any other): bool {
+        return this is other;
+    }
+}
+
+class Point3 extends Point {
+    bool selfSeen;
+
+    func Point3(int x) {
+        parent(x);
+        this.selfSeen = this.sameAs(this);
+    }
+}
+
+func top(): int {
+    return 1;
+}
+
+func makeCounter(): callable {
+    return func(): int { return 2; };
+}
+
+class IdentityTest extends test.Test {
+
+    @test
+    func instances(): void {
+        let a = Point(1);
+        let b = a;
+        Point base = Point3(2);
+        this.assertTrue(a is b);
+        this.assertFalse(a is Point(1));
+        this.assertTrue(a == Point(1));
+        this.assertTrue(a is not Point(1));
+        this.assertTrue(a.sameAs(b));
+        this.assertTrue(base.sameAs(base));
+        this.assertTrue((base as Point3).selfSeen);
+    }
+
+    @test
+    func collectionsTrackTheObject(): void {
+        let items = [1, 2];
+        let alias = items;
+        alias.push(3);
+        this.assertTrue(items is alias);
+        this.assertFalse(items is [1, 2, 3]);
+        let d = {"k": 1};
+        let d2 = d;
+        d2["z"] = 2;
+        this.assertTrue(d is d2);
+        this.assertFalse(d is {"k": 1, "z": 2});
+        let s = {1};
+        let s2 = s;
+        this.assertTrue(s is s2);
+        this.assertFalse(s is {1});
+    }
+
+    @test
+    func valueKindsCompareByTypeAndValue(): void {
+        this.assertTrue(1 is 1);
+        this.assertFalse(1 is 1.0f);
+        this.assertTrue("a" is "a");
+        this.assertTrue(null is null);
+        this.assertFalse(1 is "1");
+    }
+
+    @test
+    func functionValues(): void {
+        let counter = makeCounter();
+        let copy = counter;
+        let p = Point(1);
+        let bound = p.sameAs;
+        this.assertTrue(counter is copy);
+        this.assertFalse(makeCounter() is makeCounter());
+        this.assertTrue(top is top);
+        this.assertTrue(bound is bound);
+        this.assertFalse(p.sameAs is p.sameAs);
+    }
+
+    @test
+    func insideCallbacks(): void {
+        let target = [9];
+        let pool = [[9], target, [9]];
+        let hits = pool.filter(func(list<int> x): bool { return x is target; });
+        this.assertEquals(1, hits.length());
+        this.assertTrue(hits[0] is target);
+    }
+
+    @test
+    func acrossModules(): void {
+        let items = [1];
+        let holder = donor.Holder(items);
+        this.assertTrue(holder.holds(items));
+        this.assertFalse(holder.holds([1]));
+        this.assertTrue(donor.same(items, items));
+        this.assertFalse(donor.same(items, [1]));
+        this.assertTrue(donor.shared is donor.sharedRef());
+        this.assertTrue(donor.helper is donor.helper);
+    }
+}

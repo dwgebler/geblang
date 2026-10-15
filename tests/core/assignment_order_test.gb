@@ -1,0 +1,36 @@
+/**
+ * @title Assignment targets evaluate before the value (1.37.1)
+ * @summary For `obj.field = value` and `list[index] = value`, the receiver and
+ * index expressions run before the assigned value, left to right.
+ */
+import test;
+
+class Box {
+    int v;
+}
+
+class AssignmentOrderTest extends test.Test {
+
+    @test
+    func fieldTargetBeforeValue(): void {
+        list<string> trail = [];
+        let box = Box();
+        let target = func(): Box { trail.push("object"); return box; };
+        let value = func(): int { trail.push("value"); return 5; };
+        target().v = value();
+        this.assertEquals(["object", "value"], trail);
+        this.assertEquals(5, box.v);
+    }
+
+    @test
+    func indexTargetBeforeValue(): void {
+        list<string> trail = [];
+        list<int> items = [0, 0];
+        let source = func(): list<int> { trail.push("list"); return items; };
+        let position = func(): int { trail.push("index"); return 1; };
+        let value = func(): int { trail.push("value"); return 7; };
+        source()[position()] = value();
+        this.assertEquals(["list", "index", "value"], trail);
+        this.assertEquals([0, 7], items);
+    }
+}

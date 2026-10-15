@@ -1,0 +1,19 @@
+module cross_module_override_donor;
+
+class Base {
+    func describe(float x): string {
+        return "base";
+    }
+
+    func viaThis(): string {
+        return this.describe(3.0f);
+    }
+}
+
+export class Kid extends Base {}
+
+export func run(Kid k): string {
+    Base b = k;
+    float f = 2.0f;
+    return b.describe(f);
+}
