@@ -568,7 +568,10 @@ module and sees private functions, classes, consts, and state.
 3. **`as` is a checked cast, not a type test**; it throws on
    mismatch. Use `instanceof` for tests.
 4. **Floating literals are `decimal`** by default; suffix `f`
-   (`1.5f`) or cast for IEEE `float`.
+   (`1.5f`) or cast for IEEE `float`. Typed fields are enforced:
+   `this.rate = 0.0` on a `float` field is a compile error (a
+   `TypeError` when the value is only known at run time); write
+   `0.0f`. Integer literals convert (`this.rate = 0`).
 5. **Don't shadow stdlib module filenames** in your source files.
 6. **Dict iteration is insertion order**, not alphabetical.
 7. **String interpolation requires double quotes**; single quotes
@@ -578,6 +581,8 @@ module and sees private functions, classes, consts, and state.
    clause only; walk `reflect.parent(cls)` for the chain.
 10. **Mixed numeric arithmetic does not coerce** between
     `int`/`decimal` and `float`; cast explicitly.
+11. **`is` tests identity, `==` tests value**: `[1] is [1]` is
+    `false`, `[1] == [1]` is `true`.
 
 ## When in doubt
 
