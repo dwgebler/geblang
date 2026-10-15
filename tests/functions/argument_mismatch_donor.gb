@@ -1,0 +1,17 @@
+module argument_mismatch_donor;
+
+export class Acct {
+    int n;
+
+    func Acct(int n) {
+        this.n = n;
+    }
+
+    func add(int k): void {
+        this.n = this.n + k;
+    }
+
+    static func of(int n): Acct {
+        return Acct(n);
+    }
+}

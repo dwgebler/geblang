@@ -13,10 +13,8 @@ import (
 )
 
 func (e *Evaluator) dbConnectionObject(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if e.dbConnectionClass == nil {
-		if err := e.installBuiltinTypes(runtime.NewEnvironment()); err != nil {
-			return nil, err
-		}
+	if err := e.ensureBuiltinTypes(); err != nil {
+		return nil, err
 	}
 	return e.instantiateClass(e.dbConnectionClass, args)
 }

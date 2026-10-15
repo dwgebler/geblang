@@ -1586,7 +1586,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				classInfo := vm.curMod.Chunk.Classes[classIndex]
 				classValue, decorated, err := vm.applyCallableDecoratorsForClass(classIndex, classInfo)
 				if err != nil {
-					return vm.runtimeError(*instruction, "%s", err.Error())
+					return err
 				}
 				if decorated {
 					vm.decoratedClasses[classIndex] = classValue

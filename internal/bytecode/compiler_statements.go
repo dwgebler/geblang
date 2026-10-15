@@ -111,7 +111,8 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		return nil
 	case *ast.DeclarationStatement:
 		declType := c.bytecodeTypeName(stmt.Type)
-		if declType == "any" && stmt.Value != nil {
+		// An explicit `any` stays opaque; only an untyped declaration takes its initializer's type.
+		if declType == "any" && stmt.Type == nil && stmt.Value != nil {
 			declType = c.expressionStaticType(stmt.Value)
 		}
 		if stmt.Value == nil {

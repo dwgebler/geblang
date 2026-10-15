@@ -22,15 +22,15 @@ class CalcTest extends test.Test {
 }
 `
 
-// Partial application over two same-arity overloads: a VM parity gap the evaluator resolves at runtime.
+// A named argument of dynamic type to two same-arity overloads: a VM parity gap the evaluator resolves at runtime.
 const parityGapTestFile = `import test;
 func describe(int x): string { return "int:${x}"; }
 func describe(string x): string { return "str:${x}"; }
 class PartialTest extends test.Test {
     @test
     func resolvesAtApplication(): void {
-        let d = describe(_);
-        this.assertEquals("int:42", d(42));
+        any v = 42;
+        this.assertEquals("int:42", describe(x: v));
     }
 }
 `
@@ -242,11 +242,12 @@ func TestValidateDivergences(t *testing.T) {
 func TestVMTestCompileErrorHint(t *testing.T) {
 	src := "func describe(int x): string { return \"i\"; }\n" +
 		"func describe(string x): string { return \"s\"; }\n" +
-		"let d = describe(_);\n"
+		"any v = 1;\n" +
+		"describe(x: v);\n"
 	program := parser.New(lexer.New(src)).ParseProgram()
 	_, err := bytecode.Compile(program, []byte(src), "test")
 	if err == nil {
-		t.Fatal("expected a compile error for the partial-over-overloads snippet")
+		t.Fatal("expected a compile error for the named-argument ambiguous-overload snippet")
 	}
 	if !bytecode.IsParityError(err) {
 		t.Fatalf("expected a parity error, got: %v", err)

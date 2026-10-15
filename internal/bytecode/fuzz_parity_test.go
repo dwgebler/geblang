@@ -268,6 +268,7 @@ func (g *fuzzGen) classBlock() (decls string, calls []string) {
 		calls = append(calls,
 			"let wr = Wrap<int>("+g.intLit()+"); wr.again("+g.intLit()+"); io.println(wr.get());",
 			wrap("let wb = Wrap<int>("+g.intLit()+"); wb.put("+g.stringLit()+");"),
+			wrap("any wrong = "+g.stringLit()+"; let bad = "+c+"(wrong);"),
 			"io.println(Box<string>("+g.stringLit()+").ident("+g.intLit()+"));",
 			"io.println(Scale().set(k: 2, x: "+g.intLit()+")); io.println(FloatWrap().reset());",
 		)

@@ -357,10 +357,8 @@ methods, constructors, native builtins, module functions, callable values, and
 objects with `__invoke`.
 
 When a function has multiple overloads of the same arity distinguished only by
-parameter type, the interpreter resolves the overload at application. A compiled
-build (`geblang build`) rejects the partial at compile time because overloads
-are resolved statically and the placeholder has no concrete type. Use a typed
-wrapper function or a non-overloaded target in that case.
+parameter type, the overload is chosen at application from the argument passed
+for the hole, on both backends and in a compiled build.
 
 `_` is a hole only when it is an entire argument. Inside a larger expression
 (`_ + 1`) it is an ordinary identifier. A hole cannot be combined with a spread

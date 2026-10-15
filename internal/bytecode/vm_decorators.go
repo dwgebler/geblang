@@ -1,6 +1,7 @@
 package bytecode
 
 import (
+	"errors"
 	"fmt"
 	"geblang/internal/runtime"
 	"sort"
@@ -79,22 +80,22 @@ func (vm *VM) applyCallableDecoratorsForClass(index int64, classInfo ClassInfo) 
 		}
 		args, names, err := decoratorCallArguments(current, decorator)
 		if err != nil {
-			return nil, false, fmt.Errorf("decorator @%s: %w", decorator.Name, err)
+			return nil, false, vm.decoratorFault(classInfo.DefLine, "decorator @"+decorator.Name+": ", err)
 		}
 		functionIndex, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, decorator.Name, indices, args, names, 0)
 		if err != nil {
-			return nil, false, fmt.Errorf("decorator @%s cannot be called for class %s: %w", decorator.Name, classInfo.Name, err)
+			return nil, false, vm.decoratorFault(classInfo.DefLine, "decorator @"+decorator.Name+" cannot be called for class "+classInfo.Name+": ", err)
 		}
 		result, err := vm.CallFunctionRaw(functionIndex, ordered)
 		if err != nil {
-			return nil, false, fmt.Errorf("decorator @%s: %w", decorator.Name, err)
+			return nil, false, vm.decoratorFault(classInfo.DefLine, "decorator @"+decorator.Name+": ", err)
 		}
 		switch result.(type) {
 		case runtime.BytecodeClass, runtime.BytecodeClosure, runtime.Function, runtime.OverloadedFunction, runtime.BytecodeFunction, runtime.DecoratorTarget:
 			current = result
 			decorated = true
 		default:
-			return nil, false, fmt.Errorf("decorator @%s must return class or callable, got %s", decorator.Name, result.TypeName())
+			return nil, false, vm.decoratorFault(classInfo.DefLine, fmt.Sprintf("decorator @%s must return class or callable, got %s", decorator.Name, result.TypeName()), nil)
 		}
 	}
 	return current, decorated, nil
@@ -120,25 +121,25 @@ func (vm *VM) applyCallableDecoratorsForFunction(index int64, function FunctionI
 		}
 		args, names, err := decoratorCallArguments(current, decorator)
 		if err != nil {
-			return nil, false, fmt.Errorf("decorator @%s: %w", decorator.Name, err)
+			return nil, false, vm.decoratorFault(function.DefLine, "decorator @"+decorator.Name+": ", err)
 		}
 		functionIndex, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, decorator.Name, indices, args, names, 0)
 		if err != nil {
-			return nil, false, fmt.Errorf("decorator @%s cannot be called for %s: %w", decorator.Name, function.Name, err)
+			return nil, false, vm.decoratorFault(function.DefLine, "decorator @"+decorator.Name+" cannot be called for "+bareFunctionName(function.Name)+": ", err)
 		}
 		result, err := vm.CallFunctionRaw(functionIndex, ordered)
 		if err != nil {
-			return nil, false, fmt.Errorf("decorator @%s: %w", decorator.Name, err)
+			return nil, false, vm.decoratorFault(function.DefLine, "decorator @"+decorator.Name+": ", err)
 		}
 		switch result.(type) {
 		case runtime.BytecodeFunction, runtime.BytecodeClosure:
 			if !vm.decoratorWrapperCompatible(function, decorator.Target, result) {
-				return nil, false, fmt.Errorf("decorator @%s returned incompatible wrapper for %s", decorator.Name, function.Name)
+				return nil, false, vm.decoratorFault(function.DefLine, fmt.Sprintf("decorator @%s returned incompatible wrapper for %s", decorator.Name, bareFunctionName(function.Name)), nil)
 			}
 			current = result
 			decorated = true
 		default:
-			return nil, false, fmt.Errorf("decorator @%s must return function, got %s", decorator.Name, result.TypeName())
+			return nil, false, vm.decoratorFault(function.DefLine, fmt.Sprintf("decorator @%s must return function, got %s", decorator.Name, result.TypeName()), nil)
 		}
 	}
 	return current, decorated, nil
@@ -314,4 +315,29 @@ func (vm *VM) applyFieldDecorators(instruction Instruction, classInfo ClassInfo,
 		value = result
 	}
 	return value, nil
+}
+
+// decoratorFault raises a decorator failure at the decorated declaration, keeping the cause's error class.
+func (vm *VM) decoratorFault(line int64, message string, cause error) error {
+	class := "RuntimeError"
+	if cause != nil {
+		detail := cause.Error()
+		var thrown vmThrownError
+		var fault *vmRuntimeError
+		switch {
+		case errors.As(cause, &thrown):
+			class, detail = thrown.err.Class, thrown.err.Message
+		case errors.As(cause, &fault):
+			detail = fault.message
+		}
+		message += detail
+	}
+	return vm.typedFault(Instruction{Line: int32(line)}, class, message)
+}
+
+func bareFunctionName(name string) string {
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		return name[dot+1:]
+	}
+	return name
 }

@@ -71,8 +71,26 @@ let f = log(_, ...rest);
 	}
 }
 
-// Ambiguous-overload partial: eval accepts at application, VM rejects at compile; check reports vm-unsupported, not error.
-func TestCheckPartialOverAmbiguousOverloadIsVMUnsupported(t *testing.T) {
+// Named dynamic argument to ambiguous overloads: eval resolves at runtime, VM rejects at compile; check reports vm-unsupported, not error.
+func TestCheckNamedAmbiguousOverloadIsVMUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := `
+func describe(int n): string { return "int"; }
+func describe(string n): string { return "str"; }
+any v = 42;
+let a = describe(n: v);
+`
+	_, diags := Source(file, src, partialCheckOpts(dir))
+	if hasError(diags) {
+		t.Fatalf("ambiguous named overload call must be a warning, not an error: %v", diags)
+	}
+	if !hasRule(diags, "vm-unsupported") {
+		t.Fatalf("expected a vm-unsupported warning for the ambiguous named overload call, got %v", diags)
+	}
+}
+
+func TestCheckPartialOverAmbiguousOverloadRunsOnVM(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.gb")
 	src := `
@@ -82,11 +100,8 @@ let d = describe(_);
 let a = d(42);
 `
 	_, diags := Source(file, src, partialCheckOpts(dir))
-	if hasError(diags) {
-		t.Fatalf("ambiguous-overload partial must be a warning, not an error: %v", diags)
-	}
-	if !hasRule(diags, "vm-unsupported") {
-		t.Fatalf("expected a vm-unsupported warning for the ambiguous-overload partial, got %v", diags)
+	if hasError(diags) || hasRule(diags, "vm-unsupported") {
+		t.Fatalf("partial over overloads must check clean, got %v", diags)
 	}
 }
 

@@ -703,6 +703,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				}
 				var orderedArgs []ast.Expression
 				var functionIndex int64
+				deferSelection := false
 				if len(classInfo.ConstructorIndices) > 0 {
 					var bindings map[string]string
 					if len(expr.TypeArguments) > 0 && len(classInfo.TypeParameters) > 0 {
@@ -719,7 +720,12 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					var err error
 					functionIndex, orderedArgs, err = c.selectFunctionIndicesCallBound(classInfo.Name, classInfo.ConstructorIndices, expr.Arguments, 1, false, bindings)
 					if err != nil {
-						return err
+						if !isAmbiguousOverload(err) || positionalArguments(expr.Arguments) == nil {
+							return err
+						}
+						// The VM selects among constructors at run time, so defer an ambiguity over dynamic arguments.
+						deferSelection = true
+						orderedArgs = positionalArguments(expr.Arguments)
 					}
 				} else {
 					orderedArgs = positionalArguments(expr.Arguments)
@@ -727,7 +733,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						return fmt.Errorf("%s constructor does not accept named arguments", classInfo.Name)
 					}
 				}
-				if len(classInfo.ConstructorIndices) > 0 {
+				if len(classInfo.ConstructorIndices) > 0 && !deferSelection {
 					if err := c.compileOrderedArguments(c.chunk.Functions[functionIndex], orderedArgs, 1, expr.Token.Line, expr.Token.Column); err != nil {
 						return err
 					}
@@ -829,6 +835,9 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			}
 			index, orderedArgs, err := c.selectFunctionCall(ident.Value, expr.Arguments, 0)
 			if err != nil {
+				if indices := c.funcs[strings.ToLower(ident.Value)]; isAmbiguousOverload(err) && len(expr.TypeArguments) == 0 && positionalArguments(expr.Arguments) != nil {
+					return c.compileRuntimeOverloadedCall(indices, expr)
+				}
 				return err
 			}
 			if err := c.compileOrderedArguments(c.chunk.Functions[index], orderedArgs, 0, expr.Token.Line, expr.Token.Column); err != nil {
@@ -973,10 +982,18 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						var err error
 						if ok {
 							functionIndex, orderedArgs, err = c.selectFunctionIndicesCall(selector.Name.Value, indices, expr.Arguments, 0)
-							if err != nil {
+							deferred := err != nil && isAmbiguousOverload(err) && positionalArguments(expr.Arguments) != nil
+							if err != nil && !deferred {
 								return err
 							}
-							if err := c.compileOrderedArguments(c.chunk.Functions[functionIndex], orderedArgs, 0, expr.Token.Line, expr.Token.Column); err != nil {
+							if deferred {
+								orderedArgs = positionalArguments(expr.Arguments)
+								for _, arg := range orderedArgs {
+									if err := c.compileExpression(arg); err != nil {
+										return err
+									}
+								}
+							} else if err := c.compileOrderedArguments(c.chunk.Functions[functionIndex], orderedArgs, 0, expr.Token.Line, expr.Token.Column); err != nil {
 								return err
 							}
 						} else {
@@ -3793,4 +3810,23 @@ func (c *Compiler) emitPlantIntLiteralArgs(expr *ast.CallExpression, allowNamed 
 	}
 	operands[0] = int64(len(operands) - 1)
 	c.emitAt(OpPlantIntLiteralArgs, expr.Token.Line, expr.Token.Column, operands...)
+}
+
+func isAmbiguousOverload(err error) bool {
+	return IsParityError(err) && strings.HasPrefix(err.Error(), "ambiguous overload for ")
+}
+
+// compileRuntimeOverloadedCall invokes an overload set as a value so the VM picks the overload from the runtime arguments.
+func (c *Compiler) compileRuntimeOverloadedCall(indices []int64, expr *ast.CallExpression) error {
+	c.emitAt(OpMakeOverloaded, expr.Token.Line, expr.Token.Column, indices...)
+	for _, arg := range expr.Arguments {
+		if err := c.compileExpression(arg.Value); err != nil {
+			return err
+		}
+	}
+	nameIndex := int64(len(c.chunk.Constants))
+	c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+	c.emitPlantIntLiteralArgs(expr, false)
+	c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
+	return nil
 }

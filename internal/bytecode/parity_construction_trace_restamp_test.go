@@ -105,7 +105,7 @@ makeBox();
 	}
 }
 
-// Sweep: static-method miss, same line-drop shape; the bare-vs-qualified wording gap is the separate tracked ISSUE-029.
+// Sweep: static-method miss, same line-drop shape; both backends name the method Class.member.
 func TestUncaughtCrossModuleStaticMethodMissTrace(t *testing.T) {
 	evGot, vmGot := uncaughtOnBothBackendsModulesDir(t, traceRestampModules(), `import helpers;
 
@@ -116,7 +116,7 @@ func staticMiss(): any {
 staticMiss();
 `)
 	wantEval := "uncaught RuntimeError: no matching overload for Utils.sMethod\n  at staticMiss (line 4)\n  at <top level> (line 7)"
-	wantVM := "uncaught RuntimeError: no matching overload for sMethod\n  at staticMiss (line 4)\n  at <top level> (line 7)"
+	wantVM := wantEval
 	if evGot != wantEval {
 		t.Fatalf("evaluator mismatch:\n got %q\nwant %q", evGot, wantEval)
 	}
@@ -137,7 +137,7 @@ func instanceMiss(): any {
 instanceMiss();
 `)
 	wantEval := "uncaught RuntimeError: no matching overload for Utils.iMethod\n  at instanceMiss (line 5)\n  at <top level> (line 8)"
-	wantVM := "uncaught RuntimeError: no matching overload for imethod\n  at instanceMiss (line 5)\n  at <top level> (line 8)"
+	wantVM := wantEval
 	if evGot != wantEval {
 		t.Fatalf("evaluator mismatch:\n got %q\nwant %q", evGot, wantEval)
 	}

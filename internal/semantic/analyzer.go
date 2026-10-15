@@ -1361,7 +1361,8 @@ func (a *Analyzer) checkMethodCallArgs(call *ast.CallExpression, selector *ast.S
 			return
 		}
 		argType := a.expressionTypeName(arg.Value)
-		if !argType.known {
+		// An `any` argument picks its overload at run time.
+		if !argType.known || argType.name == "any" {
 			return
 		}
 		args = append(args, argType)

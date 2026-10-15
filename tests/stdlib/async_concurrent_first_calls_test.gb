@@ -1,0 +1,25 @@
+/**
+ * @title Concurrent async tasks making their first stdlib calls (1.37.2)
+ * @summary Async tasks started together may each make the program's first
+ * call into a stateful stdlib module; every task completes with its result.
+ */
+import test;
+import async;
+
+async func job(int n): int {
+    await async.sleep(1);
+    return n * 2;
+}
+
+class AsyncConcurrentFirstCallsTest extends test.Test {
+
+    @test
+    func tasksStartedTogetherAllComplete(): void {
+        let tasks = [];
+        for (i in 0..7) {
+            tasks.push(job(i));
+        }
+        let results = await async.all(tasks);
+        this.assertEquals([0, 2, 4, 6, 8, 10, 12, 14], results);
+    }
+}

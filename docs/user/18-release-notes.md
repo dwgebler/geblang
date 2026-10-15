@@ -1,5 +1,39 @@
 # Release Notes
 
+## 1.37.2
+
+### Fixes
+
+- A program on the bytecode VM whose async tasks made their first calls into
+  stdlib modules at the same moment could crash intermittently; those calls are
+  now safe to run concurrently.
+- An argument of the wrong type for a constructor, method, or static method with
+  a single signature raises `TypeError` naming the parameter
+  (`User expects string for parameter 'name', got int`) on both backends, as
+  functions already did, instead of `RuntimeError: no matching overload`.
+- On the bytecode VM, a variable declared `any` is no longer treated as the type
+  of its initializer: `any missing = null; greet(missing)` is a catchable
+  run-time `TypeError`, as on the evaluator, instead of a compile error.
+- The bytecode VM chooses among same-arity overloads at run time when the
+  arguments' types are only known then: a call to an overloaded function or
+  constructor with `any`-typed arguments, and a partial application over
+  overloads (`describe(_)`), now run on the VM and in `geblang build` binaries
+  instead of failing to compile.
+- `geblang check` and the compiler accept an `any`-typed argument to an
+  overloaded method or static method; the overload is chosen at run time, as
+  for overloaded functions and constructors. A literal that fits no overload is
+  still reported.
+- A decorator that cannot be applied reports the same message, error class, and
+  line on both backends, naming the decorator and the declaration
+  (`decorator @wrap cannot be called for greet: wrap expects int for parameter
+  'count', got string`).
+
+### Documentation
+
+- The generated reference manual has a search box: every page searches the
+  manual's sections by heading and text, works offline and from disk, and
+  focuses with `/`.
+
 ## 1.37.1
 
 ### Fixes

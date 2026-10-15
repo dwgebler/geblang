@@ -3810,7 +3810,7 @@ func greet(): string {
 	}
 
 	err = bytecode.NewVM(chunk, io.Discard).Run()
-	if err == nil || !strings.Contains(err.Error(), "decorator @wrap cannot be called for greet") || !strings.Contains(err.Error(), "no matching overload for wrap") {
+	if err == nil || !strings.Contains(err.Error(), "decorator @wrap cannot be called for greet") || !strings.Contains(err.Error(), "wrap expects int for parameter 'count', got string") {
 		t.Fatalf("expected decorator overload error, got %v", err)
 	}
 }

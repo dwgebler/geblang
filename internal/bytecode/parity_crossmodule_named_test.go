@@ -296,10 +296,10 @@ func TestParityCrossModuleNamedCtorTypeMismatchCaught(t *testing.T) {
 import helpers;
 try {
     io.println(helpers.Point(x: "no", y: 2).show());
-} catch (RuntimeError e) {
+} catch (TypeError e) {
     io.println(e.getMessage());
 }
-`, "no matching overload for Point\n")
+`, "Point expects int for parameter 'x', got string\n")
 }
 
 func TestParityCrossModuleNamedCtorNoConstructorCaught(t *testing.T) {

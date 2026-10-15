@@ -339,7 +339,14 @@ Runtime type mismatches raise `TypeError`. A supported conversion with invalid
 content and an out-of-range collection index raise `ValueError`. Other runtime
 faults, including division by zero and unknown fields, raise `RuntimeError`.
 These classes are siblings under `Error`, so use `catch (Error e)` for broad
-recovery and a specific class when handling one failure category. Parse,
+recovery and a specific class when handling one failure category.
+
+An argument of the wrong type for a function, constructor, method, or static
+method with a single signature raises `TypeError` naming the parameter
+(`User expects string for parameter 'name', got int`). When several overloads
+exist and none fits, the call raises `RuntimeError` (`no matching overload for
+User`). A value declared `any` is checked when the call runs, so a mismatch
+there is a catchable `TypeError` rather than a compile error. Parse,
 semantic, and startup failures are reported directly
 because the script has not reached a recoverable runtime point;
 stack-overflow and other unrecoverable conditions surface as

@@ -357,7 +357,7 @@ gap that is documented and temporarily accepted. Such a file may opt out of the
 VM lane with a comment naming a key:
 
 ```gb
-# @vm-divergence: partial-overload-resolution
+# @vm-divergence: example-key
 import test;
 # ...
 ```
@@ -367,7 +367,7 @@ and a matching row in a `KNOWN_DIVERGENCES.md` ledger placed alongside the tests
 ```text
 | key | file | reason | date |
 |-----|------|--------|------|
-| partial-overload-resolution | functions/partials_test.gb | reason, one line | 2026-07-06 |
+| example-key | functions/example_test.gb | reason, one line | 2026-07-06 |
 ```
 
 An annotated, ledgered file runs on the evaluator (it still runs; it is not

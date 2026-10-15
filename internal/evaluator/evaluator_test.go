@@ -767,7 +767,7 @@ func greet(): string {
 	}
 
 	_, err := evaluator.New(&bytes.Buffer{}).Eval(program)
-	if err == nil || !strings.Contains(err.Error(), "decorator bad must return function") {
+	if err == nil || !strings.Contains(err.Error(), "decorator @bad must return function") {
 		t.Fatalf("expected decorator return error, got %v", err)
 	}
 }
@@ -792,7 +792,7 @@ func greet(string name): string {
 	}
 
 	_, err := evaluator.New(&bytes.Buffer{}).Eval(program)
-	if err == nil || !strings.Contains(err.Error(), "decorator bad returned incompatible wrapper for greet") {
+	if err == nil || !strings.Contains(err.Error(), "decorator @bad returned incompatible wrapper for greet") {
 		t.Fatalf("expected decorator wrapper compatibility error, got %v", err)
 	}
 }
@@ -914,7 +914,7 @@ class Greeter {
 	}
 
 	_, err := evaluator.New(io.Discard).Eval(program)
-	if err == nil || !strings.Contains(err.Error(), "decorator bad must return function") {
+	if err == nil || !strings.Contains(err.Error(), "decorator @bad must return function") {
 		t.Fatalf("expected decorator return error, got %v", err)
 	}
 }
@@ -1050,7 +1050,7 @@ class Widget {}
 	}
 
 	_, err := evaluator.New(io.Discard).Eval(program)
-	if err == nil || !strings.Contains(err.Error(), "decorator bad must return class") {
+	if err == nil || !strings.Contains(err.Error(), "decorator @bad must return class") {
 		t.Fatalf("expected decorator class return error, got %v", err)
 	}
 }

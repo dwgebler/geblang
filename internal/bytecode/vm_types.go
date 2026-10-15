@@ -502,10 +502,13 @@ func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, in
 		function := vm.curMod.Chunk.Functions[index]
 		min, max, variadic := bytecodeFunctionArityRange(function, paramOffset)
 		if len(args) < min || (!variadic && len(args) > max) {
-			return 0, vm.runtimeError(instruction, "no matching overload for %s", name)
+			return 0, vm.runtimeError(instruction, "no matching overload for %s", vm.overloadLabel(name, indices))
 		}
 		if !vm.runtimeArgumentsMatch(function, args, paramOffset) {
-			return 0, vm.runtimeError(instruction, "no matching overload for %s", name)
+			if msg := vm.argumentMismatchMessage(function, args, paramOffset); msg != "" {
+				return 0, vm.typedFault(instruction, "TypeError", msg)
+			}
+			return 0, vm.runtimeError(instruction, "no matching overload for %s", vm.overloadLabel(name, indices))
 		}
 		return index, nil
 	}
@@ -536,10 +539,10 @@ func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, in
 		}
 	}
 	if len(matches) == 0 {
-		return 0, vm.runtimeError(instruction, "no matching overload for %s", name)
+		return 0, vm.runtimeError(instruction, "no matching overload for %s", vm.overloadLabel(name, indices))
 	}
 	if len(matches) > 1 {
-		return 0, vm.runtimeError(instruction, "ambiguous overload for %s", name)
+		return 0, vm.runtimeError(instruction, "ambiguous overload for %s", vm.overloadLabel(name, indices))
 	}
 	return matches[0], nil
 }
@@ -556,16 +559,21 @@ func (vm *VM) selectRuntimeNamedFunction(instruction Instruction, name string, i
 			continue
 		}
 		if !vm.runtimeArgumentsMatch(vm.curMod.Chunk.Functions[index], ordered, paramOffset) {
+			if len(indices) == 1 {
+				if msg := vm.argumentMismatchMessage(vm.curMod.Chunk.Functions[index], ordered, paramOffset); msg != "" {
+					return 0, nil, vm.typedFault(instruction, "TypeError", msg)
+				}
+			}
 			continue
 		}
 		matches = append(matches, index)
 		orderedMatches = append(orderedMatches, ordered)
 	}
 	if len(matches) == 0 {
-		return 0, nil, vm.runtimeError(instruction, "no matching overload for %s", name)
+		return 0, nil, vm.runtimeError(instruction, "no matching overload for %s", vm.overloadLabel(name, indices))
 	}
 	if len(matches) > 1 {
-		return 0, nil, vm.runtimeError(instruction, "ambiguous overload for %s", name)
+		return 0, nil, vm.runtimeError(instruction, "ambiguous overload for %s", vm.overloadLabel(name, indices))
 	}
 	return matches[0], orderedMatches[0], nil
 }
@@ -1487,4 +1495,50 @@ func shadowsClassTypeParameter(params []string, name string) bool {
 		}
 	}
 	return count > 1
+}
+
+// argumentMismatchMessage describes the first argument that does not fit function's declared parameter type.
+func (vm *VM) argumentMismatchMessage(function FunctionInfo, args []runtime.Value, paramOffset int) string {
+	for i, arg := range args {
+		position := i + paramOffset
+		if position >= len(function.ParamTypes) || (function.Variadic && position == len(function.ParamTypes)-1) {
+			return ""
+		}
+		if arg == nil || function.ParamTypes[position] == "" {
+			continue
+		}
+		if vm.runtimeArgumentsMatch(function, args[i:i+1], position) {
+			continue
+		}
+		declared := vm.expandTypeAliases(function.ParamTypes[position])
+		suffix := vm.collectionMismatchSuffixStr(arg, declared)
+		gotName := vm.descriptiveRuntimeTypeName(arg)
+		if suffix != "" {
+			gotName = arg.TypeName()
+		}
+		label := function.Name
+		if compiledConstructorName(label) {
+			label = label[:strings.IndexByte(label, '.')]
+		}
+		if position < len(function.ParamNames) {
+			return fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", label, declared, function.displayParamName(position), gotName, suffix)
+		}
+		return fmt.Sprintf("%s expects %s, got %s%s", label, declared, gotName, suffix)
+	}
+	return ""
+}
+
+// overloadLabel names an overload set as Class.member (or Class for constructors), matching the evaluator.
+func (vm *VM) overloadLabel(name string, indices []int64) string {
+	if len(indices) == 0 || indices[0] < 0 || int(indices[0]) >= len(vm.curMod.Chunk.Functions) {
+		return name
+	}
+	label := vm.curMod.Chunk.Functions[indices[0]].Name
+	if compiledConstructorName(label) {
+		return label[:strings.IndexByte(label, '.')]
+	}
+	if !strings.Contains(label, ".") {
+		return name
+	}
+	return label
 }

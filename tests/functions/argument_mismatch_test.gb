@@ -1,0 +1,138 @@
+/**
+ * @title Wrong-typed arguments raise TypeError naming the parameter (1.37.2)
+ * @summary A call to a function, constructor, method, or static method with a
+ * single signature rejects a wrong-typed argument with a TypeError that names
+ * the parameter, in the same module and across modules. A value declared `any`
+ * is checked when the call runs.
+ */
+import test;
+import argument_mismatch_donor as donor;
+
+func greet(string name): string {
+    return name;
+}
+
+class User {
+    string name;
+
+    func User(string name) {
+        this.name = name;
+    }
+
+    func rename(string name): void {
+        this.name = name;
+    }
+
+    static func make(string name): User {
+        return User(name);
+    }
+}
+
+class Kid extends User {
+    func Kid(any name) {
+        parent(name);
+    }
+}
+
+class Two {
+    func Two(int a) {}
+    func Two(string a, int b) {}
+}
+
+func pick(int x): string {
+    return "int";
+}
+
+func pick(string x): string {
+    return "string";
+}
+
+class Shape {
+    string kind;
+
+    func Shape(int sides) {
+        this.kind = "polygon";
+    }
+
+    func Shape(string name) {
+        this.kind = name;
+    }
+}
+
+class Formatter {
+    func show(int x): string {
+        return "int";
+    }
+
+    func show(string x): string {
+        return "string";
+    }
+
+    static func parse(int x): string {
+        return "int";
+    }
+
+    static func parse(string x): string {
+        return "string";
+    }
+}
+
+class ArgumentMismatchTest extends test.Test {
+
+    @test
+    func overloadedMethodsAcceptAnyValues(): void {
+        any count = 3;
+        any label = "circle";
+        any flag = true;
+        let f = Formatter();
+        this.assertEquals("int", f.show(count));
+        this.assertEquals("string", f.show(label));
+        this.assertEquals("int", Formatter.parse(count));
+        this.assertEquals("string", Formatter.parse(label));
+        this.assertThrowsOf(func(): void { f.show(flag); }, "RuntimeError", "no matching overload for Formatter.show");
+        this.assertThrowsOf(func(): void { Formatter.parse(flag); }, "RuntimeError", "no matching overload for Formatter.parse");
+    }
+
+    @test
+    func overloadsChooseByRuntimeTypeOfAnyValues(): void {
+        any count = 3;
+        any label = "circle";
+        this.assertEquals("int", pick(count));
+        this.assertEquals("string", pick(label));
+        this.assertEquals("polygon", Shape(count).kind);
+        this.assertEquals("circle", Shape(label).kind);
+    }
+
+    @test
+    func everyCallKindNamesTheParameter(): void {
+        any num = 5;
+        let u = User("a");
+        this.assertThrowsOf(func(): void { greet(num); }, "TypeError", "greet expects string for parameter 'name', got int");
+        this.assertThrowsOf(func(): void { User(num); }, "TypeError", "User expects string for parameter 'name', got int");
+        this.assertThrowsOf(func(): void { u.rename(num); }, "TypeError", "User.rename expects string for parameter 'name', got int");
+        this.assertThrowsOf(func(): void { u.rename(name: num); }, "TypeError", "User.rename expects string for parameter 'name', got int");
+        this.assertThrowsOf(func(): void { User.make(num); }, "TypeError", "User.make expects string for parameter 'name', got int");
+        this.assertThrowsOf(func(): void { Kid(num); }, "TypeError", "User expects string for parameter 'name', got int");
+    }
+
+    @test
+    func anyValuesAreCheckedAtRunTime(): void {
+        any missing = null;
+        this.assertThrowsOf(func(): void { greet(missing); }, "TypeError", "greet expects string for parameter 'name', got null");
+        this.assertThrowsOf(func(): void { User(missing); }, "TypeError", "User expects string for parameter 'name', got null");
+    }
+
+    @test
+    func acrossModules(): void {
+        any text = "s";
+        this.assertThrowsOf(func(): void { donor.Acct(text); }, "TypeError", "Acct expects int for parameter 'n', got string");
+        this.assertThrowsOf(func(): void { donor.Acct(1).add(text); }, "TypeError", "Acct.add expects int for parameter 'k', got string");
+        this.assertThrowsOf(func(): void { donor.Acct.of(text); }, "TypeError", "Acct.of expects int for parameter 'n', got string");
+    }
+
+    @test
+    func severalOverloadsStillReportNoMatch(): void {
+        any flag = true;
+        this.assertThrowsOf(func(): void { Two(flag); }, "RuntimeError", "no matching overload for Two");
+    }
+}

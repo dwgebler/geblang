@@ -118,8 +118,20 @@ func main() {
 			fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(outDir, manualCSSFile), []byte(manualCSS), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, manualCSSFile), []byte(manualCSS+searchCSS), 0o644); err != nil {
 		fatal(err)
+	}
+	if searchURL == "" {
+		index, err := searchIndexJS(buildSearchIndex(pages))
+		if err != nil {
+			fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(outDir, searchIndexFile), []byte(index), 0o644); err != nil {
+			fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(outDir, searchScriptFile), []byte(searchScript), 0o644); err != nil {
+			fatal(err)
+		}
 	}
 	if pages[0].Output != "index.html" {
 		if err := writeRedirect(outDir, pages[0].Output); err != nil {
@@ -234,6 +246,13 @@ var (
 	siteName      = "Geblang"
 	ogImage       string
 )
+
+func navbarSearchHTML(current page) string {
+	if searchURL != "" {
+		return searchFormHTML()
+	}
+	return searchBoxHTML(current)
+}
 
 func searchFormHTML() string {
 	if searchURL == "" {
@@ -905,7 +924,7 @@ func layout(pages []page, current page, prev, next *page) string {
 <body>
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid manual-shell">
-      <a class="navbar-brand fw-semibold" href="` + relHref(current.Output, "index.html") + `">` + html.EscapeString(siteName) + ` Reference Manual</a>` + searchFormHTML() + `
+      <a class="navbar-brand fw-semibold" href="` + relHref(current.Output, "index.html") + `">` + html.EscapeString(siteName) + ` Reference Manual</a>` + navbarSearchHTML(current) + `
       <span class="navbar-text d-none d-xl-inline">Static manual and source API reference</span>
     </div>
   </nav>

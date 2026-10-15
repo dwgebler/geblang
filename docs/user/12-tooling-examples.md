@@ -241,6 +241,11 @@ browser or serve the directory with any static file server. By default,
 `docs/examples/**/*.gb` and adds example source pages under
 `docs/site/examples/`.
 
+Every generated page has a search box in the navigation bar (press `/` to focus
+it). The search index is built into the output directory alongside the pages,
+so search works offline and when the files are opened straight from disk, with
+results linking to the matching section.
+
 Override the generated API inputs when building project-local docs:
 
 ```sh

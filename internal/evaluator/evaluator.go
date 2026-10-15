@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"geblang/internal/ast"
@@ -137,6 +138,8 @@ type Evaluator struct {
 	AssertionsDisabled    bool
 	vmDispatcher          MethodDispatcher
 	dbMu                  sync.Mutex
+	builtinTypesMu        sync.Mutex
+	builtinTypesReady     atomic.Bool
 	nextDBID              int64
 	dbs                   map[int64]*sql.DB
 	dbDrivers             map[int64]string
@@ -772,10 +775,8 @@ func (e *Evaluator) registryBuiltin(module, name string) builtinFunc {
 }
 
 func (e *Evaluator) CallBuiltin(module, name string, args []runtime.Value, argNames []string) (runtime.Value, error) {
-	if e.httpRequestClass == nil || e.httpResponseClass == nil {
-		if err := e.installBuiltinTypes(runtime.NewEnvironment()); err != nil {
-			return nil, err
-		}
+	if err := e.ensureBuiltinTypes(); err != nil {
+		return nil, err
 	}
 	functions, ok := e.builtins[module]
 	if !ok {
@@ -5083,6 +5084,13 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 		}
 	}
 	if len(matches) == 0 {
+		if len(overloads) == 1 {
+			if args, _, ok := bindEvaluatedFunctionCallArgumentsDetail(overloads[0], provided); ok {
+				if err := functionArgumentsMatchError(overloads[0], args, this); err != nil {
+					return nil, err
+				}
+			}
+		}
 		return nil, fmt.Errorf("no matching overload for %s", label)
 	}
 	if len(matches) > 1 {
@@ -5449,7 +5457,7 @@ func functionArgumentsMatchError(fn runtime.Function, args []runtime.Value, rece
 				name = "<closure>"
 			}
 			// Methods report as Class.method, matching VM compiled names.
-			if receiver != nil && fn.OwnerClass != nil && fn.OwnerClass.Name != fn.Name {
+			if fn.OwnerClass != nil && fn.OwnerClass.Name != fn.Name {
 				name = fn.OwnerClass.Name + "." + fn.Name
 			}
 			suffix := collectionMismatchSuffix(arg, param.Type)

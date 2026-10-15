@@ -59,6 +59,9 @@ func overloadWithTypedLiterals(overloads []runtime.Function, args []runtime.Valu
 func selectOverloadWithLiterals(label string, overloads []runtime.Function, args []runtime.Value, mask []bool, this *runtime.Instance) (runtime.Function, []runtime.Value, error) {
 	fn, err := selectOverload(label, overloads, args)
 	if mask == nil {
+		if err != nil && strings.HasPrefix(err.Error(), "no matching overload") {
+			err = singleOverloadMismatch(overloads, args, this, err)
+		}
 		return fn, args, err
 	}
 	if err == nil {
@@ -71,7 +74,20 @@ func selectOverloadWithLiterals(label string, overloads []runtime.Function, args
 	if typed, converted, ok := overloadWithTypedLiterals(overloads, args, mask, this); ok {
 		return typed, converted, nil
 	}
-	return fn, args, err
+	return fn, args, singleOverloadMismatch(overloads, args, this, err)
+}
+
+// singleOverloadMismatch replaces a no-match error with the lone candidate's precise parameter TypeError.
+func singleOverloadMismatch(overloads []runtime.Function, args []runtime.Value, this *runtime.Instance, err error) error {
+	if len(overloads) != 1 || !functionAcceptsPositionalArgs(overloads[0], len(args)) {
+		return err
+	}
+	bound := make([]runtime.Value, len(overloads[0].Parameters))
+	copy(bound, args)
+	if precise := functionArgumentsMatchError(overloads[0], bound, this); precise != nil {
+		return precise
+	}
+	return err
 }
 
 // typeLiteralArgs converts integer-literal args whose parameter is float or decimal, directly or via a bound type parameter.

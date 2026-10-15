@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"errors"
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/runtime"
@@ -8,7 +9,13 @@ import (
 	"sync"
 )
 
-func (e *Evaluator) applyCallableFunctionDecorators(fn runtime.Function, decorators []ast.Decorator, env *runtime.Environment) (runtime.Function, error) {
+func (e *Evaluator) applyCallableFunctionDecorators(fn runtime.Function, decorators []ast.Decorator, env *runtime.Environment) (result runtime.Function, err error) {
+	declLine := e.currentLine
+	defer func() {
+		if err != nil {
+			e.currentLine = declLine
+		}
+	}()
 	current := fn
 	wrapped := false
 	for i := len(decorators) - 1; i >= 0; i-- {
@@ -28,8 +35,11 @@ func (e *Evaluator) applyCallableFunctionDecorators(fn runtime.Function, decorat
 		switch callable := value.(type) {
 		case runtime.Function:
 			bound, ok := bindEvaluatedFunctionCallArguments(callable, args)
-			if !ok || !functionArgumentsMatch(callable, bound) {
-				return runtime.Function{}, fmt.Errorf("decorator %s cannot be called with decorated function arguments", decorator.Name.Value)
+			if !ok {
+				return runtime.Function{}, fmt.Errorf("decorator @%s cannot be called for %s: no matching overload for %s", decorator.Name.Value, fn.Name, decorator.Name.Value)
+			}
+			if mismatch := functionArgumentsMatchError(callable, bound, nil); mismatch != nil {
+				return runtime.Function{}, decoratorCallError(mismatch, "decorator @"+decorator.Name.Value+" cannot be called for "+fn.Name+": ")
 			}
 			result, err = e.applyFunction(callable, bound)
 		case runtime.OverloadedFunction:
@@ -44,24 +54,24 @@ func (e *Evaluator) applyCallableFunctionDecorators(fn runtime.Function, decorat
 				matchedArgs = append(matchedArgs, bound)
 			}
 			if len(matches) == 0 {
-				return runtime.Function{}, fmt.Errorf("no matching overload for decorator %s", decorator.Name.Value)
+				return runtime.Function{}, fmt.Errorf("decorator @%s cannot be called for %s: no matching overload for %s", decorator.Name.Value, fn.Name, decorator.Name.Value)
 			}
 			if len(matches) > 1 {
-				return runtime.Function{}, fmt.Errorf("ambiguous overload for decorator %s", decorator.Name.Value)
+				return runtime.Function{}, fmt.Errorf("decorator @%s cannot be called for %s: ambiguous overload for %s", decorator.Name.Value, fn.Name, decorator.Name.Value)
 			}
 			result, err = e.applyFunction(matches[0], matchedArgs[0])
 		default:
 			continue
 		}
 		if err != nil {
-			return runtime.Function{}, err
+			return runtime.Function{}, decoratorCallError(err, "decorator @"+decorator.Name.Value+": ")
 		}
 		next, ok := result.(runtime.Function)
 		if !ok {
-			return runtime.Function{}, fmt.Errorf("decorator %s must return function, got %s", decorator.Name.Value, result.TypeName())
+			return runtime.Function{}, fmt.Errorf("decorator @%s must return function, got %s", decorator.Name.Value, result.TypeName())
 		}
 		if !decoratorWrapperCompatible(fn, next) {
-			return runtime.Function{}, fmt.Errorf("decorator %s returned incompatible wrapper for %s", decorator.Name.Value, fn.Name)
+			return runtime.Function{}, fmt.Errorf("decorator @%s returned incompatible wrapper for %s", decorator.Name.Value, fn.Name)
 		}
 		current = mergeDecoratedFunctionMetadata(fn, next)
 		wrapped = true
@@ -144,7 +154,13 @@ func mergeDecoratedFunctionMetadata(original runtime.Function, decorated runtime
 	return decorated
 }
 
-func (e *Evaluator) applyCallableClassDecorators(class *runtime.Class, decorators []ast.Decorator, env *runtime.Environment) (runtime.Value, error) {
+func (e *Evaluator) applyCallableClassDecorators(class *runtime.Class, decorators []ast.Decorator, env *runtime.Environment) (decorated runtime.Value, err error) {
+	declLine := e.currentLine
+	defer func() {
+		if err != nil {
+			e.currentLine = declLine
+		}
+	}()
 	var current runtime.Value = class
 	for i := len(decorators) - 1; i >= 0; i-- {
 		decorator := decorators[i]
@@ -163,8 +179,11 @@ func (e *Evaluator) applyCallableClassDecorators(class *runtime.Class, decorator
 		switch callable := value.(type) {
 		case runtime.Function:
 			bound, ok := bindEvaluatedFunctionCallArguments(callable, args)
-			if !ok || !functionArgumentsMatch(callable, bound) {
-				return nil, fmt.Errorf("decorator %s cannot be called with decorated class arguments", decorator.Name.Value)
+			if !ok {
+				return nil, fmt.Errorf("decorator @%s cannot be called for class %s: no matching overload for %s", decorator.Name.Value, class.Name, decorator.Name.Value)
+			}
+			if mismatch := functionArgumentsMatchError(callable, bound, nil); mismatch != nil {
+				return nil, decoratorCallError(mismatch, "decorator @"+decorator.Name.Value+" cannot be called for class "+class.Name+": ")
 			}
 			result, err = e.applyFunction(callable, bound)
 		case runtime.OverloadedFunction:
@@ -179,17 +198,17 @@ func (e *Evaluator) applyCallableClassDecorators(class *runtime.Class, decorator
 				matchedArgs = append(matchedArgs, bound)
 			}
 			if len(matches) == 0 {
-				return nil, fmt.Errorf("no matching overload for decorator %s", decorator.Name.Value)
+				return nil, fmt.Errorf("decorator @%s cannot be called for class %s: no matching overload for %s", decorator.Name.Value, class.Name, decorator.Name.Value)
 			}
 			if len(matches) > 1 {
-				return nil, fmt.Errorf("ambiguous overload for decorator %s", decorator.Name.Value)
+				return nil, fmt.Errorf("decorator @%s cannot be called for class %s: ambiguous overload for %s", decorator.Name.Value, class.Name, decorator.Name.Value)
 			}
 			result, err = e.applyFunction(matches[0], matchedArgs[0])
 		default:
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, decoratorCallError(err, "decorator @"+decorator.Name.Value+": ")
 		}
 		switch next := result.(type) {
 		case *runtime.Class:
@@ -197,7 +216,7 @@ func (e *Evaluator) applyCallableClassDecorators(class *runtime.Class, decorator
 		case runtime.Function, runtime.OverloadedFunction:
 			current = result
 		default:
-			return nil, fmt.Errorf("decorator %s must return class or callable, got %s", decorator.Name.Value, result.TypeName())
+			return nil, fmt.Errorf("decorator @%s must return class or callable, got %s", decorator.Name.Value, result.TypeName())
 		}
 	}
 	return current, nil
@@ -342,6 +361,25 @@ func (e *Evaluator) getErrorSentinel(name string) *runtime.Class {
 	}
 	e.errorSentinels[name] = cls
 	return cls
+}
+
+// ensureBuiltinTypes installs the builtin classes once; concurrent async tasks share this evaluator.
+func (e *Evaluator) ensureBuiltinTypes() error {
+	if e.builtinTypesReady.Load() {
+		return nil
+	}
+	e.builtinTypesMu.Lock()
+	defer e.builtinTypesMu.Unlock()
+	if e.builtinTypesReady.Load() {
+		return nil
+	}
+	if e.httpRequestClass == nil || e.httpResponseClass == nil || e.dbConnectionClass == nil {
+		if err := e.installBuiltinTypes(runtime.NewEnvironment()); err != nil {
+			return err
+		}
+	}
+	e.builtinTypesReady.Store(true)
+	return nil
 }
 
 func (e *Evaluator) installBuiltinTypes(env *runtime.Environment) error {
@@ -510,6 +548,9 @@ func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment)
 				return nil, err
 			}
 			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: typeParameterNames(member.Generics), TypeParamConstraints: typeParamConstraints(member.Generics), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env, Decorators: member.Decorators, Target: "method", Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: true}
+			if len(member.Decorators) > 0 {
+				e.currentLine = member.Token.Line
+			}
 			decorated, err := e.applyCallableFunctionDecorators(fn, member.Decorators, env)
 			if err != nil {
 				return nil, err
@@ -807,6 +848,9 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 			}
 			methodTypeParams := append(typeParameterNames(member.Generics), classTypeParams...)
 			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(member.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env, Decorators: member.Decorators, Target: target, Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: !member.Static}
+			if len(member.Decorators) > 0 {
+				e.currentLine = member.Token.Line
+			}
 			decorated, err := e.applyCallableFunctionDecorators(fn, member.Decorators, env)
 			if err != nil {
 				return nil, err
@@ -832,6 +876,9 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 		dtor := stmt.Destructor
 		methodTypeParams := append(typeParameterNames(dtor.Generics), classTypeParams...)
 		fn := runtime.Function{Name: "~" + dtor.Name.Value, Doc: dtor.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(dtor.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(dtor.Parameters, env), ReturnType: e.resolveTypeRef(dtor.ReturnType, env), Body: dtor.Body, Env: env, Decorators: dtor.Decorators, Target: "method", Async: dtor.Async, IsGenerator: false, ForwardThis: true}
+		if len(dtor.Decorators) > 0 {
+			e.currentLine = dtor.Token.Line
+		}
 		decorated, err := e.applyCallableFunctionDecorators(fn, dtor.Decorators, env)
 		if err != nil {
 			return nil, err
@@ -1738,4 +1785,18 @@ func classAbstractnessReason(class *runtime.Class) (string, bool) {
 		}
 	}
 	return "cannot instantiate " + class.Name + ": abstract method " + sampleClass + "." + sample + " is not implemented", true
+}
+
+// decoratorCallError prefixes a decorator failure while keeping the cause's error class.
+func decoratorCallError(cause error, prefix string) error {
+	class, message := "RuntimeError", cause.Error()
+	var classified runtime.ClassifiedError
+	var thrown thrownError
+	switch {
+	case errors.As(cause, &classified):
+		class, message = classified.Class, classified.Message
+	case errors.As(cause, &thrown):
+		class, message = thrown.value.Class, thrown.value.Message
+	}
+	return runtime.ClassifiedError{Class: class, Message: prefix + message}
 }
