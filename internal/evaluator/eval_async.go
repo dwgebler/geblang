@@ -99,7 +99,7 @@ func asyncTimeout(call *ast.CallExpression, args []runtime.Value) (runtime.Value
 			out.Complete(result.Value, result.Err)
 		case <-timer.C:
 			inner.Cancel()
-			out.Complete(runtime.Null{}, fmt.Errorf("async.timeout: task did not complete within %v", duration))
+			out.Complete(runtime.Null{}, runtime.ClassifiedError{Class: "TimeoutError", Message: fmt.Sprintf("async.timeout: task did not complete within %v", duration)})
 		}
 	}()
 	return out, nil

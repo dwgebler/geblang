@@ -551,6 +551,22 @@ class B extends A { @override func farewell(): string { return "b"; } }
 	}
 }
 
+// TestOverrideDecoratorAcceptsInterfaceDefaultMethod accepts @override on a method that replaces an interface's default body, and still rejects a name the interface lacks.
+func TestOverrideDecoratorAcceptsInterfaceDefaultMethod(t *testing.T) {
+	valid := `interface Describable { func describe(): string { return "thing"; } }
+class Book implements Describable { @override func describe(): string { return "book"; } }
+`
+	if diags := analyzeInput(t, valid); len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for overriding an interface default, got: %v", diags)
+	}
+	invalid := `interface Describable { func describe(): string { return "thing"; } }
+class Book implements Describable { @override func summary(): string { return "book"; } }
+`
+	if diags := analyzeInput(t, invalid); !hasDiagnostic(diags, "no ancestor or interface of Book declares it") {
+		t.Fatalf("expected override diagnostic for an undeclared method, got: %v", diags)
+	}
+}
+
 // TestOverrideDecoratorAcceptsInterfaceMethod accepts @override on a method that
 // implements an interface method, directly or through interface inheritance.
 func TestOverrideDecoratorAcceptsInterfaceMethod(t *testing.T) {
@@ -1466,5 +1482,30 @@ func TestAnalyzerEnforcesForInBinderType(t *testing.T) {
 				t.Fatalf("expected a diagnostic containing %q, got %v", tc.want, diagnostics)
 			}
 		})
+	}
+}
+
+func TestAnalyzerTypesChainedPrimitiveMethodCalls(t *testing.T) {
+	analyze := func(src string) []semantic.Diagnostic {
+		p := parser.New(lexer.New(src))
+		program := p.ParseProgram()
+		if len(p.Errors()) != 0 {
+			t.Fatalf("parser errors: %v", p.Errors())
+		}
+		analyzer := semantic.New()
+		analyzer.EnableMethodChecks()
+		return analyzer.Analyze(program)
+	}
+	bad := analyze(`func f(string value): bool { return value.trim().upper().matches("x"); }
+`)
+	if !hasDiagnostic(bad, "string has no method matches") {
+		t.Fatalf("expected 'string has no method matches', got %v", bad)
+	}
+	good := analyze(`func f(string value): bool { return value.trim().upper().matchesRegex("x"); }
+let n = "a b".split(" ").length();
+let generic = [1, 2].copy().first();
+`)
+	if len(good) != 0 {
+		t.Fatalf("expected no diagnostics for valid chains, got %v", good)
 	}
 }

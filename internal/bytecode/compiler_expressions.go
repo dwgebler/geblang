@@ -961,7 +961,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			}
 			if object, ok := selector.Object.(*ast.Identifier); ok {
 				if _, resolvedName := c.resolveName(object.Value); !resolvedName {
-					if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok && c.chunk.Classes[classIndex].Name == object.Value {
+					if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok && c.chunk.Classes[classIndex].Name == object.Value && !c.namedCallToInheritedStatic(classIndex, selector.Name.Value, expr.Arguments) {
 						indices, ok := c.lookupStaticMethod(c.chunk.Classes[classIndex], selector.Name.Value)
 						if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
 							if ok && len(indices) > 1 {
@@ -3829,4 +3829,24 @@ func (c *Compiler) compileRuntimeOverloadedCall(indices []int64, expr *ast.CallE
 	c.emitPlantIntLiteralArgs(expr, false)
 	c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 	return nil
+}
+
+// namedCallToInheritedStatic reports a named-argument call to a static the class only inherits from another module; its names bind at run time against that module's signature.
+func (c *Compiler) namedCallToInheritedStatic(classIndex int64, name string, args []ast.CallArgument) bool {
+	if _, ok := c.lookupStaticMethod(c.chunk.Classes[classIndex], name); ok {
+		return false
+	}
+	top := c.chunk.Classes[classIndex]
+	for top.ParentIndex >= 0 && int(top.ParentIndex) < len(c.chunk.Classes) {
+		top = c.chunk.Classes[top.ParentIndex]
+	}
+	if !strings.Contains(top.ParentName, ".") {
+		return false
+	}
+	for _, arg := range args {
+		if arg.Name != nil {
+			return true
+		}
+	}
+	return false
 }

@@ -748,6 +748,8 @@ type StringLiteral struct {
 	Raw    string
 	Quote  byte
 	Triple bool
+	// Segment marks literal text between interpolations, as opposed to a string literal written inside ${...}.
+	Segment bool
 }
 
 func (*StringLiteral) expressionNode()        {}

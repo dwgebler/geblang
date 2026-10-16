@@ -298,11 +298,11 @@ func WalkImports(
 		program := parser.New(lexer.New(string(src))).ParseProgram()
 
 		for _, stmt := range program.Statements {
-			imp, ok := stmt.(*ast.ImportStatement)
+			path, ok := importedModulePath(stmt)
 			if !ok {
 				continue
 			}
-			canonical := strings.Join(imp.Path, ".")
+			canonical := strings.Join(path, ".")
 			if _, seen := result[canonical]; seen {
 				continue
 			}
@@ -333,6 +333,17 @@ func WalkImports(
 		return nil, err
 	}
 	return result, nil
+}
+
+// importedModulePath returns the module named by an `import` or `from ... import` statement.
+func importedModulePath(stmt ast.Statement) ([]string, bool) {
+	switch s := stmt.(type) {
+	case *ast.ImportStatement:
+		return s.Path, true
+	case *ast.FromImportStatement:
+		return s.Path, true
+	}
+	return nil, false
 }
 
 // SourceHash returns the hex-encoded SHA-256 of src.

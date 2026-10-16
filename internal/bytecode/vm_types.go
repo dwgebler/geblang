@@ -72,14 +72,10 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 		return nil
 	}
 	if ev, ok := value.(runtime.EnumVariant); ok {
-		if dotIdx := strings.Index(target, "."); dotIdx >= 0 {
-			// `Enum.Variant` is a variant test; a `module.Interface`
-			// qualified name (prefix is not this enum) falls through to
-			// the name/interface check below.
-			if enumName := target[:dotIdx]; strings.EqualFold(ev.Enum.Name, enumName) {
-				vm.push(runtime.Bool{Value: strings.EqualFold(ev.Variant, target[dotIdx+1:])})
-				return nil
-			}
+		// `[module.]Enum.Variant` is a variant test; a `module.Interface` or `module.Enum` qualified name falls through to the name/interface check below.
+		if segments := strings.Split(target, "."); len(segments) >= 2 && strings.EqualFold(ev.Enum.Name, segments[len(segments)-2]) {
+			vm.push(runtime.Bool{Value: strings.EqualFold(ev.Variant, segments[len(segments)-1])})
+			return nil
 		}
 		stripped := stripModulePrefix(target)
 		if strings.EqualFold(ev.Enum.Name, stripped) {
@@ -159,6 +155,7 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 // instanceMatchesParameterizedClass: class chain contains base AND
 // reified bindings match the args invariantly; unbound never matches.
 func (vm *VM) instanceMatchesParameterizedClass(instance *runtime.Instance, base string, args []string) bool {
+	base = stripModulePrefix(base)
 	chainMatches := false
 	if classInfo, ok := vm.classInfo(instance.Class.Name); ok && vm.classMatches(classInfo, base) {
 		chainMatches = true
@@ -185,11 +182,16 @@ func (vm *VM) instanceMatchesParameterizedClass(instance *runtime.Instance, base
 	}
 	for i, arg := range args {
 		bound, ok := instance.TypeBindings[declared[i]]
-		if !ok || !strings.EqualFold(bound, arg) {
+		if !ok || !typeArgNamesEqual(bound, arg) {
 			return false
 		}
 	}
 	return true
+}
+
+// typeArgNamesEqual compares two type-argument names, ignoring the module qualifier one side may carry (an alias in one module, a canonical name in another).
+func typeArgNamesEqual(a, b string) bool {
+	return strings.EqualFold(a, b) || strings.EqualFold(stripModulePrefix(a), stripModulePrefix(b))
 }
 
 func vmSplitGenericTypeName(typeName string) (string, []string, bool) {
@@ -973,7 +975,7 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 				if !ok || bound == "" || slices.ContainsFunc(instance.Class.TypeParameters, func(p string) bool { return strings.EqualFold(p, bound) }) {
 					continue
 				}
-				if !strings.EqualFold(bound, argSpec.base) {
+				if !typeArgNamesEqual(bound, argSpec.base) {
 					return false
 				}
 			}

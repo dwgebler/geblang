@@ -1425,14 +1425,19 @@ func (e *Evaluator) applyFieldDecorators(class *runtime.Class, name string, valu
 			if !strings.EqualFold(field.Name, name) {
 				continue
 			}
+			// Resolve in the declaring class's scope: the assignment may be in another module or shadow the name with a local.
+			declEnv := c.Env
+			if declEnv == nil {
+				declEnv = env
+			}
 			for i := len(field.Decorators) - 1; i >= 0; i-- {
 				dec := field.Decorators[i]
 				if dec.Name == nil {
 					continue
 				}
-				decoratorValue, found := env.Get(dec.Name.Value)
+				decoratorValue, found := declEnv.Get(dec.Name.Value)
 				if !found && e.globalClasses != nil {
-					if v, ok := envOrGlobalFunc(env, dec.Name.Value); ok {
+					if v, ok := envOrGlobalFunc(declEnv, dec.Name.Value); ok {
 						decoratorValue = v
 						found = true
 					}
@@ -1442,7 +1447,7 @@ func (e *Evaluator) applyFieldDecorators(class *runtime.Class, name string, valu
 				}
 				callArgs := []runtime.Value{}
 				for _, arg := range dec.Arguments {
-					v, err := e.evalExpression(arg.Value, env)
+					v, err := e.evalExpression(arg.Value, declEnv)
 					if err != nil {
 						return nil, fmt.Errorf("field decorator @%s: %w", dec.Name.Value, err)
 					}
@@ -1524,6 +1529,20 @@ func lookupMethod(class *runtime.Class, name string) (runtime.Function, bool) {
 	methods := lookupMethodOverloads(class, name)
 	if len(methods) == 0 {
 		return runtime.Function{}, false
+	}
+	return methods[0], true
+}
+
+// lookupMethodFor picks the overload of a dunder that accepts args; with no match it returns the first declaration so the call reports the usual argument error.
+func lookupMethodFor(class *runtime.Class, name string, args []runtime.Value) (runtime.Function, bool) {
+	methods := lookupMethodOverloads(class, name)
+	if len(methods) == 0 {
+		return runtime.Function{}, false
+	}
+	if len(methods) > 1 {
+		if selected, err := selectOverload(name, methods, args); err == nil {
+			return selected, true
+		}
 	}
 	return methods[0], true
 }

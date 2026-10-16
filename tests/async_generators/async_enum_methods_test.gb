@@ -1,0 +1,35 @@
+/**
+ * @title Async enum methods
+ * @summary An enum may declare `async func` methods; calling one on a variant
+ * returns a Task.
+ */
+import test;
+import async;
+
+enum TrafficLight {
+    Red, Amber, Green;
+
+    async func next(): TrafficLight {
+        await async.sleep(1);
+        return match (this) {
+            case TrafficLight.Red => TrafficLight.Green;
+            case TrafficLight.Green => TrafficLight.Amber;
+            default => TrafficLight.Red;
+        };
+    }
+}
+
+class AsyncEnumMethodsTest extends test.Test {
+    @test
+    func callingAnAsyncEnumMethodReturnsATask(): void {
+        let task = TrafficLight.Red.next();
+        this.assertEquals("Task", "${typeof(task)}");
+        this.assertEquals(TrafficLight.Green, task.await());
+    }
+
+    @test
+    func asyncEnumMethodsComposeWithAsyncAll(): void {
+        let results = async.all([TrafficLight.Green.next(), TrafficLight.Amber.next()]).await();
+        this.assertEquals([TrafficLight.Amber, TrafficLight.Red], results);
+    }
+}

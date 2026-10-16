@@ -1,0 +1,7 @@
+module qualified_enum_patterns_donor;
+
+export enum Delivery {
+    Booked(string, int),
+    Refused(string),
+    Waiting
+}

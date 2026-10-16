@@ -1,0 +1,47 @@
+/**
+ * @title Generic constraints across modules
+ * @summary A constrained generic class or function from one module accepts a
+ * type argument declared in another module when it satisfies the constraint,
+ * and rejects one that does not.
+ */
+import test;
+import generic_constraints_donor as donor;
+
+class Customer implements donor.Entity {
+    func Customer(string id) { this.id = id; }
+}
+
+class VipCustomer extends Customer {
+    func VipCustomer(string id) { parent(id); }
+}
+
+class Anonymous {
+    string id = "anon";
+}
+
+class GenericConstraintsCrossModuleTest extends test.Test {
+    @test
+    func acceptsAnImplementerFromTheImportingModule(): void {
+        let registry = donor.Registry<Customer>();
+        registry.add(Customer("c1"));
+        this.assertEquals(1, registry.count());
+    }
+
+    @test
+    func acceptsASubclassOfAnImplementer(): void {
+        let registry = donor.Registry<VipCustomer>();
+        registry.add(VipCustomer("v1"));
+        this.assertEquals(1, registry.count());
+    }
+
+    @test
+    func constrainedFunctionAcceptsAnImplementer(): void {
+        this.assertEquals(["a", "b"], donor.idsOf([Customer("a"), Customer("b")]));
+    }
+
+    @test
+    func rejectsATypeThatDoesNotImplementTheInterface(): void {
+        this.assertThrowsOf(func(): void { donor.Registry<Anonymous>(); }, "TypeError", "does not satisfy constraint Entity");
+        this.assertThrowsOf(func(): void { donor.idsOf([Anonymous()]); }, "TypeError", "does not satisfy constraint Entity");
+    }
+}

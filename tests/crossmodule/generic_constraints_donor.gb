@@ -1,0 +1,17 @@
+module generic_constraints_donor;
+
+export interface Entity {
+    string id;
+}
+
+export class Registry<T implements Entity> {
+    dict<string, T> items = {};
+
+    func add(T item): void { this.items[item.id] = item; }
+
+    func count(): int { return this.items.length(); }
+}
+
+export func idsOf<T implements Entity>(list<T> items): list<string> {
+    return [item.id for item in items];
+}

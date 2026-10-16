@@ -336,6 +336,7 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.
 		caller = nil
 	}
 	vm.SetReentryHost(caller)
+	vm.InheritForwardThis(caller)
 	vm.SetReentryActive(true)
 	return vm, pool
 }
@@ -390,7 +391,13 @@ func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []ru
 		chunk = c
 	}
 	vm, pool := l.moduleVM(function.Module, chunk, caller)
-	result, err := vm.CallFunctionFast(function.Index, args)
+	var result runtime.Value
+	var err error
+	if function.Raw {
+		result, err = vm.CallRawFunctionValue(function, args)
+	} else {
+		result, err = vm.CallFunctionFast(function.Index, args)
+	}
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
@@ -612,6 +619,18 @@ func (l *Loader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName 
 	}
 	vm, pool := l.moduleVM(class.Module, chunk, caller)
 	result, err := vm.CallStaticMethodFast(class.Index, methodName, args)
+	l.adoptDestructibles(pool, vm, caller)
+	l.releaseModuleVM(pool, vm, err)
+	return result, err
+}
+
+func (l *Loader) CallModuleStaticMethodNamed(class runtime.BytecodeClass, methodName string, args []runtime.Value, names []string, caller *bytecode.VM) (runtime.Value, error) {
+	chunk, ok := l.chunkFor(class.Module)
+	if !ok {
+		return nil, fmt.Errorf("module %s is not loaded", class.Module)
+	}
+	vm, pool := l.moduleVM(class.Module, chunk, caller)
+	result, err := vm.CallStaticMethodNamed(class.Index, methodName, args, names)
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
@@ -932,6 +951,37 @@ func (l *Loader) ModuleFunctionParamNames(module string, index int64) ([]string,
 	return chunk.FunctionParamNames(index)
 }
 
+func (l *Loader) ApplyModuleFieldDecorators(module string, className string, field string, value runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return value, nil
+	}
+	for idx := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[idx].Name, className) {
+			continue
+		}
+		vm, pool := l.moduleVM(module, chunk, caller)
+		result, err := vm.ApplyFieldDecoratorsForClass(int64(idx), field, value)
+		l.releaseModuleVM(pool, vm, err)
+		return result, err
+	}
+	return value, nil
+}
+
+func (l *Loader) ModuleFunctionInfo(module string, index int64) (bytecode.FunctionInfo, error) {
+	if module == "" {
+		if !l.hasMainChunk {
+			return bytecode.FunctionInfo{}, fmt.Errorf("entry-script function referenced without a main chunk")
+		}
+		return l.mainChunk.FunctionInfoAt(index)
+	}
+	chunk, ok := l.chunkValue(module)
+	if !ok {
+		return bytecode.FunctionInfo{}, fmt.Errorf("module %s is not loaded", module)
+	}
+	return chunk.FunctionInfoAt(index)
+}
+
 func (l *Loader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if module == "" {
@@ -1134,7 +1184,7 @@ func (l *Loader) RuntimeClassFor(module string, className string) (*runtime.Clas
 		rc, _ := v.(*runtime.Class)
 		return rc, rc != nil
 	}
-	chunk, ok := l.chunkValue(module)
+	chunk, ok := l.chunkFor(module)
 	if !ok {
 		l.runtimeClasses.Store(cacheKey, (*runtime.Class)(nil))
 		return nil, false

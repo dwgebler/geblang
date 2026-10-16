@@ -285,7 +285,7 @@ io.println(c.recv());                   # channels also iterate: for (x in c)
 
 Tasks are goroutines: CPU-bound fan-out scales across cores (no
 GIL, no event loop). `async.await(t)`, `async.all`, `async.race`,
-`async.timeout(ms, fn)`, `async.cancel` compose tasks; channels
+`async.timeout(task, ms)` (raises `TimeoutError`), `async.cancel` compose tasks; channels
 and `select` coordinate them.
 
 ### Classes

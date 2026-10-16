@@ -1,0 +1,43 @@
+/**
+ * @title Generic types qualified by module aliases
+ * @summary A generic class from one module parameterised with a class from
+ * another, both written through module aliases, works as a field type,
+ * parameter type, variable type, and `instanceof` target.
+ */
+import test;
+import qualified_generics_boxes as boxes;
+import qualified_generics_goods as goods;
+
+class Larder {
+    boxes.Crate<goods.Apple> apples;
+
+    func Larder() { this.apples = boxes.Crate<goods.Apple>(); }
+
+    func replace(boxes.Crate<goods.Apple> crate): boxes.Crate<goods.Apple> {
+        this.apples = crate;
+        return crate;
+    }
+}
+
+class QualifiedGenericsCrossModuleTest extends test.Test {
+    @test
+    func fieldAndParameterTypesAcceptTheMatchingInstance(): void {
+        let larder = Larder();
+        let crate = boxes.Crate<goods.Apple>();
+        crate.add(goods.Apple());
+        this.assertEquals(1, larder.replace(crate).contents.length());
+    }
+
+    @test
+    func instanceofComparesTheTypeArgument(): void {
+        let crate = boxes.Crate<goods.Apple>();
+        this.assertTrue(crate instanceof boxes.Crate<goods.Apple>);
+        this.assertFalse(crate instanceof boxes.Crate<goods.Pear>);
+    }
+
+    @test
+    func aMismatchedTypeArgumentIsRejected(): void {
+        let larder = Larder();
+        this.assertThrowsOf(func(): void { larder.apples = boxes.Crate<goods.Pear>(); }, "TypeError");
+    }
+}

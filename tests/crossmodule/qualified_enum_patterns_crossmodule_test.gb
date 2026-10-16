@@ -1,0 +1,33 @@
+/**
+ * @title Module-qualified enum patterns
+ * @summary A `match` case can destructure a variant of an enum imported from
+ * another module through its module alias, and `instanceof` accepts the same
+ * qualified variant name.
+ */
+import test;
+import qualified_enum_patterns_donor as shipping;
+
+func summarise(shipping.Delivery delivery): string {
+    return match (delivery) {
+        case shipping.Delivery.Booked(string carrier, int pence) => "${carrier}:${pence}";
+        case shipping.Delivery.Refused(string reason) => "refused (${reason})";
+        default => "waiting";
+    };
+}
+
+class QualifiedEnumPatternsCrossModuleTest extends test.Test {
+    @test
+    func destructuresQualifiedVariants(): void {
+        this.assertEquals("dhl:499", summarise(shipping.Delivery.Booked("dhl", 499)));
+        this.assertEquals("refused (too heavy)", summarise(shipping.Delivery.Refused("too heavy")));
+        this.assertEquals("waiting", summarise(shipping.Delivery.Waiting));
+    }
+
+    @test
+    func instanceofAcceptsTheQualifiedVariant(): void {
+        let booked = shipping.Delivery.Booked("ups", 1);
+        this.assertTrue(booked instanceof shipping.Delivery.Booked);
+        this.assertFalse(booked instanceof shipping.Delivery.Refused);
+        this.assertTrue(booked instanceof shipping.Delivery);
+    }
+}

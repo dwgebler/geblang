@@ -1,0 +1,35 @@
+/**
+ * @title Static async methods
+ * @summary A `static async func` returns a Task when called, so static
+ * helpers can fan work out concurrently.
+ */
+import test;
+import async;
+import time;
+
+class ExchangeRates {
+    static async func rateFor(string code): int {
+        await async.sleep(150);
+        return code.length();
+    }
+
+    static async func ratesFor(list<string> codes): list<int> {
+        return async.all([ExchangeRates.rateFor(code) for code in codes]).await();
+    }
+}
+
+class StaticAsyncMethodsTest extends test.Test {
+    @test
+    func callingAStaticAsyncMethodReturnsATask(): void {
+        let task = ExchangeRates.rateFor("GBP");
+        this.assertEquals("Task", "${typeof(task)}");
+        this.assertEquals(3, task.await());
+    }
+
+    @test
+    func staticAsyncCallsRunConcurrently(): void {
+        let started = time.monotonic();
+        this.assertEquals([3, 3, 3], ExchangeRates.ratesFor(["GBP", "EUR", "USD"]).await());
+        this.assertLessThan(400, time.monotonic() - started);
+    }
+}

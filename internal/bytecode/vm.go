@@ -203,6 +203,12 @@ type ModuleLoader interface {
 	ModuleMethodParamNames(module string, className string, methodName string) ([]string, error)
 	// ModuleFunctionParamNames exposes a cross-module free function's declared parameter names so named args can be ordered at the call site.
 	ModuleFunctionParamNames(module string, index int64) ([]string, error)
+	// ModuleFunctionInfo exposes a cross-module function's declaration, whose index refers to its home chunk.
+	ModuleFunctionInfo(module string, index int64) (FunctionInfo, error)
+	// CallModuleStaticMethodNamed calls a static method of a class in another module, binding named arguments against its home signature.
+	CallModuleStaticMethodNamed(class runtime.BytecodeClass, methodName string, args []runtime.Value, names []string, caller *VM) (runtime.Value, error)
+	// ApplyModuleFieldDecorators runs a field's write-barrier decorators in the home module of className, for an assignment made elsewhere.
+	ApplyModuleFieldDecorators(module string, className string, field string, value runtime.Value, caller *VM) (runtime.Value, error)
 	// ModuleConstructorParamNames exposes the union of a cross-module class's constructor parameter names so dict spread can drop unknown keys before construction.
 	ModuleConstructorParamNames(module string, className string) ([]string, error)
 	// CallParentInModule invokes the parent class's constructor or
@@ -311,6 +317,8 @@ type callFrame struct {
 	// when it returns.
 	immutableFieldsToLock []string
 	lockInstance          *runtime.Instance
+	// constraintInstance is a constructed generic instance whose class-level type-parameter constraints are checked when the constructor returns.
+	constraintInstance *runtime.Instance
 	// isDestructibleConstructor is true when this frame is a class
 	// constructor for a class that declares a `~ClassName()`
 	// destructor. OpReturn registers the constructed instance in
@@ -528,31 +536,71 @@ func (vm *VM) invokeInstanceMethod(instance *runtime.Instance, method string, ar
 	if instance == nil || instance.Class == nil {
 		return nil, false, nil
 	}
-	// Cross-module instance: its class lives in another chunk, so dispatch
-	// through the module loader (mirrors the == operator's cross-module path).
-	if instance.Class.Module != vm.moduleName {
-		if vm.moduleLoader == nil || len(instance.Class.Methods[strings.ToLower(method)]) == 0 {
-			return nil, false, nil
-		}
-		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, method, instance, args, vm)
+	if instance.Class.Module != vm.moduleName || !vm.hasInstanceMethod(instance, method) {
+		result, handled, err := vm.callForeignDunder(instance, method, args)
 		if err != nil {
 			return nil, false, err
 		}
-		return result, true, nil
-	}
-	classInfo, ok := vm.classInfo(instance.Class.Name)
-	if !ok {
-		return nil, false, nil
-	}
-	indices, ok := vm.lookupMethod(classInfo, method)
-	if !ok || len(indices) == 0 {
-		return nil, false, nil
+		return result, handled, nil
 	}
 	result, err := vm.CallMethod(instance, method, args)
 	if err != nil {
 		return nil, false, err
 	}
 	return result, true, nil
+}
+
+// callForeignDunder runs a dunder whose body lives in another module's chunk: on a foreign-class instance, or inherited by a local class from a cross-module ancestor.
+func (vm *VM) callForeignDunder(instance *runtime.Instance, name string, args []runtime.Value) (runtime.Value, bool, error) {
+	if instance == nil || instance.Class == nil {
+		return nil, false, nil
+	}
+	if instance.Class.Module != vm.moduleName {
+		methods := instance.Class.Methods[strings.ToLower(name)]
+		if len(methods) == 0 {
+			return nil, false, nil
+		}
+		if methods[0].Native != nil {
+			result, err := methods[0].Native(instance, args)
+			return result, true, err
+		}
+		if vm.moduleLoader == nil {
+			return nil, false, nil
+		}
+		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, vm.wrapStatefulNativeArgs("", "", args), vm)
+		return result, true, err
+	}
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return nil, false, nil
+	}
+	module, parentClass, ok := vm.crossModuleBoundary(classInfo)
+	if !ok || vm.moduleLoader == nil {
+		return nil, false, nil
+	}
+	if _, err := vm.moduleLoader.LoadModule(module, module); err != nil {
+		return nil, true, err
+	}
+	result, err := vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args, vm)
+	var notFound *runtime.MethodNotFoundError
+	if errors.As(err, &notFound) {
+		return nil, false, nil
+	}
+	return result, true, err
+}
+
+// pushForeignDunder pushes callForeignDunder's result; handled is false when no foreign implementation exists.
+func (vm *VM) pushForeignDunder(instruction Instruction, ip int, instance *runtime.Instance, name string, args []runtime.Value) (int, bool, error) {
+	result, handled, err := vm.callForeignDunder(instance, name, args)
+	if err != nil {
+		nextIP, perr := vm.propagateModuleError(instruction, ip, err)
+		return nextIP, true, perr
+	}
+	if !handled {
+		return ip, false, nil
+	}
+	vm.push(result)
+	return ip, true, nil
 }
 
 // displayString renders a value for println/print via __string when defined, else Inspect.
@@ -2209,6 +2257,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			isImmutableClass := slot.isImmutableClass
 			immutableFieldsToLock := slot.immutableFieldsToLock
 			lockInstance := slot.lockInstance
+			constraintInstance := slot.constraintInstance
 			isDestructibleConstructor := slot.isDestructibleConstructor
 			negateReturn := slot.negateReturn
 			vm.popLocalsStackFrame(slot)
@@ -2218,7 +2267,13 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			slot.typeBindings = nil
 			slot.immutableFieldsToLock = nil
 			slot.lockInstance = nil
+			slot.constraintInstance = nil
 			vm.frames = vm.frames[:frameIdx]
+			if constraintInstance != nil {
+				if err := vm.checkInstanceClassConstraints(*instruction, constraintInstance); err != nil {
+					return err
+				}
+			}
 			// Hot path: a regular return - no override, no error-class
 			// reification, no negate, no immutable freeze/field-lock, not a
 			// destructor-bearing constructor. Push the VMValue
@@ -2651,7 +2706,7 @@ func (vm *VM) callPrefixOperatorMethod(instruction Instruction, ip int, value ru
 	}
 	indices, ok := vm.lookupMethod(classInfo, methodName)
 	if !ok {
-		return ip, false, nil
+		return vm.pushForeignDunder(instruction, ip, instance, methodName, nil)
 	}
 	functionIndex, err := vm.selectRuntimeFunction(instruction, methodName, indices, nil, 1)
 	if err != nil {
@@ -2707,13 +2762,27 @@ func (vm *VM) compare(instruction Instruction, ip int) (int, error) {
 			if !ok {
 				continue
 			}
-			classInfo, ok := vm.classInfo(instance.Class.Name)
-			if !ok {
-				return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
+			var indices []int64
+			if instance.Class.Module == vm.moduleName {
+				classInfo, ok := vm.classInfo(instance.Class.Name)
+				if !ok {
+					return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
+				}
+				indices, _ = vm.lookupMethod(classInfo, at.name)
 			}
-			indices, ok := vm.lookupMethod(classInfo, at.name)
-			if !ok {
-				continue
+			if len(indices) == 0 {
+				result, handled, err := vm.callForeignDunder(instance, at.name, []runtime.Value{at.arg})
+				if err != nil {
+					return vm.propagateModuleError(instruction, ip, err)
+				}
+				if !handled {
+					continue
+				}
+				if b, isBool := result.(runtime.Bool); isBool && at.negate {
+					result = runtime.Bool{Value: !b.Value}
+				}
+				vm.push(result)
+				return ip, nil
 			}
 			functionIndex, err := vm.selectRuntimeFunction(instruction, at.name, indices, []runtime.Value{at.arg}, 1)
 			if err != nil {
@@ -2765,6 +2834,10 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 	if err != nil {
 		return 0, vm.callPropagate(instruction, err)
 	}
+	if leftNull, rightNull := runtime.IsNull(left), runtime.IsNull(right); leftNull || rightNull {
+		vm.push(runtime.Bool{Value: leftNull && rightNull})
+		return ip, nil
+	}
 	if instance, ok := left.(*runtime.Instance); ok {
 		if instance.Class.Module != vm.moduleName {
 			if len(instance.Class.Methods["__eq"]) == 0 {
@@ -2796,6 +2869,9 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 			}
 			return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
 		}
+		if nextIP, handled, err := vm.pushForeignDunder(instruction, ip, instance, "__eq", []runtime.Value{right}); handled {
+			return nextIP, err
+		}
 	}
 	eq, err := vm.deepEqual(left, right)
 	if err != nil {
@@ -2807,6 +2883,9 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 
 // deepEqual is the == operator's structural comparison: it recurses through containers and instance fields, dispatching a user __eq at every nesting depth so a nested instance compares exactly as it does at top level.
 func (vm *VM) deepEqual(left runtime.Value, right runtime.Value) (bool, error) {
+	if leftNull, rightNull := runtime.IsNull(left), runtime.IsNull(right); leftNull || rightNull {
+		return leftNull && rightNull, nil
+	}
 	if eq, both := runtime.NumericValuesEqual(left, right); both {
 		return eq, nil
 	}
@@ -2889,11 +2968,9 @@ func (vm *VM) deepEqual(left runtime.Value, right runtime.Value) (bool, error) {
 
 // instanceDeepEqual dispatches a user __eq if the class declares one, else compares fields structurally.
 func (vm *VM) instanceDeepEqual(instance *runtime.Instance, right runtime.Value) (bool, error) {
-	if instance.Class != nil && len(instance.Class.Methods["__eq"]) > 0 {
-		result, err := vm.CallMethod(instance, "__eq", []runtime.Value{right})
-		if err != nil {
-			return false, err
-		}
+	if result, handled, err := vm.invokeInstanceMethod(instance, "__eq", []runtime.Value{right}); err != nil {
+		return false, err
+	} else if handled {
 		boolResult, ok := result.(runtime.Bool)
 		if !ok {
 			return false, fmt.Errorf("%s.__eq must return bool", instance.Class.Name)
@@ -3815,7 +3892,7 @@ func (vm *VM) callBinaryOperatorMethod(instruction Instruction, ip int, left run
 	}
 	indices, ok := vm.lookupMethod(classInfo, methodName)
 	if !ok {
-		return ip, false, nil
+		return vm.pushForeignDunder(instruction, ip, instance, methodName, []runtime.Value{right})
 	}
 	functionIndex, err := vm.selectRuntimeFunction(instruction, methodName, indices, []runtime.Value{right}, 1)
 	if err != nil {
@@ -4087,8 +4164,8 @@ func (vm *VM) contains(needle, container runtime.Value) (runtime.Value, error) {
 		}
 		return runtime.Bool{Value: c.ContainsInt(n)}, nil
 	case *runtime.Instance:
-		if vm.hasInstanceMethod(c, "__contains") {
-			return vm.CallMethod(c, "__contains", []runtime.Value{needle})
+		if result, handled, err := vm.invokeInstanceMethod(c, "__contains", []runtime.Value{needle}); err != nil || handled {
+			return result, err
 		}
 		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s does not support 'in' (define __contains)", c.TypeName())}
 	default:
@@ -4152,11 +4229,9 @@ func (vm *VM) index(instruction Instruction) error {
 		}
 		vm.push(entry.Value)
 	case *runtime.Instance:
-		if vm.hasInstanceMethod(value, "__index") {
-			result, err := vm.CallMethod(value, "__index", []runtime.Value{index})
-			if err != nil {
-				return vm.callPropagate(instruction, err)
-			}
+		if result, handled, err := vm.invokeInstanceMethod(value, "__index", []runtime.Value{index}); err != nil {
+			return vm.callPropagate(instruction, err)
+		} else if handled {
 			vm.push(result)
 			return nil
 		}
@@ -4211,10 +4286,9 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 		}
 		value.PutEntry(dictKeyFor(index), runtime.DictEntry{Key: index, Value: newValue})
 	case *runtime.Instance:
-		if vm.hasInstanceMethod(value, "__setIndex") {
-			if _, err := vm.CallMethod(value, "__setIndex", []runtime.Value{index, newValue}); err != nil {
-				return 0, vm.callPropagate(instruction, err)
-			}
+		if _, handled, err := vm.invokeInstanceMethod(value, "__setIndex", []runtime.Value{index, newValue}); err != nil {
+			return 0, vm.callPropagate(instruction, err)
+		} else if handled {
 			vm.push(newValue)
 			return ip, nil
 		}
@@ -5546,7 +5620,12 @@ func cloneContainerDefault(v runtime.Value) runtime.Value {
 // qualified type name. "mod.Sub" -> "Sub"; "Sub" -> "Sub". Matches
 // `simpleTypeName` in the evaluator.
 func stripModulePrefix(typeName string) string {
-	if dot := strings.LastIndexByte(typeName, '.'); dot >= 0 {
+	head := typeName
+	// A dot inside type arguments (`box.Box<goods.Order>`) qualifies the argument, not the base.
+	if lt := strings.IndexByte(typeName, '<'); lt >= 0 {
+		head = typeName[:lt]
+	}
+	if dot := strings.LastIndexByte(head, '.'); dot >= 0 {
 		return typeName[dot+1:]
 	}
 	return typeName
@@ -5740,16 +5819,21 @@ func (vm *VM) bitwiseInfix(instruction Instruction, ip int) (int, error) {
 	}
 	if instance, ok := left.(*runtime.Instance); ok {
 		if methodName, ok := bitwiseMagicName(instruction.Op); ok {
-			classInfo, ok := vm.classInfo(instance.Class.Name)
-			if !ok {
-				return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
-			}
-			if indices, ok := vm.lookupMethod(classInfo, methodName); ok {
-				functionIndex, err := vm.selectRuntimeFunction(instruction, methodName, indices, []runtime.Value{right}, 1)
-				if err != nil {
-					return 0, err
+			if instance.Class.Module == vm.moduleName {
+				classInfo, ok := vm.classInfo(instance.Class.Name)
+				if !ok {
+					return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
 				}
-				return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+				if indices, ok := vm.lookupMethod(classInfo, methodName); ok {
+					functionIndex, err := vm.selectRuntimeFunction(instruction, methodName, indices, []runtime.Value{right}, 1)
+					if err != nil {
+						return 0, err
+					}
+					return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+				}
+			}
+			if nextIP, handled, err := vm.pushForeignDunder(instruction, ip, instance, methodName, []runtime.Value{right}); handled {
+				return nextIP, err
 			}
 		}
 	}
@@ -5791,16 +5875,21 @@ func (vm *VM) bitwiseNot(instruction Instruction, ip int) (int, error) {
 		return 0, vm.callPropagate(instruction, err)
 	}
 	if instance, ok := value.(*runtime.Instance); ok {
-		classInfo, ok := vm.classInfo(instance.Class.Name)
-		if !ok {
-			return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
-		}
-		if indices, ok := vm.lookupMethod(classInfo, "__bitnot"); ok {
-			functionIndex, err := vm.selectRuntimeFunction(instruction, "__bitnot", indices, nil, 1)
-			if err != nil {
-				return 0, err
+		if instance.Class.Module == vm.moduleName {
+			classInfo, ok := vm.classInfo(instance.Class.Name)
+			if !ok {
+				return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
 			}
-			return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance}, nil)
+			if indices, ok := vm.lookupMethod(classInfo, "__bitnot"); ok {
+				functionIndex, err := vm.selectRuntimeFunction(instruction, "__bitnot", indices, nil, 1)
+				if err != nil {
+					return 0, err
+				}
+				return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance}, nil)
+			}
+		}
+		if nextIP, handled, err := vm.pushForeignDunder(instruction, ip, instance, "__bitnot", nil); handled {
+			return nextIP, err
 		}
 	}
 	intVal, ok := native.IntValueToBigInt(value)

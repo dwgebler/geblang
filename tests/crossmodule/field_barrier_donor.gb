@@ -1,0 +1,21 @@
+module field_barrier_donor;
+
+func normalised(string value): string { return value.trim().lower(); }
+
+func nonNegative(int value): int {
+    if (value < 0) { throw ValueError("stock cannot be negative"); }
+    return value;
+}
+
+export class StockItem {
+    @normalised
+    string code;
+
+    @nonNegative
+    int stock;
+
+    func StockItem(string code, int stock) {
+        this.code = code;
+        this.stock = stock;
+    }
+}

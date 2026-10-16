@@ -1873,6 +1873,14 @@ func (c *Chunk) ConstructorParamNames(className string) ([]string, error) {
 }
 
 // FunctionParamNames returns a free function's declared parameter names, so the loader can order named args for a cross-module function call.
+// FunctionInfoAt returns the declaration of the function at index.
+func (c *Chunk) FunctionInfoAt(index int64) (FunctionInfo, error) {
+	if index < 0 || int(index) >= len(c.Functions) {
+		return FunctionInfo{}, fmt.Errorf("function index out of range")
+	}
+	return c.Functions[index], nil
+}
+
 func (c *Chunk) FunctionParamNames(index int64) ([]string, error) {
 	if index < 0 || int(index) >= len(c.Functions) {
 		return nil, fmt.Errorf("function index out of range")

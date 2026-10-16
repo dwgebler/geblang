@@ -1,0 +1,9 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown method at the end of a chain of
+ * primitive methods: `value.trim().upper()` is a string, which has no
+ * `matches` (the method is `matchesRegex`).
+ */
+func looksLikeSku(string value): bool {
+    return value.trim().upper().matches("^[A-Z]+$");
+}

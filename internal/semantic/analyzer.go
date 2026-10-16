@@ -143,6 +143,8 @@ type interfaceInfo struct {
 	name    string
 	parents []string
 	methods map[string][]methodInfo
+	// defaults names the interface's default-bodied methods, which implementers may override but need not declare.
+	defaults map[string]bool
 }
 
 type enumInfo struct {
@@ -426,6 +428,15 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 				methodInfo := a.methodInfoFromSignature(method)
 				key := strings.ToLower(methodInfo.name)
 				info.methods[key] = append(info.methods[key], methodInfo)
+			}
+			for _, def := range stmt.Defaults {
+				if def.Name == nil {
+					continue
+				}
+				if info.defaults == nil {
+					info.defaults = map[string]bool{}
+				}
+				info.defaults[strings.ToLower(def.Name.Value)] = true
 			}
 			a.interfaces[info.name] = info
 		case *ast.EnumStatement:
@@ -2771,6 +2782,9 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 				return info
 			}
 		}
+		if selector, ok := expr.Callee.(*ast.SelectorExpression); ok && selector.Name != nil && !selector.Optional {
+			return a.primitiveMethodResult(selector)
+		}
 		return typeInfo{}
 	case *ast.Literal:
 		switch expr.Value.(type) {
@@ -2799,6 +2813,34 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 	default:
 		return typeInfo{}
 	}
+}
+
+// primitiveMethodResult types `recv.method(...)` on a statically known primitive from the canonical method catalog, so chained calls stay typed; generic or `any` results stay unknown.
+func (a *Analyzer) primitiveMethodResult(selector *ast.SelectorExpression) typeInfo {
+	recv := a.expressionTypeName(selector.Object)
+	if !recv.known || recv.nullable {
+		return typeInfo{}
+	}
+	doc, ok := native.CatalogPrimitiveMethods[recv.name][selector.Name.Value]
+	if !ok {
+		return typeInfo{}
+	}
+	return concretePrimitiveType(strings.TrimSpace(doc.Result))
+}
+
+func concretePrimitiveType(name string) typeInfo {
+	switch name {
+	case "string", "int", "bool", "decimal", "float", "bytes":
+		return typeInfo{name: name, known: true}
+	}
+	for _, container := range []string{"list", "set"} {
+		if inner, ok := strings.CutPrefix(name, container+"<"); ok && strings.HasSuffix(inner, ">") {
+			if elem := concretePrimitiveType(strings.TrimSuffix(inner, ">")); elem.known {
+				return typeInfo{name: container, known: true, args: []typeInfo{elem}}
+			}
+		}
+	}
+	return typeInfo{}
 }
 
 const (

@@ -108,6 +108,9 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 			}
 			vm.push(runtime.Error{Class: classInfo.Name, Fields: fields, Parents: vm.errorParentChain(classInfo)})
 		} else {
+			if err := vm.checkClassConstraints(instruction, classInfo, instance.TypeBindings); err != nil {
+				return 0, err
+			}
 			if classInfo.Immutable {
 				instance.Frozen = true
 			}
@@ -192,6 +195,9 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 			}
 		}
 		runtime.ResolveInheritedTypeBindings(instance)
+	}
+	if len(classInfo.TypeParamConstraintExprs) > 0 && len(vm.frames) > 0 {
+		vm.frames[len(vm.frames)-1].constraintInstance = instance
 	}
 	return nextIP, nil
 }
@@ -564,13 +570,11 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 	if instance.LockedFields[name] {
 		return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify immutable field "+name+" of "+instance.Class.Name)
 	}
-	if classInfo, ok := vm.classInfo(instance.Class.Name); ok {
-		transformed, err := vm.applyFieldDecorators(instruction, classInfo, name, value)
-		if err != nil {
-			return vm.propagateModuleError(instruction, ip, err)
-		}
-		value = transformed
+	transformed, err := vm.fieldBarrier(instruction, instance, name, value)
+	if err != nil {
+		return vm.propagateModuleError(instruction, ip, err)
 	}
+	value = transformed
 	if len(instruction.Operands) > 1 && instruction.Operands[1] == setFieldIntLiteral {
 		value = vm.literalFieldValue(instance, name, value)
 	}
@@ -682,6 +686,9 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 	if err != nil {
 		return 0, err
 	}
+	if err := vm.checkClassConstraints(instruction, parent, instance.TypeBindings); err != nil {
+		return 0, err
+	}
 	callArgs := append([]runtime.Value{instance}, args...)
 	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, runtime.Null{})
 	if err == nil && len(parent.ImmutableFields) > 0 && len(vm.frames) > 0 {
@@ -724,6 +731,10 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 					return 0, err
 				}
 				callArgs := append([]runtime.Value{instance}, args...)
+				if task, ok := vm.startAsyncMethod(functionIndex, callArgs); ok {
+					vm.push(task)
+					return ip, nil
+				}
 				return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, nil)
 			}
 		}
@@ -967,7 +978,11 @@ func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcInd
 				if res, err, handled := vm.callBoundDecoratedValue(instance, funcIndex, args); handled {
 					return res, err
 				}
-				return vm.CallFunctionRaw(funcIndex, append([]runtime.Value{instance}, args...))
+				callArgs := append([]runtime.Value{instance}, args...)
+				if task, ok := vm.startAsyncMethod(funcIndex, callArgs); ok {
+					return task, nil
+				}
+				return vm.CallFunctionRaw(funcIndex, callArgs)
 			},
 		}
 	}
@@ -1125,6 +1140,10 @@ func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classInd
 			return vm.propagateDecoratedCallbackError(instruction, ip, err, vm.curMod.Chunk.Functions[functionIndex].Name)
 		}
 		vm.push(result)
+		return ip, nil
+	}
+	if task, ok := vm.startAsyncMethod(functionIndex, args); ok {
+		vm.push(task)
 		return ip, nil
 	}
 	return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], args, nil)
@@ -1652,24 +1671,80 @@ func (vm *VM) classImplements(classInfo ClassInfo, target string) bool {
 }
 
 func (vm *VM) checkTypeParamConstraints(instruction Instruction, function *FunctionInfo, typeBindings map[string]string) error {
-	if len(function.TypeParamConstraintExprs) == 0 {
+	return vm.checkConstraintExprs(instruction, function.TypeParameters, function.TypeParamConstraintExprs, typeBindings)
+}
+
+// checkClassConstraints enforces a generic class's own type-parameter constraints against an instance's bindings.
+func (vm *VM) checkClassConstraints(instruction Instruction, classInfo ClassInfo, typeBindings map[string]string) error {
+	return vm.checkConstraintExprs(instruction, classInfo.TypeParameters, classInfo.TypeParamConstraintExprs, typeBindings)
+}
+
+func (vm *VM) checkInstanceClassConstraints(instruction Instruction, instance *runtime.Instance) error {
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
 		return nil
 	}
-	for i, expr := range function.TypeParamConstraintExprs {
-		if expr == "" || i >= len(function.TypeParameters) {
+	return vm.checkClassConstraints(instruction, classInfo, instance.TypeBindings)
+}
+
+func (vm *VM) checkConstraintExprs(instruction Instruction, typeParameters []string, constraintExprs []string, typeBindings map[string]string) error {
+	if len(constraintExprs) == 0 {
+		return nil
+	}
+	for i, expr := range constraintExprs {
+		if expr == "" || i >= len(typeParameters) {
 			continue
 		}
-		paramName := function.TypeParameters[i]
+		paramName := typeParameters[i]
 		boundName, ok := typeBindings[paramName]
 		if !ok {
 			continue
 		}
 		classInfo, found := vm.classInfo(boundName)
+		if !found {
+			if foreign := vm.foreignBoundClass(boundName); foreign != nil {
+				if !foreignConstraintSatisfied(boundName, foreign, expr) {
+					return vm.typedFault(instruction, "TypeError", fmt.Sprintf("type %s does not satisfy constraint %s for type parameter %s", boundName, stripOuterConstraintParens(strings.TrimSpace(expr)), paramName))
+				}
+				continue
+			}
+		}
 		if !vm.constraintExprSatisfied(boundName, classInfo, found, expr) {
 			return vm.typedFault(instruction, "TypeError", fmt.Sprintf("type %s does not satisfy constraint %s for type parameter %s", boundName, stripOuterConstraintParens(strings.TrimSpace(expr)), paramName))
 		}
 	}
 	return nil
+}
+
+// foreignBoundClass resolves a type argument declared in another module (including the entry script) to its runtime class.
+func (vm *VM) foreignBoundClass(name string) *runtime.Class {
+	if vm.moduleLoader == nil {
+		return nil
+	}
+	value, ok := vm.moduleLoader.FindClassByName(stripModulePrefix(name))
+	if !ok {
+		return nil
+	}
+	class, ok := value.(runtime.BytecodeClass)
+	if !ok {
+		return nil
+	}
+	rc, _ := vm.moduleLoader.RuntimeClassFor(class.Module, class.Name)
+	return rc
+}
+
+func foreignConstraintSatisfied(boundName string, class *runtime.Class, expr string) bool {
+	expr = stripOuterConstraintParens(strings.TrimSpace(expr))
+	if idx := topLevelConstraintOperator(expr, "|"); idx >= 0 {
+		return foreignConstraintSatisfied(boundName, class, expr[:idx]) || foreignConstraintSatisfied(boundName, class, expr[idx+1:])
+	}
+	if idx := topLevelConstraintOperator(expr, "&"); idx >= 0 {
+		return foreignConstraintSatisfied(boundName, class, expr[:idx]) && foreignConstraintSatisfied(boundName, class, expr[idx+1:])
+	}
+	if strings.EqualFold(boundName, expr) {
+		return true
+	}
+	return runtimeClassMatches(class, stripModulePrefix(expr))
 }
 
 func (vm *VM) constraintExprSatisfied(boundName string, classInfo ClassInfo, found bool, expr string) bool {

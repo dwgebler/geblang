@@ -85,6 +85,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	frame.isImmutableClass = false
 	frame.immutableFieldsToLock = nil
 	frame.lockInstance = nil
+	frame.constraintInstance = nil
 	frame.isDestructibleConstructor = false
 	frame.typeBindings = nil
 	frame.generator = nil
@@ -191,6 +192,14 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 	nextIP, err := vm.startFunction(instruction, ip, function, args, nil)
 	vm.releaseCallArgsBuffer(args)
 	return nextIP, err
+}
+
+// startAsyncMethod starts an async method body on a worker and reports whether it did; callArgs[0] is the receiver.
+func (vm *VM) startAsyncMethod(functionIndex int64, callArgs []runtime.Value) (*runtime.Task, bool) {
+	if vm.syncMode || !vm.curMod.Chunk.Functions[functionIndex].Async {
+		return nil, false
+	}
+	return vm.startAsyncFunction(functionIndex, callArgs), true
 }
 
 func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Task {
@@ -475,6 +484,8 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 		vm.frames = grown
 	}
 	vm.frames = vm.frames[:len(vm.frames)+1]
+	// syncMode only makes the entry call run inline; calls nested inside it start Tasks as usual.
+	vm.syncMode = false
 	frame := &vm.frames[len(vm.frames)-1]
 	frame.returnIP = ip
 	frame.returnOverride = nil
@@ -496,6 +507,7 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	frame.isImmutableClass = false
 	frame.immutableFieldsToLock = nil
 	frame.lockInstance = nil
+	frame.constraintInstance = nil
 	frame.isDestructibleConstructor = false
 	frame.shared = function.SharesParentFrame
 	if function.IsGenerator && vm.generatorExecution {
@@ -983,6 +995,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 		vm.frames = grown
 	}
 	vm.frames = vm.frames[:len(vm.frames)+1]
+	vm.syncMode = false
 	frame := &vm.frames[len(vm.frames)-1]
 	frame.returnIP = ip
 	frame.returnOverride = returnOverride
@@ -1004,6 +1017,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	frame.isImmutableClass = false
 	frame.immutableFieldsToLock = nil
 	frame.lockInstance = nil
+	frame.constraintInstance = nil
 	frame.isDestructibleConstructor = false
 	frame.shared = function.SharesParentFrame
 	if function.IsGenerator && vm.generatorExecution {
@@ -1732,7 +1746,7 @@ func (vm *VM) asyncTimeoutNative(args []runtime.Value) (runtime.Value, error) {
 			out.Complete(result.Value, result.Err)
 		case <-time.After(time.Duration(ms) * time.Millisecond):
 			inner.Cancel()
-			out.Complete(runtime.Null{}, fmt.Errorf("async.timeout: task did not complete within %dms", ms))
+			out.Complete(runtime.Null{}, runtime.ClassifiedError{Class: "TimeoutError", Message: fmt.Sprintf("async.timeout: task did not complete within %dms", ms)})
 		}
 	}()
 	return out, nil
@@ -2393,8 +2407,8 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 		}
 		return vm.callCallableModeHosted(chosen, args, allowInline, reentryHost)
 	case runtime.BytecodeFunction:
-		// An async function invoked as a value/callback yields a Task (the worker runs the body synchronously via syncMode), matching the evaluator and the direct-call path.
-		if f.Async && !vm.syncMode {
+		// An async function invoked as a value/callback yields a Task (the worker runs the body synchronously via syncMode), matching the evaluator and the direct-call path. A raw value is a decorated function's original body, already inside the decorated call's Task.
+		if f.Async && !f.Raw && !vm.syncMode {
 			return vm.startAsyncCallable(f, args), nil
 		}
 		if f.Module != vm.moduleName {
@@ -2410,10 +2424,15 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 		}
 		if f.Raw {
 			if vm.methodReceiverFuncs[f.Index] {
-				if vm.forwardThis == nil {
+				receiver := vm.forwardThis
+				if receiver == nil && reentryHost != nil {
+					// A bridged call from a decorator in another module carries the receiver on the calling VM.
+					receiver = reentryHost.forwardThis
+				}
+				if receiver == nil {
 					return nil, fmt.Errorf("method receiver is not available")
 				}
-				args = append([]runtime.Value{vm.forwardThis}, args...)
+				args = append([]runtime.Value{receiver}, args...)
 			}
 			return vm.CallFunctionRaw(f.Index, args)
 		}
@@ -2489,6 +2508,24 @@ func (vm *VM) CallFunction(index int64, args []runtime.Value) (runtime.Value, er
 	wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{index, int64(len(args))}})
 	wrapper = append(wrapper, Instruction{Op: OpReturn})
 	return vm.runWrapper(args, wrapper)
+}
+
+// CallRawFunctionValue runs a function value's undecorated body, prepending the forwarded receiver when it is a decorated method's original body.
+func (vm *VM) CallRawFunctionValue(f runtime.BytecodeFunction, args []runtime.Value) (runtime.Value, error) {
+	if vm.methodReceiverFuncs[f.Index] {
+		if vm.forwardThis == nil {
+			return nil, fmt.Errorf("method receiver is not available")
+		}
+		args = append([]runtime.Value{vm.forwardThis}, args...)
+	}
+	return vm.CallFunctionRaw(f.Index, args)
+}
+
+// InheritForwardThis carries the caller's decorated-method receiver onto a worker about to run code for it.
+func (vm *VM) InheritForwardThis(caller *VM) {
+	if caller != nil && vm.forwardThis == nil {
+		vm.forwardThis = caller.forwardThis
+	}
 }
 
 // CallFunctionFast enters a cross-module free function directly (no synthetic wrapper bytecode / derived call VM) when it is sync, undecorated, non-generator and non-raw; otherwise it falls back to the wrapper path with identical results.
@@ -2967,6 +3004,9 @@ func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name st
 		return vm.callCallableWithForwardThis(decorated, args, instance)
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
+	if task, ok := vm.startAsyncMethod(functionIndex, callArgs); ok {
+		return task, nil
+	}
 	return vm.CallFunction(functionIndex, callArgs)
 }
 
@@ -3007,6 +3047,9 @@ func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime
 		return vm.callCallableWithForwardThis(decorated, args, instance)
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
+	if task, ok := vm.startAsyncMethod(functionIndex, callArgs); ok {
+		return task, nil
+	}
 	return vm.CallFunction(functionIndex, callArgs)
 }
 
@@ -3063,7 +3106,11 @@ func (vm *VM) CallBoundMethodValue(instance *runtime.Instance, funcIndex int64, 
 		return res, err
 	}
 	if instance != nil {
-		return vm.CallFunctionFast(funcIndex, append([]runtime.Value{instance}, args...))
+		callArgs := append([]runtime.Value{instance}, args...)
+		if task, ok := vm.startAsyncMethod(funcIndex, callArgs); ok {
+			return task, nil
+		}
+		return vm.CallFunctionFast(funcIndex, callArgs)
 	}
 	return vm.CallFunctionFast(funcIndex, args)
 }
@@ -3107,6 +3154,10 @@ func (vm *VM) CallStaticMethod(classIndex int64, name string, args []runtime.Val
 	if err != nil {
 		return nil, err
 	}
+	return vm.callStaticFunction(functionIndex, args)
+}
+
+func (vm *VM) callStaticFunction(functionIndex int64, args []runtime.Value) (runtime.Value, error) {
 	if err := vm.ensureCallableDecorators(); err != nil {
 		return nil, err
 	}
@@ -3116,7 +3167,42 @@ func (vm *VM) CallStaticMethod(classIndex int64, name string, args []runtime.Val
 		}
 		return vm.callCallable(decorated, args)
 	}
+	if task, ok := vm.startAsyncMethod(functionIndex, args); ok {
+		return task, nil
+	}
 	return vm.CallFunction(functionIndex, args)
+}
+
+// CallStaticMethodNamed binds named arguments against a static method's own signature (engaging declared defaults), then calls it; a static inherited from another module's class is called in that module.
+func (vm *VM) CallStaticMethodNamed(classIndex int64, name string, args []runtime.Value, names []string) (runtime.Value, error) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
+		return nil, fmt.Errorf("class index out of range")
+	}
+	classInfo := vm.curMod.Chunk.Classes[classIndex]
+	indices, ok := vm.lookupStaticMethod(classInfo, name)
+	if !ok {
+		if module, parentClass, boundary := vm.crossModuleBoundary(classInfo); boundary && vm.moduleLoader != nil {
+			if parent, found := vm.moduleLoader.ClassValueInModule(module, parentClass); found {
+				if class, isClass := parent.(runtime.BytecodeClass); isClass {
+					return vm.moduleLoader.CallModuleStaticMethodNamed(class, name, args, names, vm)
+				}
+			}
+		}
+		if fallback, ok := vm.lookupStaticMethod(classInfo, "__callStatic"); ok {
+			callArgs := []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}
+			functionIndex, err := vm.selectRuntimeFunction(Instruction{}, "__callStatic", fallback, callArgs, 0)
+			if err != nil {
+				return nil, err
+			}
+			return vm.callStaticFunction(functionIndex, callArgs)
+		}
+		return nil, fmt.Errorf("unknown static method %s.%s", classInfo.Name, name)
+	}
+	functionIndex, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, name, indices, args, names, 0)
+	if err != nil {
+		return nil, err
+	}
+	return vm.callStaticFunction(functionIndex, ordered)
 }
 
 // CallStaticMethodFast enters a cross-module static method directly on the exclusive worker VM (no wrapper) when it resolves to a sync, undecorated, non-generator method; otherwise it falls back to CallStaticMethod.

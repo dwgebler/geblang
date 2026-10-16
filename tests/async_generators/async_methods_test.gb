@@ -1,0 +1,67 @@
+/**
+ * @title Async methods
+ * @summary Calling an `async func` method starts it and returns a Task, in
+ * every way a method can be called: on an instance, through `this`, inherited,
+ * with named or spread arguments, and as a bound method value.
+ */
+import test;
+import async;
+import time;
+
+class Fetcher {
+    async func fetch(int n, int extra = 0): int {
+        await async.sleep(1);
+        return n + extra;
+    }
+
+    async func slow(): int {
+        await async.sleep(150);
+        return 1;
+    }
+
+    async func broken(): int {
+        throw ValueError("unreachable host");
+    }
+
+    func viaThis(int n): any {
+        return this.fetch(n);
+    }
+}
+
+class CachingFetcher extends Fetcher {}
+
+class AsyncMethodsTest extends test.Test {
+    @test
+    func callingAnAsyncMethodReturnsATask(): void {
+        let task = Fetcher().fetch(1);
+        this.assertEquals("Task", "${typeof(task)}");
+        this.assertEquals(1, task.await());
+    }
+
+    @test
+    func everyCallShapeReturnsATask(): void {
+        let f = Fetcher();
+        let bound = f.fetch;
+        let tasks = [f.viaThis(2), CachingFetcher().fetch(3), f.fetch(4, extra: 10), f.fetch(...[5]), bound(6)];
+        for (task in tasks) {
+            this.assertEquals("Task", "${typeof(task)}");
+        }
+        this.assertEquals([2, 3, 14, 5, 6], [task.await() for task in tasks]);
+    }
+
+    @test
+    func asyncMethodsRunConcurrently(): void {
+        let f = Fetcher();
+        let started = time.monotonic();
+        let results = async.all([f.slow(), f.slow(), f.slow()]).await();
+        this.assertEquals([1, 1, 1], results);
+        this.assertLessThan(400, time.monotonic() - started);
+    }
+
+    @test
+    func anErrorSurfacesWhenTheTaskIsAwaited(): void {
+        let task = Fetcher().broken();
+        this.assertEquals("Task", "${typeof(task)}");
+        this.assertThrowsOf(func(): void { task.await(); }, "ValueError", "unreachable host");
+    }
+}

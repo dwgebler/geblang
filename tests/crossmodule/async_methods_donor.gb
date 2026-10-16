@@ -1,0 +1,24 @@
+module async_methods_donor;
+
+import async;
+
+export enum Shelf {
+    Top, Bottom;
+
+    async func capacity(): int {
+        await async.sleep(1);
+        return this == Shelf.Top ? 10 : 30;
+    }
+}
+
+export class Inventory {
+    async func stockOf(string sku): int {
+        await async.sleep(1);
+        return sku.length();
+    }
+
+    static async func warehouseCount(): int {
+        await async.sleep(1);
+        return 3;
+    }
+}

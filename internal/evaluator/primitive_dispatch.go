@@ -1351,7 +1351,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			lo, hi := 0, len(value.Elements)
 			for lo < hi {
 				mid := (lo + hi) / 2
-				cmp, err := compareValues(value.Elements[mid], target)
+				cmp, err := e.compareForOrdering(value.Elements[mid], target)
 				if err != nil {
 					return nil, err
 				}
@@ -1376,7 +1376,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				cmp, err := compareValues(key, target)
+				cmp, err := e.compareForOrdering(key, target)
 				if err != nil {
 					return nil, err
 				}
@@ -1397,7 +1397,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			lo, hi := 0, len(value.Elements)
 			for lo < hi {
 				mid := (lo + hi) / 2
-				cmp, err := compareValues(value.Elements[mid], target)
+				cmp, err := e.compareForOrdering(value.Elements[mid], target)
 				if err != nil {
 					return nil, err
 				}
@@ -1416,7 +1416,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			lo, hi := 0, len(value.Elements)
 			for lo < hi {
 				mid := (lo + hi) / 2
-				cmp, err := compareValues(value.Elements[mid], target)
+				cmp, err := e.compareForOrdering(value.Elements[mid], target)
 				if err != nil {
 					return nil, err
 				}
@@ -1444,7 +1444,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				cmp, err := compareValues(key, bestKey)
+				cmp, err := e.compareForOrdering(key, bestKey)
 				if err != nil {
 					return nil, err
 				}
@@ -1470,7 +1470,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				cmp, err := compareValues(key, bestKey)
+				cmp, err := e.compareForOrdering(key, bestKey)
 				if err != nil {
 					return nil, err
 				}
@@ -1511,7 +1511,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if sortErr != nil {
 					return false
 				}
-				cmp, err := compareValues(pairs[i].key, pairs[j].key)
+				cmp, err := e.compareForOrdering(pairs[i].key, pairs[j].key)
 				if err != nil {
 					sortErr = err
 					return false
@@ -1554,7 +1554,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if sortErr != nil {
 					return false
 				}
-				cmp, err := compareValues(pairs[i].key, pairs[j].key)
+				cmp, err := e.compareForOrdering(pairs[i].key, pairs[j].key)
 				if err != nil {
 					sortErr = err
 					return false
@@ -1696,7 +1696,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if sortErr != nil {
 					return false
 				}
-				cmp, err := compareValues(newElements[i], newElements[j])
+				cmp, err := e.compareForOrdering(newElements[i], newElements[j])
 				if err != nil {
 					sortErr = err
 					return false
@@ -1729,7 +1729,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if sortErr != nil {
 					return false
 				}
-				cmp, err := compareValues(newElements[i], newElements[j])
+				cmp, err := e.compareForOrdering(newElements[i], newElements[j])
 				if err != nil {
 					sortErr = err
 					return false

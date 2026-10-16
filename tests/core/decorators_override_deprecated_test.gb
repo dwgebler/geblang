@@ -16,6 +16,15 @@ class Dog extends Animal {
     func speak(): string { return "woof"; }
 }
 
+interface Labelled {
+    func label(): string { return "unlabelled"; }
+}
+
+class Parcel implements Labelled {
+    @override
+    func label(): string { return "fragile"; }
+}
+
 @deprecated("use modernValue")
 func legacyValue(): int { return 41; }
 
@@ -25,6 +34,11 @@ class DecoratorsOverrideDeprecatedTest extends test.Test {
     func overrideDispatchesToSubclass(): void {
         let a = Dog();
         this.assertEquals("woof", a.speak());
+    }
+
+    @test
+    func overrideOfAnInterfaceDefaultReplacesIt(): void {
+        this.assertEquals("fragile", Parcel().label());
     }
 
     @test

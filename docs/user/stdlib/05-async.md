@@ -78,8 +78,8 @@ let winner = await async.race([primary(), backup()]);
 
 `async.timeout(task, ms)` wraps a task with a millisecond deadline. If the
 inner task does not complete in time it is cancelled and the wrapper task
-re-throws a `RuntimeError` ("async.timeout: task did not complete within Nms")
-when the wrapper is awaited. The error propagates out of the script unless
+re-throws a `TimeoutError` ("async.timeout: task did not complete within Nms"),
+an `IOError` subclass, when the wrapper is awaited. The error propagates out of the script unless
 caught further up.
 
 ```gb

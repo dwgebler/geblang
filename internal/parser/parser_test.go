@@ -1,6 +1,7 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"geblang/internal/ast"
@@ -563,5 +564,35 @@ func TestParserLessThanComparisonStillParses(t *testing.T) {
 		if len(prog.Statements) == 0 {
 			t.Fatalf("input %q: no statements parsed", src)
 		}
+	}
+}
+
+func TestParserParsesStaticAsyncMethodAndRejectsReversedOrder(t *testing.T) {
+	p := parser.New(lexer.New("class A {\n    static async func f(): int { return 1; }\n}\n"))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("unexpected parse errors: %v", p.Errors())
+	}
+	class := program.Statements[0].(*ast.ClassStatement)
+	fn := class.Members[0].(*ast.FunctionStatement)
+	if !fn.Static || !fn.Async {
+		t.Fatalf("expected a static async method, got static=%v async=%v", fn.Static, fn.Async)
+	}
+	reversed := parser.New(lexer.New("class A {\n    async static func f(): int { return 1; }\n}\n"))
+	reversed.ParseProgram()
+	if len(reversed.Errors()) == 0 || !strings.Contains(reversed.Errors()[0], "static async func") {
+		t.Fatalf("expected an error suggesting `static async func`, got %v", reversed.Errors())
+	}
+}
+
+func TestParserParsesAsyncEnumMethods(t *testing.T) {
+	p := parser.New(lexer.New("enum Light {\n    Red, Green;\n    async func next(): string { return \"x\"; }\n    func label(): string { return \"y\"; }\n}\n"))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("unexpected parse errors: %v", p.Errors())
+	}
+	enum := program.Statements[0].(*ast.EnumStatement)
+	if len(enum.Methods) != 2 || !enum.Methods[0].Async || enum.Methods[1].Async {
+		t.Fatalf("expected one async and one sync method, got %+v", enum.Methods)
 	}
 }

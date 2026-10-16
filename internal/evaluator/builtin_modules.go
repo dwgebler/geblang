@@ -362,7 +362,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"isEmpty":         collectionsIsEmpty,
 			"contains":        collectionsContains,
 			"reverse":         collectionsReverse,
-			"sort":            collectionsSort,
+			"sort":            e.collectionsSort,
 			"join":            collectionsJoin,
 			"range":           collectionsRange,
 			"take":            collectionsTake,

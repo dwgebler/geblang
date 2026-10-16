@@ -1,0 +1,7 @@
+module qualified_generics_boxes;
+
+export class Crate<T> {
+    list<T> contents = [];
+
+    func add(T item): void { this.contents.push(item); }
+}

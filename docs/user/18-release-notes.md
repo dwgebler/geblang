@@ -1,5 +1,98 @@
 # Release Notes
 
+## 1.37.3
+
+### Language
+
+- `static async func` declares an async static method; calling it returns a
+  `Task` on both backends. The reversed `async static func` is a parse error
+  that suggests the canonical order.
+- Enum methods can be `async func`; calling one on a variant returns a `Task`,
+  including on an enum from another module.
+- Instances of a class with an ordering dunder (`__lt` or `__gt`) can be sorted
+  and ranked: `sort()`, `sorted()`, `sortBy`, `minBy`, `maxBy`, `topK`,
+  `bottomK`, `topBy`, the binary searches, and `collections.sort` use it, as
+  the `<` operator does.
+
+### Fixes
+
+- `geblang fmt` no longer drops code. It used to delete interface properties
+  and default methods, field decorators, destructors, enum backing types and
+  values, and could turn an inclusive slice `xs[1..3]` into an exclusive one or
+  unwrap a string literal written inside `${...}`. Its safety check now compares
+  the whole syntax tree, so any construct it cannot print faithfully is refused
+  and the file is left unchanged.
+- `geblang fmt` keeps a chain of `catch` clauses on one line, places decorators
+  before `export`, and preserves blank lines between enum methods.
+- On the bytecode VM, operator and protocol dunders work on instances of a class
+  imported from another module and on local subclasses that inherit them:
+  `<`, `>`, `<=`, `>=`, `==`, arithmetic, bitwise and prefix operators, `in`,
+  subscripts, and `as` casts. Comparisons previously failed with
+  `unknown class`, and a subclass lost every inherited operator.
+- On the bytecode VM, a decorator function imported with `from m import f`
+  now applies to functions, methods, classes, and fields, as it does on the
+  evaluator; it was previously ignored. A method decorator from one module
+  applied to a class in another keeps `this` when it calls the wrapped method.
+- `geblang build` bundles modules that are reached only through
+  `from module import name`; such a module was left out of the binary, which
+  then failed at run time with `cannot resolve module`.
+- On the bytecode VM, calling an `async func` method returns a `Task`, as on the
+  evaluator, instead of running the method to completion and returning its
+  value. This holds for every call shape: on an instance or through `this`,
+  inherited, with named or spread arguments, as a bound method value, and on a
+  class from another module.
+- On the bytecode VM, an async function or method called from inside other async
+  code, or from a callback, returns a `Task` instead of running inline, so
+  fan-out inside an async function (`async.all([...])`) runs concurrently. A
+  decorated async function stays a single Task: the decorator's call to the
+  original body runs inside it.
+- A generic class or function constrained with `<T implements X>` accepts a type
+  argument declared in another module (including the entry script) when it
+  satisfies the constraint; it was rejected with `type ... does not satisfy
+  constraint` on both backends.
+- On the bytecode VM, a generic class's constraints are checked when an
+  instance is built, as on the evaluator: `Basket<Rock>()` with no constructor,
+  and a subclass whose `extends Base<Rock>` clause breaks the base's constraint,
+  now raise `TypeError` instead of succeeding.
+- On the bytecode VM, a generic type whose type argument is qualified by a
+  module alias (`boxes.Crate<goods.Apple>`) matches correctly as a field,
+  parameter, or variable type and as an `instanceof` target; it was rejected
+  with `cannot assign` or tested false.
+- A field decorator runs on every assignment to its field, as documented,
+  including assignments written in another module, compound assignments, and
+  assignments in a subclass declared elsewhere; previously only assignments
+  inside the declaring module ran it. On the bytecode VM a subclass in the same
+  module also skipped an inherited field's decorator.
+- A field decorator resolves in the scope that declares the class, so a
+  constructor parameter with the same name (`@sku string sku;` with
+  `func Product(string sku)`) no longer shadows it; the evaluator reported
+  `decorator is not callable: string`.
+- On the evaluator, an overloaded operator method (`__mul(int)` and
+  `__mul(decimal)`, `__index(int)` and `__index(string)`, ...) dispatches to
+  the overload matching the operand, as on the VM; it always called the first
+  declaration.
+- A `match` case can destructure a variant of an enum from another module
+  through its module alias (`case shipping.Quote.Offered(string c, Money p)`),
+  which was a parse error, and `instanceof shipping.Quote.Offered` tests the
+  variant on both backends.
+- `x == null` and `x != null` compare with null directly on both backends; a
+  class's `__eq` is no longer called with `null`, which raised `TypeError` when
+  `__eq` was typed for its own class. The same holds inside lists and dicts.
+- An expired `async.timeout(task, ms)` raises `TimeoutError` (an `IOError`
+  subclass) instead of `RuntimeError`, so a timeout can be caught on its own.
+  Code that caught the timeout as `RuntimeError` should catch `TimeoutError`.
+- On the bytecode VM, `assertThrowsOf(fn, "IOError")` accepts a `TimeoutError`
+  or `TlsError`, as `catch (IOError e)` and the evaluator already did.
+- `geblang check` tracks the result type of built-in methods through a chain,
+  so `value.trim().upper().matches(...)` is reported as
+  `string has no method matches` instead of failing only at run time.
+- On the bytecode VM, named arguments to a static method of a class from
+  another module, or inherited from one (`pricing.Pricing.total(net: 100)`),
+  bind by name; they failed or were bound positionally.
+- `@override` accepts a method that replaces an interface's default method;
+  `geblang check` and both backends reported that no ancestor or interface
+  declared it.
+
 ## 1.37.2
 
 ### Fixes

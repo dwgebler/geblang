@@ -107,7 +107,7 @@ func collectionsReverse(call *ast.CallExpression, args []runtime.Value) (runtime
 	}
 }
 
-func collectionsSort(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) collectionsSort(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
 	}
@@ -121,7 +121,7 @@ func collectionsSort(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 		if compareErr != nil {
 			return false
 		}
-		cmp, err := compareValues(out[i], out[j])
+		cmp, err := e.compareForOrdering(out[i], out[j])
 		if err != nil {
 			compareErr = err
 			return false

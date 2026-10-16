@@ -23,6 +23,29 @@ io.println(task.done());
 io.println(task.await());
 ```
 
+### Async methods
+
+Methods can be async too. Calling one starts it and returns a `Task`, however
+the method is reached: on an instance, through `this`, inherited, as a bound
+method value, or on a class from another module. A static method is written
+`static async func`:
+
+```gb
+class Rates {
+    async func refresh(): int { ... }
+    static async func fetch(string code): decimal { ... }
+}
+
+let pending = [Rates.fetch(code) for code in ["GBP", "EUR"]];
+let rates = await async.all(pending);
+```
+
+Enum methods can be async as well (`async func` inside the enum's method
+block); calling one on a variant returns a `Task`.
+
+An async call made inside another async function or method also returns a
+`Task`, so fan-out inside async code runs concurrently.
+
 ## Async Module
 
 ```gb
@@ -87,7 +110,7 @@ cancelled on the first failure), see Structured Concurrency below.
 
 `async.timeout(task, ms)` wraps a task with a deadline. If the task does not
 complete within the given milliseconds, the wrapping task fails with a
-`RuntimeError` and the inner task is cancelled.
+`TimeoutError` (an `IOError` subclass) and the inner task is cancelled.
 
 ```gb
 let slow = async.run(func(): string {
@@ -95,8 +118,8 @@ let slow = async.run(func(): string {
     return "never";
 });
 
-# Awaiting the timeout wrapper raises a runtime error when the deadline expires:
-let result = await async.timeout(slow, 50);   # runtime error after 50ms
+# Awaiting the timeout wrapper raises TimeoutError when the deadline expires:
+let result = await async.timeout(slow, 50);   # TimeoutError after 50ms
 ```
 
 ### Cancellation

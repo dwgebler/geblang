@@ -413,6 +413,17 @@ let text = match (result) {
 };
 ```
 
+An enum imported from another module can be named through its module alias:
+
+```gb
+import shop.shipping as shipping;
+
+let label = match (quote) {
+    case shipping.Quote.Offered(string carrier, Money price) => "${carrier}: ${price}";
+    case shipping.Quote.Declined(string carrier, string reason) => "${carrier} declined";
+};
+```
+
 ### List patterns
 
 A bracketed pattern matches a list of exactly that length and

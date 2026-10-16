@@ -1,0 +1,38 @@
+/**
+ * @title Comparing with null
+ * @summary `== null` and `!= null` test for null directly; a class's `__eq`
+ * (typed for its own class) is never called with null, at top level or inside
+ * a collection.
+ */
+import test;
+
+class Money {
+    int pence;
+
+    func Money(int pence) { this.pence = pence; }
+
+    func __eq(Money other): bool { return this.pence == other.pence; }
+}
+
+class NullEqualityTest extends test.Test {
+    @test
+    func comparingAnInstanceWithNullDoesNotCallEq(): void {
+        ?Money price = Money(100);
+        this.assertFalse(price == null);
+        this.assertTrue(price != null);
+        this.assertTrue(price == Money(100));
+    }
+
+    @test
+    func aNullVariableEqualsNull(): void {
+        ?Money price = null;
+        this.assertTrue(price == null);
+        this.assertFalse(price != null);
+    }
+
+    @test
+    func nullInsideCollectionsComparesByIdentity(): void {
+        this.assertFalse([Money(1)] == [null]);
+        this.assertTrue([null] == [null]);
+    }
+}

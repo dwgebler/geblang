@@ -115,7 +115,7 @@ func (vm *VM) collectionsNativeCall(fn string, args []runtime.Value) (runtime.Va
 			if sortErr != nil {
 				return false
 			}
-			cmp, err := valuesCompare(out[i], out[j])
+			cmp, err := vm.compareForOrdering(out[i], out[j])
 			if err != nil {
 				sortErr = err
 				return false
@@ -401,6 +401,52 @@ func (vm *VM) collectionsNativeLazyFilter(args []runtime.Value) (runtime.Value, 
 	}), nil
 }
 
+// compareForOrdering orders two values for sorting and min/max-style operations: instances through their ordering dunders, as the < operator would, anything else by the shared value ordering.
+func (vm *VM) compareForOrdering(left, right runtime.Value) (int, error) {
+	_, leftInstance := left.(*runtime.Instance)
+	_, rightInstance := right.(*runtime.Instance)
+	if !leftInstance && !rightInstance {
+		return valuesCompare(left, right)
+	}
+	less, err := vm.instanceLess(left, right)
+	if err != nil || less {
+		return -1, err
+	}
+	greater, err := vm.instanceLess(right, left)
+	if err != nil || greater {
+		return 1, err
+	}
+	return 0, nil
+}
+
+// instanceLess resolves left < right like the operator: __lt on the left, else __gt on the right.
+func (vm *VM) instanceLess(left, right runtime.Value) (bool, error) {
+	attempts := []struct {
+		recv runtime.Value
+		name string
+		arg  runtime.Value
+	}{{left, "__lt", right}, {right, "__gt", left}}
+	for _, at := range attempts {
+		instance, ok := at.recv.(*runtime.Instance)
+		if !ok {
+			continue
+		}
+		result, handled, err := vm.invokeInstanceMethod(instance, at.name, []runtime.Value{at.arg})
+		if err != nil {
+			return false, err
+		}
+		if !handled {
+			continue
+		}
+		b, ok := result.(runtime.Bool)
+		if !ok {
+			return false, fmt.Errorf("%s.%s must return bool", instance.Class.Name, at.name)
+		}
+		return b.Value, nil
+	}
+	return false, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("cannot compare %s and %s", left.TypeName(), right.TypeName())}
+}
+
 func valuesCompare(left, right runtime.Value) (int, error) {
 	if ls, ok := left.(runtime.String); ok {
 		if rs, ok := right.(runtime.String); ok {
@@ -437,7 +483,7 @@ func (vm *VM) sortElements(elements []runtime.Value, args []runtime.Value) error
 			}
 			return less
 		}
-		cmp, err := valuesCompare(elements[i], elements[j])
+		cmp, err := vm.compareForOrdering(elements[i], elements[j])
 		if err != nil {
 			sortErr = err
 			return false
@@ -962,7 +1008,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		lo, hi := 0, len(list.Elements)
 		for lo < hi {
 			mid := (lo + hi) / 2
-			cmp, err := valuesCompare(list.Elements[mid], target)
+			cmp, err := vm.compareForOrdering(list.Elements[mid], target)
 			if err != nil {
 				return nil, true, err
 			}
@@ -987,7 +1033,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			cmp, err := valuesCompare(key, target)
+			cmp, err := vm.compareForOrdering(key, target)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1008,7 +1054,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		lo, hi := 0, len(list.Elements)
 		for lo < hi {
 			mid := (lo + hi) / 2
-			cmp, err := valuesCompare(list.Elements[mid], target)
+			cmp, err := vm.compareForOrdering(list.Elements[mid], target)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1027,7 +1073,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		lo, hi := 0, len(list.Elements)
 		for lo < hi {
 			mid := (lo + hi) / 2
-			cmp, err := valuesCompare(list.Elements[mid], target)
+			cmp, err := vm.compareForOrdering(list.Elements[mid], target)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1055,7 +1101,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			cmp, err := valuesCompare(key, bestKey)
+			cmp, err := vm.compareForOrdering(key, bestKey)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1081,7 +1127,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			cmp, err := valuesCompare(key, bestKey)
+			cmp, err := vm.compareForOrdering(key, bestKey)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1122,7 +1168,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if sortErr != nil {
 				return false
 			}
-			cmp, err := valuesCompare(pairs[i].key, pairs[j].key)
+			cmp, err := vm.compareForOrdering(pairs[i].key, pairs[j].key)
 			if err != nil {
 				sortErr = err
 				return false
@@ -1165,7 +1211,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if sortErr != nil {
 				return false
 			}
-			cmp, err := valuesCompare(pairs[i].key, pairs[j].key)
+			cmp, err := vm.compareForOrdering(pairs[i].key, pairs[j].key)
 			if err != nil {
 				sortErr = err
 				return false
@@ -1311,7 +1357,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if sortErr != nil {
 				return false
 			}
-			cmp, err := valuesCompare(newElements[i], newElements[j])
+			cmp, err := vm.compareForOrdering(newElements[i], newElements[j])
 			if err != nil {
 				sortErr = err
 				return false
@@ -1344,7 +1390,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if sortErr != nil {
 				return false
 			}
-			cmp, err := valuesCompare(newElements[i], newElements[j])
+			cmp, err := vm.compareForOrdering(newElements[i], newElements[j])
 			if err != nil {
 				sortErr = err
 				return false

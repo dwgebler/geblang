@@ -1,0 +1,30 @@
+module imported_decorators_aspects;
+
+export class Transient extends RuntimeError {
+    func Transient(string message) { parent(message); }
+}
+
+export func retry(callable next, int attempts): callable {
+    return func(any ...args): any {
+        int attempt = 1;
+        while (true) {
+            try {
+                return next(...args);
+            } catch (Transient e) {
+                if (attempt >= attempts) { throw e; }
+                attempt += 1;
+            }
+        }
+    };
+}
+
+export func bracket(callable next, string open = "[", string close = "]"): callable {
+    return func(any ...args): any { return open + next(...args) + close; };
+}
+
+export func trimmed(string value): string { return value.trim(); }
+
+export func atLeast(int min, int value): int {
+    if (value < min) { throw ValueError("must be at least ${min}"); }
+    return value;
+}

@@ -1,0 +1,44 @@
+/**
+ * @title Field decorator scope
+ * @summary A field decorator resolves in the scope that declares the class,
+ * so a constructor parameter with the same name does not shadow it, and an
+ * inherited decorated field keeps its decorator in a subclass.
+ */
+import test;
+
+func sku(string value): string { return value.trim().upper(); }
+
+func tagged(string value): string { return "#" + value; }
+
+class Product {
+    @sku
+    string sku;
+
+    @tagged
+    string label;
+
+    func Product(string sku, string label) {
+        this.sku = sku;
+        this.label = label;
+    }
+}
+
+class Special extends Product {
+    func Special(string sku) { parent(sku, "offer"); }
+
+    func relabel(string label): void { this.label = label; }
+}
+
+class FieldDecoratorScopeTest extends test.Test {
+    @test
+    func aParameterNamedLikeTheDecoratorDoesNotShadowIt(): void {
+        this.assertEquals("AB-1", Product(" ab-1 ", "a").sku);
+    }
+
+    @test
+    func aSubclassAssignmentRunsTheInheritedDecorator(): void {
+        let special = Special("cd");
+        special.relabel("sale");
+        this.assertEquals("#sale", special.label);
+    }
+}

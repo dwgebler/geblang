@@ -2,6 +2,7 @@ package check
 
 import (
 	"sort"
+	"strings"
 
 	"geblang/internal/ast"
 )
@@ -109,7 +110,14 @@ func (v *astVisitor) matchCases(cases []ast.MatchCase) {
 		v.typ(clause.Type)
 		v.bind(clause.Name)
 		if clause.EnumVariant != nil {
-			v.ident(clause.EnumVariant.Enum)
+			enum := clause.EnumVariant.Enum
+			if enum != nil {
+				if dot := strings.IndexByte(enum.Value, '.'); dot >= 0 {
+					// A qualified pattern uses the module alias, not a name of its own.
+					enum = &ast.Identifier{Token: enum.Token, Value: enum.Value[:dot]}
+				}
+			}
+			v.ident(enum)
 			for _, param := range clause.EnumVariant.Params {
 				v.typ(param.Type)
 				v.bind(param.Name)

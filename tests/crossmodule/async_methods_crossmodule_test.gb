@@ -1,0 +1,39 @@
+/**
+ * @title Async methods across modules
+ * @summary An async method on a class imported from another module, or
+ * inherited from one, returns a Task.
+ */
+import test;
+import async_methods_donor as donor;
+
+class Warehouse extends donor.Inventory {}
+
+class AsyncMethodsCrossModuleTest extends test.Test {
+    @test
+    func importedAsyncMethodReturnsATask(): void {
+        let task = donor.Inventory().stockOf("bolt");
+        this.assertEquals("Task", "${typeof(task)}");
+        this.assertEquals(4, task.await());
+    }
+
+    @test
+    func importedStaticAsyncMethodReturnsATask(): void {
+        let task = donor.Inventory.warehouseCount();
+        this.assertEquals("Task", "${typeof(task)}");
+        this.assertEquals(3, task.await());
+    }
+
+    @test
+    func importedAsyncEnumMethodReturnsATask(): void {
+        let task = donor.Shelf.Bottom.capacity();
+        this.assertEquals("Task", "${typeof(task)}");
+        this.assertEquals(30, task.await());
+    }
+
+    @test
+    func inheritedAsyncMethodReturnsATask(): void {
+        let task = Warehouse().stockOf("washer");
+        this.assertEquals("Task", "${typeof(task)}");
+        this.assertEquals(6, task.await());
+    }
+}

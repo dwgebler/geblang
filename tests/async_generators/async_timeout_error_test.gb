@@ -1,0 +1,33 @@
+/**
+ * @title async.timeout raises TimeoutError
+ * @summary An expired `async.timeout` raises `TimeoutError`, which is also an
+ * `IOError`, so callers can handle a timeout separately from other failures.
+ */
+import test;
+import async;
+
+async func slowLookup(): string {
+    await async.sleep(300);
+    return "late";
+}
+
+class AsyncTimeoutErrorTest extends test.Test {
+    @test
+    func anExpiredTimeoutRaisesTimeoutError(): void {
+        this.assertThrowsOf(
+            func(): void { async.timeout(slowLookup(), 20).await(); },
+            "TimeoutError",
+            "did not complete within"
+        );
+    }
+
+    @test
+    func aTimeoutIsAlsoAnIOError(): void {
+        this.assertThrowsOf(func(): void { async.timeout(slowLookup(), 20).await(); }, "IOError");
+    }
+
+    @test
+    func aTaskThatFinishesInTimeReturnsItsValue(): void {
+        this.assertEquals("late", async.timeout(slowLookup(), 2000).await());
+    }
+}

@@ -74,19 +74,18 @@ func (vm *VM) applyCallableDecoratorsForClass(index int64, classInfo ClassInfo) 
 		if decorator.Name == "" {
 			continue
 		}
-		indices := vm.decoratorFunctionIndices(decorator.Name)
-		if len(indices) == 0 {
-			continue
-		}
 		args, names, err := decoratorCallArguments(current, decorator)
 		if err != nil {
 			return nil, false, vm.decoratorFault(classInfo.DefLine, "decorator @"+decorator.Name+": ", err)
 		}
-		functionIndex, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, decorator.Name, indices, args, names, 0)
-		if err != nil {
-			return nil, false, vm.decoratorFault(classInfo.DefLine, "decorator @"+decorator.Name+" cannot be called for class "+classInfo.Name+": ", err)
+		result, found, err := vm.callDecorator(decorator.Name, args, names)
+		if !found {
+			continue
 		}
-		result, err := vm.CallFunctionRaw(functionIndex, ordered)
+		var bind *decoratorBindError
+		if errors.As(err, &bind) {
+			return nil, false, vm.decoratorFault(classInfo.DefLine, "decorator @"+decorator.Name+" cannot be called for class "+classInfo.Name+": ", bind.err)
+		}
 		if err != nil {
 			return nil, false, vm.decoratorFault(classInfo.DefLine, "decorator @"+decorator.Name+": ", err)
 		}
@@ -115,19 +114,18 @@ func (vm *VM) applyCallableDecoratorsForFunction(index int64, function FunctionI
 		if decorator.Target == "method" {
 			vm.methodReceiverFuncs[index] = true
 		}
-		indices := vm.decoratorFunctionIndices(decorator.Name)
-		if len(indices) == 0 {
-			continue
-		}
 		args, names, err := decoratorCallArguments(current, decorator)
 		if err != nil {
 			return nil, false, vm.decoratorFault(function.DefLine, "decorator @"+decorator.Name+": ", err)
 		}
-		functionIndex, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, decorator.Name, indices, args, names, 0)
-		if err != nil {
-			return nil, false, vm.decoratorFault(function.DefLine, "decorator @"+decorator.Name+" cannot be called for "+bareFunctionName(function.Name)+": ", err)
+		result, found, err := vm.callDecorator(decorator.Name, args, names)
+		if !found {
+			continue
 		}
-		result, err := vm.CallFunctionRaw(functionIndex, ordered)
+		var bind *decoratorBindError
+		if errors.As(err, &bind) {
+			return nil, false, vm.decoratorFault(function.DefLine, "decorator @"+decorator.Name+" cannot be called for "+bareFunctionName(function.Name)+": ", bind.err)
+		}
 		if err != nil {
 			return nil, false, vm.decoratorFault(function.DefLine, "decorator @"+decorator.Name+": ", err)
 		}
@@ -167,21 +165,34 @@ func (vm *VM) decoratorWrapperCompatible(original FunctionInfo, target string, w
 func (vm *VM) callableArityRange(value runtime.Value) (int, int, bool, bool) {
 	switch callable := value.(type) {
 	case runtime.BytecodeFunction:
-		if callable.Index < 0 || int(callable.Index) >= len(vm.curMod.Chunk.Functions) {
+		info, ok := vm.functionInfoIn(callable.Module, callable.Index)
+		if !ok {
 			return 0, 0, false, false
 		}
-		min, max, variadic := bytecodeFunctionArityRange(vm.curMod.Chunk.Functions[callable.Index], 0)
+		min, max, variadic := bytecodeFunctionArityRange(info, 0)
 		return min, max, variadic, true
 	case runtime.BytecodeClosure:
-		if callable.FunctionIndex < 0 || int(callable.FunctionIndex) >= len(vm.curMod.Chunk.Functions) {
+		info, ok := vm.functionInfoIn(callable.Module, callable.FunctionIndex)
+		if !ok {
 			return 0, 0, false, false
 		}
-		info := vm.curMod.Chunk.Functions[callable.FunctionIndex]
 		min, max, variadic := bytecodeFunctionArityRange(info, int(info.UpvalueCount))
 		return min, max, variadic, true
 	default:
 		return 0, 0, false, false
 	}
+}
+
+// functionInfoIn finds a function declaration in its home chunk, which differs from the current one for a callable from another module.
+func (vm *VM) functionInfoIn(module string, index int64) (FunctionInfo, bool) {
+	if module != vm.moduleName && vm.moduleLoader != nil {
+		info, err := vm.moduleLoader.ModuleFunctionInfo(module, index)
+		return info, err == nil
+	}
+	if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
+		return FunctionInfo{}, false
+	}
+	return vm.curMod.Chunk.Functions[index], true
 }
 
 func bytecodeFunctionArityRange(function FunctionInfo, offset int) (int, int, bool) {
@@ -203,6 +214,54 @@ func bytecodeFunctionArityRange(function FunctionInfo, offset int) (int, int, bo
 		min--
 	}
 	return min, max, variadic
+}
+
+// decoratorBindError marks a decorator whose arguments match none of its signatures, as opposed to one that failed while running.
+type decoratorBindError struct{ err error }
+
+func (e *decoratorBindError) Error() string { return e.err.Error() }
+
+// callDecorator calls the function a decorator name resolves to (local or `from`-imported); found is false for a metadata-only decorator.
+func (vm *VM) callDecorator(name string, args []runtime.Value, names []string) (runtime.Value, bool, error) {
+	if indices := vm.decoratorFunctionIndices(name); len(indices) > 0 {
+		functionIndex, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, name, indices, args, names, 0)
+		if err != nil {
+			return nil, true, &decoratorBindError{err}
+		}
+		result, err := vm.CallFunctionRaw(functionIndex, ordered)
+		return result, true, err
+	}
+	imported, err := vm.importedDecorator(name)
+	if err != nil || imported == nil {
+		return nil, err != nil, err
+	}
+	ordered, err := vm.reorderCallableNamedArgs(Instruction{}, imported, args, names)
+	if err != nil {
+		return nil, true, &decoratorBindError{err}
+	}
+	result, err := vm.callCallable(imported, ordered)
+	return result, true, err
+}
+
+// importedDecorator resolves a name bound by `from m import f` to m's exported callable, loading m if needed.
+func (vm *VM) importedDecorator(name string) (runtime.Value, error) {
+	target, ok := vm.curMod.Chunk.FromImports[name]
+	if !ok || vm.moduleLoader == nil {
+		return nil, nil
+	}
+	dot := strings.LastIndexByte(target, '.')
+	if dot < 0 {
+		return nil, nil
+	}
+	module, err := vm.moduleLoader.LoadModule(target[:dot], "")
+	if err != nil {
+		return nil, err
+	}
+	value, ok := module.Exports[target[dot+1:]]
+	if !ok || !runtime.IsCallableValue(value) {
+		return nil, nil
+	}
+	return value, nil
 }
 
 func (vm *VM) decoratorFunctionIndices(name string) []int64 {
@@ -277,6 +336,58 @@ func validateDecoratorArgument(value runtime.Value) error {
 	return nil
 }
 
+// fieldBarrier runs a field's write-barrier decorators in the module whose class declares the field, whichever module performs the assignment.
+func (vm *VM) fieldBarrier(instruction Instruction, instance *runtime.Instance, name string, value runtime.Value) (runtime.Value, error) {
+	if instance.Class == nil {
+		return value, nil
+	}
+	if instance.Class.Module != vm.moduleName {
+		if vm.moduleLoader == nil {
+			return value, nil
+		}
+		return vm.moduleLoader.ApplyModuleFieldDecorators(instance.Class.Module, instance.Class.Name, name, value, vm)
+	}
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return value, nil
+	}
+	return vm.applyInheritedFieldDecorators(instruction, classInfo, name, value)
+}
+
+// applyInheritedFieldDecorators finds the nearest class in the chain declaring decorators for the field, crossing into a parent's module when the chain leaves this chunk.
+func (vm *VM) applyInheritedFieldDecorators(instruction Instruction, classInfo ClassInfo, name string, value runtime.Value) (runtime.Value, error) {
+	for ci := classInfo; ; {
+		if fieldHasDecorators(ci, name) {
+			return vm.applyFieldDecorators(instruction, ci, name, value)
+		}
+		if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+			ci = vm.curMod.Chunk.Classes[ci.ParentIndex]
+			continue
+		}
+		if module, parent, ok := splitQualifiedClassName(ci.ParentName); ok && vm.moduleLoader != nil {
+			return vm.moduleLoader.ApplyModuleFieldDecorators(module, parent, name, value, vm)
+		}
+		return value, nil
+	}
+}
+
+// ApplyFieldDecoratorsForClass runs the write barrier for a field assigned on an instance of the class at classIndex, from another module.
+func (vm *VM) ApplyFieldDecoratorsForClass(classIndex int64, name string, value runtime.Value) (runtime.Value, error) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
+		return value, nil
+	}
+	return vm.applyInheritedFieldDecorators(Instruction{}, vm.curMod.Chunk.Classes[classIndex], name, value)
+}
+
+func fieldHasDecorators(classInfo ClassInfo, name string) bool {
+	for i, fname := range classInfo.FieldNames {
+		if strings.EqualFold(fname, name) {
+			return i < len(classInfo.FieldDecorators) && len(classInfo.FieldDecorators[i]) > 0
+		}
+	}
+	return false
+}
+
 func (vm *VM) applyFieldDecorators(instruction Instruction, classInfo ClassInfo, name string, value runtime.Value) (runtime.Value, error) {
 	fieldIndex := -1
 	for i, fname := range classInfo.FieldNames {
@@ -297,13 +408,25 @@ func (vm *VM) applyFieldDecorators(instruction Instruction, classInfo ClassInfo,
 		if dec.Name == "" {
 			continue
 		}
-		indices := vm.decoratorFunctionIndices(dec.Name)
-		if len(indices) == 0 {
-			continue
-		}
 		callArgs := make([]runtime.Value, 0, len(dec.Args)+1)
 		callArgs = append(callArgs, dec.Args...)
 		callArgs = append(callArgs, value)
+		indices := vm.decoratorFunctionIndices(dec.Name)
+		if len(indices) == 0 {
+			imported, err := vm.importedDecorator(dec.Name)
+			if err != nil {
+				return nil, err
+			}
+			if imported == nil {
+				continue
+			}
+			result, err := vm.callCallable(imported, callArgs)
+			if err != nil {
+				return nil, err
+			}
+			value = result
+			continue
+		}
 		functionIndex, err := vm.selectRuntimeFunction(instruction, dec.Name, indices, callArgs, 0)
 		if err != nil {
 			return nil, vm.runtimeError(instruction, "field decorator @%s: %s", dec.Name, err.Error())

@@ -1,0 +1,22 @@
+/**
+ * @title Named arguments to static methods across modules
+ * @summary A static method of a class from another module, or inherited from
+ * one, accepts named arguments, including skipping a middle default.
+ */
+import test;
+import static_named_args_donor as donor;
+
+class ShopPricing extends donor.Pricing {}
+
+class StaticNamedArgsCrossModuleTest extends test.Test {
+    @test
+    func namedArgumentsBindByName(): void {
+        this.assertEquals(120, donor.Pricing.total(net: 100));
+        this.assertEquals(115, donor.Pricing.total(100, discount: 5));
+    }
+
+    @test
+    func inheritedStaticAcceptsNamedArguments(): void {
+        this.assertEquals(110, ShopPricing.total(vatPercent: 10, net: 100));
+    }
+}

@@ -417,7 +417,8 @@ extends another class must declare its own constructor.
 ## @override
 
 Annotate a method with `@override` to assert that it overrides a method of the
-same name declared on an ancestor class or an implemented interface. If neither
+same name declared on an ancestor class or an implemented interface, including
+an interface's default method. If neither
 declares it, it is a compile-time error - which catches a parent or interface
 method that was renamed or removed out from under the override.
 
@@ -622,7 +623,10 @@ A decorator applied to a `func` or `class` declaration whose name
 resolves to a function in scope **wraps the target**. The target value
 is passed to the decorator at definition time, and the decorator's
 return value replaces it. Use this to add cross-cutting behaviour like
-logging, caching, retry, or timing.
+logging, caching, retry, or timing. A function brought in with
+`from module import name` counts as in scope, so a module of reusable
+aspects can be shared across a codebase (`from aspects import retry;` then
+`@retry(3)`). A dotted name such as `@aspects.retry` is always metadata.
 
 ```gb
 func log(callable fn): callable {
@@ -1010,8 +1014,12 @@ Callable objects can be passed to parameters typed as `callable`.
 
 Operator methods customize how instances interact with operators:
 
-- equality: `__eq(other)`
-- ordering: `__lt(other)`, `__lte(other)`, `__gt(other)`, `__gte(other)`
+- equality: `__eq(other)` (never called for `== null` / `!= null`, which
+  compare with null directly)
+- ordering: `__lt(other)`, `__lte(other)`, `__gt(other)`, `__gte(other)`;
+  defining `__lt` (or `__gt`) also lets instances be sorted and ranked by
+  `sort()`, `sorted()`, `sortBy`, `minBy`, `maxBy`, `topK`, `bottomK`,
+  `topBy`, `binarySearch`, `lowerBound`, `upperBound`, and `collections.sort`
 - arithmetic: `__add`, `__sub`, `__mul`, `__div`, `__intdiv`, `__mod`,
   `__pow`
 - bitwise: `__bitand`, `__bitor`, `__bitxor`, `__lshift`, `__rshift`

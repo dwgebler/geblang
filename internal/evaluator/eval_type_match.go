@@ -14,6 +14,15 @@ import (
 	"unicode/utf8"
 )
 
+// enumVariantTest treats `[module.]Enum.Variant` naming ev's enum as a variant test; a `module.Interface` or `module.Enum` name is not one.
+func enumVariantTest(ev runtime.EnumVariant, typeName string) (matches bool, isVariantTest bool) {
+	segments := strings.Split(typeName, ".")
+	if len(segments) < 2 || !strings.EqualFold(ev.Enum.Name, segments[len(segments)-2]) {
+		return false, false
+	}
+	return strings.EqualFold(ev.Variant, segments[len(segments)-1]), true
+}
+
 // valueMatchesType (method form) is the evaluator-aware variant of the
 // free function. It walks `errorClassParents` so cross-module
 // user-defined error class hierarchies (BadRequestError -> HttpException
@@ -21,13 +30,9 @@ import (
 // function is preserved for call sites that don't have an *Evaluator
 // in hand and only care about plain class / interface matching.
 func (e *Evaluator) valueMatchesType(value runtime.Value, typeName string) bool {
-	if dotIdx := strings.Index(typeName, "."); dotIdx >= 0 {
-		if ev, ok := value.(runtime.EnumVariant); ok {
-			enumTypeName := typeName[:dotIdx]
-			variantName := typeName[dotIdx+1:]
-			if strings.EqualFold(ev.Enum.Name, enumTypeName) {
-				return strings.EqualFold(ev.Variant, variantName)
-			}
+	if ev, ok := value.(runtime.EnumVariant); ok {
+		if matches, isVariantTest := enumVariantTest(ev, typeName); isVariantTest {
+			return matches
 		}
 	}
 	stripped := simpleTypeName(typeName)
@@ -81,16 +86,9 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 		}
 		return false
 	}
-	if dotIdx := strings.Index(typeName, "."); dotIdx >= 0 {
-		if ev, ok := value.(runtime.EnumVariant); ok {
-			enumTypeName := typeName[:dotIdx]
-			variantName := typeName[dotIdx+1:]
-			// `Enum.Variant` is a variant test; a `module.Interface`
-			// qualified name (prefix is not this enum) falls through to
-			// the interface-conformance check below.
-			if strings.EqualFold(ev.Enum.Name, enumTypeName) {
-				return strings.EqualFold(ev.Variant, variantName)
-			}
+	if ev, ok := value.(runtime.EnumVariant); ok {
+		if matches, isVariantTest := enumVariantTest(ev, typeName); isVariantTest {
+			return matches
 		}
 	}
 	if baseName, args, ok := splitGenericTypeName(typeName); ok {
@@ -435,12 +433,8 @@ func (e *Evaluator) constraintSatisfied(typeName string, constraint *ast.TypeRef
 	if typeNamesEqual(typeName, leaf) {
 		return true
 	}
-	boundVal, ok := env.Get(typeName)
-	if !ok {
-		return false
-	}
-	boundClass, ok := boundVal.(*runtime.Class)
-	if !ok {
+	boundClass := e.constraintBoundClass(typeName, env)
+	if boundClass == nil {
 		return false
 	}
 	leafVal, ok := env.Get(leaf)
@@ -458,6 +452,24 @@ func (e *Evaluator) constraintSatisfied(typeName string, constraint *ast.TypeRef
 		}
 	}
 	return false
+}
+
+// constraintBoundClass resolves a type argument's class, falling back to the cross-module registry for a class declared outside the generic's module.
+func (e *Evaluator) constraintBoundClass(typeName string, env *runtime.Environment) *runtime.Class {
+	if value, ok := env.Get(typeName); ok {
+		if class, isClass := value.(*runtime.Class); isClass {
+			return class
+		}
+	}
+	bare := typeName
+	if dot := strings.LastIndexByte(bare, '.'); dot >= 0 {
+		bare = bare[dot+1:]
+	}
+	if value, ok := e.resolveDeserializeClass(bare); ok {
+		class, _ := value.(*runtime.Class)
+		return class
+	}
+	return nil
 }
 
 // constraintDisplayString matches the VM's stored constraint expr with

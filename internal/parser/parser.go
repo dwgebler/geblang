@@ -167,8 +167,13 @@ func (p *Parser) parseStatement() ast.Statement {
 		if p.peekTokenIs(token.Func) {
 			return p.parseFunctionStatement(false)
 		}
+		if p.peekTokenIs(token.Static) {
+			p.errorf(p.peekToken, "write `static async func`, not `async static func`")
+			p.nextToken()
+			return p.parseFunctionStatement(true)
+		}
 	case token.Static:
-		if p.peekTokenIs(token.Func) {
+		if p.peekTokenIs(token.Func) || p.peekTokenIs(token.Async) {
 			return p.parseFunctionStatement(true)
 		}
 		return p.parseDeclarationStatement()
@@ -664,12 +669,12 @@ func (p *Parser) parseDestructuringPattern(stmt *ast.DestructuringStatement) {
 
 func (p *Parser) parseFunctionStatement(static bool) ast.Statement {
 	stmt := &ast.FunctionStatement{Static: static, Doc: p.curToken.Doc}
-	if p.curTokenIs(token.Async) {
-		stmt.Async = true
-		p.nextToken()
-	}
 	if p.curTokenIs(token.Static) {
 		stmt.Static = true
+		p.nextToken()
+	}
+	if p.curTokenIs(token.Async) {
+		stmt.Async = true
 		p.nextToken()
 	}
 	stmt.Token = p.curToken
@@ -2086,13 +2091,16 @@ func (p *Parser) lookaheadToken(n int) token.Token {
 	return p.tokens[idx]
 }
 
-// isEnumDestructuringPattern detects `Ident.Ident(` after the `case` keyword,
-// which is the enum variant destructuring syntax: `case Result.Ok(string s):`.
+// isEnumDestructuringPattern detects `Enum.Variant(` (optionally module-qualified, `mod.Enum.Variant(`) after the `case` keyword.
 func (p *Parser) isEnumDestructuringPattern() bool {
-	return p.curTokenIs(token.Ident) &&
-		p.lookaheadToken(1).Type == token.Dot &&
-		p.lookaheadToken(2).Type == token.Ident &&
-		p.lookaheadToken(3).Type == token.LParen
+	if !p.curTokenIs(token.Ident) {
+		return false
+	}
+	i := 1
+	for p.lookaheadToken(i).Type == token.Dot && p.lookaheadToken(i+1).Type == token.Ident {
+		i += 2
+	}
+	return i >= 3 && p.lookaheadToken(i).Type == token.LParen
 }
 
 func (p *Parser) parseEnumStatement() ast.Statement {
@@ -2156,7 +2164,7 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 			p.nextToken() // consume ','
 		} else if p.peekTokenIs(token.Semicolon) {
 			p.nextToken() // consume ';'
-			if p.peekTokenIs(token.Func) {
+			if p.peekTokenIs(token.Func) || p.peekTokenIs(token.Async) {
 				break
 			}
 		}
@@ -2166,7 +2174,7 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
 			break
 		}
-		if !p.curTokenIs(token.Func) {
+		if !p.curTokenIs(token.Func) && !(p.curTokenIs(token.Async) && p.peekTokenIs(token.Func)) {
 			p.errorf(p.curToken, "expected enum method declaration, got %s", p.curToken.Type)
 			p.synchronize()
 			continue
@@ -2183,9 +2191,14 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 
 func (p *Parser) parseEnumVariantPattern() *ast.EnumVariantPattern {
 	pattern := &ast.EnumVariantPattern{Token: p.curToken}
-	pattern.Enum = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-	p.nextToken() // consume enum name → curToken = '.'
-	p.nextToken() // consume '.'       → curToken = variant name
+	enumToken := p.curToken
+	segments := []string{p.curToken.Literal}
+	for p.peekTokenIs(token.Dot) {
+		p.nextToken()
+		p.nextToken()
+		segments = append(segments, p.curToken.Literal)
+	}
+	pattern.Enum = &ast.Identifier{Token: enumToken, Value: strings.Join(segments[:len(segments)-1], ".")}
 	pattern.Variant = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 	if !p.expectPeek(token.LParen) {
 		return pattern
@@ -2633,7 +2646,7 @@ func (p *Parser) interpolationLiteral(tok token.Token, seg string) *ast.StringLi
 		p.errorf(tok, "%s", err.Error())
 		value = seg
 	}
-	return &ast.StringLiteral{Token: tok, Value: value, Raw: seg, Quote: tok.Quote}
+	return &ast.StringLiteral{Token: tok, Value: value, Raw: seg, Quote: tok.Quote, Segment: true}
 }
 
 func (p *Parser) parseInterpolatedString(tok token.Token) *ast.InterpolatedString {

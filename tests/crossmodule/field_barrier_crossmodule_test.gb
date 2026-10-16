@@ -1,0 +1,36 @@
+/**
+ * @title Field decorators across modules
+ * @summary A field decorator runs on every assignment to the field, including
+ * assignments written in another module and in a subclass declared elsewhere.
+ */
+import test;
+import field_barrier_donor as donor;
+
+class Perishable extends donor.StockItem {
+    func Perishable(string code) { parent(code, 1); }
+
+    func recode(string code): void { this.code = code; }
+}
+
+class FieldBarrierCrossModuleTest extends test.Test {
+    @test
+    func directAssignmentRunsTheDecorator(): void {
+        let item = donor.StockItem("A1", 3);
+        item.code = "  B2  ";
+        this.assertEquals("b2", item.code);
+    }
+
+    @test
+    func compoundAssignmentRunsTheDecorator(): void {
+        let item = donor.StockItem("A1", 3);
+        this.assertThrowsOf(func(): void { item.stock -= 5; }, "ValueError", "cannot be negative");
+        this.assertEquals(3, item.stock);
+    }
+
+    @test
+    func subclassInAnotherModuleRunsTheDecorator(): void {
+        let item = Perishable("MILK");
+        item.recode("  CREAM ");
+        this.assertEquals("cream", item.code);
+    }
+}

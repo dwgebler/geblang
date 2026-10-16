@@ -1,0 +1,26 @@
+module operator_dunders_donor;
+
+export class Money {
+    int cents;
+    list<int> parts = [];
+
+    func Money(int cents) {
+        this.cents = cents;
+        this.parts = [cents // 100, cents % 100];
+    }
+
+    func __add(Money other): Money { return Money(this.cents + other.cents); }
+    func __mul(int factor): Money { return Money(this.cents * factor); }
+    func __neg(): Money { return Money(-this.cents); }
+    func __not(): bool { return this.cents == 0; }
+    func __lt(Money other): bool { return this.cents < other.cents; }
+    func __eq(Money other): bool { return this.cents == other.cents; }
+    func __bitand(Money other): Money { return Money(this.cents & other.cents); }
+    func __bitnot(): Money { return Money(~this.cents); }
+    func __index(int i): int { return this.parts[i]; }
+    func __setIndex(int i, int value): void { this.parts[i] = value; }
+    func __contains(int value): bool { return this.parts.contains(value); }
+    func __string(): string { return "${this.cents}c"; }
+    func __int(): int { return this.cents; }
+    func __bool(): bool { return this.cents != 0; }
+}

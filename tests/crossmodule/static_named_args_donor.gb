@@ -1,0 +1,7 @@
+module static_named_args_donor;
+
+export class Pricing {
+    static func total(int net, int vatPercent = 20, int discount = 0): int {
+        return net + (net * vatPercent) // 100 - discount;
+    }
+}

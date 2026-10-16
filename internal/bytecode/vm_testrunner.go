@@ -133,9 +133,8 @@ func (vm *VM) lookupErrorParent(class string) (string, bool) {
 			break
 		}
 	}
-	switch class {
-	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
-		return "Error", true
+	if parent := runtime.BuiltinErrorParent(class); parent != "" {
+		return parent, true
 	}
 	return "", false
 }

@@ -258,13 +258,17 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 	}
 	base := n - argc - 1
 	function := &vm.curMod.Chunk.Functions[functionIndex]
-	if function.IsGenerator && !vm.generatorExecution {
+	if (function.IsGenerator && !vm.generatorExecution) || (function.Async && !vm.syncMode) {
 		callArgs := make([]runtime.Value, argc+1)
 		for i := 0; i <= argc; i++ {
 			callArgs[i] = vm.stack[base+i].ToValue()
 		}
 		vm.stack = vm.stack[:base]
-		vm.push(vm.lazyGenerator(functionIndex, callArgs))
+		if task, ok := vm.startAsyncMethod(functionIndex, callArgs); ok {
+			vm.push(task)
+		} else {
+			vm.push(vm.lazyGenerator(functionIndex, callArgs))
+		}
 		return ip, nil
 	}
 	// Fast path: skip the per-arg ToValue() conversion when
@@ -532,6 +536,10 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 				return vm.propagateDecoratedCallbackError(instruction, ip, err, vm.curMod.Chunk.Functions[functionIndex].Name)
 			}
 			vm.push(result)
+			return ip, nil
+		}
+		if task, ok := vm.startAsyncMethod(functionIndex, slots); ok {
+			vm.push(task)
 			return ip, nil
 		}
 		if vm.curMod.Chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
@@ -859,11 +867,19 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			return 0, vm.callPropagate(instruction, err)
 		}
 		if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
+			if vm.curMod.Chunk.Functions[functionIndex].Async && !vm.syncMode {
+				vm.push(vm.startAsyncCallable(decorated, args))
+				return ip, nil
+			}
 			result, err := vm.callCallable(decorated, args)
 			if err != nil {
 				return vm.propagateDecoratedCallbackError(instruction, ip, err, vm.curMod.Chunk.Functions[functionIndex].Name)
 			}
 			vm.push(result)
+			return ip, nil
+		}
+		if task, ok := vm.startAsyncMethod(functionIndex, args); ok {
+			vm.push(task)
 			return ip, nil
 		}
 		return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], args, nil)
@@ -926,6 +942,11 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
 			fn := runtime.BytecodeFunction{Module: variant.Enum.Module, Index: indices[0]}
+			if info, ierr := vm.moduleLoader.ModuleFunctionInfo(fn.Module, fn.Index); ierr == nil && info.Async && !vm.syncMode {
+				fn.Async = true
+				vm.push(vm.startAsyncCallable(fn, slots))
+				return ip, nil
+			}
 			result, err := vm.moduleLoader.CallModuleFunction(fn, slots, vm)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
@@ -936,6 +957,10 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		functionIndex, err := vm.selectRuntimeFunction(instruction, nameValue.Value, indices, args, 1)
 		if err != nil {
 			return 0, err
+		}
+		if task, ok := vm.startAsyncMethod(functionIndex, slots); ok {
+			vm.push(task)
+			return ip, nil
 		}
 		if vm.curMod.Chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
 			vm.push(vm.lazyGenerator(functionIndex, slots))
@@ -1206,6 +1231,20 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 	if class, ok := receiver.(runtime.BytecodeClass); ok && methodName == "__invoke" && class.Module != vm.moduleName && vm.moduleLoader != nil {
 		return vm.dispatchCrossModuleNamedConstruct(instruction, ip, class, args, names)
 	}
+	if class, ok := receiver.(runtime.BytecodeClass); ok && methodName != "__invoke" {
+		var result runtime.Value
+		var err error
+		if class.Module != vm.moduleName && vm.moduleLoader != nil {
+			result, err = vm.moduleLoader.CallModuleStaticMethodNamed(class, methodName, vm.wrapStatefulNativeArgs("", "", args), names, vm)
+		} else {
+			result, err = vm.CallStaticMethodNamed(class.Index, methodName, args, names)
+		}
+		if err != nil {
+			return vm.propagateModuleError(instruction, ip, err)
+		}
+		vm.push(result)
+		return ip, nil
+	}
 	instance, ok := receiver.(*runtime.Instance)
 	if !ok {
 		// Generic callables (reflect targets, native-wrapped functions):
@@ -1274,6 +1313,10 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		return ip, nil
 	}
 	callArgs := append([]runtime.Value{instance}, ordered...)
+	if task, ok := vm.startAsyncMethod(functionIndex, callArgs); ok {
+		vm.push(task)
+		return ip, nil
+	}
 	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, nil)
 	if err != nil {
 		return 0, err

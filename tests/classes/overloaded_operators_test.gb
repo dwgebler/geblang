@@ -1,0 +1,44 @@
+/**
+ * @title Overloaded operator methods
+ * @summary An operator dunder may be overloaded by parameter type; the
+ * operator picks the overload matching its operand, including for inherited
+ * overloads.
+ */
+import test;
+
+class Money {
+    int pence;
+
+    func Money(int pence) { this.pence = pence; }
+
+    func __mul(int factor): Money { return Money(this.pence * factor); }
+    func __mul(decimal factor): Money { return Money((this.pence * factor).round(0) as int); }
+
+    func __add(Money other): Money { return Money(this.pence + other.pence); }
+    func __add(int pence): Money { return Money(this.pence + pence); }
+
+    func __eq(Money other): bool { return this.pence == other.pence; }
+    func __eq(int pence): bool { return this.pence == pence; }
+}
+
+class Tip extends Money {
+    func Tip(int pence) { parent(pence); }
+}
+
+class OverloadedOperatorsTest extends test.Test {
+    @test
+    func picksTheOverloadMatchingTheOperand(): void {
+        let price = Money(250);
+        this.assertTrue(price * 2 == 500);
+        this.assertTrue(price * 1.5 == 375);
+        this.assertTrue(price + Money(50) == Money(300));
+        this.assertTrue(price + 5 == 255);
+    }
+
+    @test
+    func inheritedOverloadsDispatchTheSameWay(): void {
+        let tip = Tip(100);
+        this.assertTrue(tip * 3 == 300);
+        this.assertTrue(tip * 0.5 == 50);
+    }
+}

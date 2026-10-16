@@ -26,7 +26,16 @@ type Value interface {
 type Null struct{}
 
 func (Null) TypeName() string { return "null" }
-func (Null) Inspect() string  { return "null" }
+
+// IsNull reports whether v is the null value (or an absent Go value).
+func IsNull(v Value) bool {
+	if v == nil {
+		return true
+	}
+	_, ok := v.(Null)
+	return ok
+}
+func (Null) Inspect() string { return "null" }
 
 type Bool struct {
 	Value bool

@@ -1,0 +1,5 @@
+module qualified_generics_goods;
+
+export class Apple { string kind = "apple"; }
+
+export class Pear { string kind = "pear"; }

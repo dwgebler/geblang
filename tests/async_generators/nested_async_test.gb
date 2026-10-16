@@ -1,0 +1,40 @@
+/**
+ * @title Async calls inside async code
+ * @summary An async function or method called from inside another async body
+ * starts its own Task, so fan-out inside async code runs concurrently.
+ */
+import test;
+import async;
+import time;
+
+async func lookup(int id): int {
+    await async.sleep(150);
+    return id * 10;
+}
+
+async func lookupAll(list<int> ids): list<int> {
+    return async.all([lookup(id) for id in ids]).await();
+}
+
+class Catalogue {
+    async func price(int id): int { await async.sleep(1); return id + 100; }
+
+    async func describe(int id): string {
+        let pending = this.price(id);
+        return "${typeof(pending)}:${pending.await()}";
+    }
+}
+
+class NestedAsyncTest extends test.Test {
+    @test
+    func fanOutInsideAnAsyncFunctionRunsConcurrently(): void {
+        let started = time.monotonic();
+        this.assertEquals([10, 20, 30], lookupAll([1, 2, 3]).await());
+        this.assertLessThan(400, time.monotonic() - started);
+    }
+
+    @test
+    func anAsyncMethodCalledFromAnotherReturnsATask(): void {
+        this.assertEquals("Task:105", Catalogue().describe(5).await());
+    }
+}

@@ -1,0 +1,29 @@
+module imported_decorators_shop;
+
+from imported_decorators_aspects import retry, trimmed, atLeast, Transient;
+from imported_decorators_aspects import bracket as wrap;
+
+export class Supplier {
+    @trimmed
+    string name;
+
+    @atLeast(0)
+    int outages;
+
+    int calls = 0;
+
+    func Supplier(string name, int outages) {
+        this.name = name;
+        this.outages = outages;
+    }
+
+    @retry(3)
+    func quote(string item): string {
+        this.calls += 1;
+        if (this.calls <= this.outages) { throw Transient("busy"); }
+        return "${this.name}:${item}";
+    }
+
+    @wrap(open: "<", close: ">")
+    func label(): string { return this.name; }
+}

@@ -71,6 +71,9 @@ func (a *Analyzer) interfaceHasMethod(name, methodLower string, seen map[string]
 	if _, ok := iface.methods[methodLower]; ok {
 		return true, true
 	}
+	if iface.defaults[methodLower] {
+		return true, true
+	}
 	for _, parent := range iface.parents {
 		r, f := a.interfaceHasMethod(parent, methodLower, seen)
 		if f {

@@ -1,0 +1,45 @@
+/**
+ * @title Constraints at construction
+ * @summary A generic class's `T implements X` constraint is enforced when the
+ * instance is built: with explicit type arguments, with inferred ones, without
+ * a constructor, and through a subclass's `extends Base<Type>` clause.
+ */
+import test;
+
+interface Priced { func price(): int; }
+
+class Book implements Priced { func price(): int { return 10; } }
+class Rock {}
+
+class Basket<T implements Priced> { list<T> items = []; }
+
+class Wrapper<T implements Priced> {
+    T item;
+    func Wrapper(T item) { this.item = item; }
+}
+
+class Shelf<T implements Priced> { func Shelf() {} }
+class RockShelf extends Shelf<Rock> { func RockShelf() { parent(); } }
+
+class ConstraintConstructionTest extends test.Test {
+    @test
+    func acceptsATypeThatSatisfiesTheConstraint(): void {
+        this.assertEquals(0, Basket<Book>().items.length());
+        this.assertEquals(10, Wrapper(Book()).item.price());
+    }
+
+    @test
+    func rejectsExplicitTypeArgumentsWithoutAConstructor(): void {
+        this.assertThrowsOf(func(): void { Basket<Rock>(); }, "TypeError", "does not satisfy constraint Priced");
+    }
+
+    @test
+    func rejectsInferredTypeArguments(): void {
+        this.assertThrowsOf(func(): void { Wrapper(Rock()); }, "TypeError", "does not satisfy constraint Priced");
+    }
+
+    @test
+    func rejectsABindingInheritedThroughExtends(): void {
+        this.assertThrowsOf(func(): void { RockShelf(); }, "TypeError", "does not satisfy constraint Priced");
+    }
+}

@@ -39,6 +39,18 @@ func (e *MethodNotFoundError) Error() string {
 	return "unknown method " + e.Class + "." + e.Method
 }
 
+// BuiltinErrorParent is the one source of the built-in error hierarchy: the parent class of a built-in error class, or "" for Error, FatalError, and non-built-ins.
+func BuiltinErrorParent(class string) string {
+	switch class {
+	case "TimeoutError", "TlsError":
+		return "IOError"
+	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
+		return "Error"
+	default:
+		return ""
+	}
+}
+
 func NewRecoverableError(err error) Error {
 	return Error{Class: RecoverableErrorClass(err), Message: recoverableErrorMessage(err)}
 }

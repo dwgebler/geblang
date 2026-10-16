@@ -413,7 +413,11 @@ func (l *Lowerer) emitMatchAsTypeSwitch(scrutinee ast.Expression, cases []ast.Ma
 				"this slice supports either all-variant cases or no variant cases")
 			continue
 		}
-		variantStruct := emit.MangleIdent(c.EnumVariant.Enum.Value) + emit.MangleIdent(c.EnumVariant.Variant.Value)
+		enumName := c.EnumVariant.Enum.Value
+		if dot := strings.LastIndexByte(enumName, '.'); dot >= 0 {
+			enumName = enumName[dot+1:]
+		}
+		variantStruct := emit.MangleIdent(enumName) + emit.MangleIdent(c.EnumVariant.Variant.Value)
 		l.w.WriteString("case ")
 		l.w.WriteString(variantStruct)
 		l.w.WriteLine(":")

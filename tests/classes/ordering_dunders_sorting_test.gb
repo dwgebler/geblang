@@ -1,0 +1,61 @@
+/**
+ * @title Sorting objects with ordering dunders
+ * @summary A class that defines `__lt` (or `__gt`) sorts and ranks like a
+ * number: `sort()`, `sorted()`, `sortBy`, `minBy`, `maxBy`, `topK`,
+ * `bottomK`, and the binary searches all use its ordering.
+ */
+import test;
+
+class Price {
+    int pence;
+
+    func Price(int pence) { this.pence = pence; }
+
+    func __lt(Price other): bool { return this.pence < other.pence; }
+
+    func __eq(?Price other): bool { return other != null && this.pence == other.pence; }
+}
+
+class Product {
+    string name;
+    Price price;
+
+    func Product(string name, int pence) {
+        this.name = name;
+        this.price = Price(pence);
+    }
+}
+
+class Unordered {}
+
+class OrderingDundersSortingTest extends test.Test {
+    func prices(): list<Price> {
+        return [Price(500), Price(120), Price(300)];
+    }
+
+    @test
+    func sortedOrdersByTheDunder(): void {
+        this.assertEquals([120, 300, 500], [p.pence for p in this.prices().sorted()]);
+    }
+
+    @test
+    func keyedOperationsUseTheDunderOnKeys(): void {
+        let products = [Product("tea", 300), Product("mug", 650), Product("pen", 120)];
+        let byPrice = func(Product p): any { return p.price; };
+        this.assertEquals(["pen", "tea", "mug"], [p.name for p in products.sortBy(byPrice)]);
+        this.assertEquals("mug", products.maxBy(byPrice).name);
+        this.assertEquals("pen", products.minBy(byPrice).name);
+    }
+
+    @test
+    func rankingAndSearchingUseTheDunder(): void {
+        let sorted = this.prices().sorted();
+        this.assertEquals([500, 300], [p.pence for p in this.prices().topK(2)]);
+        this.assertEquals(1, sorted.binarySearch(Price(300)));
+    }
+
+    @test
+    func objectsWithoutOrderingCannotBeSorted(): void {
+        this.assertThrowsOf(func(): void { [Unordered(), Unordered()].sorted(); }, "TypeError", "cannot compare");
+    }
+}

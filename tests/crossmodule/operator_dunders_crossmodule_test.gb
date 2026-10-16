@@ -1,0 +1,46 @@
+/**
+ * @title Operator dunders across modules
+ * @summary Operators, casts, `in` and subscripts dispatch to dunders on a class
+ * imported from another module, and on a local subclass that inherits them.
+ */
+import test;
+import operator_dunders_donor as d;
+
+class Tip extends d.Money {
+    func Tip(int cents) { parent(cents); }
+}
+
+class OperatorDundersCrossModuleTest extends test.Test {
+    func check(any small, any large): void {
+        this.assertEquals(d.Money(350), small + large);
+        this.assertEquals(d.Money(300), small * 3);
+        this.assertEquals(d.Money(-100), -small);
+        this.assertFalse(!small);
+        this.assertEquals(d.Money(100 & 250), small & large);
+        this.assertEquals(d.Money(~100), ~small);
+        this.assertTrue(small < large);
+        this.assertFalse(small > large);
+        this.assertTrue(small <= large);
+        this.assertTrue(large >= small);
+        this.assertTrue(small == d.Money(100));
+        this.assertTrue(small != large);
+        this.assertEquals(1, small[0]);
+        small[1] = 7;
+        this.assertEquals(7, small[1]);
+        this.assertTrue(7 in small);
+        this.assertFalse(9 in small);
+        this.assertEquals("100c", "${small}");
+        this.assertEquals(100, small as int);
+        this.assertTrue(small as bool);
+    }
+
+    @test
+    func dundersOnAnImportedClassWork(): void {
+        this.check(d.Money(100), d.Money(250));
+    }
+
+    @test
+    func dundersInheritedFromAnImportedClassWork(): void {
+        this.check(Tip(100), Tip(250));
+    }
+}

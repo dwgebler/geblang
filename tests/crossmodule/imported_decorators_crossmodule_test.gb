@@ -1,0 +1,51 @@
+/**
+ * @title Decorators imported from another module
+ * @summary A decorator function brought in with `from m import f` wraps
+ * methods and functions and runs as a field write barrier, including when the
+ * decorated class itself lives in a third module.
+ */
+import test;
+import imported_decorators_shop as shop;
+from imported_decorators_aspects import bracket, trimmed;
+
+@bracket
+func title(string text): string { return text; }
+
+class Note {
+    @trimmed
+    string text;
+    func Note(string text) { this.text = text; }
+}
+
+class ImportedDecoratorsCrossModuleTest extends test.Test {
+    @test
+    func methodDecoratorRetriesAcrossModules(): void {
+        let supplier = shop.Supplier("acme", 2);
+        this.assertEquals("acme:bolts", supplier.quote("bolts"));
+        this.assertEquals(3, supplier.calls);
+    }
+
+    @test
+    func methodDecoratorGivesUpAfterItsLimit(): void {
+        let supplier = shop.Supplier("acme", 9);
+        this.assertThrowsOf(func(): void { supplier.quote("bolts"); }, "Transient");
+        this.assertEquals(3, supplier.calls);
+    }
+
+    @test
+    func aliasedDecoratorWithNamedArguments(): void {
+        this.assertEquals("<acme>", shop.Supplier("acme", 0).label());
+    }
+
+    @test
+    func fieldDecoratorsRunInTheDeclaringModule(): void {
+        this.assertEquals("acme", shop.Supplier("  acme  ", 0).name);
+        this.assertThrowsOf(func(): void { shop.Supplier("acme", -1); }, "ValueError", "at least 0");
+    }
+
+    @test
+    func importedDecoratorsWorkInTheImportingFile(): void {
+        this.assertEquals("[hello]", title("hello"));
+        this.assertEquals("tidy", Note("  tidy  ").text);
+    }
+}

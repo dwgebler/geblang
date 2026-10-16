@@ -2054,7 +2054,11 @@ func (e *Evaluator) matchCase(value runtime.Value, c ast.MatchCase, env *runtime
 	case c.EnumVariant != nil:
 		ev := c.EnumVariant
 		enumVal, ok := value.(runtime.EnumVariant)
-		if ok && strings.EqualFold(enumVal.Enum.Name, ev.Enum.Value) && strings.EqualFold(enumVal.Variant, ev.Variant.Value) {
+		enumName := ev.Enum.Value
+		if dot := strings.LastIndexByte(enumName, '.'); dot >= 0 {
+			enumName = enumName[dot+1:]
+		}
+		if ok && strings.EqualFold(enumVal.Enum.Name, enumName) && strings.EqualFold(enumVal.Variant, ev.Variant.Value) {
 			matched = true
 			for i, param := range ev.Params {
 				if i >= len(enumVal.Fields) {
@@ -2470,14 +2474,7 @@ func (e *Evaluator) errorParent(class string) string {
 			return parent
 		}
 	}
-	switch class {
-	case "TimeoutError", "TlsError":
-		return "IOError"
-	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
-		return "Error"
-	default:
-		return ""
-	}
+	return runtime.BuiltinErrorParent(class)
 }
 
 func (e *Evaluator) errorTypeMatches(class string, target string) bool {
@@ -2960,7 +2957,7 @@ func (e *Evaluator) sortElements(elements []runtime.Value, args []runtime.Value)
 			}
 			return less
 		}
-		cmp, err := e.compareValues(elements[i], elements[j])
+		cmp, err := e.compareForOrdering(elements[i], elements[j])
 		if err != nil {
 			sortErr = err
 			return false
@@ -4370,7 +4367,7 @@ func (e *Evaluator) evalIndexExpression(expr *ast.IndexExpression, env *runtime.
 		}
 		return bytesElement(value, i)
 	case *runtime.Instance:
-		if method, ok := lookupMethod(value.Class, "__index"); ok {
+		if method, ok := lookupMethodFor(value.Class, "__index", []runtime.Value{index}); ok {
 			bound := method
 			bound.Env = bindThis(method.Env, value)
 			return e.applyFunctionWithThis(bound, []runtime.Value{index}, value)
@@ -4629,7 +4626,7 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, evalValue func() (run
 		value.PutEntry(dictKey(index), runtime.DictEntry{Key: index, Value: newValue})
 		return nil
 	case *runtime.Instance:
-		if method, ok := lookupMethod(value.Class, "__setIndex"); ok {
+		if method, ok := lookupMethodFor(value.Class, "__setIndex", []runtime.Value{index, newValue}); ok {
 			bound := method
 			bound.Env = bindThis(method.Env, value)
 			_, err := e.applyFunctionWithThis(bound, []runtime.Value{index, newValue}, value)
@@ -6292,7 +6289,7 @@ func (e *Evaluator) evalPrefixOperatorMethod(operator string, right runtime.Valu
 	if !ok {
 		return nil, false, nil
 	}
-	method, ok := lookupMethod(instance.Class, name)
+	method, ok := lookupMethodFor(instance.Class, name, nil)
 	if !ok {
 		return nil, false, nil
 	}
@@ -6387,7 +6384,7 @@ func (e *Evaluator) evalContains(needle, container runtime.Value) (runtime.Value
 		}
 		return runtime.Bool{Value: c.ContainsInt(n)}, nil
 	case *runtime.Instance:
-		if method, ok := lookupMethod(c.Class, "__contains"); ok {
+		if method, ok := lookupMethodFor(c.Class, "__contains", []runtime.Value{needle}); ok {
 			bound := method
 			bound.Env = bindThis(method.Env, c)
 			return e.applyFunctionWithThis(bound, []runtime.Value{needle}, c)
@@ -6410,7 +6407,7 @@ func (e *Evaluator) evalOperatorMethod(operator string, left runtime.Value, righ
 	if !ok {
 		return nil, false, nil
 	}
-	method, ok := lookupMethod(instance.Class, name)
+	method, ok := lookupMethodFor(instance.Class, name, []runtime.Value{right})
 	if !ok {
 		return nil, false, nil
 	}
@@ -6464,7 +6461,7 @@ func (e *Evaluator) evalComparisonMethod(operator string, left, right runtime.Va
 		if !ok {
 			continue
 		}
-		method, ok := lookupMethod(instance.Class, at.name)
+		method, ok := lookupMethodFor(instance.Class, at.name, []runtime.Value{at.arg})
 		if !ok {
 			continue
 		}
@@ -6524,6 +6521,10 @@ func operatorMethodName(operator string) (string, bool) {
 }
 
 func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, error) {
+	// Equality with null never consults __eq: a user dunder typed for its own class must not receive null.
+	if leftNull, rightNull := runtime.IsNull(left), runtime.IsNull(right); leftNull || rightNull {
+		return leftNull && rightNull, nil
+	}
 	if ev, ok := left.(runtime.EnumVariant); ok {
 		rv, ok := right.(runtime.EnumVariant)
 		if !ok || ev.Enum != rv.Enum || ev.Variant != rv.Variant || len(ev.Fields) != len(rv.Fields) {
@@ -6538,7 +6539,7 @@ func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, 
 		return true, nil
 	}
 	if instance, ok := left.(*runtime.Instance); ok {
-		if method, ok := lookupMethod(instance.Class, "__eq"); ok {
+		if method, ok := lookupMethodFor(instance.Class, "__eq", []runtime.Value{right}); ok {
 			value, err := e.applyFunctionWithThis(method, []runtime.Value{right}, instance)
 			if err != nil {
 				return false, err
@@ -7026,6 +7027,31 @@ func (e *Evaluator) callValue(fn runtime.Value, args []runtime.Value) (runtime.V
 
 func (e *Evaluator) compareValues(left runtime.Value, right runtime.Value) (int, error) {
 	return compareValues(left, right)
+}
+
+// compareForOrdering orders two values for sorting and min/max-style operations: instances through their ordering dunders, as the < operator would, anything else by the shared value ordering.
+func (e *Evaluator) compareForOrdering(left runtime.Value, right runtime.Value) (int, error) {
+	_, leftInstance := left.(*runtime.Instance)
+	_, rightInstance := right.(*runtime.Instance)
+	if !leftInstance && !rightInstance {
+		return compareValues(left, right)
+	}
+	for _, pair := range [][2]runtime.Value{{left, right}, {right, left}} {
+		value, handled, err := e.evalComparisonMethod("<", pair[0], pair[1])
+		if err != nil {
+			return 0, err
+		}
+		if !handled {
+			return 0, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("cannot compare %s and %s", left.TypeName(), right.TypeName())}
+		}
+		if b, ok := value.(runtime.Bool); ok && b.Value {
+			if pair[0] == left {
+				return -1, nil
+			}
+			return 1, nil
+		}
+	}
+	return 0, nil
 }
 
 func compareValues(left runtime.Value, right runtime.Value) (int, error) {

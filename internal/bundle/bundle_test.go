@@ -12,6 +12,7 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/bytecode"
 	"geblang/internal/lexer"
+	"geblang/internal/modules"
 	"geblang/internal/parser"
 )
 
@@ -181,5 +182,29 @@ func TestExtractToSeedsRealCachePaths(t *testing.T) {
 	want := bytecode.CachePath(cacheDir, finalSrc, src, "testc")
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("seeded cache file not at the runtime's lookup path: %v", err)
+	}
+}
+
+func TestWalkImportsFollowsFromImports(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"app.gb":        "import helpers;\nhelpers.run();\n",
+		"helpers.gb":    "module helpers;\nfrom decorators import trace;\nexport func run(): void {}\n",
+		"decorators.gb": "module decorators;\nexport func trace(callable f): callable { return f; }\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolver := modules.NewResolver([]string{dir})
+	got, err := WalkImports("app", filepath.Join(dir, "app.gb"), resolver, func(string) bool { return false })
+	if err != nil {
+		t.Fatalf("WalkImports: %v", err)
+	}
+	for _, want := range []string{"app", "helpers", "decorators"} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("module %q missing from the bundle walk: %v", want, got)
+		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"geblang/internal/ast"
@@ -55,7 +56,7 @@ func verifyRoundTrip(input *ast.Program, out string) error {
 	if errs := p.Errors(); len(errs) > 0 {
 		return fmt.Errorf("formatter bug: output no longer parses (%s); source left unchanged", errs[0])
 	}
-	if input.String() != reparsed.String() {
+	if input.String() != reparsed.String() || !astEquivalent(reflect.ValueOf(input), reflect.ValueOf(reparsed)) {
 		return fmt.Errorf("formatter bug: formatting would change the program's meaning; source left unchanged")
 	}
 	return nil
@@ -83,9 +84,14 @@ func (f *fmtr) flushTrailing(line int) {
 }
 
 // startLine returns a statement's first source line via its Token field, or a large sentinel for nodes without one.
-func startLine(s ast.Statement) int {
+func startLine(s any) int {
 	v := reflect.Indirect(reflect.ValueOf(s))
 	if v.Kind() == reflect.Struct {
+		if fv := v.FieldByName("Decorators"); fv.IsValid() {
+			if decs, ok := fv.Interface().([]ast.Decorator); ok && len(decs) > 0 && decs[0].Token.Line > 0 {
+				return decs[0].Token.Line
+			}
+		}
 		if tok := v.FieldByName("Token"); tok.IsValid() && tok.Kind() == reflect.Struct {
 			if line := tok.FieldByName("Line"); line.IsValid() && line.CanInt() {
 				return int(line.Int())
@@ -96,7 +102,7 @@ func startLine(s ast.Statement) int {
 }
 
 // endLine returns the largest source line in a statement's subtree (its last token), so blank-line gaps after multi-line statements are measured correctly.
-func endLine(s ast.Statement) int {
+func endLine(s any) int {
 	max := 0
 	var walk func(v reflect.Value)
 	walk = func(v reflect.Value) {
@@ -268,6 +274,7 @@ func (f *fmtr) stmt(s ast.Statement) {
 		}
 		f.writeln(f.pad() + "from " + importPath(s.Path, s.ForceBuiltin) + " import " + strings.Join(names, ", ") + ";")
 	case *ast.ExportStatement:
+		f.writeDecorators(exportedDecorators(s.Statement))
 		f.write(f.pad() + "export ")
 		f.stmtInner(s.Statement)
 	case *ast.TypeAliasStatement:
@@ -361,9 +368,9 @@ func (f *fmtr) stmt(s ast.Statement) {
 func (f *fmtr) stmtInner(s ast.Statement) {
 	switch s := s.(type) {
 	case *ast.FunctionStatement:
-		f.fmtFunctionRaw(s)
+		f.fmtFunctionHead(s)
 	case *ast.ClassStatement:
-		f.fmtClassRaw(s)
+		f.fmtClassHead(s)
 	case *ast.InterfaceStatement:
 		f.fmtInterface(s)
 	case *ast.EnumStatement:
@@ -404,6 +411,23 @@ func declPrefix(s *ast.DeclarationStatement) []string {
 	return parts
 }
 
+func exportedDecorators(s ast.Statement) []ast.Decorator {
+	switch s := s.(type) {
+	case *ast.FunctionStatement:
+		return s.Decorators
+	case *ast.ClassStatement:
+		return s.Decorators
+	}
+	return nil
+}
+
+// writeDecorators writes one decorator per line at the current indent.
+func (f *fmtr) writeDecorators(decs []ast.Decorator) {
+	for _, dec := range decs {
+		f.writeln(f.pad() + f.fmtDecorator(dec))
+	}
+}
+
 func (f *fmtr) fmtDecorator(dec ast.Decorator) string {
 	if len(dec.Arguments) > 0 {
 		return "@" + dec.Name.Value + "(" + f.callArgs(dec.Arguments) + ")"
@@ -423,6 +447,7 @@ func (f *fmtr) typeArgs(args []*ast.TypeRef) string {
 }
 
 func (f *fmtr) fmtDeclaration(s *ast.DeclarationStatement) {
+	f.writeDecorators(s.Decorators)
 	line := f.pad() + strings.Join(declPrefix(s), " ")
 	if s.Value != nil {
 		prefix := line + " = "
@@ -579,20 +604,13 @@ func (f *fmtr) fmtFor(s *ast.ForStatement) {
 // ---- function ----
 
 func (f *fmtr) fmtFunction(s *ast.FunctionStatement) {
+	f.writeDecorators(s.Decorators)
 	f.write(f.pad())
-	f.fmtFunctionRaw(s)
+	f.fmtFunctionHead(s)
 }
 
-func (f *fmtr) fmtFunctionRaw(s *ast.FunctionStatement) {
-	for i, dec := range s.Decorators {
-		if i > 0 {
-			f.write(f.pad())
-		}
-		f.writeln(f.fmtDecorator(dec))
-	}
-	if len(s.Decorators) > 0 {
-		f.write(f.pad())
-	}
+// fmtFunctionHead writes a function from its modifiers onward; the caller has written any decorators and indent.
+func (f *fmtr) fmtFunctionHead(s *ast.FunctionStatement) {
 	prefix := ""
 	if s.Static {
 		prefix += "static "
@@ -616,20 +634,13 @@ func (f *fmtr) fmtFunctionRaw(s *ast.FunctionStatement) {
 // ---- class ----
 
 func (f *fmtr) fmtClass(s *ast.ClassStatement) {
+	f.writeDecorators(s.Decorators)
 	f.write(f.pad())
-	f.fmtClassRaw(s)
+	f.fmtClassHead(s)
 }
 
-func (f *fmtr) fmtClassRaw(s *ast.ClassStatement) {
-	for i, dec := range s.Decorators {
-		if i > 0 {
-			f.write(f.pad())
-		}
-		f.writeln(f.fmtDecorator(dec))
-	}
-	if len(s.Decorators) > 0 {
-		f.write(f.pad())
-	}
+// fmtClassHead writes a class from the class keyword onward; the caller has written any decorators and indent.
+func (f *fmtr) fmtClassHead(s *ast.ClassStatement) {
 	line := "class " + s.Name.Value
 	if len(s.Generics) > 0 {
 		line += "<" + f.typeParams(s.Generics) + ">"
@@ -646,16 +657,50 @@ func (f *fmtr) fmtClassRaw(s *ast.ClassStatement) {
 	}
 	f.writeln(line + " {")
 	f.depth++
+	members := s.Members
+	if s.Destructor != nil {
+		members = withDestructor(s.Members, s.Destructor)
+	}
 	prevEnd := 0
-	for _, m := range s.Members {
+	for _, m := range members {
 		f.maybeBlank(prevEnd, m)
 		f.flushComments(startLine(m))
-		f.stmt(m)
+		if m == ast.Statement(s.Destructor) {
+			f.fmtDestructor(s.Destructor)
+		} else {
+			f.stmt(m)
+		}
 		f.flushTrailing(endLine(m))
 		prevEnd = endLine(m)
 	}
 	f.depth--
 	f.writeln(f.pad() + "}")
+}
+
+// withDestructor places the destructor among the members at its source position.
+func withDestructor(members []ast.Statement, dtor *ast.FunctionStatement) []ast.Statement {
+	out := make([]ast.Statement, 0, len(members)+1)
+	placed := false
+	for _, m := range members {
+		if !placed && startLine(dtor) < startLine(m) {
+			out = append(out, dtor)
+			placed = true
+		}
+		out = append(out, m)
+	}
+	if !placed {
+		out = append(out, dtor)
+	}
+	return out
+}
+
+func (f *fmtr) fmtDestructor(s *ast.FunctionStatement) {
+	head := f.pad() + "func ~" + s.Name.Value + "()"
+	if s.ReturnType != nil {
+		head += ": " + s.ReturnType.String()
+	}
+	f.write(head + " ")
+	f.block(s.Body)
 }
 
 // ---- interface ----
@@ -674,8 +719,33 @@ func (f *fmtr) fmtInterface(s *ast.InterfaceStatement) {
 	}
 	f.writeln(line + " {")
 	f.depth++
+	members := make([]any, 0, len(s.Fields)+len(s.Methods)+len(s.Defaults))
+	for _, fld := range s.Fields {
+		members = append(members, fld)
+	}
 	for _, m := range s.Methods {
-		f.fmtSignature(m)
+		members = append(members, m)
+	}
+	for _, d := range s.Defaults {
+		members = append(members, d)
+	}
+	sort.SliceStable(members, func(i, j int) bool { return startLine(members[i]) < startLine(members[j]) })
+	prevEnd := 0
+	for _, m := range members {
+		if prevEnd > 0 && startLine(m)-prevEnd > 1 {
+			f.nl()
+		}
+		f.flushComments(startLine(m))
+		switch m := m.(type) {
+		case *ast.DeclarationStatement:
+			f.fmtDeclaration(m)
+		case *ast.FunctionSignature:
+			f.fmtSignature(m)
+		case *ast.FunctionStatement:
+			f.fmtFunction(m)
+		}
+		f.flushTrailing(endLine(m))
+		prevEnd = endLine(m)
 	}
 	f.depth--
 	f.writeln(f.pad() + "}")
@@ -697,6 +767,9 @@ func (f *fmtr) fmtSignature(sig *ast.FunctionSignature) {
 
 func (f *fmtr) fmtEnum(s *ast.EnumStatement) {
 	header := "enum " + s.Name.Value
+	if s.BackingType != nil {
+		header += ": " + s.BackingType.String()
+	}
 	if len(s.Implements) > 0 {
 		parts := make([]string, 0, len(s.Implements))
 		for _, iface := range s.Implements {
@@ -715,6 +788,9 @@ func (f *fmtr) fmtEnum(s *ast.EnumStatement) {
 			}
 			line += "(" + strings.Join(parts, ", ") + ")"
 		}
+		if v.BackingValue != nil {
+			line += " = " + f.expr(v.BackingValue)
+		}
 		if i < len(s.Variants)-1 {
 			line += ","
 		} else if len(s.Methods) > 0 {
@@ -722,8 +798,16 @@ func (f *fmtr) fmtEnum(s *ast.EnumStatement) {
 		}
 		f.writeln(line)
 	}
+	prevEnd := 0
+	if len(s.Variants) > 0 {
+		prevEnd = endLine(s.Variants[len(s.Variants)-1])
+	}
 	for _, m := range s.Methods {
+		f.maybeBlank(prevEnd, m)
+		f.flushComments(startLine(m))
 		f.fmtFunction(m)
+		f.flushTrailing(endLine(m))
+		prevEnd = endLine(m)
 	}
 	f.depth--
 	f.writeln(f.pad() + "}")
@@ -750,13 +834,13 @@ func (f *fmtr) fmtTry(s *ast.TryStatement) {
 				clause += ")"
 			}
 			f.write(clause + " ")
-			f.blockInline(catch.Body, nil)
+			f.blockInline(catch.Body, func() {})
 		}
 		if s.Finally != nil && len(s.Finally.Statements) > 0 {
 			f.write(" finally ")
 			f.block(s.Finally)
-		} else if len(s.Catches) == 0 {
-			f.nl() // only the no-catch/no-finally form needs an explicit line terminator; a catch/finally block already emits one
+		} else {
+			f.nl()
 		}
 	})
 }
@@ -1101,6 +1185,9 @@ func (f *fmtr) multilineInfix(e *ast.InfixExpression) string {
 
 // sliceIndex renders a range used as an index in Python slice syntax: start:end[:step].
 func (f *fmtr) sliceIndex(r *ast.RangeExpression) string {
+	if !r.Exclusive {
+		return f.expr(r)
+	}
 	s := ""
 	if r.Start != nil {
 		s += f.expr(r.Start)
@@ -1321,6 +1408,10 @@ func (f *fmtr) fmtInterpolated(e *ast.InterpolatedString) string {
 	for _, p := range e.Parts {
 		switch part := p.(type) {
 		case *ast.StringLiteral:
+			if !part.Segment {
+				sb.WriteString("${" + f.expr(part) + "}")
+				continue
+			}
 			sb.WriteString(part.Raw)
 		case *ast.FormattedInterpolation:
 			sb.WriteString("${")
