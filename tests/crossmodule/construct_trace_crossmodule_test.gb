@@ -10,7 +10,7 @@ import test;
 import construct_trace_donor as donor;
 
 func makePositional(): any {
-    return donor.Point(1, 2, 3);
+    return donor.Point(dyn(1), 2, 3);
 }
 
 func makeNamed(): any {
@@ -18,7 +18,7 @@ func makeNamed(): any {
 }
 
 func wrapperB(): any {
-    return donor.Point(1, 2, 3);
+    return donor.Point(dyn(1), 2, 3);
 }
 
 func wrapperA(): any {
@@ -30,7 +30,7 @@ func makeGenericBox(): any {
 }
 
 func makeZeroPositional(): any {
-    return donor.Zero(1, 2, 3);
+    return donor.Zero(dyn(1), 2, 3);
 }
 
 func callStaticMiss(): any {
@@ -43,7 +43,7 @@ func callInstanceMiss(): any {
 }
 
 func callFunctionMiss(): any {
-    return donor.addTwo(1, 2, 3);
+    return donor.addTwo(dyn(1), 2, 3);
 }
 
 class ConstructTraceCrossModuleTest extends test.Test {
@@ -138,4 +138,9 @@ class ConstructTraceCrossModuleTest extends test.Test {
             this.assertEquals(46, frames[0].line());
         }
     }
+}
+
+# Typed as any so geblang check leaves these deliberately bad calls to the runtime under test.
+func dyn(any v): any {
+    return v;
 }

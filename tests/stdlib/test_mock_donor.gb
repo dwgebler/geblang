@@ -1,0 +1,12 @@
+module test_mock_donor;
+
+import datetime;
+import sys;
+
+export func now(): int {
+    return datetime.nowUnix();
+}
+
+export func bundle(): string {
+    return sys.bundleDir();
+}

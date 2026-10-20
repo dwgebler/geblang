@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a call that passes a native function too few
+ *          or too many arguments.
+ */
+import math;
+
+let raised = math.pow(2.0);

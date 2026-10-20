@@ -258,3 +258,64 @@ io.println("${typeof(ratio.r)} ${typeof(f)} ${typeof(box.item)} ${typeof(exact.i
 		t.Fatalf("vm output:\n%s\nwant:\n%s", vm, want)
 	}
 }
+
+func TestParityConditionalAndCoalesceLiteralBranches(t *testing.T) {
+	ev, vm := parityOutputs(t, `import io;
+class Box {
+    decimal amount;
+    static decimal total = 0.0;
+    func Box(decimal a) { this.amount = a; }
+    func setThis(bool c, decimal d): void { this.amount = c ? d : 0; }
+}
+class Sub extends Box {
+    func Sub() { parent(1.0); }
+}
+func ret(bool c, decimal d): decimal { return c ? d : 0; }
+func take(decimal x): string { return typeof(x) as string; }
+bool f = false;
+decimal d1 = 2.5;
+let b = Box(1.0);
+b.setThis(f, d1);
+io.println(typeof(b.amount) as string);
+b.amount = f ? d1 : 3;
+io.println("${typeof(b.amount)} ${b.amount}");
+let s = Sub();
+s.amount = f ? d1 : (f ? 1 : 2);
+io.println("${typeof(s.amount)} ${s.amount}");
+?decimal n = null;
+s.amount = n ?? 4;
+io.println("${typeof(s.amount)} ${s.amount}");
+s.amount = d1 ?? 5;
+io.println("${typeof(s.amount)} ${s.amount}");
+Box.total = f ? d1 : 6;
+io.println("${typeof(Box.total)} ${Box.total}");
+decimal viaCoalesce = n ?? 7;
+io.println("${typeof(viaCoalesce)} ${typeof(ret(f, d1))} ${take(f ? d1 : 8)}");
+any count = 9;
+try { b.amount = f ? d1 : count; } catch (TypeError e) { io.println(e.message); }
+`)
+	want := "decimal\ndecimal 3.0000000000\ndecimal 2.0000000000\ndecimal 4.0000000000\ndecimal 2.5000000000\ndecimal 6.0000000000\ndecimal decimal decimal\ncannot assign int to decimal field Box.amount\n"
+	if ev != want {
+		t.Fatalf("evaluator output:\n%s\nwant:\n%s", ev, want)
+	}
+	if vm != want {
+		t.Fatalf("vm output:\n%s\nwant:\n%s", vm, want)
+	}
+}
+
+func TestParityForwardReferenceWithDefaults(t *testing.T) {
+	ev, vm := parityOutputs(t, `import io;
+class A {
+    func m(): string { return j({"a": 1}) as string; }
+}
+func viaFunction(): string { return k(3); }
+io.println(A().m());
+io.println(viaFunction());
+func j(any v, string key = "dflt"): any { return "${v} ${key}"; }
+func k(int x, int y = 10, string z = "z"): string { return "${x + y}${z}"; }
+`)
+	want := "{\"a\": 1} dflt\n13z\n"
+	if ev != want || vm != want {
+		t.Fatalf("evaluator:\n%s\nvm:\n%s\nwant:\n%s", ev, vm, want)
+	}
+}

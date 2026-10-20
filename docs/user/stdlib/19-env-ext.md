@@ -257,6 +257,10 @@ let result = ext.call(conn, "resize",
 );
 ```
 
+Named arguments reach the extension as `kwargs`. The names `conn`,
+`function` (and `options` for `ext.callWithOptions`) bind to the call's own
+parameters instead.
+
 #### Implementing binary in a Python extension
 
 The `gebext.py` helper handles slot assembly and disassembly. Receive binary

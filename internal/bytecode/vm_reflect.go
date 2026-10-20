@@ -698,10 +698,25 @@ func makeLocationDict(module string, line, column int64) runtime.Dict {
 
 // reflectFunctionMetadataValue resolves a same-module BytecodeClosure (a free function passed by value through an `any` binding) to its populated function metadata before delegating.
 func (vm *VM) reflectFunctionMetadataValue(value runtime.Value) (runtime.FunctionMetadata, bool) {
-	if closure, ok := value.(runtime.BytecodeClosure); ok && (closure.Module == "" || closure.Module == vm.moduleName) {
-		value = vm.bytecodeFunctionValue(closure.FunctionIndex, false)
+	if closure, ok := value.(runtime.BytecodeClosure); ok {
+		if closure.Module == "" || closure.Module == vm.moduleName {
+			if closure.FunctionIndex >= 0 && int(closure.FunctionIndex) < len(vm.curMod.Chunk.Functions) {
+				value = closureFunctionValue(vm.curMod.Chunk.Functions[closure.FunctionIndex], closure, vm.moduleName)
+			}
+		} else if vm.moduleLoader != nil {
+			if info, err := vm.moduleLoader.ModuleFunctionInfo(closure.Module, closure.FunctionIndex); err == nil {
+				value = closureFunctionValue(info, closure, closure.Module)
+			}
+		}
 	}
 	return reflectFunctionMetadata(value)
+}
+
+// closureFunctionValue describes a closure's own parameters, skipping the leading captured-variable slots.
+func closureFunctionValue(info FunctionInfo, closure runtime.BytecodeClosure, module string) runtime.BytecodeFunction {
+	fn := bytecodeFunctionFromInfo(info, closure.FunctionIndex, module, false)
+	fn.Parameters = parameterMetadataFromFunctionInfo(info, int(info.UpvalueCount))
+	return fn
 }
 
 func reflectFunctionMetadata(value runtime.Value) (runtime.FunctionMetadata, bool) {
@@ -1334,7 +1349,9 @@ func parameterMetadataFromFunctionInfo(info FunctionInfo, paramOffset int) []run
 	parameters := make([]runtime.ParameterMetadata, 0, len(info.ParamNames)-paramOffset)
 	for i := paramOffset; i < len(info.ParamNames); i++ {
 		typ := "any"
-		if i < len(info.ParamTypes) && info.ParamTypes[i] != "" {
+		if i < len(info.ParamDisplayTypes) {
+			typ = info.ParamDisplayTypes[i]
+		} else if i < len(info.ParamTypes) && info.ParamTypes[i] != "" {
 			typ = info.ParamTypes[i]
 		}
 		hasDefault := false

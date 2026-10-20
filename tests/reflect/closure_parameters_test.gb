@@ -1,0 +1,51 @@
+/**
+ * @title reflect.parameters on closures and generic types
+ * @summary Closures report only their declared parameters (not captured
+ * variables), parameter types keep their type arguments, and a closure
+ * created in another module reflects like a local one.
+ */
+import test;
+import reflect;
+import closure_params_donor as donor;
+
+func typed(list<int> xs, dict<string, int> d, ?set<string> s, int[] arr): void {}
+
+class ClosureParametersTest extends test.Test {
+    func names(callable fn): list<string> {
+        list<string> out = [];
+        for (p in reflect.parameters(fn)) {
+            out.push((p as dict<string, any>)["name"] as string);
+        }
+        return out;
+    }
+
+    func types(callable fn): list<string> {
+        list<string> out = [];
+        for (p in reflect.parameters(fn)) {
+            out.push((p as dict<string, any>)["type"] as string);
+        }
+        return out;
+    }
+
+    @test
+    func genericParameterTypesKeepTheirArguments(): void {
+        this.assertEquals(["list<int>", "dict<string, int>", "?set<string>", "int[]"], this.types(typed));
+    }
+
+    @test
+    func capturedVariablesAreNotParameters(): void {
+        int base = 10;
+        let add = func(int n): int { return base + n; };
+        this.assertEquals(["n"], this.names(add));
+        this.assertEquals(["xs"], this.names(donor.capturing("x")));
+        this.assertEquals(["list<int>"], this.types(donor.capturing("x")));
+    }
+
+    @test
+    func crossModuleClosureReflects(): void {
+        let h = donor.handler();
+        this.assertEquals(["request", "code"], this.names(h));
+        this.assertEquals(["dict<string, any>", "int"], this.types(h));
+        this.assertTrue((reflect.parameters(h)[1] as dict<string, any>)["hasDefault"] as bool);
+    }
+}

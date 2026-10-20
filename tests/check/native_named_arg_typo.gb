@@ -1,0 +1,10 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a named argument that is not a parameter of
+ *          the native function being called.
+ */
+import json;
+import math;
+
+let spaced = json.stringify({"a": 1}, indent: 2);
+let raised = math.pow(base: 2.0, zzz: 3.0);

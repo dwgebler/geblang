@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a constructor call into another module
+ *          with the wrong number of arguments.
+ */
+import donors.literal_args_donor as donor;
+
+let amount = donor.Amount(1, 2);

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"geblang/internal/ast"
+	"geblang/internal/native"
 	"geblang/internal/runtime"
 	"io"
 	"mime"
@@ -415,15 +416,15 @@ func webParseMultipart(call *ast.CallExpression, args []runtime.Value) (runtime.
 }
 
 func (e *Evaluator) webApp(value runtime.Value) (*webApp, error) {
-	id, ok := value.(runtime.Int)
-	if !ok || !id.Value.IsInt64() {
+	id, ok := native.AsInt64(value)
+	if !ok {
 		return nil, fmt.Errorf("web app handle must be int")
 	}
 	e.webMu.Lock()
 	defer e.webMu.Unlock()
-	app, ok := e.lookupWebApp(id.Value.Int64())
+	app, ok := e.lookupWebApp(id)
 	if !ok {
-		return nil, fmt.Errorf("unknown web app handle %d", id.Value.Int64())
+		return nil, fmt.Errorf("unknown web app handle %d", id)
 	}
 	return app, nil
 }

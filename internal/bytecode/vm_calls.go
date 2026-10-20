@@ -1141,6 +1141,10 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 		return vm.runtimeError(instruction, "native call name out of range")
 	}
+	if gen := native.PatchGeneration(); gen != vm.nativeCacheGen {
+		vm.invalidateNativeCache()
+		vm.nativeCacheGen = gen
+	}
 	if int(nameIndex) < len(vm.nativeCache) {
 		if fn := vm.nativeCache[nameIndex]; fn != nil {
 			args := vm.takeCallArgsBuffer(int(argc))
@@ -1590,10 +1594,23 @@ func (vm *VM) bindNativeNamedArgs(name string, args []runtime.Value, names []str
 }
 
 func (vm *VM) evalNativeCallWithNames(name string, args []runtime.Value, names []string) (runtime.Value, error) {
-	if reordered, bound, err := vm.bindNativeNamedArgs(name, args, names); err != nil {
+	if module, function, _ := strings.Cut(name, "."); len(names) > 0 && native.ForwardsNamedArgs(module, function) {
+		order, outNames, err := native.ForwardedArgOrder(module, function, names)
+		if err != nil {
+			return nil, err
+		}
+		reordered := make([]runtime.Value, len(order))
+		for k, idx := range order {
+			reordered[k] = args[idx]
+		}
+		args, names = reordered, outNames
+	} else if reordered, bound, err := vm.bindNativeNamedArgs(name, args, names); err != nil {
 		return nil, err
 	} else if bound {
 		args, names = reordered, nil
+	}
+	if patch := native.LookupPatch(name); patch != nil {
+		return patch(args)
 	}
 	if strings.HasPrefix(name, "collections.") {
 		return vm.collectionsNativeCall(name[len("collections."):], args)
@@ -2530,6 +2547,12 @@ func (vm *VM) InheritForwardThis(caller *VM) {
 
 // CallFunctionFast enters a cross-module free function directly (no synthetic wrapper bytecode / derived call VM) when it is sync, undecorated, non-generator and non-raw; otherwise it falls back to the wrapper path with identical results.
 func (vm *VM) CallFunctionFast(index int64, args []runtime.Value) (runtime.Value, error) {
+	if literals := vm.pendingLiteralArgs; literals != nil {
+		vm.pendingLiteralArgs = nil
+		if index >= 0 && int(index) < len(vm.curMod.Chunk.Functions) {
+			vm.typeLiteralArgs(vm.curMod.Chunk.Functions[index], args, 0, literals, nil)
+		}
+	}
 	if vm.directEntryEligible(index) {
 		return vm.executeFunctionDirect(index, args)
 	}
@@ -2891,9 +2914,20 @@ func (vm *VM) ConstructClassFastNamed(index int64, args []runtime.Value, names [
 	return vm.ConstructClassFast(index, ordered, typeArgs)
 }
 
+// AdoptLiteralArgs moves the int-literal argument mask a caller handed off for a cross-module call onto this home VM, so the next fast call types those arguments as a same-module call would.
+func (vm *VM) AdoptLiteralArgs(caller *VM) {
+	if caller == nil || caller == vm {
+		return
+	}
+	vm.pendingLiteralArgs = caller.literalHandoff
+	caller.literalHandoff = nil
+}
+
 // CallOverloadedFast selects a positional overload against the home chunk and calls it; displayName carries the call-site-qualified name for selection errors. An async winner yields a Task unless the caller is already inside an async worker.
 func (vm *VM) CallOverloadedFast(indices []int64, displayName string, args []runtime.Value, caller *VM) (runtime.Value, error) {
-	index, err := vm.selectRuntimeFunction(Instruction{}, displayName, indices, args, 0)
+	literals := vm.pendingLiteralArgs
+	vm.pendingLiteralArgs = nil
+	index, err := vm.selectRuntimeFunctionLiterals(Instruction{}, displayName, indices, args, 0, literals, nil)
 	if err != nil {
 		return nil, err
 	}

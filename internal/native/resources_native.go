@@ -106,8 +106,11 @@ func resourceLookup(args []runtime.Value) (string, bool, error) {
 		}
 		return "", false, fmt.Errorf("resources: %q: %w", name, err)
 	}
+	if info.IsDir() {
+		return resolved, true, nil
+	}
 	if !info.Mode().IsRegular() {
-		return "", false, fmt.Errorf("resources: %q is not a regular file", name)
+		return "", false, fmt.Errorf("resources: %q is not a regular file or directory", name)
 	}
 	file, err := os.Open(resolved)
 	if err != nil {
@@ -177,7 +180,7 @@ func resourceDeclared(root, name, mode string) (bool, error) {
 			return false, fmt.Errorf("resources: parse bundle manifest: %w", err)
 		}
 		for _, declared := range manifest.Resources {
-			if declared == name {
+			if declared == name || strings.HasPrefix(declared, name+"/") {
 				return true, nil
 			}
 		}
@@ -239,7 +242,7 @@ func resourceDeclaredByManifest(root, name string) (bool, error) {
 				return false, fmt.Errorf("resources: stat %q: %w", spec, err)
 			}
 			if info.IsDir() {
-				if candidate != match && resourceWithin(match, candidate) {
+				if resourceWithin(match, candidate) {
 					return true, nil
 				}
 			} else if candidate == match {

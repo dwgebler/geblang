@@ -78,6 +78,62 @@ type ModuleModel struct {
 	Interfaces map[string]InterfaceDecl
 }
 
+// ModuleCallSignatures returns the signatures a call to `name` in another module must match: the overloads of an undecorated top-level function, or an undecorated class's constructors (one empty signature when a class with no parent declares none). ok is false when the name is not such a declaration, so callers stay silent.
+func ModuleCallSignatures(program *ast.Program, name string) ([]MethodSignature, bool) {
+	if program == nil {
+		return nil, false
+	}
+	var sigs []MethodSignature
+	for _, stmt := range program.Statements {
+		if exp, ok := stmt.(*ast.ExportStatement); ok {
+			stmt = exp.Statement
+		}
+		switch s := stmt.(type) {
+		case *ast.FunctionStatement:
+			if s.Name == nil || s.Name.Value != name {
+				continue
+			}
+			if len(s.Decorators) > 0 {
+				return nil, false
+			}
+			sigs = append(sigs, methodSignatureFromFunc(s))
+		case *ast.ClassStatement:
+			if s.Name == nil || s.Name.Value != name {
+				continue
+			}
+			if len(s.Decorators) > 0 {
+				return nil, false
+			}
+			var classGenerics []string
+			for _, g := range s.Generics {
+				if g != nil && g.Name != nil {
+					classGenerics = append(classGenerics, g.Name.Value)
+				}
+			}
+			var ctors []MethodSignature
+			for _, member := range s.Members {
+				if m, ok := member.(*ast.FunctionStatement); ok && m.Name != nil && m.Name.Value == s.Name.Value {
+					if len(m.Decorators) > 0 {
+						return nil, false
+					}
+					sig := methodSignatureFromFunc(m)
+					sig.TypeParams = append(sig.TypeParams, classGenerics...)
+					ctors = append(ctors, sig)
+				}
+			}
+			if len(ctors) == 0 {
+				if s.Extends != nil {
+					// The constructor may be inherited from a parent elsewhere.
+					return nil, false
+				}
+				ctors = []MethodSignature{{}}
+			}
+			return ctors, true
+		}
+	}
+	return sigs, len(sigs) > 0
+}
+
 // ExtractModel walks a parsed program and returns its class/interface
 // declarations. Pure (no IO); the check package calls it per module to
 // build a cross-module class graph. Keys are the declared names (as

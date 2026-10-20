@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"geblang/internal/ast"
+	"geblang/internal/native"
 	"geblang/internal/runtime"
 	"math/big"
 	"sort"
@@ -163,11 +164,11 @@ type collectionsIterator struct {
 }
 
 func collectionsIntArg(value runtime.Value, label string) (*big.Int, error) {
-	intValue, ok := value.(runtime.Int)
+	intValue, ok := native.IntValueToBigInt(value)
 	if !ok {
 		return nil, fmt.Errorf("%s must be int", label)
 	}
-	return new(big.Int).Set(intValue.Value), nil
+	return new(big.Int).Set(intValue), nil
 }
 
 func collectionsRangeContains(current, end, step *big.Int, exclusive bool) bool {

@@ -42,9 +42,11 @@ class NumericOperatorsTest extends test.Test {
 
     @test
     func decimalFloatArithmeticThrows(): void {
-        this.assertThrows(func(): void { let x = 2.5 + 2.5f; });
-        this.assertThrows(func(): void { let x = 2.5f * 2.0; });
-        this.assertThrows(func(): void { let x = 2.5 - 1.0f; });
+        any d = 2.5;
+        any f = 2.5f;
+        this.assertThrows(func(): void { let x = d + f; });
+        this.assertThrows(func(): void { let x = f * d; });
+        this.assertThrows(func(): void { let x = d - f; });
     }
 
     @test

@@ -929,8 +929,20 @@ func (e *Evaluator) sqliteDSNWithOptions(call *ast.CallExpression, dsn string, a
 	if b, ok := dictBoolField(options, "tempStoreMemory"); ok && b {
 		pragmas = append(pragmas, "temp_store(MEMORY)")
 	}
-	if len(pragmas) == 0 {
+	txLock := ""
+	if v, ok := dictStringField(options, "txLock"); ok {
+		txLock = strings.ToLower(v)
+		switch txLock {
+		case "deferred", "immediate", "exclusive":
+		default:
+			return "", fmt.Errorf("%s txLock must be deferred, immediate, or exclusive", call.Callee.String())
+		}
+	}
+	if len(pragmas) == 0 && txLock == "" {
 		return sqliteDSNWithDefaults(dsn), nil
+	}
+	if len(pragmas) == 0 {
+		dsn = sqliteDSNWithDefaults(dsn)
 	}
 	out := dsn
 	if !strings.HasPrefix(out, "file:") {
@@ -943,6 +955,10 @@ func (e *Evaluator) sqliteDSNWithOptions(call *ast.CallExpression, dsn string, a
 	for _, p := range pragmas {
 		out += sep + "_pragma=" + p
 		sep = "&"
+	}
+	if txLock != "" {
+		// How a transaction begins: immediate takes the write lock at BEGIN (waiting on busy_timeout) instead of at the first write.
+		out += sep + "_txlock=" + txLock
 	}
 	return out, nil
 }

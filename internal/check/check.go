@@ -125,6 +125,7 @@ func CrossModuleAnalysis(file string, program *ast.Program, opts Options) []Diag
 			analyzer.SetClassSurfaceResolver(graph.surface)
 			analyzer.SetClassMethodSignatureResolver(graph.methodSignatures)
 			analyzer.SetClassFieldTypeResolver(graph.fieldType)
+			analyzer.SetModuleFunctionSignatureResolver(moduleFunctionResolver(program, opts, cache))
 		}
 	}
 	for _, sd := range analyzer.Analyze(program) {

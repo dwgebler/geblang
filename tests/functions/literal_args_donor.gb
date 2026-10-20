@@ -1,0 +1,25 @@
+module literal_args_donor;
+
+export func asText(decimal d): string {
+    return d.format(2);
+}
+
+export func scaled(float f): float {
+    return f * 2.0f;
+}
+
+export func pick(decimal d): string {
+    return "decimal ${d.format(1)}";
+}
+
+export func pick(string s): string {
+    return "string ${s}";
+}
+
+export class Amount {
+    decimal value;
+
+    func Amount(decimal value) {
+        this.value = value;
+    }
+}

@@ -621,6 +621,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	paramNames := make([]string, 0, len(stmt.Parameters))
 	paramDisplayNames := make([]string, 0, len(stmt.Parameters))
 	paramTypes := make([]string, 0, len(stmt.Parameters))
+	paramDisplayTypes := make([]string, 0, len(stmt.Parameters))
 	paramDecorators := make([][]runtime.DecoratorMetadata, 0, len(stmt.Parameters))
 	defaultConstants := make([]int64, 0, len(stmt.Parameters))
 	if receiverName != "" {
@@ -628,6 +629,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		paramDisplayNames = append(paramDisplayNames, receiverName)
 		paramSlots = append(paramSlots, c.defineLocalWithType(receiverName, ""))
 		paramTypes = append(paramTypes, "")
+		paramDisplayTypes = append(paramDisplayTypes, "any")
 		paramDecorators = append(paramDecorators, nil)
 		defaultConstants = append(defaultConstants, -1)
 	}
@@ -650,6 +652,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 			constSlots = append(constSlots, paramSlot)
 		}
 		paramTypes = append(paramTypes, paramType)
+		paramDisplayTypes = append(paramDisplayTypes, declaredTypeName(param.Type))
 		paramDecs, err := c.decoratorsMetadata(param.Decorators, "parameter", 0)
 		if err != nil {
 			if !nestedStatement {
@@ -684,6 +687,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	c.chunk.Functions[index].ParamDisplayNames = paramDisplayNames
 	c.chunk.Functions[index].ParamSlots = paramSlots
 	c.chunk.Functions[index].ParamTypes = paramTypes
+	c.chunk.Functions[index].ParamDisplayTypes = paramDisplayTypes
 	c.chunk.Functions[index].ParamDecorators = paramDecorators
 	c.chunk.Functions[index].ReturnType = c.bytecodeReturnType(stmt.ReturnType)
 	c.chunk.Functions[index].ReturnCheckType = c.bytecodeReturnCheckType(stmt.ReturnType)
@@ -1070,8 +1074,14 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 	nameIndex := int64(len(c.chunk.Constants))
 	c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: canonical + "." + name})
 	if !hasNamedArgs {
+		if err := validateNativeArity(canonical, name, call.Arguments); err != nil {
+			return err
+		}
 		c.emitAt(OpDeferNativeCall, stmt.Token.Line, stmt.Token.Column, nameIndex, int64(len(call.Arguments)))
 		return nil
+	}
+	if err := validateNativeNamedArgs(canonical, name, call.Arguments); err != nil {
+		return err
 	}
 	operands := []int64{nameIndex, int64(len(call.Arguments))}
 	for _, arg := range call.Arguments {

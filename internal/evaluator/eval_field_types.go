@@ -26,6 +26,30 @@ func literalFieldValue(instance *runtime.Instance, name string, value runtime.Va
 	return value
 }
 
+// numericFieldTarget is a field's declared float or decimal type, so integer-literal branches of the assigned value take it.
+func numericFieldTarget(object runtime.Value, name string) *ast.TypeRef {
+	var declared *ast.TypeRef
+	switch target := object.(type) {
+	case *runtime.Instance:
+		if target.Class != nil && target.HasField(name) {
+			if check := resolveFieldCheck(target.Class, name); check.params == nil {
+				declared = check.declared
+			}
+		}
+	case *runtime.Class:
+		for cur := target; cur != nil; cur = cur.Parent {
+			if _, present := cur.StaticValues[name]; present {
+				declared = cur.StaticTypes[name]
+				break
+			}
+		}
+	}
+	if declared == nil || declared.Operator != "" || (declared.Name != "float" && declared.Name != "decimal") {
+		return nil
+	}
+	return declared
+}
+
 // fieldCheck is the resolved declared type of one field on one class.
 type fieldCheck struct {
 	declaring *runtime.Class

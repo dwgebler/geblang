@@ -84,7 +84,10 @@ connect("example.com", tls: false);           # positional then named
 connect(host: "example.com", 443);            # named then positional: port=443
 ```
 
-Unknown names raise an error so typos surface immediately:
+Unknown names are an error so typos surface immediately; `geblang check`
+reports them, for your own functions and for stdlib functions alike
+(`json.stringify(value, indent: 2)` is rejected because `stringify` has no
+`indent` parameter):
 
 ```gb
 connect("example.com", tsl: false);           # error - no parameter "tsl"

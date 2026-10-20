@@ -104,7 +104,7 @@ class ReturnTypeChecksTest extends test.Test {
 
     @test
     func closureErrorsNameTheClosure(): void {
-        func bad = func(): int { any v = "a"; return v; };
+        func bad = func(): int { any v = "a"; return v as string; };
         this.assertThrowsOf(func(): void { bad(); }, "TypeError", "<closure> expects int return, got string");
     }
 }

@@ -47,7 +47,7 @@ func report(func f): void {
 }
 report(func(): void { secureRandom.randomInt(5, 1); });
 report(func(): void { secureRandom.randomInt(s, 5, 1); });
-report(func(): void { secureRandom.randomInt(1); });
+report(func(): void { secureRandom.randomInt(...[1]); });
 report(func(): void { secureRandom.randomInt("a", 2); });
 report(func(): void { secureRandom.randomInt(s, 1, 2 ** 70); });
 report(func(): void { secureRandom.randomBytes(-1); });

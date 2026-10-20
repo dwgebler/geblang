@@ -768,7 +768,9 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 				vm.push(vm.startAsyncCallable(function, args))
 				return ip, nil
 			}
+			vm.literalHandoff = literalArgs
 			result, err := vm.moduleLoader.CallModuleFunction(function, vm.wrapStatefulNativeArgs("", "", args), vm)
+			vm.literalHandoff = nil
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -779,7 +781,9 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
+			vm.literalHandoff = literalArgs
 			result, err := vm.moduleLoader.CallModuleOverloaded(overloaded.Module, overloaded.Indices, module.Name+"."+nameValue.Value, vm.wrapStatefulNativeArgs("", "", args), vm)
+			vm.literalHandoff = nil
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -790,7 +794,9 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
+			vm.literalHandoff = literalArgs
 			result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args), callTypeArgs, vm)
+			vm.literalHandoff = nil
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -822,7 +828,9 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			 * chunk. Main-chunk classes have Module="" so the check
 			 * looks at both directions. */
 			if class.Module != vm.moduleName && vm.moduleLoader != nil {
+				vm.literalHandoff = literalArgs
 				result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args), callTypeArgs, vm)
+				vm.literalHandoff = nil
 				if err != nil {
 					return vm.propagateModuleError(instruction, ip, err)
 				}

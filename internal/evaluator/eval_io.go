@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"geblang/internal/ast"
+	"geblang/internal/native"
 	"geblang/internal/runtime"
 	"io"
 	"net"
@@ -1926,11 +1927,11 @@ func (e *Evaluator) ioStreamMethod(stream runtime.NativeObject, name string, arg
 }
 
 func fileHandleID(value runtime.Value) (int64, error) {
-	id, ok := value.(runtime.Int)
-	if !ok || !id.Value.IsInt64() {
+	id, ok := native.AsInt64(value)
+	if !ok {
 		return 0, fmt.Errorf("file handle must be int")
 	}
-	return id.Value.Int64(), nil
+	return id, nil
 }
 
 func fileOpenFlags(mode string) (int, error) {

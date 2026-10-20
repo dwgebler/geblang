@@ -27,6 +27,24 @@ class ResourcesTest extends test.Test {
     }
 
     @test
+    func resolvesDirectories(): void {
+        let root = io.tempDir("resources-*");
+        defer io.remove(root);
+        io.mkdir(path.join(root, "templates", "admin"), 0o755);
+        io.writeText(path.join(root, "templates", "admin", "page.html"), "page");
+        let items = resources.withRoot(root);
+        this.assertTrue(items.exists("templates"));
+        this.assertTrue(items.exists("templates/admin"));
+        let dir = items.path("templates");
+        this.assertEquals(path.abs(dir), dir);
+        this.assertEquals("page", io.readText(path.join(dir, "admin", "page.html")));
+        bool readDir = false;
+        try { items.readText("templates"); }
+        catch (Error e) { readDir = true; }
+        this.assertTrue(readDir);
+    }
+
+    @test
     func rejectsTraversalAndSymlinkEscape(): void {
         let root = io.tempDir("resources-root-*");
         let outside = io.tempDir("resources-outside-*");

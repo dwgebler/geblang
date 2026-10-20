@@ -1,0 +1,15 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an int-typed conditional or `??` branch
+ *          assigned to a decimal target; only integer literals widen.
+ */
+class Box {
+    decimal amount;
+}
+
+func pick(bool on, decimal d, int i, ?decimal maybe): decimal {
+    let box = Box();
+    box.amount = on ? d : i;
+    decimal viaCoalesce = maybe ?? i;
+    return on ? i : d;
+}

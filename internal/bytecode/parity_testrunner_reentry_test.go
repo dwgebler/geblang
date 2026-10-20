@@ -124,3 +124,52 @@ class Widget {
 io.println("${scan.scanAll()}");
 `, "[\"Widget:Repo\"]\n")
 }
+
+// test.mock patches reach calls made inside imported modules, and directly-bound builtins such as sys.*.
+func TestParityTestMockReachesImportedModules(t *testing.T) {
+	dir := t.TempDir()
+	writeModule(t, dir, "clockdonor", `module clockdonor;
+import datetime;
+import sys;
+export func now(): int { return datetime.nowUnix(); }
+export func bundle(): string { return sys.bundleDir(); }
+`)
+	runParityModulesDir(t, dir, `import io;
+import test;
+import clockdonor;
+test.mock("datetime", {"nowUnix": func(): int { return 11; }});
+test.mock("sys", {"bundleDir": func(): string { return "/b"; }});
+io.println("${clockdonor.now()} ${clockdonor.bundle()}");
+test.restoreAll();
+io.println(clockdonor.now() > 11);
+try {
+    test.mock("datetime", {"nope": func(): int { return 1; }});
+} catch (ValueError e) {
+    io.println(e.message.contains("datetime.nope"));
+}
+`, "11 /b\ntrue\ntrue\n")
+}
+
+// reflect.parameters reports declared types with their arguments, skips captured variables, and resolves closures from other modules.
+func TestParityReflectParametersOnClosures(t *testing.T) {
+	dir := t.TempDir()
+	writeModule(t, dir, "mk", `module mk;
+export func handler(): callable {
+    let tag = "t";
+    return func(dict<string, any> request, int code = 200): string { return tag; };
+}
+`)
+	runParityModulesDir(t, dir, `import io;
+import reflect;
+import mk;
+func typed(list<int> xs, ?set<string> s, int[] arr): void {}
+int base = 1;
+let local = func(int n): int { return base + n; };
+io.println(reflect.parameters(typed));
+io.println(reflect.parameters(local));
+io.println(reflect.parameters(mk.handler()));
+`, `[{"hasDefault": false, "name": "xs", "type": "list<int>", "variadic": false}, {"hasDefault": false, "name": "s", "type": "?set<string>", "variadic": false}, {"hasDefault": false, "name": "arr", "type": "int[]", "variadic": false}]
+[{"hasDefault": false, "name": "n", "type": "int", "variadic": false}]
+[{"hasDefault": false, "name": "request", "type": "dict<string, any>", "variadic": false}, {"hasDefault": true, "name": "code", "type": "int", "variadic": false}]
+`)
+}

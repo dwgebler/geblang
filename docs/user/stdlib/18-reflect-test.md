@@ -403,16 +403,17 @@ method:
 Patches dispatch through whichever engine is active (evaluator
 or VM); a mock installed inside an `@test` method is visible to
 all subsequent stdlib calls in that method, including nested
-function calls.
+function calls and calls made inside imported modules. Mocking a
+name that is not a native module function (a typo such as
+`"nowUnixx"`) throws a `ValueError`.
 
 Notes:
 
 - The patched callable receives positional arguments only. Named
   argument forms aren't supported in v1; the underlying stdlib
   surface generally doesn't use them.
-- `test.mock` patches the *Geblang-visible* native dispatch. It
-  doesn't intercept calls made by Go-side stateful natives that
-  bypass the registry (rare; mostly internal plumbing).
+- `test.mock` patches calls made from Geblang code. It doesn't
+  intercept a native function calling another natively.
 - For instance-method or DI-resolved-service patching, prefer
   constructor injection - replace the dependency in the test's
   setup rather than reaching for `test.mock`.

@@ -190,6 +190,10 @@ Message dictionary keys:
 | `headers` | `dict<string, string|list<string>>` | Custom non-reserved headers. |
 | `attachments` | `list<dict>` | Attachment dictionaries. |
 
+Addresses may include a display name (`"App <noreply@example.com>"`). Headers
+keep the name as written; the SMTP envelope (`MAIL FROM` / `RCPT TO`) uses the
+bare address, which is what servers require.
+
 Attachment dictionary keys:
 
 | Key | Type | Description |

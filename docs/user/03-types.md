@@ -173,7 +173,10 @@ to a parameter whose type is a generic `T` bound to `float` or `decimal`
 (`Box<float>(1)`, or `T` bound through an `extends Box<float>` clause). A
 negated literal such as `-1`, and a conditional whose branches are both literals
 (`on ? 1 : 2`), count as literals; a field default must be a plain or negated
-literal. When an overload takes an `int`, the `int` overload is chosen, and when
+literal. Each branch of a conditional or `??` is typed on its own, so in
+`decimal total = paid ? amount : 0;` or `total = saved ?? 0;` only the literal
+branch converts, and an `int` variable in another branch is rejected as it would
+be on its own. When an overload takes an `int`, the `int` overload is chosen, and when
 several overloads need converting, the one needing the fewest conversions wins;
 a named argument is typed only when every overload agrees on its parameter type.
 Only literals are typed this way: an `int` variable passed or assigned where a

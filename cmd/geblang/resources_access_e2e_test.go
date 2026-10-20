@@ -85,3 +85,54 @@ app.main();
 		t.Fatalf("symlink escape build: %v, output %q", err, output)
 	}
 }
+
+func TestResourceDirectoriesSourceAndBuilt(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "geblang")
+	if output, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build geblang: %v\n%s", err, output)
+	}
+	project := t.TempDir()
+	write := func(name, content string) {
+		location := filepath.Join(project, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(location), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(location, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("geblang.yaml", "name: app\nversion: 0.0.0\nresources:\n  - templates\n")
+	write("templates/admin/page.html", "page-ok")
+	write("private/secret.txt", "no")
+	write("app.gb", `module app;
+import io;
+import path;
+import resources;
+export func main(): int {
+    io.println(resources.exists("templates"));
+    io.println(resources.exists("templates/admin"));
+    io.println(resources.exists("private"));
+    io.println(io.readText(path.join(resources.path("templates"), "admin", "page.html")));
+    return 0;
+}
+`)
+	write("runner.gb", "import app;\napp.main();\n")
+	away := t.TempDir()
+	want := "true\ntrue\nfalse\npage-ok"
+	run := exec.Command(bin, "run", filepath.Join(project, "runner.gb"))
+	run.Dir = away
+	if output, err := run.CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != want {
+		t.Fatalf("source run: %v, output %q", err, output)
+	}
+	executable := filepath.Join(project, "app-bin")
+	build := exec.Command(bin, "build", "--entry", "app", "--out", executable, ".")
+	build.Dir = project
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build app: %v\n%s", err, output)
+	}
+	launch := exec.Command(executable)
+	launch.Dir = away
+	if output, err := launch.CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != want {
+		t.Fatalf("built app: %v, output %q", err, output)
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"geblang/internal/ast"
+	"geblang/internal/native"
 	"geblang/internal/runtime"
 )
 
@@ -98,13 +99,32 @@ func smtpSendBuiltin(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 	if len(recipients) == 0 {
 		return nil, fmt.Errorf("%s message must include to, cc, or bcc recipients", call.Callee.String())
 	}
-	if err := sendSMTP(config, message.from, recipients, data); err != nil {
+	envelopeFrom, err := envelopeAddress(message.from)
+	if err != nil {
+		return nil, fmt.Errorf("%s from: %v", call.Callee.String(), err)
+	}
+	envelopeTo := make([]string, len(recipients))
+	for i, recipient := range recipients {
+		if envelopeTo[i], err = envelopeAddress(recipient); err != nil {
+			return nil, fmt.Errorf("%s recipient: %v", call.Callee.String(), err)
+		}
+	}
+	if err := sendSMTP(config, envelopeFrom, envelopeTo, data); err != nil {
 		return nil, fmt.Errorf("%s %v", call.Callee.String(), err)
 	}
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "ok", runtime.Bool{Value: true})
 	putDict(entries, "recipients", runtime.SmallInt{Value: int64(len(recipients))})
 	return runtime.Dict{Entries: entries}, nil
+}
+
+// envelopeAddress reduces "Name <addr>" to the bare address SMTP commands require.
+func envelopeAddress(address string) (string, error) {
+	parsed, err := mail.ParseAddress(address)
+	if err != nil {
+		return "", err
+	}
+	return parsed.Address, nil
 }
 
 func smtpConfigFromValue(value runtime.Value) (smtpConfig, error) {
@@ -529,14 +549,14 @@ func smtpAttachmentFromDict(dict runtime.Dict) (smtpAttachment, error) {
 }
 
 func intField(value runtime.Value, label string) (int, error) {
-	intValue, ok := value.(runtime.Int)
-	if !ok {
+	if _, ok := native.IntValueToBigInt(value); !ok {
 		return 0, fmt.Errorf("%s must be int", label)
 	}
-	if !intValue.Value.IsInt64() {
+	n, ok := native.AsInt64(value)
+	if !ok {
 		return 0, fmt.Errorf("%s is out of range", label)
 	}
-	return int(intValue.Value.Int64()), nil
+	return int(n), nil
 }
 
 func dictBoolFieldDefault(dict runtime.Dict, key string, fallback bool) bool {

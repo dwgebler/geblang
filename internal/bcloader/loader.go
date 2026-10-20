@@ -391,6 +391,7 @@ func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []ru
 		chunk = c
 	}
 	vm, pool := l.moduleVM(function.Module, chunk, caller)
+	vm.AdoptLiteralArgs(caller)
 	var result runtime.Value
 	var err error
 	if function.Raw {
@@ -486,6 +487,7 @@ func (l *Loader) ConstructModuleClass(class runtime.BytecodeClass, args []runtim
 		chunk = c
 	}
 	vm, pool := l.moduleVM(class.Module, chunk, caller)
+	vm.AdoptLiteralArgs(caller)
 	result, err := vm.ConstructClassFast(class.Index, args, typeArgs)
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
@@ -519,6 +521,7 @@ func (l *Loader) CallModuleOverloaded(module string, indices []int64, displayNam
 		return nil, fmt.Errorf("module %s is not loaded", module)
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
+	vm.AdoptLiteralArgs(caller)
 	result, err := vm.CallOverloadedFast(indices, displayName, args, caller)
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)

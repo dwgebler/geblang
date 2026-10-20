@@ -90,6 +90,15 @@ that map to per-connection pragmas applied at connect time:
 | `cacheSizeKb: N` | `cache_size(-N)` | Page-cache size in KiB. |
 | `mmapSizeMb: N` | `mmap_size(N MiB)` | Memory-mapped I/O size. |
 | `tempStoreMemory: true` | `temp_store(MEMORY)` | Keep temp tables and indices in memory. |
+| `txLock: "immediate"` | `BEGIN IMMEDIATE` | How `begin()` starts a transaction: `"deferred"` (SQLite's default), `"immediate"` or `"exclusive"`. |
+
+`txLock: "immediate"` makes each transaction take the write lock when it
+begins, waiting up to the busy timeout for another writer to finish. With the
+default deferred mode a transaction that reads and then writes takes the lock
+only at its first write; under WAL, if another connection committed in
+between, that write fails at once with `database is locked` and the busy
+timeout does not help. Use `"immediate"` for read-then-write transactions when
+more than one connection or process writes to the database.
 
 A file database already uses WAL and `synchronous(NORMAL)` by default; these
 options tune or override that (for example `wal: false`, or

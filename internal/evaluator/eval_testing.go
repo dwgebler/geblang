@@ -174,6 +174,9 @@ func (e *Evaluator) testMock(call *ast.CallExpression, args []runtime.Value) (ru
 			return nil, fmt.Errorf("%s dict keys must be strings", call.Callee.String())
 		}
 		fname := fnameValue.Value
+		if _, builtin := e.builtins[moduleName.Value][fname]; !builtin && !e.natives.Has(moduleName.Value, fname) {
+			return nil, runtime.ClassifiedError{Class: "ValueError", Message: fmt.Sprintf("%s: %s.%s is not a native function that can be mocked", call.Callee.String(), moduleName.Value, fname)}
+		}
 		callable := entry.Value
 		patch := e.makeMockPatch(call, callable)
 		e.natives.Patch(moduleName.Value, fname, patch)
@@ -496,4 +499,20 @@ func (e *Evaluator) assertThrowsImpl(args []runtime.Value) (runtime.Value, error
 		return nil, fmt.Errorf("expected error containing %q, got %q", expectedSub, err.Error())
 	}
 	return runtime.Null{}, nil
+}
+
+// withTestPatches routes every builtin module function through the test.mock patch table first.
+func withTestPatches(modules map[string]map[string]builtinFunc) map[string]map[string]builtinFunc {
+	for module, functions := range modules {
+		for name, fn := range functions {
+			key, inner := native.Key(module, name), fn
+			functions[name] = func(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+				if patch := native.LookupPatch(key); patch != nil {
+					return patch(args)
+				}
+				return inner(call, args)
+			}
+		}
+	}
+	return modules
 }

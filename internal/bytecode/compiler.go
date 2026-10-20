@@ -524,6 +524,19 @@ func (c *Compiler) declareFunction(name string) int64 {
 // metadata; the function body is compiled later by
 // compileFunctionStatement which overwrites everything except the
 // reserved index.
+// signatureDefaultConstant records a declared default during the signature pre-pass, so calls compiled before the function body still see the parameter as optional.
+func (c *Compiler) signatureDefaultConstant(def ast.Expression) int64 {
+	if def == nil {
+		return -1
+	}
+	value, err := c.constantValueFromExpression(def)
+	if err != nil {
+		return -1
+	}
+	c.chunk.Constants = append(c.chunk.Constants, value)
+	return int64(len(c.chunk.Constants) - 1)
+}
+
 func (c *Compiler) populateFunctionSignature(index int64, fn *ast.FunctionStatement) {
 	info := &c.chunk.Functions[index]
 	info.ParamNames = make([]string, 0, len(fn.Parameters))
@@ -536,7 +549,7 @@ func (c *Compiler) populateFunctionSignature(index int64, fn *ast.FunctionStatem
 		} else {
 			info.ParamTypes = append(info.ParamTypes, "")
 		}
-		info.DefaultConstants = append(info.DefaultConstants, -1)
+		info.DefaultConstants = append(info.DefaultConstants, c.signatureDefaultConstant(param.Default))
 		if param.Variadic {
 			info.Variadic = true
 		}

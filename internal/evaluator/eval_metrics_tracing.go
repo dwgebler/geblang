@@ -938,11 +938,11 @@ func optionalAttrs(call *ast.CallExpression, args []runtime.Value, index int) (m
 }
 
 func traceHandleID(value runtime.Value) (int64, error) {
-	id, ok := value.(runtime.Int)
-	if !ok || !id.Value.IsInt64() {
+	id, ok := native.AsInt64(value)
+	if !ok {
 		return 0, fmt.Errorf("trace span handle must be int")
 	}
-	return id.Value.Int64(), nil
+	return id, nil
 }
 
 func traceSpanValue(id int64, span *traceSpan) runtime.Dict {

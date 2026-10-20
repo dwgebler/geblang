@@ -1,0 +1,10 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a call to another module's function whose
+ *          arguments fit none of its parameter lists (here an int variable for
+ *          a decimal parameter).
+ */
+import donors.literal_args_donor as donor;
+
+int n = 3;
+let text = donor.asText(n);

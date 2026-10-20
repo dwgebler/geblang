@@ -475,11 +475,11 @@ func (e *Evaluator) loggerHandle(value runtime.Value) (*loggerHandle, error) {
 }
 
 func logHandleID(value runtime.Value) (int64, error) {
-	id, ok := value.(runtime.Int)
-	if !ok || !id.Value.IsInt64() {
+	id, ok := native.AsInt64(value)
+	if !ok {
 		return 0, fmt.Errorf("logger handle must be int")
 	}
-	return id.Value.Int64(), nil
+	return id, nil
 }
 
 func formatLogLine(level string, message string, fields runtime.Dict) (string, error) {

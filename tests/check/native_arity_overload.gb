@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an argument count that fits none of an
+ *          overloaded native's accepted forms.
+ */
+import secureRandom;
+
+let n = secureRandom.randomInt(1, 2, 3, 4);

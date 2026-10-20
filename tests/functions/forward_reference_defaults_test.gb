@@ -1,0 +1,39 @@
+/**
+ * @title Forward references with default parameters
+ * @summary A function declared later in the file can be called with its
+ * defaulted parameters omitted, from methods, functions and closures.
+ */
+import test;
+
+class Caller {
+    func viaMethod(): string {
+        return later(1);
+    }
+
+    static func viaStatic(): string {
+        return later(2, label: "s");
+    }
+}
+
+func viaFunction(): string {
+    return later(3);
+}
+
+class ForwardReferenceDefaultsTest extends test.Test {
+    @test
+    func methodsSeeLaterDefaults(): void {
+        this.assertEquals("1:x:true", Caller().viaMethod());
+        this.assertEquals("2:s:true", Caller.viaStatic());
+    }
+
+    @test
+    func functionsAndClosuresSeeLaterDefaults(): void {
+        this.assertEquals("3:x:true", viaFunction());
+        let fn = func(): string { return later(4, flag: false); };
+        this.assertEquals("4:x:false", fn());
+    }
+}
+
+func later(int n, string label = "x", bool flag = true): string {
+    return "${n}:${label}:${flag}";
+}

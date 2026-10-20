@@ -1606,6 +1606,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	paramNames := make([]string, 0, cap(paramSlots))
 	paramDisplayNames := make([]string, 0, cap(paramSlots))
 	paramTypes := make([]string, 0, cap(paramSlots))
+	paramDisplayTypes := make([]string, 0, cap(paramSlots))
 	defaultConstants := make([]int64, 0, cap(paramSlots))
 
 	for _, cap := range captures {
@@ -1614,6 +1615,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 		paramNames = append(paramNames, cap.name)
 		paramDisplayNames = append(paramDisplayNames, cap.name)
 		paramTypes = append(paramTypes, "")
+		paramDisplayTypes = append(paramDisplayTypes, "any")
 		defaultConstants = append(defaultConstants, -1)
 	}
 
@@ -1630,6 +1632,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 		paramNames = append(paramNames, strings.ToLower(param.Name.Value))
 		paramDisplayNames = append(paramDisplayNames, param.Name.Value)
 		paramTypes = append(paramTypes, paramType)
+		paramDisplayTypes = append(paramDisplayTypes, declaredTypeName(param.Type))
 		if param.Default == nil {
 			defaultConstants = append(defaultConstants, -1)
 			continue
@@ -1650,6 +1653,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	fn.ParamDisplayNames = paramDisplayNames
 	fn.ParamSlots = paramSlots
 	fn.ParamTypes = paramTypes
+	fn.ParamDisplayTypes = paramDisplayTypes
 	fn.ReturnType = c.bytecodeReturnType(expr.ReturnType)
 	fn.ReturnCheckType = c.bytecodeReturnCheckType(expr.ReturnType)
 	fn.DefaultConstants = defaultConstants
@@ -1724,18 +1728,111 @@ func (c *Compiler) compileShortCircuitExpression(expr *ast.InfixExpression) erro
 	return nil
 }
 
+// compileBranchedFieldStore stores each conditional or `??` branch separately so only integer-literal branches take the field's numeric type.
+func (c *Compiler) compileBranchedFieldStore(receiver int64, value ast.Expression, nameIndex int64, line, column int) error {
+	store := func(literal bool) {
+		if literal {
+			c.emitAt(OpSetField, line, column, nameIndex, setFieldIntLiteral)
+		} else {
+			c.emitAt(OpSetField, line, column, nameIndex)
+		}
+	}
+	switch v := value.(type) {
+	case *ast.TernaryExpression:
+		if ast.HasIntegerLiteralBranch(v) && !ast.IsIntegerLiteral(v) {
+			jumpFalse, err := c.compileConditionAndJumpIfFalse(v.Condition, v.Token.Line, v.Token.Column)
+			if err != nil {
+				return err
+			}
+			if err := c.compileBranchedFieldStore(receiver, v.ThenExpr, nameIndex, line, column); err != nil {
+				return err
+			}
+			end := c.emitJump(OpJump, line, column)
+			c.patchJump(jumpFalse)
+			if err := c.compileBranchedFieldStore(receiver, v.ElseExpr, nameIndex, line, column); err != nil {
+				return err
+			}
+			c.patchJump(end)
+			return nil
+		}
+	case *ast.InfixExpression:
+		if v.Operator == "??" && ast.HasIntegerLiteralBranch(v) {
+			c.emitAt(OpGetLocal, line, column, receiver)
+			if err := c.compileExpression(v.Left); err != nil {
+				return err
+			}
+			present := c.emitJump(OpNullCoalesce, v.Token.Line, v.Token.Column)
+			if err := c.compileExpression(v.Right); err != nil {
+				return err
+			}
+			store(ast.IsIntegerLiteral(v.Right))
+			end := c.emitJump(OpJump, line, column)
+			c.patchJump(present)
+			store(ast.IsIntegerLiteral(v.Left))
+			c.patchJump(end)
+			return nil
+		}
+	}
+	c.emitAt(OpGetLocal, line, column, receiver)
+	if err := c.compileExpression(value); err != nil {
+		return err
+	}
+	store(ast.IsIntegerLiteral(value))
+	return nil
+}
+
 func (c *Compiler) compileNullCoalesceExpression(expr *ast.InfixExpression) error {
-	if err := c.compileExpression(expr.Left); err != nil {
+	expected := c.currentExpectedType()
+	if err := c.compileExpressionWithExpected(expr.Left, expected); err != nil {
 		return err
 	}
 	// If left is non-null, jump past right side (leaving left on stack).
 	endJump := c.emitJump(OpNullCoalesce, expr.Token.Line, expr.Token.Column)
 	// Left was null: pop it, then evaluate right side.
-	if err := c.compileExpression(expr.Right); err != nil {
+	if err := c.compileExpressionWithExpected(expr.Right, expected); err != nil {
 		return err
 	}
 	c.patchJump(endJump)
 	return nil
+}
+
+// validateNativeNamedArgs rejects at compile time the named arguments a native call would reject when bound at run time.
+func validateNativeNamedArgs(module, name string, args []ast.CallArgument) error {
+	if native.ForwardsNamedArgs(module, name) {
+		return nil
+	}
+	sig, ok := native.NativeSignature(module, name)
+	for _, arg := range args {
+		if arg.Name == nil {
+			continue
+		}
+		if !ok {
+			return fmt.Errorf("named arguments are only supported for Geblang functions and methods (%s.%s)", module, name)
+		}
+		known := false
+		for _, param := range sig.ParamNames {
+			if param == arg.Name.Value {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return fmt.Errorf("%s has no parameter %s", name, arg.Name.Value)
+		}
+	}
+	return nil
+}
+
+// validateNativeArity rejects at compile time a positional native call whose argument count does not fit the catalog signature.
+func validateNativeArity(module, name string, args []ast.CallArgument) error {
+	if native.ForwardsNamedArgs(module, name) {
+		return nil
+	}
+	if fits, ok := native.NativeArityFits(module, name, len(args)); !ok || fits {
+		return nil
+	}
+	sig, _ := native.NativeSignature(module, name)
+	return fmt.Errorf("%s.%s(%s) does not accept %d argument(s)", module, name, strings.Join(sig.ParamNames, ", "), len(args))
 }
 
 func (c *Compiler) compileBuiltinCall(expr *ast.CallExpression, module, name string) error {
@@ -1797,8 +1894,14 @@ func (c *Compiler) compileBuiltinCall(expr *ast.CallExpression, module, name str
 		nameIndex := int64(len(c.chunk.Constants))
 		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: module + "." + name})
 		if !hasNamedArgs {
+			if err := validateNativeArity(module, name, expr.Arguments); err != nil {
+				return err
+			}
 			c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 			return nil
+		}
+		if err := validateNativeNamedArgs(module, name, expr.Arguments); err != nil {
+			return err
 		}
 		operands := []int64{nameIndex, int64(len(expr.Arguments))}
 		for _, arg := range expr.Arguments {
@@ -2396,6 +2499,13 @@ func (c *Compiler) compileAssignmentExpression(expr *ast.AssignmentExpression) e
 		}
 		if err := c.compileExpression(left.Object); err != nil {
 			return err
+		}
+		if !ast.IsIntegerLiteral(expr.Value) && ast.HasIntegerLiteralBranch(expr.Value) {
+			nameIndex := int64(len(c.chunk.Constants))
+			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: left.Name.Value})
+			receiver := c.allocateLocal()
+			c.emitAt(OpDefineLocal, expr.Token.Line, expr.Token.Column, receiver)
+			return c.compileBranchedFieldStore(receiver, expr.Value, nameIndex, expr.Token.Line, expr.Token.Column)
 		}
 		if err := c.compileExpression(expr.Value); err != nil {
 			return err

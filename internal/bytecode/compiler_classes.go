@@ -9,6 +9,14 @@ import (
 	"strings"
 )
 
+// declaredTypeName is a parameter type as written in source, matching the evaluator's reflection.
+func declaredTypeName(typ *ast.TypeRef) string {
+	if typ == nil {
+		return "any"
+	}
+	return typ.String()
+}
+
 func reflectFunctionMetadataFromStatement(c *Compiler, stmt *ast.FunctionStatement, target string, overload int64) (runtime.FunctionMetadata, error) {
 	parameters := make([]runtime.ParameterMetadata, 0, len(stmt.Parameters))
 	for _, param := range stmt.Parameters {
@@ -22,7 +30,7 @@ func reflectFunctionMetadataFromStatement(c *Compiler, stmt *ast.FunctionStateme
 		}
 		parameters = append(parameters, runtime.ParameterMetadata{
 			Name:       name,
-			Type:       c.bytecodeTypeName(param.Type),
+			Type:       declaredTypeName(param.Type),
 			Variadic:   param.Variadic,
 			HasDefault: param.Default != nil,
 			Decorators: paramDecs,
@@ -56,7 +64,7 @@ func reflectFunctionMetadataFromSignature(c *Compiler, sig *ast.FunctionSignatur
 		paramDecs, _ := c.decoratorsMetadata(param.Decorators, "parameter", 0)
 		parameters = append(parameters, runtime.ParameterMetadata{
 			Name:       name,
-			Type:       c.bytecodeTypeName(param.Type),
+			Type:       declaredTypeName(param.Type),
 			Variadic:   param.Variadic,
 			HasDefault: param.Default != nil,
 			Decorators: paramDecs,

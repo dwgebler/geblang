@@ -32,14 +32,9 @@ func ensureBuiltinFunctions() map[string]Function {
 }
 
 // NewBuiltinRegistry returns a Registry pre-populated with all pure built-in functions.
-// The function map is built once per process and shared across VMs;
-// each call still allocates a fresh per-VM patches overlay so tests
-// can install mocks without disturbing other VMs.
+// The function map is built once per process and shared across VMs.
 func NewBuiltinRegistry() *Registry {
-	return &Registry{
-		functions: ensureBuiltinFunctions(),
-		patches:   map[string]Function{},
-	}
+	return &Registry{functions: ensureBuiltinFunctions()}
 }
 
 // registerAllBuiltins is the original NewBuiltinRegistry body, lifted

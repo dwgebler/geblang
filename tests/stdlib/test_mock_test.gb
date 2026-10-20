@@ -8,7 +8,7 @@
 import test;
 import datetime;
 import crypt;
-import io;
+import test_mock_donor;
 
 class TestMockTest extends test.Test {
     @test
@@ -73,11 +73,18 @@ class TestMockTest extends test.Test {
     }
 
     @test
-    func unknownModuleStillReachable(): void {
-        /* Patching a never-registered module is fine - the patch
-         * just sits in the table. */
-        test.mock("noSuchModule", {"x": func(): int { return 1; }});
-        /* No crash. */
-        this.assertTrue(true);
+    func unknownFunctionIsRejected(): void {
+        this.assertThrowsOf(func(): void { test.mock("noSuchModule", {"x": func(): int { return 1; }}); },
+            "ValueError", "noSuchModule.x is not a native function");
+        this.assertThrowsOf(func(): void { test.mock("datetime", {"nowUnixx": func(): int { return 1; }}); },
+            "ValueError", "datetime.nowUnixx");
+    }
+
+    @test
+    func patchesApplyToCallsFromOtherModules(): void {
+        test.mock("datetime", {"nowUnix": func(): int { return 7; }});
+        test.mock("sys", {"bundleDir": func(): string { return "/mock/bundle"; }});
+        this.assertEquals(7, test_mock_donor.now());
+        this.assertEquals("/mock/bundle", test_mock_donor.bundle());
     }
 }

@@ -1,6 +1,7 @@
 package native
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -18,10 +19,18 @@ type FunctionDoc struct {
 	Params []string
 	Result string
 	Doc    string
+	// Alternates lists other accepted parameter lists (overloads); argument-count checks accept any of them.
+	Alternates [][]string
 }
 
 func Fn(params []string, result, doc string) FunctionDoc {
 	return FunctionDoc{Params: params, Result: result, Doc: doc}
+}
+
+// Or records another accepted parameter list for an overloaded native.
+func (f FunctionDoc) Or(params ...string) FunctionDoc {
+	f.Alternates = append(f.Alternates, params)
+	return f
 }
 
 func (f FunctionDoc) Signature() string {
@@ -192,7 +201,7 @@ var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 		"graphemes":          Fn([]string{}, "list<string>", "List of grapheme clusters (user-perceived characters; combining marks and emoji ZWJ sequences stay together)."),
 		"graphemeLength":     Fn([]string{}, "int", "Number of grapheme clusters (the user-perceived character count)."),
 		"truncateGraphemes":  Fn([]string{"int n"}, "string", "The first n grapheme clusters as a string (the whole string if shorter)."),
-		"format":             Fn([]string{"any ...args"}, "string", "printf-style format using % placeholders."),
+		"format":             Fn([]string{"...any args"}, "string", "printf-style format using % placeholders."),
 		"toString":           Fn([]string{}, "string", "Identity."),
 		"toInt":              Fn([]string{"int base = 10"}, "int", "Parse as int in base 2-36."),
 		"toFloat":            Fn([]string{}, "float", "Parse as float."),
@@ -424,7 +433,7 @@ func init() {
 var StdlibCatalog = map[string]ModuleDoc{
 	"args": {Functions: map[string]FunctionDoc{
 		"parse": Fn([]string{"list<string> argv", "dict<string, any> spec"}, "dict<string, any>", "Parses command-line options."),
-		"help":  Fn([]string{"dict<string, any> spec"}, "string", "Builds usage text for an option specification."),
+		"help":  Fn([]string{"string name", "dict<string, any> spec"}, "string", "Builds usage text for program name from an option specification."),
 	}},
 	"amqp": {Functions: map[string]FunctionDoc{
 		"dial":            Fn([]string{"string url"}, "int", "Opens an AMQP 0.9.1 connection. Returns a connection handle. Prefer messaging.connect({driver: \"rabbitmq\", ...}) for the high-level API."),
@@ -480,7 +489,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"token":   Fn([]string{}, "Task", "Returns a fresh uncompleted Task used as a pure cancellation signal (used by Timer/Ticker)."),
 	}},
 	"bytes": {Functions: map[string]FunctionDoc{
-		"fromString":    Fn([]string{"string text"}, "bytes", "Encodes a string as bytes."),
+		"fromString":    Fn([]string{"string text", "string encoding = \"utf-8\""}, "bytes", "Encodes a string as bytes."),
 		"fromList":      Fn([]string{"list<int> values"}, "bytes", "Builds bytes from a list of int byte values (0-255)."),
 		"toString":      Fn([]string{"bytes data"}, "string", "Decodes valid UTF-8; throws on invalid bytes."),
 		"rawString":     Fn([]string{"bytes data"}, "string", "Returns a byte-preserving string, including invalid UTF-8."),
@@ -497,13 +506,13 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"password":       Fn([]string{"string label"}, "string", "Reads masked console input."),
 		"secret":         Fn([]string{"string label"}, "string", "Reads masked console input."),
 		"confirm":        Fn([]string{"string label", "bool default = false"}, "bool", "Reads a yes/no answer."),
-		"choose":         Fn([]string{"string label", "list<string> choices"}, "string", "Reads a choice from a list."),
+		"choose":         Fn([]string{"string label", "list<string> choices", "?int defaultIndex = null"}, "string", "Reads a choice from a list."),
 		"multiChoose":    Fn([]string{"string label", "list<string> choices", "list<int> preselected = []"}, "list<string>", "Selects multiple choices: an arrow-key checkbox UI on a TTY, numbered comma-separated input otherwise."),
 		"style":          Fn([]string{"string text", "dict<string, any> options"}, "string", "Applies ANSI console styling."),
 		"stripAnsi":      Fn([]string{"string text"}, "string", "Removes ANSI escape sequences."),
-		"table":          Fn([]string{"list<dict<string, any>> rows"}, "string", "Formats rows as a console table."),
+		"table":          Fn([]string{"list<dict<string, any>> rows", "any options = null"}, "string", "Formats rows as a console table."),
 		"parseArgs":      Fn([]string{"list<string> argv", "dict<string, any> spec"}, "dict<string, any>", "Parses command-line options."),
-		"help":           Fn([]string{"dict<string, any> spec"}, "string", "Builds usage text for an option specification."),
+		"help":           Fn([]string{"string name", "dict<string, any> spec"}, "string", "Builds usage text for program name from an option specification."),
 		"spinnerTick":    Fn([]string{"int frameIndex", "string message"}, "int", "Renders one spinner frame to stderr; returns the next frame index (1.2.0). Use cli.widgets.Spinner for the OO wrapper."),
 		"spinnerStop":    Fn([]string{"string finalMessage = \"\""}, "void", "Clears the spinner line (1.2.0)."),
 		"progressRender": Fn([]string{"int current", "int total", "int width = 30", "string label = \"\""}, "void", "Renders an ANSI progress bar to stderr (1.2.0). Use cli.widgets.ProgressBar."),
@@ -647,7 +656,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"serve":              Fn([]string{"string addr", "func handler", "dict<string, any> opts = {}"}, "void", "Starts an HTTP server. opts may set maxConcurrent / queueSize / onOverload, maxBodyBytes (413 over the cap), and tls ({cert, key} or {selfSigned: true}) to serve HTTPS."),
 		"listen":             Fn([]string{"string addr", "func handler", "dict<string, any> opts = {}"}, "Server", "Starts an HTTP server handle. opts may set maxConcurrent / queueSize / onOverload, maxBodyBytes (413 over the cap), and tls ({cert, key} or {selfSigned: true}) to serve HTTPS."),
 		"close":              Fn([]string{"Server server"}, "void", "Closes a server."),
-		"shutdown":           Fn([]string{"Server server"}, "void", "Gracefully shuts down a server."),
+		"shutdown":           Fn([]string{"Server server", "int timeoutMs = 5000"}, "void", "Gracefully shuts down a server."),
 		"serverStats":        Fn([]string{"Server server"}, "dict<string, int>", "Pool stats: active, queued, rejected, maxConcurrent."),
 		"wait":               Fn([]string{"Server server"}, "void", "Blocks until the server handle stops serving (close or shutdown from anywhere)."),
 		"stream":             Fn([]string{"int status = 200", "dict<string, string> headers = {}"}, "Response", "Creates a streaming response."),
@@ -657,11 +666,11 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"get":                Fn([]string{"string url"}, "Response", "Performs an HTTP GET request."),
 		"post":               Fn([]string{"string url", "string body"}, "Response", "Performs an HTTP POST request."),
 		"postJson":           Fn([]string{"string url", "any payload"}, "Response", "POSTs JSON."),
-		"request":            Fn([]string{"string url"}, "Builder", "One arg starts a fluent request builder; the method/url/body form performs a request."),
+		"request":            Fn([]string{"string url"}, "Builder", "One arg starts a fluent request builder; the method/url/body form performs a request.").Or("string method", "string url", "any body", "dict<string, string> headers = {}"),
 		"requestWithOptions": Fn([]string{"dict<string, any> options"}, "Response", "Performs a configured HTTP request."),
 		"requestStream":      Fn([]string{"dict<string, any> options"}, "StreamResponse", "Performs a request and returns a StreamResponse for reading the body line-by-line as it arrives (LLM / SSE streaming)."),
 		"jsonResponse":       Fn([]string{"any payload", "int status = 200"}, "Response", "Creates a JSON response."),
-		"response":           Fn([]string{"string body", "int status = 200"}, "Response", "Creates a text response."),
+		"response":           Fn([]string{"string body", "int status = 200", "dict<string, string> headers = {}"}, "Response", "Creates a text response."),
 		"redirect":           Fn([]string{"string url", "int status = 302"}, "Response", "Creates a redirect response with a Location header."),
 		"newClient":          Fn([]string{"dict<string, any> options = {}"}, "Client", "Builds a reusable HTTP client. Options: timeoutMs, baseUrl, headers, cookieJar (CookieJar | true), keepAlive, maxIdleConns, proxy, proxyFromEnv, tls ({verify, caCerts, caCertsOnly, clientCert, clientKey})."),
 		"newCookieJar":       Fn([]string{}, "CookieJar", "Returns a new in-memory cookie jar to share across requests."),
@@ -784,7 +793,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"readText":        Fn([]string{"string path"}, "string", "Reads a UTF-8 text file."),
 		"writeText":       Fn([]string{"string path", "string text"}, "void", "Writes a UTF-8 text file."),
 		"appendText":      Fn([]string{"string path", "string text"}, "void", "Appends UTF-8 text."),
-		"readBytes":       Fn([]string{"string path"}, "bytes", "Reads a file as bytes."),
+		"readBytes":       Fn([]string{"string path"}, "bytes", "Reads a file as bytes.").Or("Stream stream", "int n"),
 		"writeBytes":      Fn([]string{"string path", "bytes data"}, "void", "Writes bytes to a file."),
 		"exists":          Fn([]string{"string path"}, "bool", "Checks whether a path exists."),
 		"open":            Fn([]string{"string path", "string mode = \"r\""}, "File", "Opens a file handle. Modes: r, w, a, r+, w+, a+, x (exclusive create), x+."),
@@ -807,7 +816,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"redirectStdout":  Fn([]string{"Stream stream"}, "void", "Redirects stdout."),
 		"redirectStderr":  Fn([]string{"Stream stream"}, "void", "Redirects stderr."),
 		"redirectStdin":   Fn([]string{"Stream stream"}, "void", "Redirects stdin."),
-		"mkdir":           Fn([]string{"string path", "int mode = 493"}, "void", "Creates a directory."),
+		"mkdir":           Fn([]string{"string path", "int mode"}, "void", "Creates a directory."),
 		"chmod":           Fn([]string{"string path", "int mode"}, "void", "Changes file permissions."),
 		"tempFile":        Fn([]string{"string pattern = \"\""}, "string", "Creates a temporary file."),
 		"tempDir":         Fn([]string{"string pattern = \"\""}, "string", "Creates a temporary directory."),
@@ -830,7 +839,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"sync":            Fn([]string{"File handle"}, "void", "Flushes file data and metadata to disk."),
 		"dataSync":        Fn([]string{"File handle"}, "void", "Flushes file data to disk without metadata."),
 		"lock":            Fn([]string{"File handle"}, "void", "Acquires an exclusive advisory lock, blocking if needed."),
-		"tryLock":         Fn([]string{"File handle"}, "bool", "Attempts an exclusive advisory lock without blocking."),
+		"tryLock":         Fn([]string{"File handle", "string mode = \"exclusive\""}, "bool", "Attempts an exclusive advisory lock without blocking."),
 		"unlock":          Fn([]string{"File handle"}, "void", "Releases an advisory lock."),
 		"buffer":          Fn([]string{}, "Buffer", "Creates an in-memory buffer."),
 		"bufferToString":  Fn([]string{"Buffer buffer"}, "string", "Returns buffer contents as text."),
@@ -855,7 +864,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"tryParse":         Fn([]string{"string text"}, "dict<string, any>", "Parses JSON without throwing."),
 		"validateDetailed": Fn([]string{"string text"}, "dict<string, any>", "Returns detailed validation information."),
 		"reader":           Fn([]string{"Stream stream"}, "JsonStreamInterface", "Creates a JSON stream reader."),
-		"stream":           Fn([]string{"Stream stream"}, "JsonStreamInterface", "Creates a JSON stream reader."),
+		"stream":           Fn([]string{"Stream stream"}, "JsonStreamInterface", "Creates a JSON stream reader.").Or("any source", "any handler"),
 	}},
 	"llm": {Functions: map[string]FunctionDoc{
 		"client": Fn([]string{"dict<string, any> opts"}, "Client", "Build a provider-agnostic LLM client. opts.provider picks the backend (\"openai\" / \"anthropic\" / \"bedrock\"); remaining keys are validated by the chosen provider."),
@@ -867,10 +876,10 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"toStream": Fn([]string{"IOStream stream"}, "Logger", "Creates a logger that writes JSON lines to the given IOStream. The stream's lifetime is owned by the caller - closing the logger does not close the stream."),
 		"custom":   Fn([]string{"LogInterface handler"}, "Logger", "Creates a custom logger."),
 		"syslog":   Fn([]string{"dict<string, any> opts"}, "Logger", "Creates an RFC 5424 syslog logger. opts: network (\"udp\" default | \"tcp\" | \"local\"), address (host:port for udp/tcp), facility (default \"user\"), app, hostname. Cross-platform; \"local\" is Unix-only."),
-		"info":     Fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an info log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
-		"warn":     Fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes a warning log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
-		"error":    Fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an error log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
-		"debug":    Fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes a debug log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
+		"info":     Fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an info log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger.").Or("Logger logger", "string message", "dict<string, any> context = {}"),
+		"warn":     Fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes a warning log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger.").Or("Logger logger", "string message", "dict<string, any> context = {}"),
+		"error":    Fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an error log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger.").Or("Logger logger", "string message", "dict<string, any> context = {}"),
+		"debug":    Fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes a debug log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger.").Or("Logger logger", "string message", "dict<string, any> context = {}"),
 		"close":    Fn([]string{"Logger logger"}, "void", "Closes a logger."),
 	}, Classes: map[string]string{
 		"Logger": "A logging sink. Construct via log.stdout() / log.stderr() / log.file(path) / log.custom(handler).",
@@ -885,8 +894,8 @@ var StdlibCatalog = map[string]ModuleDoc{
 	}},
 	"math": {Functions: map[string]FunctionDoc{
 		"abs":        Fn([]string{"number value"}, "number", "Absolute value."),
-		"min":        Fn([]string{"number left", "number right"}, "number", "Minimum value."),
-		"max":        Fn([]string{"number left", "number right"}, "number", "Maximum value."),
+		"min":        Fn([]string{"number left", "number right"}, "number", "Minimum value.").Or("...number values"),
+		"max":        Fn([]string{"number left", "number right"}, "number", "Maximum value.").Or("...number values"),
 		"clamp":      Fn([]string{"number value", "number min", "number max"}, "number", "Clamps a value."),
 		"lerp":       Fn([]string{"number a", "number b", "number t"}, "number", "Linear interpolation a+(b-a)*t. int/decimal inputs return an exact decimal; float returns float (1.10.0)."),
 		"remap":      Fn([]string{"number x", "number inLow", "number inHigh", "number outLow", "number outHigh"}, "number", "Linearly remaps x from [inLow,inHigh] onto [outLow,outHigh]. int/decimal inputs return an exact decimal; float returns float (1.10.0)."),
@@ -1102,10 +1111,10 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"bundleDir":        Fn([]string{}, "string", "Returns the extract directory of a built binary's embedded resources, or \"\" when not running from a bundle."),
 		"packageRoot":      Fn([]string{}, "string", "Returns the current package manifest directory, or an empty string."),
 		"args":             Fn([]string{}, "list<string>", "Returns command-line arguments."),
-		"run":              Fn([]string{"string command", "list<string> args = []"}, "dict<string, any>", "Runs a process."),
+		"run":              Fn([]string{"string command", "list<string> args = []"}, "dict<string, any>", "Runs a process.").Or("string command", "...string args"),
 		"shell":            Fn([]string{"string command"}, "dict<string, any>", "Runs a command through the shell and returns its result."),
 		"runWithOptions":   Fn([]string{"dict<string, any> options"}, "dict<string, any>", "Runs a command with options (cwd, env, stdin, timeoutMs)."),
-		"start":            Fn([]string{"string command", "list<string> args = []"}, "Process", "Starts a process for interaction."),
+		"start":            Fn([]string{"string command", "list<string> args = []"}, "Process", "Starts a process for interaction.").Or("string command", "...string args"),
 		"startWithOptions": Fn([]string{"dict<string, any> options"}, "Process", "Starts a process with options."),
 		"sleep":            Fn([]string{"int milliseconds"}, "void", "Sleeps for a duration."),
 		"platform":         Fn([]string{}, "string", "Returns OS platform."),
@@ -1332,7 +1341,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 	"datetime": {Functions: map[string]FunctionDoc{
 		"sleep":         Fn([]string{"int milliseconds"}, "void", "Blocks the current thread for the given milliseconds."),
 		"nowUnix":       Fn([]string{}, "int", "Current Unix time in seconds."),
-		"unix":          Fn([]string{}, "int", "Alias for nowUnix."),
+		"unix":          Fn([]string{"int seconds"}, "string", "Formats Unix seconds as an RFC3339 UTC timestamp."),
 		"parse":         Fn([]string{"string text", "string layout = \"\""}, "int", "Parses a date/time string into a Unix timestamp (RFC3339, or a strftime/preset/Go layout)."),
 		"format":        Fn([]string{"int unix", "string layout"}, "string", "Formats a Unix timestamp; layout is strftime (%Y-%m-%d), a preset name, or a Go layout."),
 		"addSeconds":    Fn([]string{"int unix", "int seconds"}, "int", "Adds seconds to a Unix timestamp."),
@@ -1412,7 +1421,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		},
 	}},
 	"binary": {Functions: map[string]FunctionDoc{
-		"pack":        Fn([]string{"string format", "any ...values"}, "bytes", "Pack values into bytes using a Python struct-style format string."),
+		"pack":        Fn([]string{"string format", "...any values"}, "bytes", "Pack values into bytes using a Python struct-style format string."),
 		"unpack":      Fn([]string{"string format", "bytes data"}, "list<any>", "Decode bytes into a list of typed values."),
 		"unpackNamed": Fn([]string{"list<dict<string, string>> spec", "bytes data"}, "dict<string, any>", "Decode bytes into a dict; spec items are {name, type} pairs."),
 		"size":        Fn([]string{"string format"}, "int", "Number of bytes the format consumes."),
@@ -1460,7 +1469,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"concat":      Fn([]string{"list<dataframe.DataFrame> frames"}, "dataframe.DataFrame", "Concatenates frames sharing the same columns (1.19.0)."),
 		"readCsv":     Fn([]string{"string path", "dict<string, any> opts = {}"}, "dataframe.DataFrame", "Reads a CSV file; column types inferred, opts.types overrides per column (1.19.0)."),
 		"writeCsv":    Fn([]string{"dataframe.DataFrame frame", "string path"}, "void", "Writes the frame as CSV with a header row; nulls become empty cells (1.19.0)."),
-		"fromQuery":   Fn([]string{"any conn", "string sql", "any ...params"}, "dataframe.DataFrame", "Runs a query on a db connection and loads the rows as a frame (1.19.0)."),
+		"fromQuery":   Fn([]string{"any conn", "string sql", "...any params"}, "dataframe.DataFrame", "Runs a query on a db connection and loads the rows as a frame (1.19.0)."),
 		"toTable":     Fn([]string{"dataframe.DataFrame frame", "any conn", "string table"}, "int", "Bulk-inserts the frame into a table (created if missing); returns the row count (1.19.0)."),
 	}},
 	"ndarray": {Functions: map[string]FunctionDoc{
@@ -1526,8 +1535,8 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"polyfit":                      Fn([]string{"list<float> x", "list<float> y", "int degree"}, "list<float>", "Least-squares polynomial fit; returns coefficients highest degree first."),
 		"polyval":                      Fn([]string{"list<float> coeffs", "float x"}, "float", "Evaluate a polynomial (coefficients highest degree first) at x."),
 		"skewness":                     Fn([]string{"list<float> xs"}, "float", "Population skewness."),
-		"variance":                     Fn([]string{"list<number> xs", "dict opts"}, "float", "Sample variance (n-1); {population: true} for the population variance."),
-		"stdev":                        Fn([]string{"list<number> xs", "dict opts"}, "float", "Sample standard deviation; {population: true} for the population form."),
+		"variance":                     Fn([]string{"list<number> xs", "dict opts = {}"}, "float", "Sample variance (n-1); {population: true} for the population variance."),
+		"stdev":                        Fn([]string{"list<number> xs", "dict opts = {}"}, "float", "Sample standard deviation; {population: true} for the population form."),
 		"geometricMean":                Fn([]string{"list<number> xs"}, "float", "Geometric mean of positive values."),
 		"harmonicMean":                 Fn([]string{"list<number> xs"}, "float", "Harmonic mean of positive values."),
 		"weightedMean":                 Fn([]string{"list<number> xs", "list<number> weights"}, "float", "Mean weighted by non-negative weights."),
@@ -1587,15 +1596,15 @@ var StdlibCatalog = map[string]ModuleDoc{
 		},
 	}},
 	"geo": {Functions: map[string]FunctionDoc{
-		"haversineDistance": Fn([]string{"float lat1", "float lon1", "float lat2", "float lon2", "string unit?"}, "float", "Great-circle distance (km default)."),
+		"haversineDistance": Fn([]string{"float lat1", "float lon1", "float lat2", "float lon2", "string unit = \"km\""}, "float", "Great-circle distance (km default)."),
 		"bearing":           Fn([]string{"float lat1", "float lon1", "float lat2", "float lon2"}, "float", "Initial bearing in degrees [0, 360)."),
 		"midpoint":          Fn([]string{"float lat1", "float lon1", "float lat2", "float lon2"}, "dict<string, float>", "Geographic midpoint as {lat, lon}."),
-		"destination":       Fn([]string{"float lat", "float lon", "float bearing", "float distance", "string unit?"}, "dict<string, float>", "Destination point given start, bearing, and distance."),
+		"destination":       Fn([]string{"float lat", "float lon", "float bearing", "float distance", "string unit = \"km\""}, "dict<string, float>", "Destination point given start, bearing, and distance."),
 	}},
 	"random": {Functions: map[string]FunctionDoc{
 		"seed":     Fn([]string{"int seed"}, "void", "Seeds the deterministic PRNG (not for cryptography)."),
 		"next":     Fn([]string{}, "int", "Returns the next pseudo-random int."),
-		"intRange": Fn([]string{"int min", "int max"}, "int", "Returns a pseudo-random int in [min, max]."),
+		"intRange": Fn([]string{"int min", "int max"}, "int", "Returns a pseudo-random int in [min, max].").Or("Random rng", "int min", "int max"),
 		"float":    Fn([]string{}, "float", "Returns a pseudo-random float in [0, 1)."),
 		"bool":     Fn([]string{}, "bool", "Returns a pseudo-random bool."),
 		"choice":   Fn([]string{"list<any> items"}, "any", "Returns a random element."),
@@ -1986,8 +1995,8 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"auditLogJson":     Fn([]string{"SecureRandomSession s"}, "string", "Serialises the audit log (and serverSeed if revealed) to JSON."),
 		"bytes":            Fn([]string{"SecureRandomSession s", "int n"}, "bytes", "Draws n provably-fair pseudo-random bytes."),
 		"uintRange":        Fn([]string{"SecureRandomSession s", "int lo", "int hi"}, "int", "Returns an unbiased uniform int in [lo, hi)."),
-		"randomBytes":      Fn([]string{"int n"}, "bytes", "Returns n cryptographically random bytes; pass a session first to draw them provably fair."),
-		"randomInt":        Fn([]string{"int min", "int max"}, "int", "Returns a cryptographically random int in [min, max]; pass a session first to draw it provably fair."),
+		"randomBytes":      Fn([]string{"int n"}, "bytes", "Returns n cryptographically random bytes; pass a session first to draw them provably fair.").Or("SecureRandomSession s", "int n"),
+		"randomInt":        Fn([]string{"int min", "int max"}, "int", "Returns a cryptographically random int in [min, max]; pass a session first to draw it provably fair.").Or("SecureRandomSession s", "int min", "int max"),
 		"float":            Fn([]string{"SecureRandomSession s"}, "float", "Returns a uniform float in [0, 1)."),
 		"bool":             Fn([]string{"SecureRandomSession s"}, "bool", "Returns a fair coin flip."),
 		"choice":           Fn([]string{"SecureRandomSession s", "list<any> items"}, "any", "Returns one element of items uniformly at random."),
@@ -2340,7 +2349,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		},
 	}},
 	"path": {Functions: map[string]FunctionDoc{
-		"join":  Fn([]string{"string ...parts"}, "string", "Joins path segments using the platform separator."),
+		"join":  Fn([]string{"...string parts"}, "string", "Joins path segments using the platform separator."),
 		"clean": Fn([]string{"string p"}, "string", "Lexically normalises a path."),
 		"base":  Fn([]string{"string p"}, "string", "Returns the last segment."),
 		"dir":   Fn([]string{"string p"}, "string", "Returns everything before the last segment."),
@@ -2414,7 +2423,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"stringify": Fn([]string{"URL url"}, "string", "Serialises a URL value."),
 		"encode":    Fn([]string{"string text"}, "string", "URL-encodes a string."),
 		"decode":    Fn([]string{"string text"}, "string", "URL-decodes a string."),
-		"joinPath":  Fn([]string{"string base", "string ...parts"}, "string", "Joins URL path segments."),
+		"joinPath":  Fn([]string{"string base", "...string parts"}, "string", "Joins URL path segments."),
 	}, Classes: map[string]string{"URL": "Parsed URL value with scheme/host/path/query parts."}, ClassMethods: map[string]map[string]FunctionDoc{
 		"URL": {
 			"scheme":       Fn([]string{}, "string", "Returns the URL scheme."),
@@ -2459,11 +2468,11 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"validate":         Fn([]string{"string text"}, "bool", "Reports whether text is valid XML."),
 		"validateDetailed": Fn([]string{"string text"}, "dict<string, any>", "Detailed validation result."),
 		"reader":           Fn([]string{"Stream stream"}, "XmlStreamInterface", "Creates an XML stream reader."),
-		"stream":           Fn([]string{"Stream stream"}, "XmlStreamInterface", "Creates an XML stream reader."),
+		"stream":           Fn([]string{"Stream stream"}, "XmlStreamInterface", "Creates an XML stream reader.").Or("any source", "any handler"),
 	}},
 	"yaml": {Functions: map[string]FunctionDoc{
 		"reader":           Fn([]string{"Stream stream"}, "YamlStreamInterface", "Creates a YAML stream reader."),
-		"stream":           Fn([]string{"Stream stream"}, "YamlStreamInterface", "Creates a YAML stream reader."),
+		"stream":           Fn([]string{"Stream stream"}, "YamlStreamInterface", "Creates a YAML stream reader.").Or("any source", "any handler"),
 		"parse":            Fn([]string{"string text"}, "any", "Parses YAML into a value; throws on error."),
 		"parseAs":          Fn([]string{"string text", "class target"}, "any", "Parses YAML into an instance of the target class."),
 		"tryParse":         Fn([]string{"string text"}, "any", "Parses YAML or returns null on error."),
@@ -2497,7 +2506,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 	"functools": {Functions: map[string]FunctionDoc{
 		"pipe":    Fn([]string{"list<func> fns"}, "func", "Returns f(x) = fnN(...f2(f1(x))); left-to-right application."),
 		"compose": Fn([]string{"list<func> fns"}, "func", "Returns f(x) = f1(f2(...fnN(x))); right-to-left application."),
-		"partial": Fn([]string{"func fn", "any ...bound"}, "func", "Returns a new function with the leading args pre-bound."),
+		"partial": Fn([]string{"func fn", "...any bound"}, "func", "Returns a new function with the leading args pre-bound."),
 		"memoize": Fn([]string{"func fn", "int max = 128"}, "func", "Returns a cached version of fn with a bounded LRU."),
 	}},
 	"mailparse_native": {Functions: map[string]FunctionDoc{
@@ -2581,7 +2590,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 	}},
 	"pathlib": {Functions: map[string]FunctionDoc{
 		"of":   Fn([]string{"string raw"}, "Path", "Builds a Path from a raw string."),
-		"join": Fn([]string{"string ...parts"}, "Path", "Builds a Path by joining the parts."),
+		"join": Fn([]string{"...string parts"}, "Path", "Builds a Path by joining the parts."),
 	}, Classes: map[string]string{
 		"Path": "Fluent filesystem path: composition, normalisation, extension manipulation, on-disk checks.",
 	}, ClassMethods: map[string]map[string]FunctionDoc{
@@ -2591,7 +2600,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 			"ext":      Fn([]string{}, "string", "File extension including the leading dot, or empty."),
 			"stem":     Fn([]string{}, "string", "File name without the extension."),
 			"withExt":  Fn([]string{"string newExt"}, "Path", "Returns a new Path with the extension replaced."),
-			"join":     Fn([]string{"string ...parts"}, "Path", "Appends parts to the path."),
+			"join":     Fn([]string{"...string parts"}, "Path", "Appends parts to the path."),
 			"abs":      Fn([]string{}, "Path", "Returns the absolute form."),
 			"parent":   Fn([]string{}, "Path", "Alias for dir()."),
 			"toString": Fn([]string{}, "string", "String form."),
@@ -3354,10 +3363,46 @@ func paramName(param string) string {
 	return fields[len(fields)-1]
 }
 
+// NativeArityFits reports whether argc positional arguments fit the native's signature or one of its alternates; ok is false when the native has no catalog entry.
+func NativeArityFits(module, function string, argc int) (fits bool, ok bool) {
+	doc, ok := nativeDoc(module, function)
+	if !ok {
+		return false, false
+	}
+	for _, params := range append([][]string{doc.Params}, doc.Alternates...) {
+		if paramsAccept(params, argc) {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+func paramsAccept(params []string, argc int) bool {
+	required := 0
+	for i, p := range params {
+		variadic := i == len(params)-1 && strings.HasPrefix(strings.TrimSpace(p), "...")
+		if variadic {
+			return argc >= required
+		}
+		if !strings.Contains(p, " = ") {
+			required++
+		}
+	}
+	return argc >= required && argc <= len(params)
+}
+
 func nativeParams(module, function string) ([]string, bool) {
-	mod, ok := StdlibCatalog[module]
+	doc, ok := nativeDoc(module, function)
 	if !ok {
 		return nil, false
+	}
+	return doc.Params, true
+}
+
+func nativeDoc(module, function string) (FunctionDoc, bool) {
+	mod, ok := StdlibCatalog[module]
+	if !ok {
+		return FunctionDoc{}, false
 	}
 	doc, ok := mod.Functions[function]
 	if !ok {
@@ -3370,9 +3415,9 @@ func nativeParams(module, function string) ([]string, bool) {
 		}
 	}
 	if !ok {
-		return nil, false
+		return FunctionDoc{}, false
 	}
-	return doc.Params, true
+	return doc, true
 }
 
 func NativeParamNames(module, function string) ([]string, bool) {
@@ -3387,6 +3432,51 @@ func NativeParamNames(module, function string) ([]string, bool) {
 		}
 	}
 	return names, true
+}
+
+// ForwardsNamedArgs reports whether a native passes its named arguments through to the callee instead of binding them to its own parameters.
+func ForwardsNamedArgs(module, function string) bool {
+	return module == "ext" && (function == "call" || function == "callWithOptions")
+}
+
+// ForwardedArgOrder orders a forwarding native's arguments: its fixed parameters first (taken by name, else from the leading positional arguments), then the remaining arguments in source order. outNames is empty for the fixed parameters and keeps the forwarded names.
+func ForwardedArgOrder(module, function string, names []string) (order []int, outNames []string, err error) {
+	sig, _ := NativeSignature(module, function)
+	fixed := sig.ParamNames
+	if sig.Variadic && len(fixed) > 0 {
+		fixed = fixed[:len(fixed)-1]
+	}
+	used := make([]bool, len(names))
+	for _, param := range fixed {
+		pick := -1
+		for i, n := range names {
+			if !used[i] && n == param {
+				pick = i
+				break
+			}
+		}
+		if pick < 0 {
+			for i, n := range names {
+				if !used[i] && n == "" {
+					pick = i
+					break
+				}
+			}
+		}
+		if pick < 0 {
+			return nil, nil, fmt.Errorf("%s.%s missing argument %s", module, function, param)
+		}
+		used[pick] = true
+		order = append(order, pick)
+		outNames = append(outNames, "")
+	}
+	for i, n := range names {
+		if !used[i] {
+			order = append(order, i)
+			outNames = append(outNames, n)
+		}
+	}
+	return order, outNames, nil
 }
 
 // NativeSignature builds the argument-binding signature (param names, defaults, variadic) for a native module function.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"geblang/internal/ast"
+	"geblang/internal/native"
 	"geblang/internal/runtime"
 	"time"
 
@@ -281,8 +282,8 @@ func (e *Evaluator) amqpAck(call *ast.CallExpression, args []runtime.Value) (run
 	if err != nil {
 		return nil, err
 	}
-	tag, ok := args[1].(runtime.Int)
-	if !ok || !tag.Value.IsInt64() {
+	tag, ok := native.AsInt64(args[1])
+	if !ok {
 		return nil, fmt.Errorf("amqp.ack: deliveryTag must be int")
 	}
 	e.amqpMu.Lock()
@@ -291,7 +292,7 @@ func (e *Evaluator) amqpAck(call *ast.CallExpression, args []runtime.Value) (run
 	if !ok {
 		return nil, fmt.Errorf("amqp.ack: unknown channel handle %d", id)
 	}
-	if err := ch.Ack(uint64(tag.Value.Int64()), false); err != nil {
+	if err := ch.Ack(uint64(tag), false); err != nil {
 		return nil, fmt.Errorf("amqp.ack: %w", err)
 	}
 	return runtime.Null{}, nil
@@ -495,11 +496,11 @@ func (e *Evaluator) kafkaRead(call *ast.CallExpression, args []runtime.Value) (r
 	}
 	timeoutMs := int64(30000)
 	if len(args) == 2 {
-		n, ok := args[1].(runtime.Int)
-		if !ok || !n.Value.IsInt64() {
+		n, ok := native.AsInt64(args[1])
+		if !ok {
 			return nil, fmt.Errorf("kafka.read: timeoutMs must be int")
 		}
-		timeoutMs = n.Value.Int64()
+		timeoutMs = n
 	}
 	e.kafkaMu.Lock()
 	handle, ok := e.kafkaReaders[id]

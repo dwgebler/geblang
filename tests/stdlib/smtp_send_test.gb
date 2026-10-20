@@ -1,0 +1,107 @@
+/**
+ * @title smtp.send envelope
+ * @summary `smtp.send` accepts an int port on both runtimes and sends bare
+ * addresses in MAIL FROM / RCPT TO even when the message uses display names.
+ */
+import test;
+import smtp;
+import sockets;
+import sys;
+# Module-level so the accept handler's writes are visible after server.close().
+list<string> smtpEnvelope = [];
+
+func fakeSmtp(sockets.Socket conn): void {
+    conn.write("220 fake ESMTP\r\n");
+    bool inData = false;
+    for (raw in conn) {
+        let line = (raw as string).trimEnd();
+        if (inData) {
+            if (line == ".") {
+                inData = false;
+                conn.write("250 queued\r\n");
+            }
+            continue;
+        }
+        let verb = line.split(" ")[0].upper();
+        if (verb == "MAIL" || verb == "RCPT") {
+            smtpEnvelope = smtpEnvelope.push(line);
+            conn.write("250 ok\r\n");
+        } else if (verb == "DATA") {
+            inData = true;
+            conn.write("354 go ahead\r\n");
+        }
+ else if (verb == "QUIT") {
+            conn.write("221 bye\r\n");
+            break;
+        }
+ else {
+            conn.write("250 ok\r\n");
+        }
+    }
+    conn.close();
+}
+
+class SmtpSendTest extends test.Test {
+    @test
+    func sendsBareEnvelopeAddressesWithIntPort(): void {
+        smtpEnvelope = [];
+        let server = sockets.serve("127.0.0.1", 0, fakeSmtp);
+        let port = (server.localAddr().split(":")[1] as string) as int;
+        let res = smtp.send(
+            {
+                "host": "127.0.0.1",
+                "port": port,
+                "username": "",
+                "password": "",
+                "startTLS": false,
+                "tls": false,
+            },
+            {
+                "from": "App <noreply@example.com>",
+                "to": ["Ada Lovelace <ada@example.com>"],
+                "bcc": ["audit@example.com"],
+                "subject": "Hi",
+                "text": "Hello",
+            }
+        );
+        sys.sleep(50 as int);
+        server.close();
+        this.assertTrue(res["ok"] as bool);
+        this.assertEquals(2, res["recipients"]);
+        this.assertEquals(3, smtpEnvelope.length());
+        this.assertTrue(smtpEnvelope[0].startsWith("MAIL FROM:<noreply@example.com>"));
+        this.assertTrue(smtpEnvelope[1].startsWith("RCPT TO:<ada@example.com>"));
+        this.assertTrue(smtpEnvelope[2].startsWith("RCPT TO:<audit@example.com>"));
+    }
+
+    @test
+    func acceptsASingleRecipientString(): void {
+        smtpEnvelope = [];
+        let server = sockets.serve("127.0.0.1", 0, fakeSmtp);
+        let port = (server.localAddr().split(":")[1] as string) as int;
+        let res = smtp.send(
+            {"host": "127.0.0.1", "port": port, "startTLS": false},
+            {
+                "from": "noreply@example.com",
+                "to": "Ada <ada@example.com>",
+                "subject": "s",
+                "text": "t",
+            }
+        );
+        sys.sleep(50 as int);
+        server.close();
+        this.assertTrue(res["ok"] as bool);
+        this.assertEquals(
+            ["MAIL FROM:<noreply@example.com>", "RCPT TO:<ada@example.com>"],
+            [smtpEnvelope[0].split(" BODY")[0], smtpEnvelope[1]]
+        );
+    }
+
+    @test
+    func rejectsAnInvalidSender(): void {
+        this.assertThrows(func(): void { smtp.send(
+    {"host": "127.0.0.1", "port": 1},
+    {"from": "not an address", "to": "ada@example.com", "subject": "s", "text": "t"}
+); });
+    }
+}

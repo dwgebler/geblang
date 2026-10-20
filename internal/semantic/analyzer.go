@@ -57,6 +57,8 @@ type Analyzer struct {
 	// the declaring class's generic parameter names) for static argument
 	// validation. Injected by the check command alongside classSurface.
 	classMethodSigs func(className, methodLower string) ([]MethodSignature, []string, bool)
+	// moduleFuncSigs, when set, returns the overload signatures of a function (or a class's constructors) declared in an imported source module: qualifier is the module alias of `alias.name(...)`, "" for a name brought in by `from m import name`.
+	moduleFuncSigs func(qualifier, name string) ([]MethodSignature, bool)
 	// classFieldType resolves a field's declared type across parents/modules; nil disables field-receiver typing.
 	classFieldType func(className, fieldLower string) (*ast.TypeRef, bool)
 	// methodChecks enables the unknown-method checks (primitive + class).
@@ -94,6 +96,11 @@ func (a *Analyzer) SetClassSurfaceResolver(fn func(string) (map[string]bool, boo
 	a.classSurface = fn
 }
 
+// SetModuleFunctionSignatureResolver installs the resolver used to validate calls into other source modules (see moduleFuncSigs).
+func (a *Analyzer) SetModuleFunctionSignatureResolver(fn func(string, string) ([]MethodSignature, bool)) {
+	a.moduleFuncSigs = fn
+}
+
 // SetClassMethodSignatureResolver installs the resolver used to validate
 // method-call arguments. Call before Analyze.
 func (a *Analyzer) SetClassMethodSignatureResolver(fn func(string, string) ([]MethodSignature, []string, bool)) {
@@ -129,6 +136,8 @@ type typeInfo struct {
 	// Re-binding (let / const / typed declaration) of the same
 	// name creates a fresh entry with destroyed=false.
 	destroyed bool
+	// union lists the members of a `A | B` type; the union itself stays unknown elsewhere.
+	union []typeInfo
 }
 
 type classInfo struct {
@@ -825,7 +834,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 			 * followed by `errors.push(...)`). */
 			a.declare(param.Name.Value, a.parameterBindingType(param))
 			if param.Default != nil {
-				a.checkAssignable(param.Type, param.Default, fmt.Sprintf("cannot use %s default for %s parameter %s", a.expressionTypeName(param.Default).display(), param.Type.String(), param.Name.Value))
+				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
 			}
 		}
 		a.analyzeBlock(stmt.Body, stmt)
@@ -865,7 +874,24 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		if stmt.Update != nil {
 			a.analyzeStatement(stmt.Update, fn)
 		}
+		// for-in loop variables shadow outer names in the body (typed only when annotated).
+		a.pushScope()
+		names := stmt.VarNames
+		if stmt.VarName != nil {
+			names = []*ast.Identifier{stmt.VarName}
+		}
+		for _, name := range names {
+			if name == nil {
+				continue
+			}
+			var t typeInfo
+			if stmt.VarType != nil {
+				t = a.typeInfoFromRef(stmt.VarType)
+			}
+			a.declare(name.Value, t)
+		}
 		a.analyzeBlock(stmt.Body, fn)
+		a.popScope()
 	case *ast.TryStatement:
 		a.analyzeBlock(stmt.Body, fn)
 		for _, catch := range stmt.Catches {
@@ -900,6 +926,21 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		}
 		a.markBindingDestroyed(stmt.Target.Value)
 	}
+}
+
+// analyzeFunctionLiteral checks a closure body like a named function body.
+func (a *Analyzer) analyzeFunctionLiteral(lit *ast.FunctionLiteral) {
+	fn := &ast.FunctionStatement{Token: lit.Token, Async: lit.Async, Name: &ast.Identifier{Token: lit.Token, Value: "<closure>"},
+		Parameters: lit.Parameters, ReturnType: lit.ReturnType, Body: lit.Body}
+	a.pushScope()
+	defer a.popScope()
+	for _, param := range lit.Parameters {
+		a.declare(param.Name.Value, a.parameterBindingType(param))
+		if param.Default != nil {
+			a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
+		}
+	}
+	a.analyzeBlock(lit.Body, fn)
 }
 
 func (a *Analyzer) analyzeBlock(block *ast.BlockStatement, fn *ast.FunctionStatement) {
@@ -955,7 +996,7 @@ func (a *Analyzer) analyzeClassMembers(stmt *ast.ClassStatement) {
 		for _, param := range method.Parameters {
 			a.declare(param.Name.Value, a.parameterBindingType(param))
 			if param.Default != nil {
-				a.checkAssignable(param.Type, param.Default, fmt.Sprintf("cannot use %s default for %s parameter %s", a.expressionTypeName(param.Default).display(), param.Type.String(), param.Name.Value))
+				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
 			}
 		}
 		a.analyzeBlock(method.Body, method)
@@ -978,7 +1019,7 @@ func (a *Analyzer) analyzeEnumMembers(stmt *ast.EnumStatement) {
 		for _, param := range method.Parameters {
 			a.declare(param.Name.Value, a.parameterBindingType(param))
 			if param.Default != nil {
-				a.checkAssignable(param.Type, param.Default, fmt.Sprintf("cannot use %s default for %s parameter %s", a.expressionTypeName(param.Default).display(), param.Type.String(), param.Name.Value))
+				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
 			}
 		}
 		a.analyzeBlock(method.Body, method)
@@ -1074,7 +1115,7 @@ func (a *Analyzer) analyzeDeclaration(stmt *ast.DeclarationStatement) {
 	}
 	a.validateCallExpression(stmt.Value, declared)
 	a.validateContainerLiteral(declared, stmt.Value, stmt.Name.Value)
-	a.checkAssignable(stmt.Type, stmt.Value, fmt.Sprintf("cannot assign %s to %s %s", a.expressionTypeName(stmt.Value).display(), stmt.Type.String(), stmt.Name.Value))
+	a.checkAssignableBranches(stmt.Type, stmt.Value, fmt.Sprintf("cannot assign %%s to %s %s", stmt.Type.String(), stmt.Name.Value))
 }
 
 // builtinTypeNames are the lower-case type names the language treats
@@ -1390,6 +1431,97 @@ func (a *Analyzer) checkMethodCallArgs(call *ast.CallExpression, selector *ast.S
 	a.errorAt(selector.Name.Token, "no matching overload for %s.%s: got (%s)", receiverType.name, selector.Name.Value, displayTypeInfos(args))
 }
 
+// checkImportedCallArgs flags a call to a function or constructor of another source module (`alias.f(...)`, `alias.Class(...)`, or a `from`-imported name) when no overload can accept the arguments. Same conservative rules as checkMethodCallArgs: named/spread/unknown/any arguments, variadic overloads and generic parameters stay silent.
+func (a *Analyzer) checkImportedCallArgs(call *ast.CallExpression) {
+	if a.moduleFuncSigs == nil {
+		return
+	}
+	qualifier, name, display := "", "", ""
+	var tok token.Token
+	switch callee := call.Callee.(type) {
+	case *ast.SelectorExpression:
+		ident, ok := callee.Object.(*ast.Identifier)
+		if !ok || callee.Name == nil || callee.Optional || !a.moduleAliases[ident.Value] {
+			return
+		}
+		if _, shadowed := a.lookup(ident.Value); shadowed {
+			return
+		}
+		qualifier, name, tok = ident.Value, callee.Name.Value, callee.Name.Token
+		display = ident.Value + "." + name
+	case *ast.Identifier:
+		if !a.importedNames[callee.Value] || len(a.functions[strings.ToLower(callee.Value)]) > 0 {
+			return
+		}
+		if _, shadowed := a.lookup(callee.Value); shadowed {
+			return
+		}
+		name, tok, display = callee.Value, callee.Token, callee.Value
+	default:
+		return
+	}
+	sigs, ok := a.moduleFuncSigs(qualifier, name)
+	if !ok || len(sigs) == 0 {
+		return
+	}
+	args := make([]typeInfo, 0, len(call.Arguments))
+	literals := make([]bool, 0, len(call.Arguments))
+	for _, arg := range call.Arguments {
+		if arg.Name != nil || arg.Spread {
+			return
+		}
+		argType := a.expressionTypeName(arg.Value)
+		if !argType.known || argType.name == "any" {
+			return
+		}
+		args = append(args, argType)
+		literals = append(literals, ast.IsIntegerLiteral(arg.Value))
+	}
+	for _, sig := range sigs {
+		// Parameter types naming the other module's own classes, interfaces or aliases can't be resolved here; only built-in types are checked.
+		sig = builtinParamsOnly(sig)
+		if a.methodOverloadPossible(args, sig, nil) {
+			return
+		}
+		if typed, ok := intLiteralArgsTyped(args, literals, sig); ok && a.methodOverloadPossible(typed, sig, nil) {
+			return
+		}
+	}
+	a.errorAt(tok, "no matching overload for %s: got (%s)", display, displayTypeInfos(args))
+}
+
+// builtinParamsOnly copies sig with every parameter whose type mentions a non-built-in name made untyped (a wildcard).
+func builtinParamsOnly(sig MethodSignature) MethodSignature {
+	out := sig
+	out.Params = make([]*ast.TypeRef, len(sig.Params))
+	for i, p := range sig.Params {
+		if p != nil && refIsBuiltin(p) {
+			out.Params[i] = p
+		} else {
+			out.Params[i] = &ast.TypeRef{Name: "any", Nullable: true}
+		}
+	}
+	return out
+}
+
+func refIsBuiltin(ref *ast.TypeRef) bool {
+	if ref == nil {
+		return true
+	}
+	if ref.Operator != "" {
+		return refIsBuiltin(ref.Left) && refIsBuiltin(ref.Right)
+	}
+	if _, ok := builtinTypeNames[strings.ToLower(ref.Name)]; !ok {
+		return false
+	}
+	for _, arg := range ref.Arguments {
+		if !refIsBuiltin(arg) {
+			return false
+		}
+	}
+	return true
+}
+
 // displayTypeInfos renders an argument/parameter type list for diagnostics.
 func displayTypeInfos(infos []typeInfo) string {
 	parts := make([]string, len(infos))
@@ -1604,10 +1736,66 @@ func (a *Analyzer) analyzeReturn(stmt *ast.ReturnStatement, fn *ast.FunctionStat
 	}
 	a.analyzeExpression(stmt.Value)
 	a.validateCallExpression(stmt.Value, a.typeInfoFromRef(fn.ReturnType))
-	a.checkAssignable(fn.ReturnType, stmt.Value, fmt.Sprintf("cannot return %s from %s returning %s", a.expressionTypeName(stmt.Value).display(), fn.Name.Value, fn.ReturnType.String()))
+	a.checkAssignableBranches(fn.ReturnType, stmt.Value, fmt.Sprintf("cannot return %%s from %s returning %s", fn.Name.Value, fn.ReturnType.String()))
+}
+
+// checkAssignableBranches checks each conditional and `??` branch of expr on its own; format has one %s for the branch's type.
+func (a *Analyzer) checkAssignableBranches(target *ast.TypeRef, expr ast.Expression, format string) {
+	a.checkAssignableBranchesIn(target, expr, format, false)
+}
+
+// checkAssignableBranchesIn is checkAssignableBranches; skipAny leaves any-typed branches to the runtime check, as field writes do.
+func (a *Analyzer) checkAssignableBranchesIn(target *ast.TypeRef, expr ast.Expression, format string, skipAny bool) {
+	switch e := expr.(type) {
+	case *ast.TernaryExpression:
+		a.checkAssignableBranchesIn(target, e.ThenExpr, format, skipAny)
+		a.checkAssignableBranchesIn(target, e.ElseExpr, format, skipAny)
+		return
+	case *ast.InfixExpression:
+		if e.Operator == "??" {
+			if _, nested := e.Left.(*ast.TernaryExpression); nested {
+				a.checkAssignableBranchesIn(target, e.Left, format, skipAny)
+			} else {
+				present := a.expressionTypeName(e.Left)
+				present.nullable = false
+				if present.name != "null" && !(skipAny && strings.EqualFold(present.name, "any")) {
+					before := len(a.diagnostics)
+					a.checkAssignableActual(target, e.Left, present, fmt.Sprintf(format, present.display()))
+					a.positionDiagnostics(before, tokenOfExpression(e.Left))
+				}
+			}
+			a.checkAssignableBranchesIn(target, e.Right, format, skipAny)
+			return
+		}
+	}
+	if skipAny {
+		if leaf := a.expressionTypeName(expr); !leaf.known || strings.EqualFold(leaf.name, "any") {
+			return
+		}
+	}
+	before := len(a.diagnostics)
+	a.checkAssignable(target, expr, fmt.Sprintf(format, a.expressionTypeName(expr).display()))
+	a.positionDiagnostics(before, tokenOfExpression(expr))
+}
+
+// positionDiagnostics gives diagnostics recorded since index before a position when they have none.
+func (a *Analyzer) positionDiagnostics(before int, tok token.Token) {
+	if tok.Line == 0 {
+		return
+	}
+	for i := before; i < len(a.diagnostics); i++ {
+		if a.diagnostics[i].Line == 0 {
+			a.diagnostics[i].Line = tok.Line
+			a.diagnostics[i].Column = tok.Column
+		}
+	}
 }
 
 func (a *Analyzer) checkAssignable(target *ast.TypeRef, expr ast.Expression, message string) {
+	a.checkAssignableActual(target, expr, a.expressionTypeName(expr), message)
+}
+
+func (a *Analyzer) checkAssignableActual(target *ast.TypeRef, expr ast.Expression, actual typeInfo, message string) {
 	if target == nil || target.Operator != "" {
 		return
 	}
@@ -1616,7 +1804,6 @@ func (a *Analyzer) checkAssignable(target *ast.TypeRef, expr ast.Expression, mes
 		return
 	}
 	targetInfo := a.typeInfoFromRef(target)
-	actual := a.expressionTypeName(expr)
 	if !actual.known {
 		return
 	}
@@ -1915,6 +2102,12 @@ func (a *Analyzer) callArgumentsBaseCompatible(args, parameters []typeInfo, minA
 		return false
 	}
 	for i, arg := range args {
+		if len(parameters[i].union) > 0 && arg.known {
+			if !a.unionAccepts(parameters[i].union, arg) {
+				return false
+			}
+			continue
+		}
 		if !parameters[i].known || !arg.known {
 			return false
 		}
@@ -2181,11 +2374,43 @@ func substituteTypeParam(ti typeInfo, bindings map[string]typeInfo, paramSet map
 	return out, true
 }
 
+func (a *Analyzer) unionMembers(ref *ast.TypeRef) []typeInfo {
+	if ref != nil && ref.Operator == "|" {
+		return append(a.unionMembers(ref.Left), a.unionMembers(ref.Right)...)
+	}
+	return []typeInfo{a.typeInfoFromRef(ref)}
+}
+
+// unionAccepts reports whether arg fits some member of a union parameter; an unknown member may accept anything.
+func (a *Analyzer) unionAccepts(members []typeInfo, arg typeInfo) bool {
+	for _, member := range members {
+		if !member.known || member.name == "any" {
+			return true
+		}
+		if arg.name == "null" {
+			if member.nullable || member.name == "null" {
+				return true
+			}
+			continue
+		}
+		if a.isAssignable(member, arg) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Analyzer) callArgumentsCompatible(args, parameters []typeInfo, minArgs int) bool {
 	if len(args) < minArgs || len(args) > len(parameters) {
 		return false
 	}
 	for i, arg := range args {
+		if len(parameters[i].union) > 0 && arg.known {
+			if !a.unionAccepts(parameters[i].union, arg) {
+				return false
+			}
+			continue
+		}
 		if !parameters[i].known || !arg.known {
 			return false
 		}
@@ -2252,6 +2477,8 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		}
 	case *ast.AssignmentExpression:
 		a.analyzeAssignment(expr)
+	case *ast.FunctionLiteral:
+		a.analyzeFunctionLiteral(expr)
 	case *ast.InfixExpression:
 		a.analyzeExpression(expr.Left)
 		// instanceof's right operand is a type reference, not a value.
@@ -2293,6 +2520,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		a.checkTypedCollectionMethodCall(expr)
 		a.checkPrimitiveMethodCall(expr)
 		a.checkClassMethodCall(expr)
+		a.checkImportedCallArgs(expr)
 		a.checkMethodCallTypeArgs(expr)
 		a.checkConstructorTypeArgs(expr)
 		a.checkDeprecatedCall(expr)
@@ -2597,17 +2825,19 @@ func (a *Analyzer) checkFieldAssignment(selector *ast.SelectorExpression, value 
 	if alias, isAlias := a.aliases[strings.ToLower(ref.Name)]; (isAlias && !alias.known) || !a.typeInfoFromRef(ref).known {
 		return
 	}
+	_, branched := value.(*ast.TernaryExpression)
+	if infix, ok := value.(*ast.InfixExpression); ok && infix.Operator == "??" {
+		branched = true
+	}
 	actual := a.expressionTypeName(value)
-	if !actual.known || strings.EqualFold(actual.name, "any") {
+	if !branched && (!actual.known || strings.EqualFold(actual.name, "any")) {
 		return
 	}
 	before := len(a.diagnostics)
-	a.checkAssignable(ref, value, fmt.Sprintf("cannot assign %s to %s field %s.%s", actual.display(), ref.String(), recv.name, selector.Name.Value))
+	a.checkAssignableBranchesIn(ref, value, fmt.Sprintf("cannot assign %%s to %s field %s.%s", ref.String(), recv.name, selector.Name.Value), true)
 	for i := before; i < len(a.diagnostics); i++ {
-		if a.diagnostics[i].Line == 0 {
-			a.diagnostics[i].Line = selector.Name.Token.Line
-			a.diagnostics[i].Column = selector.Name.Token.Column
-		}
+		a.diagnostics[i].Line = selector.Name.Token.Line
+		a.diagnostics[i].Column = selector.Name.Token.Column
 	}
 }
 
@@ -3263,6 +3493,9 @@ func (a *Analyzer) parameterBindingType(param ast.Parameter) typeInfo {
 }
 
 func (a *Analyzer) typeInfoFromRef(ref *ast.TypeRef) typeInfo {
+	if ref != nil && ref.Operator == "|" {
+		return typeInfo{union: append(a.unionMembers(ref.Left), a.unionMembers(ref.Right)...)}
+	}
 	if ref == nil || ref.Operator != "" {
 		return typeInfo{}
 	}

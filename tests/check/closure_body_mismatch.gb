@@ -1,0 +1,10 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST check typed declarations and returns inside
+ *          function literals, as it does in named functions.
+ */
+let convert = func(): decimal {
+    int count = 3;
+    decimal total = count;
+    return total;
+};

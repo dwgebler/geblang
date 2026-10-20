@@ -1,0 +1,10 @@
+module closure_params_donor;
+
+export func handler(): callable {
+    return func(dict<string, any> request, int code = 200): dict<string, any> { return request; };
+}
+
+export func capturing(string label): callable {
+    let prefix = label + ":";
+    return func(list<int> xs): string { return prefix; };
+}

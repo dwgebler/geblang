@@ -127,15 +127,15 @@ func (e *Evaluator) processObjectClasses() []*runtime.Class {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("Process.readStdoutN expects 1 argument")
 		}
-		n, ok := args[0].(runtime.Int)
-		if !ok {
-			return nil, fmt.Errorf("Process.readStdoutN argument must be int")
+		n, ok := native.AsInt64(args[0])
+		if !ok || n < 0 {
+			return nil, fmt.Errorf("Process.readStdoutN argument must be a non-negative int")
 		}
 		proc, err := getHandle(this)
 		if err != nil {
 			return nil, err
 		}
-		buf := make([]byte, n.Value.Int64())
+		buf := make([]byte, n)
 		nr, _ := proc.stdout.Read(buf)
 		return runtime.String{Value: string(buf[:nr])}, nil
 	}}}
@@ -143,15 +143,15 @@ func (e *Evaluator) processObjectClasses() []*runtime.Class {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("Process.readStderrN expects 1 argument")
 		}
-		n, ok := args[0].(runtime.Int)
-		if !ok {
-			return nil, fmt.Errorf("Process.readStderrN argument must be int")
+		n, ok := native.AsInt64(args[0])
+		if !ok || n < 0 {
+			return nil, fmt.Errorf("Process.readStderrN argument must be a non-negative int")
 		}
 		proc, err := getHandle(this)
 		if err != nil {
 			return nil, err
 		}
-		buf := make([]byte, n.Value.Int64())
+		buf := make([]byte, n)
 		nr, _ := proc.stderr.Read(buf)
 		return runtime.String{Value: string(buf[:nr])}, nil
 	}}}

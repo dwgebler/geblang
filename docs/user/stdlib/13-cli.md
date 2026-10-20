@@ -26,9 +26,9 @@ if (opts["verbose"] as bool) {
 }
 ```
 
-`cli.help(spec)` prints a usage summary derived from the spec. The low-level
-`args.parse(argv, spec)` and `args.help(spec)` functions provide the same
-interface without the interactive features.
+`cli.help(name, spec)` returns usage text for the program `name`, derived from
+the spec. The low-level `args.parse(argv, spec)` and `args.help(name, spec)`
+functions provide the same interface without the interactive features.
 
 ## Interactive prompts
 

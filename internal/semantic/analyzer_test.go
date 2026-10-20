@@ -1509,3 +1509,140 @@ let generic = [1, 2].copy().first();
 		t.Fatalf("expected no diagnostics for valid chains, got %v", good)
 	}
 }
+
+func TestAnalyzerTypesConditionalAndCoalesceBranches(t *testing.T) {
+	prelude := ""
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"literal branch takes decimal", "func f(bool c, decimal d): void { decimal x = c ? d : 0; }\n", ""},
+		{"literal coalesce takes decimal", "func f(?decimal n): void { decimal x = n ?? 0; }\n", ""},
+		{"nested literals", "func f(bool c, decimal d): void { decimal x = c ? d : (c ? 1 : 2); }\n", ""},
+		{"null branch into nullable", "func f(bool c): void { ?decimal x = c ? null : 1; }\n", ""},
+		{"int branch rejected", "func f(bool c, decimal d, int i): void { decimal x = c ? d : i; }\n", "cannot assign int to decimal x"},
+		{"int coalesce rejected", "func f(?decimal n, int i): void { decimal x = n ?? i; }\n", "cannot assign int to decimal x"},
+		{"int branch return rejected", "func f(bool c, decimal d, int i): decimal { return c ? i : d; }\n", "cannot return int from f returning decimal"},
+		{"int default branch rejected", "func f(int i, decimal d = true ? 1.5 : i): void {}\n", "cannot use int default for decimal parameter d"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := parser.New(lexer.New(prelude + tc.src))
+			program := p.ParseProgram()
+			if len(p.Errors()) != 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+			diagnostics := semantic.New().Analyze(program)
+			if tc.want == "" {
+				if len(diagnostics) != 0 {
+					t.Fatalf("expected no diagnostics, got %v", diagnostics)
+				}
+				return
+			}
+			for _, d := range diagnostics {
+				if strings.Contains(d.Message, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("expected %q, got %v", tc.want, diagnostics)
+		})
+	}
+}
+
+func TestAnalyzerChecksFunctionLiteralBodies(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"declaration", "let g = func(): void { int i = 3; decimal x = i; };\n", "cannot assign int to decimal x"},
+		{"return", "let g = func(): int { return \"s\"; };\n", "cannot return string from <closure> returning int"},
+		{"param default", "let g = func(int n = \"s\"): void {};\n", "cannot use string default for int parameter n"},
+		{"nested closure", "func f(): void { let g = func(): void { let h = func(): void { string s = 1; }; }; }\n", "cannot assign int to string s"},
+		{"params in scope", "let g = func(decimal d): decimal { decimal x = d; return x; };\n", ""},
+		{"captures outer", "decimal total = 1.5;\nlet g = func(): decimal { return total; };\n", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := parser.New(lexer.New(tc.src))
+			program := p.ParseProgram()
+			if len(p.Errors()) != 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+			diagnostics := semantic.New().Analyze(program)
+			if tc.want == "" {
+				if len(diagnostics) != 0 {
+					t.Fatalf("expected no diagnostics, got %v", diagnostics)
+				}
+				return
+			}
+			for _, d := range diagnostics {
+				if strings.Contains(d.Message, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("expected %q, got %v", tc.want, diagnostics)
+		})
+	}
+}
+
+func TestAnalyzerAssignabilityDiagnosticsHavePositions(t *testing.T) {
+	src := "int i = 3;\ndecimal x = i;\nfunc f(bool c, int n): decimal {\n    return c ? 1.5 : n;\n}\n"
+	p := parser.New(lexer.New(src))
+	program := p.ParseProgram()
+	diagnostics := semantic.New().Analyze(program)
+	want := map[string][2]int{
+		"cannot assign int to decimal x":             {2, 13},
+		"cannot return int from f returning decimal": {4, 22},
+	}
+	for msg, pos := range want {
+		found := false
+		for _, d := range diagnostics {
+			if strings.Contains(d.Message, msg) {
+				found = true
+				if d.Line != pos[0] || d.Column != pos[1] {
+					t.Errorf("%q at %d:%d, want %d:%d", msg, d.Line, d.Column, pos[0], pos[1])
+				}
+			}
+		}
+		if !found {
+			t.Errorf("missing diagnostic %q in %v", msg, diagnostics)
+		}
+	}
+}
+
+func TestAnalyzerAcceptsUnionParameterCalls(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"member argument in return", "func u(string|int v): int { return 1; }\nfunc f(): int { return u(\"x\"); }\n", ""},
+		{"other member", "func u(string|int v): int { return 1; }\nfunc f(): int { return u(2); }\n", ""},
+		{"nullable member", "func u(?string|int v): int { return 1; }\nfunc f(): int { return u(null); }\n", ""},
+		{"non-member rejected", "func u(string|int v): int { return 1; }\nfunc f(): int { return u(true); }\n", "no matching overload for u returning int"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := parser.New(lexer.New(tc.src))
+			program := p.ParseProgram()
+			if len(p.Errors()) != 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+			diagnostics := semantic.New().Analyze(program)
+			if tc.want == "" {
+				if len(diagnostics) != 0 {
+					t.Fatalf("expected no diagnostics, got %v", diagnostics)
+				}
+				return
+			}
+			for _, d := range diagnostics {
+				if strings.Contains(d.Message, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("expected %q, got %v", tc.want, diagnostics)
+		})
+	}
+}

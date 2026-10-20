@@ -125,6 +125,11 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 		return ip, nil
 	}
 	functionIndex, err := vm.selectRuntimeFunctionWith(instruction, classInfo.Name, classInfo.ConstructorIndices, args, 1, explicitBindings)
+	if err != nil && literalArgs != nil && len(explicitBindings) == 0 {
+		// A cross-module construction reaches here untyped: an int literal fits its float/decimal parameter only once typed.
+		functionIndex, err = vm.selectRuntimeFunctionLiterals(instruction, classInfo.Name, classInfo.ConstructorIndices, args, 1, literalArgs, instance.TypeBindings)
+		literalArgs = nil
+	}
 	if err != nil {
 		return 0, err
 	}

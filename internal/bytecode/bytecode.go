@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(88)
+	Version = uint16(89)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -432,6 +432,7 @@ type FunctionInfo struct {
 	ParamDisplayNames        []string // original-case names for reflection/error display; ParamNames stays lowercased for matching
 	ParamSlots               []int64
 	ParamTypes               []string
+	ParamDisplayTypes        []string // declared types as written, for reflection; ParamTypes is the runtime-check form
 	ParamDecorators          [][]runtime.DecoratorMetadata
 	ReturnType               string
 	ReturnCheckType          string // parameterized return type for runtime checks; ReturnType erases type args
@@ -606,6 +607,11 @@ func Encode(chunk Chunk) ([]byte, error) {
 		}
 		out = binary.BigEndian.AppendUint16(out, uint16(len(function.ParamTypes)))
 		for _, typ := range function.ParamTypes {
+			out = binary.BigEndian.AppendUint16(out, uint16(len(typ)))
+			out = append(out, []byte(typ)...)
+		}
+		out = binary.BigEndian.AppendUint16(out, uint16(len(function.ParamDisplayTypes)))
+		for _, typ := range function.ParamDisplayTypes {
 			out = binary.BigEndian.AppendUint16(out, uint16(len(typ)))
 			out = append(out, []byte(typ)...)
 		}
@@ -922,6 +928,11 @@ func Decode(data []byte) (Chunk, error) {
 		function.ParamTypes = make([]string, 0, typeCount)
 		for j := 0; j < typeCount; j++ {
 			function.ParamTypes = append(function.ParamTypes, string(reader.read(int(reader.u16()))))
+		}
+		displayTypeCount := int(reader.u16())
+		function.ParamDisplayTypes = make([]string, 0, displayTypeCount)
+		for j := 0; j < displayTypeCount; j++ {
+			function.ParamDisplayTypes = append(function.ParamDisplayTypes, string(reader.read(int(reader.u16()))))
 		}
 		paramDecCount := int(reader.u16())
 		if paramDecCount > 0 {

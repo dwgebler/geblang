@@ -102,6 +102,23 @@ the receiver's type is not a statically known class, when the class (or any
 ancestor) defines `__call`, when the class carries decorators that may inject
 members, or when any part of the hierarchy cannot be resolved.
 
+Calls into your own modules are checked against the called function's or
+constructor's parameters - `mod.f(...)`, `mod.Class(...)` and names brought in
+with `from mod import f`:
+
+```sh
+$ geblang check app.gb
+app.gb:4:18: error[semantic]: no matching overload for prices.format: got (int)
+```
+
+This check is conservative too. It compares only parameters of built-in types
+(`int`, `decimal`, `list<string>`, ...), treating a parameter typed with the
+other module's own classes or aliases as accepting anything; it skips calls with
+named or spread arguments, arguments whose type isn't statically known (or is
+`any`), variadic functions, generic parameters, decorated functions and classes,
+and subclasses that inherit their constructor. An integer literal is accepted
+for a `float` or `decimal` parameter, as at run time.
+
 These checks also run inside class method and constructor bodies, not just
 top-level and free-function code. Inside a method, `this` is typed as the
 enclosing class, so member access and argument types on `this.field` and on

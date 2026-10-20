@@ -96,7 +96,10 @@ func loadTemplate(string name): string {
 
 Use `resources.readBytes(name)` for binary data, `resources.open(name)` for an
 owned read-only file handle, `resources.exists(name)` to test absence, or
-`resources.path(name)` to pass an absolute path to another API. A path must be
+`resources.path(name)` to pass an absolute path to another API. A declared
+directory resolves too: `resources.path("templates")` returns the directory's
+absolute path (and `resources.exists("templates")` is `true`), which suits APIs
+that take a directory; `readText` and friends stay file-only. A path must be
 declared and cannot traverse outside the root. A `--resource src=dest` remap
 introduces `dest` only in the built binary. Scripts without a manifest can use
 `resources.withRoot(root)` to select an explicit directory.

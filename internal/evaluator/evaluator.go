@@ -559,7 +559,7 @@ func newEvaluatorCore(stdout io.Writer, args []string, modulePaths []string) *Ev
 		stdout = io.Discard
 	}
 	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
-	e.builtins = e.builtinModules()
+	e.builtins = withTestPatches(e.builtinModules())
 	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer})
 	return e
 }
@@ -1734,14 +1734,14 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			return runtime.Bool{Value: rightBool.Value}, nil
 		}
 		if expr.Operator == "??" {
-			left, err := e.evalExpression(expr.Left, env)
+			left, err := e.evalExpressionWithExpectedType(expr.Left, env, expected)
 			if err != nil {
 				return nil, err
 			}
 			if _, isNull := left.(runtime.Null); !isNull {
 				return left, nil
 			}
-			return e.evalExpression(expr.Right, env)
+			return e.evalExpressionWithExpectedType(expr.Right, env, expected)
 		}
 		left, err := e.evalExpression(expr.Left, env)
 		if err != nil {
@@ -1760,6 +1760,14 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			value = v
 			return v, err
 		}
+		evalTyped := func(expected *ast.TypeRef) (runtime.Value, error) {
+			if expected == nil {
+				return evalValue()
+			}
+			v, err := e.evalExpressionWithExpectedType(expr.Value, env, expected)
+			value = v
+			return v, err
+		}
 		switch left := expr.Left.(type) {
 		case *ast.IndexExpression:
 			if err := e.assignIndex(left, evalValue, env); err != nil {
@@ -1767,7 +1775,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			}
 			return value, nil
 		case *ast.SelectorExpression:
-			if err := e.assignSelector(left, evalValue, ast.IsIntegerLiteral(expr.Value), env); err != nil {
+			if err := e.assignSelector(left, evalTyped, ast.IsIntegerLiteral(expr.Value), env); err != nil {
 				return nil, err
 			}
 			return value, nil
@@ -3288,11 +3296,63 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 	if hasImportName {
 		effModule = canonical
 	}
+	if native.ForwardsNamedArgs(effModule, name) {
+		return e.callForwardingNative(function, call, env, effModule, name)
+	}
 	args, err := e.evalNativeCallArguments(call, env, effModule, name)
 	if err != nil {
 		return nil, err
 	}
 	return function(call, args)
+}
+
+// callForwardingNative evaluates a forwarding native's arguments in source order, then hands it a call whose arguments put its fixed parameters first so the remaining names are forwarded.
+func (e *Evaluator) callForwardingNative(function func(*ast.CallExpression, []runtime.Value) (runtime.Value, error), call *ast.CallExpression, env *runtime.Environment, module, name string) (runtime.Value, error) {
+	names := make([]string, len(call.Arguments))
+	hasNamed := false
+	for i, arg := range call.Arguments {
+		if arg.Spread {
+			args, err := e.evalCallArguments(call, env)
+			if err != nil {
+				return nil, err
+			}
+			return function(call, args)
+		}
+		if arg.Name != nil {
+			names[i] = arg.Name.Value
+			hasNamed = true
+		}
+	}
+	if !hasNamed {
+		args, err := e.evalCallArguments(call, env)
+		if err != nil {
+			return nil, err
+		}
+		return function(call, args)
+	}
+	values := make([]runtime.Value, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		v, err := e.evalExpression(arg.Value, env)
+		if err != nil {
+			return nil, err
+		}
+		values[i] = v
+	}
+	order, outNames, err := native.ForwardedArgOrder(module, name, names)
+	if err != nil {
+		return nil, err
+	}
+	rewritten := *call
+	rewritten.Arguments = make([]ast.CallArgument, len(order))
+	args := make([]runtime.Value, len(order))
+	for k, idx := range order {
+		rewritten.Arguments[k] = call.Arguments[idx]
+		if outNames[k] == "" {
+			rewritten.Arguments[k].Name = nil
+		}
+		args[k] = values[idx]
+	}
+	return function(&rewritten, args)
 }
 
 // evalNativeCallArguments evaluates a native call's arguments, binding named arguments to the native's declared parameter order; falls back to positional evaluation when there are no names, a spread is present, or the native has no signature.
@@ -3717,19 +3777,19 @@ func dictBoolField(dict runtime.Dict, key string) (bool, bool) {
 }
 
 func runtimeInt64(value runtime.Value, name string) (int64, error) {
-	intValue, ok := value.(runtime.Int)
-	if !ok || !intValue.Value.IsInt64() {
+	intValue, ok := native.AsInt64(value)
+	if !ok {
 		return 0, fmt.Errorf("%s must be int", name)
 	}
-	return intValue.Value.Int64(), nil
+	return intValue, nil
 }
 
 func handleID(value runtime.Value, label string) (int64, error) {
-	handle, ok := value.(runtime.Int)
-	if !ok || !handle.Value.IsInt64() {
+	handle, ok := native.AsInt64(value)
+	if !ok {
 		return 0, fmt.Errorf("%s handle must be int", label)
 	}
-	return handle.Value.Int64(), nil
+	return handle, nil
 }
 
 func toInt64(v runtime.Value) (int64, bool) {
@@ -4638,12 +4698,12 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, evalValue func() (run
 	}
 }
 
-func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, evalValue func() (runtime.Value, error), intLiteral bool, env *runtime.Environment) error {
+func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, evalValue func(*ast.TypeRef) (runtime.Value, error), intLiteral bool, env *runtime.Environment) error {
 	object, err := e.evalExpression(expr.Object, env)
 	if err != nil {
 		return err
 	}
-	newValue, err := evalValue()
+	newValue, err := evalValue(numericFieldTarget(object, expr.Name.Value))
 	if err != nil {
 		return err
 	}
@@ -5035,6 +5095,10 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 	provided, err := e.evalDetailedCallArgumentsWithHints(call, env, hints)
 	if err != nil {
 		return nil, err
+	}
+	// Re-stamp: argument evaluation can move currentLine off this call site, and selection errors are attributed to it.
+	if call.Token.Line > 0 {
+		e.currentLine = call.Token.Line
 	}
 	var matches []runtime.Function
 	var matchedArgs [][]runtime.Value

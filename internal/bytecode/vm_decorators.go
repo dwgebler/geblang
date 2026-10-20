@@ -279,23 +279,28 @@ func (vm *VM) decoratorFunctionIndices(name string) []int64 {
 }
 
 func (vm *VM) bytecodeFunctionValue(index int64, raw bool) runtime.BytecodeFunction {
-	function := runtime.BytecodeFunction{Index: index, Raw: raw}
 	if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
-		return function
+		return runtime.BytecodeFunction{Index: index, Raw: raw}
 	}
-	info := vm.curMod.Chunk.Functions[index]
-	function.Module = vm.moduleName
-	function.Name = info.Name
-	function.Doc = info.Doc
-	function.TypeParameters = append([]string(nil), info.TypeParameters...)
-	function.Parameters = parameterMetadataFromFunctionInfo(info, 0)
-	function.ReturnType = info.ReturnType
-	function.Async = info.Async
-	function.Variadic = info.Variadic
-	function.Decorators = append([]runtime.DecoratorMetadata(nil), info.Decorators...)
-	function.DefLine = info.DefLine
-	function.DefColumn = info.DefColumn
-	return function
+	return bytecodeFunctionFromInfo(vm.curMod.Chunk.Functions[index], index, vm.moduleName, raw)
+}
+
+func bytecodeFunctionFromInfo(info FunctionInfo, index int64, module string, raw bool) runtime.BytecodeFunction {
+	return runtime.BytecodeFunction{
+		Index:          index,
+		Raw:            raw,
+		Module:         module,
+		Name:           info.Name,
+		Doc:            info.Doc,
+		TypeParameters: append([]string(nil), info.TypeParameters...),
+		Parameters:     parameterMetadataFromFunctionInfo(info, 0),
+		ReturnType:     info.ReturnType,
+		Async:          info.Async,
+		Variadic:       info.Variadic,
+		Decorators:     append([]runtime.DecoratorMetadata(nil), info.Decorators...),
+		DefLine:        info.DefLine,
+		DefColumn:      info.DefColumn,
+	}
 }
 
 func decoratorCallArguments(current runtime.Value, decorator runtime.DecoratorMetadata) ([]runtime.Value, []string, error) {

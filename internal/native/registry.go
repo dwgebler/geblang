@@ -10,8 +10,6 @@ type Function func(args []runtime.Value) (runtime.Value, error)
 
 type Registry struct {
 	functions map[string]Function
-	// patches overlays functions during a test (test.mock); CallKey checks it first, cleared between @test methods.
-	patches map[string]Function
 	// convCtx is this backend's serialize/deserialize context for the conversion natives; set once at construction, read per call (no process-global).
 	convCtx ConversionContext
 }
@@ -20,7 +18,7 @@ type Registry struct {
 func (r *Registry) SetConversionContext(ctx ConversionContext) { r.convCtx = ctx }
 
 func NewRegistry() *Registry {
-	return &Registry{functions: map[string]Function{}, patches: map[string]Function{}}
+	return &Registry{functions: map[string]Function{}}
 }
 
 func Key(module, name string) string {
@@ -32,7 +30,7 @@ func (r *Registry) Register(module, name string, fn Function) {
 }
 
 func (r *Registry) Call(module, name string, args []runtime.Value) (runtime.Value, error) {
-	if patch, ok := r.patches[Key(module, name)]; ok {
+	if patch := LookupPatch(Key(module, name)); patch != nil {
 		return patch(args)
 	}
 	fn, ok := r.functions[Key(module, name)]
@@ -62,7 +60,7 @@ func (r *Registry) Keys() []string {
 // Returns nil when a test patch shadows the key; the caller must
 // fall back to Call/CallKey so patches still win.
 func (r *Registry) LookupKey(key string) Function {
-	if _, patched := r.patches[key]; patched {
+	if LookupPatch(key) != nil {
 		return nil
 	}
 	// Conversion natives carry this backend's context; the cached wrapper reads r.convCtx at call time, so the VM fast path stays per-backend.
@@ -73,7 +71,7 @@ func (r *Registry) LookupKey(key string) Function {
 }
 
 func (r *Registry) CallKey(key string, args []runtime.Value) (runtime.Value, error) {
-	if patch, ok := r.patches[key]; ok {
+	if patch := LookupPatch(key); patch != nil {
 		return patch(args)
 	}
 	if isConversionKey(key) {
@@ -91,37 +89,26 @@ func (r *Registry) CallKey(key string, args []runtime.Value) (runtime.Value, err
 // pairs it with Snapshot/Restore so patches roll back at @test
 // method boundaries.
 func (r *Registry) Patch(module, name string, fn Function) {
-	r.patches[Key(module, name)] = fn
+	globalPatch(Key(module, name), fn)
 }
 
 // Unpatch removes a single override, falling back to the
 // originally-registered function for subsequent calls.
 func (r *Registry) Unpatch(module, name string) {
-	delete(r.patches, Key(module, name))
+	globalUnpatch(Key(module, name))
 }
 
 // Snapshot returns a copy of the current patch map. The engine
 // captures one snapshot before each @test method and Restore()s
 // it after, so tests don't leak mocks into the next case.
 func (r *Registry) Snapshot() map[string]Function {
-	out := make(map[string]Function, len(r.patches))
-	for k, v := range r.patches {
-		out[k] = v
-	}
-	return out
+	return globalSnapshot()
 }
 
 // Restore replaces the active patch map with the given snapshot.
 // Pass an empty / nil map to clear all patches.
 func (r *Registry) Restore(snapshot map[string]Function) {
-	if snapshot == nil {
-		r.patches = map[string]Function{}
-		return
-	}
-	r.patches = make(map[string]Function, len(snapshot))
-	for k, v := range snapshot {
-		r.patches[k] = v
-	}
+	globalRestore(snapshot)
 }
 
 func IsPureBuiltin(module, name string) bool {

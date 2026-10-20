@@ -1380,6 +1380,17 @@ func (e *TernaryExpression) String() string {
 	return "(" + e.Condition.String() + " ? " + e.ThenExpr.String() + " : " + e.ElseExpr.String() + ")"
 }
 
+// HasIntegerLiteralBranch reports whether expr is, or may evaluate to, an integer literal through a conditional or `??` branch.
+func HasIntegerLiteralBranch(expr Expression) bool {
+	switch e := expr.(type) {
+	case *TernaryExpression:
+		return HasIntegerLiteralBranch(e.ThenExpr) || HasIntegerLiteralBranch(e.ElseExpr)
+	case *InfixExpression:
+		return e.Operator == "??" && (HasIntegerLiteralBranch(e.Left) || HasIntegerLiteralBranch(e.Right))
+	}
+	return IsIntegerLiteral(expr)
+}
+
 // IsIntegerLiteral reports whether expr is an integer literal, optionally negated, or a conditional of two.
 func IsIntegerLiteral(expr Expression) bool {
 	switch e := expr.(type) {

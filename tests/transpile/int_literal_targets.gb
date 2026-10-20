@@ -41,3 +41,9 @@ func guarded(bool b): float {
     }
 }
 io.println("${guarded(true) / 4.0f} ${guarded(false) / 4.0f}");
+decimal mixed = off ? d : 5;
+?decimal missing = null;
+decimal fallback = missing ?? 6;
+account.balance = off ? d : 7;
+account.rate = off ? 0.5f : 8;
+io.println("${mixed} ${fallback} ${account.balance} ${account.rate / 16.0f}");

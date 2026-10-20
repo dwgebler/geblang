@@ -94,6 +94,53 @@ class SqliteTuningTest extends test.Test {
         c.close();
     }
 
+    func lockConn(string file, string txLock): db.Connection {
+        return db.Connection({
+            "driver": "sqlite",
+            "dsn": file,
+            "wal": true,
+            "busyTimeoutMs": 100,
+            "txLock": txLock,
+            "maxOpenConns": 2,
+        });
+    }
+
+    @test
+    func txLockImmediateTakesTheWriteLockAtBegin(): void {
+        let file = path.join(io.tempDir("geb-txlock-"), "app.sqlite");
+        let a = this.lockConn(file, "immediate");
+        a.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+        let b = this.lockConn(file, "immediate");
+        let held = a.begin();
+        # The second writer cannot even begin while the first holds the lock.
+        this.assertThrows(func(): void { let t2 = b.begin(); t2.rollback(); }, "locked");
+        held.commit();
+        let after = b.begin();
+        after.exec("INSERT INTO t (id) VALUES (1)");
+        after.commit();
+        a.close();
+        b.close();
+    }
+
+    @test
+    func txLockDeferredBeginsWithoutTheLock(): void {
+        let file = path.join(io.tempDir("geb-txlock-"), "app.sqlite");
+        let a = this.lockConn(file, "deferred");
+        a.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+        let b = this.lockConn(file, "deferred");
+        let held = a.begin();
+        let second = b.begin();
+        second.rollback();
+        held.rollback();
+        a.close();
+        b.close();
+    }
+
+    @test
+    func txLockRejectsUnknownModes(): void {
+        this.assertThrows(func(): void { this.lockConn(path.join(io.tempDir("geb-txlock-"), "x.sqlite"), "eager"); }, "txLock");
+    }
+
     @test
     func optimizeRunsWithoutError(): void {
         let c = this.walConn();

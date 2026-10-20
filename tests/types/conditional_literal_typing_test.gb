@@ -1,0 +1,89 @@
+/**
+ * @title Conditional and coalesce branch typing
+ * @summary An integer-literal branch of `?:` or `??` takes a float or decimal
+ * target in every context; other branches keep their own type.
+ */
+import test;
+
+class Ledger {
+    decimal total;
+    float rate;
+    ?decimal pending;
+    static let decimal grand = 0.0;
+
+    func Ledger() {
+        this.total = 0;
+        this.rate = 1;
+        this.pending = null;
+    }
+
+    func reset(bool on, decimal d): void {
+        this.total = on ? d : 0;
+    }
+}
+
+class Audit extends Ledger {
+    func Audit() {
+        parent();
+    }
+}
+
+func settle(bool on, decimal d): decimal {
+    return on ? d : 0;
+}
+
+func scale(float f): string {
+    return typeof(f) as string;
+}
+
+class ConditionalLiteralTypingTest extends test.Test {
+    bool off = false;
+
+    @test
+    func declarationsAndReturns(): void {
+        decimal d = 2.5;
+        decimal viaTernary = this.off ? d : 0;
+        ?decimal none = null;
+        decimal viaCoalesce = none ?? 7;
+        decimal nested = this.off ? d : (this.off ? 1 : 2);
+        this.assertEquals("decimal", typeof(viaTernary) as string);
+        this.assertEquals("decimal", typeof(viaCoalesce) as string);
+        this.assertEquals("decimal", typeof(nested) as string);
+        this.assertEquals("decimal", typeof(settle(false, d)) as string);
+        this.assertEquals(2.0, nested);
+    }
+
+    @test
+    func instanceAndInheritedFields(): void {
+        let ledger = Ledger();
+        ledger.reset(false, 4.5);
+        this.assertEquals("decimal", typeof(ledger.total) as string);
+        ledger.rate = this.off ? 0.5f : 3;
+        this.assertEquals("float", typeof(ledger.rate) as string);
+        let audit = Audit();
+        audit.total = this.off ? 1.5 : 9;
+        this.assertEquals("decimal", typeof(audit.total) as string);
+        audit.pending = this.off ? null : 5;
+        this.assertEquals("decimal", typeof(audit.pending) as string);
+        ?decimal missing = null;
+        audit.total = missing ?? 3;
+        this.assertEquals(3.0, audit.total);
+    }
+
+    @test
+    func staticFieldsAndArguments(): void {
+        Ledger.grand = this.off ? 1.5 : 4;
+        this.assertEquals("decimal", typeof(Ledger.grand) as string);
+        this.assertEquals("float", scale(this.off ? 0.5f : 2));
+    }
+
+    @test
+    func nonLiteralIntBranchIsStillRejected(): void {
+        let ledger = Ledger();
+        any count = 3;
+        this.assertThrows(
+            func(): void { ledger.total = this.off ? 1.5 : count; },
+            "cannot assign int to decimal field Ledger.total"
+        );
+    }
+}

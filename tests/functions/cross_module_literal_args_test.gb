@@ -1,0 +1,35 @@
+/**
+ * @title Integer literals passed to another module's float/decimal parameters
+ * @summary An int literal argument converts to an imported function's,
+ * overload's or constructor's float or decimal parameter, as it does for a
+ * local call; an int variable is still rejected.
+ */
+import test;
+import literal_args_donor as donor;
+
+class CrossModuleLiteralArgsTest extends test.Test {
+    @test
+    func literalConvertsForImportedFunction(): void {
+        this.assertEquals("0.00", donor.asText(0));
+        this.assertEquals("12.00", donor.asText(12));
+        this.assertEquals(6.0f, donor.scaled(3));
+    }
+
+    @test
+    func literalSelectsTheDecimalOverload(): void {
+        this.assertEquals("decimal 5.0", donor.pick(5));
+        this.assertEquals("string x", donor.pick("x"));
+    }
+
+    @test
+    func literalConvertsForImportedConstructor(): void {
+        this.assertEquals(7.00, donor.Amount(7).value);
+    }
+
+    @test
+    func nonLiteralIntIsStillRejected(): void {
+        # any: a statically typed int is already a geblang check error (tests/check/cross_module_arg_mismatch.gb).
+        any n = 3;
+        this.assertThrows(func(): void { donor.asText(n); }, "expects decimal");
+    }
+}

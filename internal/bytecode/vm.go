@@ -81,6 +81,7 @@ type VM struct {
 	natives        *native.Registry
 	// nil entries fall through to evalNativeCall (statefuls / errors.is).
 	nativeCache          []native.Function
+	nativeCacheGen       uint64
 	syncMode             bool // when true, async functions are called synchronously
 	decoratedFuncs       map[int64]runtime.Value
 	decoratedClasses     map[int64]runtime.Value
@@ -109,9 +110,11 @@ type VM struct {
 	// which consumes (or drops) them at entry.
 	pendingCallTypeArgs []string
 	pendingLiteralArgs  []bool
-	fieldTypes          map[fieldTypeKey]*fieldTypeList
-	fieldTypesClass     *runtime.Class
-	fieldTypesFields    *fieldTypeList
+	// literalHandoff carries a cross-module call's int-literal mask to the callee's home VM (see AdoptLiteralArgs).
+	literalHandoff   []bool
+	fieldTypes       map[fieldTypeKey]*fieldTypeList
+	fieldTypesClass  *runtime.Class
+	fieldTypesFields *fieldTypeList
 	// destructibleInstances tracks instances of classes that declare
 	// `func ~ClassName()`. The sweep in Cleanup() invokes their
 	// destructors in reverse-creation order. `del x` removes the

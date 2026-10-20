@@ -1,5 +1,97 @@
 # Release Notes
 
+## 1.37.4
+
+### New
+
+- SQLite connections accept `txLock` (`"deferred"`, `"immediate"` or
+  `"exclusive"`), which sets how `begin()` starts a transaction.
+  `"immediate"` takes the write lock up front and waits on the busy timeout,
+  so read-then-write transactions from several connections no longer fail
+  with `database is locked`.
+- `geblang check` checks calls into your own modules (`mod.f(...)`,
+  `mod.Class(...)` and `from mod import f` names) against the called
+  function's or constructor's parameters, reporting a wrong argument count or
+  a built-in-typed argument that can't match (for example an `int` variable for
+  a `decimal` parameter).
+
+### Fixes
+
+- `resources.path` and `resources.exists` accept a declared resource directory
+  (or a directory inside one), in source runs and built binaries, so a
+  directory such as `templates` can be handed to an API that takes a path.
+
+- A class method or function can call a function declared later in the same
+  file without passing its defaulted parameters; this was rejected with
+  `no matching overload`.
+- `geblang check` (and compilation) rejects a named argument that is not a
+  parameter of the stdlib function being called, such as
+  `json.stringify(value, indent: 2)`; it previously failed only at run time.
+- `geblang check` accepts a call to a function with a union-typed parameter
+  (`string|int`) where the call's result is returned or assigned; it reported
+  `no matching overload`.
+- `geblang check` (and compilation) rejects a stdlib call with too few or too
+  many arguments, such as `math.pow(2.0)`; it previously failed only at run
+  time. Functions with several call forms (an optional leading logger, session
+  or generator, or variadic arguments) accept each documented form.
+- The stdlib catalog used by `geblang check`, `geblang doc` and the language
+  server now matches the runtime for `datetime.unix(seconds)` (returns an
+  RFC3339 string), `io.mkdir(path, mode)` (mode is required),
+  `cli.help(name, spec)` and `args.help(name, spec)`, and the optional
+  arguments of `http.shutdown`, `http.response`, `io.tryLock`, `cli.choose`,
+  `cli.table`, `stats.variance` and `stats.stdev`.
+- `geblang check` scopes a `for (x in ...)` loop variable to the loop body, so
+  a loop variable named like a top-level function (`for (t in tags)` beside
+  `func t(...)`) is no longer typed as that function.
+- On the evaluator, an error raised while choosing an overload or constructor
+  (`no matching overload`) reports the call's line in its stack trace when an
+  argument was itself a function call; it reported the last line that
+  function ran.
+- On the bytecode VM, an integer literal passed to a `float` or `decimal`
+  parameter of a function, overloaded function or class constructor imported
+  from another module is converted, as it is for a call within the same
+  module and on the evaluator; it failed with `expects decimal for parameter`
+  (or `no matching overload`).
+- `ext.call` and `ext.callWithOptions` forward named arguments to the extension
+  as keyword arguments, as documented, on both runtimes; they failed with
+  `call has no parameter ...`. The names `conn`, `function` and `options` still
+  bind to the call's own parameters.
+
+- On the bytecode VM, `reflect.parameters` (and `reflect.returnType`) works on a
+  closure created in another module, no longer lists a closure's captured
+  variables as parameters, and reports parameter types with their type
+  arguments (`list<int>`, `dict<string, any>`, `int[]`) as the evaluator does.
+
+- `test.mock` applies to calls made inside imported modules on the bytecode VM
+  (previously only on the evaluator) and to every native module function,
+  including `sys`. Mocking a name that is not a native function throws a
+  `ValueError` instead of being silently ignored.
+- `geblang check` checks the bodies of function literals (closures) as it does
+  named functions, so typed declarations, returns and parameter defaults inside
+  them are type-checked.
+- Type-mismatch diagnostics for declarations, returns and parameter defaults
+  carry a line and column.
+
+- An integer-literal branch of a conditional or `??` takes a `float` or
+  `decimal` target in every context, including instance and static field
+  assignments (`this.total = paid ? amount : 0`) and `decimal x = maybe ?? 0`.
+  Static field assignments behaved differently on the two runtimes.
+- `geblang check` checks each branch of a conditional or `??` against its
+  target, so an `int` variable branch assigned, returned or defaulted where a
+  `float` or `decimal` is declared is reported; it was previously accepted and
+  stored as an `int`.
+- `geblang build --native` lowers a conditional or `??` that mixes an integer
+  literal with a typed value; it emitted Go that failed to compile, or failed at
+  run time for field assignments.
+
+- `smtp.send` (and `mailer.Mailer.send`) accepts an int `port` on the bytecode
+  VM; it previously failed with `config.port must be int`. Other native
+  functions that took int handles or counts strictly accept the same values on
+  both runtimes.
+- `smtp.send` uses the bare address for the SMTP envelope when `from` or a
+  recipient includes a display name (`"App <noreply@example.com>"`). Servers
+  rejected the whole header value as `MAIL FROM`.
+
 ## 1.37.3
 
 ### Language

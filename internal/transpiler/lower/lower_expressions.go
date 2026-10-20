@@ -206,6 +206,10 @@ func (l *Lowerer) lowerFieldValue(sel *ast.SelectorExpression, field *types.Type
 		l.lowerIntoNullable(field, value)
 		return
 	}
+	if (field.Kind == types.KindFloat || field.Kind == types.KindDecimal) && ast.HasIntegerLiteralBranch(value) {
+		l.withExpectedType(field, func() { l.lowerValueAs(field, value) })
+		return
+	}
 	if valTy := l.inferExpressionType(value); valTy != nil && (valTy.Kind == types.KindAny || valTy.Kind == types.KindUnknown) && !isNullLiteral(value) {
 		helper := ""
 		switch field.Kind {
@@ -245,8 +249,45 @@ func (l *Lowerer) lowerFieldValue(sel *ast.SelectorExpression, field *types.Type
 
 // lowerValueAs lowers value for a typed target, giving integer literals the target's float or decimal type.
 func (l *Lowerer) lowerValueAs(target *types.Type, value ast.Expression) {
-	if target == nil || target.Nullable || (target.Kind != types.KindFloat && target.Kind != types.KindDecimal) || !ast.IsIntegerLiteral(value) {
+	if target == nil || target.Nullable || (target.Kind != types.KindFloat && target.Kind != types.KindDecimal) || !ast.HasIntegerLiteralBranch(value) {
 		l.lowerExpression(value)
+		return
+	}
+	if !ast.IsIntegerLiteral(value) && !l.branchesMatchKind(target.Kind, value) {
+		line, column := 0, 0
+		switch v := value.(type) {
+		case *ast.TernaryExpression:
+			line, column = v.Token.Line, v.Token.Column
+		case *ast.InfixExpression:
+			line, column = v.Token.Line, v.Token.Column
+		}
+		l.errAt(line, column, "a conditional mixing an integer literal with an untyped branch is not supported by --native",
+			"give every branch the target's declared type")
+		l.w.WriteString("nil")
+		return
+	}
+	if coalesce, ok := value.(*ast.InfixExpression); ok && coalesce.Operator == "??" {
+		leftTy := l.inferExpressionType(coalesce.Left)
+		if leftTy != nil && !leftTy.Nullable && isNonNullableKind(leftTy.Kind) {
+			l.lowerValueAs(target, coalesce.Left)
+			return
+		}
+		goTy := types.ToGo(target, l.Module.IntMode)
+		deref := "*__x"
+		if !nullableValuePtr(leftTy) {
+			if leftTy == nil || leftTy.Kind != target.Kind {
+				l.lowerExpression(value)
+				return
+			}
+			// Nullable decimals are nilable pointers already.
+			deref = "__x"
+		}
+		l.Module.AddTypeImports(goTy)
+		l.w.WriteString("func() " + goTy.Source + " { __x := ")
+		l.lowerExpression(coalesce.Left)
+		l.w.WriteString("; if __x != nil { return " + deref + " }; return ")
+		l.lowerValueAs(target, coalesce.Right)
+		l.w.WriteString(" }()")
 		return
 	}
 	if ternary, ok := value.(*ast.TernaryExpression); ok {
@@ -275,9 +316,26 @@ func (l *Lowerer) lowerValueAs(target *types.Type, value ast.Expression) {
 	l.w.WriteString("float64(" + literal.String() + ")")
 }
 
+// branchesMatchKind reports whether every non-literal conditional or `??` branch of value statically has the target kind.
+func (l *Lowerer) branchesMatchKind(kind types.Kind, value ast.Expression) bool {
+	switch v := value.(type) {
+	case *ast.TernaryExpression:
+		return l.branchesMatchKind(kind, v.ThenExpr) && l.branchesMatchKind(kind, v.ElseExpr)
+	case *ast.InfixExpression:
+		if v.Operator == "??" {
+			return l.branchesMatchKind(kind, v.Left) && l.branchesMatchKind(kind, v.Right)
+		}
+	}
+	if ast.IsIntegerLiteral(value) {
+		return true
+	}
+	ty := l.inferExpressionType(value)
+	return ty != nil && ty.Kind == kind
+}
+
 // lowerArgAs lowers a call argument against the callee's declared parameter type at index i.
 func (l *Lowerer) lowerArgAs(refs []*ast.TypeRef, i int, value ast.Expression) {
-	if i < len(refs) && refs[i] != nil && ast.IsIntegerLiteral(value) {
+	if i < len(refs) && refs[i] != nil && ast.HasIntegerLiteralBranch(value) {
 		l.lowerValueAs(l.resolveTypeRef(refs[i]), value)
 		return
 	}

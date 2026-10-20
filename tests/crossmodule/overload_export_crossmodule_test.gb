@@ -66,7 +66,8 @@ class OverloadExportTest extends test.Test {
     func noMatchCarriesQualifiedName(): void {
         let msg = "";
         try {
-            overload_export_donor.over(true);
+            any flag = true;
+            overload_export_donor.over(flag);
         } catch (Error e) {
             msg = e.message;
         }
