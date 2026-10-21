@@ -126,7 +126,10 @@ set<int>           s  = {1, 2, 3};      # brace literal w/o ':' is a set
   variants.
 - **Dicts iterate in insertion order**, including `.keys()`,
   `.values()`, `.items()`, and `for (k, v in d)`.
-- An EMPTY `{}` is a dict; an empty set needs a typed declaration.
+- A bare `{}` is a dict; `set<int> s = {};` (a set-typed variable, parameter
+  default or field) is an empty set.
+- `type` is a keyword (type aliases: `type UserId = string;`); don't use it as
+  a variable or parameter name.
 - Slicing is Python-style on lists and strings: `xs[1:3]`,
   `xs[:2]`, `s[-3:]`. Negative indexes count from the end.
 - Comprehensions: `[x * x for x in 1..5]`,
@@ -286,7 +289,13 @@ io.println(c.recv());                   # channels also iterate: for (x in c)
 Tasks are goroutines: CPU-bound fan-out scales across cores (no
 GIL, no event loop). `async.await(t)`, `async.all`, `async.race`,
 `async.timeout(task, ms)` (raises `TimeoutError`), `async.cancel` compose tasks; channels
-and `select` coordinate them.
+and `select` coordinate them. `async.sleep(ms)` returns a Task: `await` it to
+pause (an un-awaited call returns immediately).
+
+Never mutate a plain `dict` / `list` / object from several tasks at once;
+share mutable state through `store.Store`. A `freeze.deep` value can never
+change, so concurrent tasks and requests may read it, and `store.Store` shares
+it without copying: build large read-only data once, freeze it, share it.
 
 ### Classes
 

@@ -1,0 +1,138 @@
+/**
+ * @title Deep-frozen values (1.37.5)
+ * @summary freeze.deep keeps insertion order and element-type tags,
+ * store.Store keeps values frozen and shares deeply frozen values without
+ * copying, and concurrent tasks can read one shared frozen value.
+ */
+import test;
+import freeze;
+import store;
+import reflect;
+import async;
+
+class Model {
+    string name;
+    list<int> stops;
+    dict<string, any> weights;
+
+    func Model(string name, list<int> stops, dict<string, any> weights) {
+        this.name = name;
+        this.stops = stops;
+        this.weights = weights;
+    }
+
+    func total(): int {
+        int n = 0;
+        for (s in this.stops) {
+            n += s;
+        }
+        return n;
+    }
+}
+
+class Box<T> {
+    T value;
+
+    func Box(T value) {
+        this.value = value;
+    }
+}
+
+class FreezeSharingTest extends test.Test {
+    @test
+    func storeCopyKeepsInstanceTypeBindings(): void {
+        let s = store.Store();
+        let b = Box<int>(5);
+        s.set("box", b);
+        let got = s.get("box");
+        this.assertEquals(reflect.typeBindings(b), reflect.typeBindings(got));
+        this.assertEquals({"T": "int"}, reflect.typeBindings([b].deepCopy()[0]));
+    }
+
+    @test
+    func deepFreezeKeepsDictOrder(): void {
+        let f = freeze.deep({"z": 1, "b": 2, "a": {"y": 1, "c": 2}});
+        this.assertEquals(["z", "b", "a"], f.keys());
+        this.assertEquals(["y", "c"], (f["a"] as dict<string, any>).keys());
+    }
+
+    @test
+    func deepFreezeKeepsElementTypes(): void {
+        let list<int> xs = [3, 1, 2];
+        let dict<string, int> d = {"a": 1};
+        this.assertEquals({"T": "int"}, reflect.typeBindings(freeze.deep(xs)));
+        this.assertEquals("int", reflect.typeBindings(freeze.deep(d))["V"]);
+    }
+
+    @test
+    func typedDeclarationDoesNotRetagFrozenList(): void {
+        let list<int> xs = [1, 2];
+        let f = freeze.deep(xs);
+        let list<any> ys = f;
+        this.assertEquals({"T": "int"}, reflect.typeBindings(f));
+        this.assertEquals({"T": "any"}, reflect.typeBindings(ys));
+        this.assertTrue(freeze.isFrozen(ys));
+    }
+
+    @test
+    func storeKeepsShallowFrozenValuesFrozen(): void {
+        let s = store.Store();
+        s.set("k", freeze.shallow({"items": [1, 2]}));
+        let got = s.get("k") as dict<string, any>;
+        this.assertTrue(freeze.isFrozen(got));
+        # Nested values were not frozen, so the copy-out is still isolated.
+        (got["items"] as list<any>).push(3);
+        this.assertEquals([1, 2], (s.get("k") as dict<string, any>)["items"]);
+    }
+
+    @test
+    func storeSharesDeepFrozenValues(): void {
+        let s = store.Store();
+        let m = freeze.deep(Model("main", [1, 2, 3], {"a": 1}));
+        s.set("model", m);
+        let got = s.get("model") as Model;
+        this.assertTrue(freeze.isFrozen(got));
+        this.assertTrue(freeze.isFrozen(got.stops));
+        this.assertEquals(6, got.total());
+        this.assertTrue(got == m);
+        this.assertThrows(func(): void {
+            got.stops.push(4);
+        });
+    }
+
+    @test
+    func storeGetOrSetAndCompareAndSetShareDeepFrozenValues(): void {
+        let s = store.Store();
+        let v = freeze.deep({"n": [1]});
+        this.assertTrue(freeze.isFrozen(s.getOrSet("a", v)));
+        this.assertTrue(s.compareAndSet("b", null, v));
+        this.assertTrue(freeze.isFrozen(s.get("b")));
+        this.assertTrue(freeze.isFrozen(s.values()[0]));
+    }
+
+    @test
+    func concurrentTasksReadOneSharedFrozenModel(): void {
+        let s = store.Store();
+        list<int> stops = [];
+        for (i in 0..<500) {
+            stops.push(i);
+        }
+        s.set("model", freeze.deep(Model("main", stops, {"a": 1, "b": 2})));
+        list<any> tasks = [];
+        for (t in 0..<16) {
+            tasks.push(async.run(func(): int {
+                int sum = 0;
+                for (k in 0..<50) {
+                    let m = s.get("model") as Model;
+                    let list<int> typed = m.stops;
+                    sum += m.total() + typed.length() + (m.weights["b"] as int);
+                }
+                return sum;
+            }));
+        }
+        let expected = 50 * (124750 + 500 + 2);
+        for (r in await async.all(tasks)) {
+            this.assertEquals(expected, r as int);
+        }
+    }
+}

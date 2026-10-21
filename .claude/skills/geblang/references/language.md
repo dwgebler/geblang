@@ -89,8 +89,8 @@ set<int>          s  = {1, 2, 3};     # brace literal without ':' is a set
   `fill(value, count)`. `sorted()` / `reversed()` / `copy()` / `deepCopy()` are
   the copy variants.
 - **Dicts iterate in insertion order**, including `.keys()`, `.values()`,
-  `.items()`, and `for (k, v in d)`. An empty `{}` is a dict; an empty set needs
-  a typed declaration.
+  `.items()`, and `for (k, v in d)`. A bare `{}` is a dict; `set<int> s = {};`
+  (set-typed variable, parameter default or field) is an empty set.
 - `search` / `searchPattern` on lists, dicts, and strings return every matching
   locator: `xs.search(value)` (equality), `xs.search(pred)` (predicate),
   `s.searchPattern(regex)`.
@@ -239,12 +239,19 @@ io.println(c.recv());                    # channels also iterate: for (x in c)
 ```
 
 Tasks are goroutines: CPU-bound fan-out scales across cores (no GIL, no event
-loop). `async.await`, `async.all`, `async.race`, `async.timeout(ms, fn)`,
-`async.cancel` compose tasks; channels and `select` coordinate them. For
+loop). `async.await`, `async.all`, `async.race`, `async.timeout(task, ms)`,
+`async.cancel` compose tasks; channels and `select` coordinate them.
+`async.sleep(ms)` returns a Task: `await` it to pause. For
 higher-level orchestration, `import async.tasks as task` adds `map`/`forEach`
 (bounded parallel over a collection), `retry` (backoff), `settle` (await-all,
 no fail-fast), `any` (first success), and `parallel` (run a list/dict of
 callables), all built on the async core.
+
+Never mutate a plain `dict` / `list` / object from several tasks at once (a
+race can crash the process); share mutable state through `store.Store`. A
+value frozen with `freeze.deep` can never change, so tasks and server requests
+may read it concurrently, and `store.Store` hands it out without copying
+(1.37.5+): build a large read-only structure once, freeze it, and share it.
 
 ## Classes
 

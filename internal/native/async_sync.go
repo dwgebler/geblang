@@ -3,7 +3,6 @@ package native
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"geblang/internal/runtime"
 )
@@ -18,15 +17,12 @@ import (
 // the handle and delegates method calls to the free functions
 // registered here.
 
+// Sync primitive handles (mutexes, semaphores, wait groups, atomics) carry
+// the Go value they own as their Payload, so it is freed with the last
+// reference to the handle; nothing is kept in a process-wide registry.
 var (
-	syncMu          sync.Mutex
-	syncNextID      int64
-	syncMutexes     = map[int64]*sync.Mutex{}
-	syncRWMutexes   = map[int64]*sync.RWMutex{}
-	syncSemaphores  = map[int64]chan struct{}{}
-	syncWaitGroups  = map[int64]*sync.WaitGroup{}
-	syncAtomicInts  = map[int64]*atomic.Int64{}
-	syncAtomicBools = map[int64]*atomic.Bool{}
+	syncMu     sync.Mutex
+	syncNextID int64
 )
 
 func registerAsyncSync(r *Registry) {
@@ -43,11 +39,7 @@ func registerAsyncSyncMutex(r *Registry) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("async.sync.mutexNew expects no arguments")
 		}
-		id := nextSyncID()
-		syncMu.Lock()
-		syncMutexes[id] = &sync.Mutex{}
-		syncMu.Unlock()
-		return runtime.NativeObject{Kind: "AsyncMutex", ID: id}, nil
+		return runtime.NativeObject{Kind: "AsyncMutex", ID: nextSyncID(), Payload: &sync.Mutex{}}, nil
 	})
 	r.Register("async.sync", "mutexLock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupMutex(args, "async.sync.mutexLock")
@@ -75,13 +67,11 @@ func registerAsyncSyncMutex(r *Registry) {
 }
 
 func lookupMutex(args []runtime.Value, label string) (*sync.Mutex, error) {
-	id, err := singleHandle(args, "AsyncMutex", label)
+	obj, err := singleHandleObject(args, "AsyncMutex", label)
 	if err != nil {
 		return nil, err
 	}
-	syncMu.Lock()
-	m, ok := syncMutexes[id]
-	syncMu.Unlock()
+	m, ok := obj.Payload.(*sync.Mutex)
 	if !ok {
 		return nil, fmt.Errorf("%s: unknown handle", label)
 	}
@@ -95,11 +85,7 @@ func registerAsyncSyncRWMutex(r *Registry) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("async.sync.rwmutexNew expects no arguments")
 		}
-		id := nextSyncID()
-		syncMu.Lock()
-		syncRWMutexes[id] = &sync.RWMutex{}
-		syncMu.Unlock()
-		return runtime.NativeObject{Kind: "AsyncRWMutex", ID: id}, nil
+		return runtime.NativeObject{Kind: "AsyncRWMutex", ID: nextSyncID(), Payload: &sync.RWMutex{}}, nil
 	})
 	r.Register("async.sync", "rwmutexLock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupRWMutex(args, "async.sync.rwmutexLock")
@@ -150,13 +136,11 @@ func registerAsyncSyncRWMutex(r *Registry) {
 }
 
 func lookupRWMutex(args []runtime.Value, label string) (*sync.RWMutex, error) {
-	id, err := singleHandle(args, "AsyncRWMutex", label)
+	obj, err := singleHandleObject(args, "AsyncRWMutex", label)
 	if err != nil {
 		return nil, err
 	}
-	syncMu.Lock()
-	m, ok := syncRWMutexes[id]
-	syncMu.Unlock()
+	m, ok := obj.Payload.(*sync.RWMutex)
 	if !ok {
 		return nil, fmt.Errorf("%s: unknown handle", label)
 	}
@@ -185,11 +169,7 @@ func registerAsyncSyncSemaphore(r *Registry) {
 		for i := int64(0); i < permits; i++ {
 			ch <- struct{}{}
 		}
-		id := nextSyncID()
-		syncMu.Lock()
-		syncSemaphores[id] = ch
-		syncMu.Unlock()
-		return runtime.NativeObject{Kind: "AsyncSemaphore", ID: id}, nil
+		return runtime.NativeObject{Kind: "AsyncSemaphore", ID: nextSyncID(), Payload: ch}, nil
 	})
 	r.Register("async.sync", "semaphoreAcquire", func(args []runtime.Value) (runtime.Value, error) {
 		ch, err := lookupSemaphore(args, "async.sync.semaphoreAcquire")
@@ -226,13 +206,11 @@ func registerAsyncSyncSemaphore(r *Registry) {
 }
 
 func lookupSemaphore(args []runtime.Value, label string) (chan struct{}, error) {
-	id, err := singleHandle(args, "AsyncSemaphore", label)
+	obj, err := singleHandleObject(args, "AsyncSemaphore", label)
 	if err != nil {
 		return nil, err
 	}
-	syncMu.Lock()
-	ch, ok := syncSemaphores[id]
-	syncMu.Unlock()
+	ch, ok := obj.Payload.(chan struct{})
 	if !ok {
 		return nil, fmt.Errorf("%s: unknown handle", label)
 	}
@@ -246,11 +224,7 @@ func registerAsyncSyncWaitGroup(r *Registry) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("async.sync.waitgroupNew expects no arguments")
 		}
-		id := nextSyncID()
-		syncMu.Lock()
-		syncWaitGroups[id] = &sync.WaitGroup{}
-		syncMu.Unlock()
-		return runtime.NativeObject{Kind: "AsyncWaitGroup", ID: id}, nil
+		return runtime.NativeObject{Kind: "AsyncWaitGroup", ID: nextSyncID(), Payload: &sync.WaitGroup{}}, nil
 	})
 	r.Register("async.sync", "waitgroupAdd", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
@@ -264,7 +238,7 @@ func registerAsyncSyncWaitGroup(r *Registry) {
 		if !ok {
 			return nil, fmt.Errorf("async.sync.waitgroupAdd delta must be int")
 		}
-		wg, err := lookupWaitGroupByID(obj.ID)
+		wg, err := waitGroupPayload(obj)
 		if err != nil {
 			return nil, fmt.Errorf("async.sync.waitgroupAdd: %s", err.Error())
 		}
@@ -290,17 +264,15 @@ func registerAsyncSyncWaitGroup(r *Registry) {
 }
 
 func lookupWaitGroup(args []runtime.Value, label string) (*sync.WaitGroup, error) {
-	id, err := singleHandle(args, "AsyncWaitGroup", label)
+	obj, err := singleHandleObject(args, "AsyncWaitGroup", label)
 	if err != nil {
 		return nil, err
 	}
-	return lookupWaitGroupByID(id)
+	return waitGroupPayload(obj)
 }
 
-func lookupWaitGroupByID(id int64) (*sync.WaitGroup, error) {
-	syncMu.Lock()
-	wg, ok := syncWaitGroups[id]
-	syncMu.Unlock()
+func waitGroupPayload(obj runtime.NativeObject) (*sync.WaitGroup, error) {
+	wg, ok := obj.Payload.(*sync.WaitGroup)
 	if !ok {
 		return nil, fmt.Errorf("unknown handle")
 	}
@@ -315,6 +287,19 @@ func nextSyncID() int64 {
 	id := syncNextID
 	syncMu.Unlock()
 	return id
+}
+
+// singleHandleObject checks that args is exactly one handle of kind and
+// returns it; the handle's Payload holds the native value it owns.
+func singleHandleObject(args []runtime.Value, kind, label string) (runtime.NativeObject, error) {
+	if len(args) != 1 {
+		return runtime.NativeObject{}, fmt.Errorf("%s expects (handle)", label)
+	}
+	obj, ok := args[0].(runtime.NativeObject)
+	if !ok || obj.Kind != kind {
+		return runtime.NativeObject{}, fmt.Errorf("%s: argument is not a %s handle", label, kind)
+	}
+	return obj, nil
 }
 
 func singleHandle(args []runtime.Value, kind, label string) (int64, error) {

@@ -45,7 +45,7 @@ export class RabbitQueue implements contract.MessageQueue {
             if (deadline == 0) { break; }
             int step = 50;
             if (step > deadline) { step = deadline; }
-            async.sleep(step);
+            async.await(async.sleep(step));
             deadline = deadline - step;
         }
         return null;
@@ -172,7 +172,7 @@ export class RabbitTopic implements contract.MessageTopic {
         while (this._closed == false) {
             let msg = amqp.get(this.ch, queueName, false);
             if (msg == null) {
-                async.sleep(50);
+                async.await(async.sleep(50));
                 continue;
             }
             handler({

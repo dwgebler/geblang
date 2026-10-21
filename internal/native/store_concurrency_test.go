@@ -74,3 +74,90 @@ func TestStoreConcurrentMixedAccessIsRaceFree(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestStoreSharesDeepFrozenValues checks that a deeply frozen value is stored
+// and returned by reference, while a shallow-frozen one is copied but stays
+// frozen.
+func TestStoreSharesDeepFrozenValues(t *testing.T) {
+	r := native.NewBuiltinRegistry()
+	h, err := r.Call("store", "new", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &runtime.List{Elements: []runtime.Value{runtime.SmallInt{Value: 1}}}
+	deep := runtime.DeepFreeze(&runtime.List{Elements: []runtime.Value{inner}}).(*runtime.List)
+	if !runtime.IsDeepFrozen(deep) {
+		t.Fatal("DeepFreeze result is not deeply frozen")
+	}
+	if _, err := r.Call("store", "set", []runtime.Value{h, runtime.String{Value: "deep"}, deep}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Call("store", "get", []runtime.Value{h, runtime.String{Value: "deep"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.(*runtime.List) != deep {
+		t.Fatal("deeply frozen value was copied instead of shared")
+	}
+
+	shallow := runtime.ShallowFreeze(&runtime.List{Elements: []runtime.Value{inner}}).(*runtime.List)
+	if runtime.IsDeepFrozen(shallow) {
+		t.Fatal("shallow-frozen list with a mutable element reported deeply frozen")
+	}
+	if _, err := r.Call("store", "set", []runtime.Value{h, runtime.String{Value: "shallow"}, shallow}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = r.Call("store", "get", []runtime.Value{h, runtime.String{Value: "shallow"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := got.(*runtime.List)
+	if list == shallow || !list.Frozen {
+		t.Fatalf("shallow-frozen value should be a frozen copy (same=%v frozen=%v)", list == shallow, list.Frozen)
+	}
+	if list.Elements[0].(*runtime.List) == inner {
+		t.Fatal("mutable nested value was shared")
+	}
+}
+
+// TestStoreConcurrentDeepFrozenReadsAreRaceFree reads one shared deeply frozen
+// value from many goroutines (run with -race).
+func TestStoreConcurrentDeepFrozenReadsAreRaceFree(t *testing.T) {
+	r := native.NewBuiltinRegistry()
+	h, err := r.Call("store", "new", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := runtime.NewDict()
+	for i := 0; i < 50; i++ {
+		d.PutEntry(fmt.Sprintf("k%d", i), runtime.DictEntry{Key: runtime.String{Value: fmt.Sprintf("k%d", i)}, Value: &runtime.List{Elements: []runtime.Value{runtime.SmallInt{Value: int64(i)}}}})
+	}
+	frozen := runtime.DeepFreeze(d)
+	if _, err := r.Call("store", "set", []runtime.Value{h, runtime.String{Value: "m"}, frozen}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for g := 0; g < 32; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				v, err := r.Call("store", "get", []runtime.Value{h, runtime.String{Value: "m"}})
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				sum := int64(0)
+				v.(runtime.Dict).ForEachEntry(func(_ string, e runtime.DictEntry) bool {
+					sum += e.Value.(*runtime.List).Elements[0].(runtime.SmallInt).Value
+					return true
+				})
+				if sum != 1225 {
+					t.Errorf("sum = %d", sum)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}

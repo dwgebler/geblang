@@ -50,7 +50,7 @@ export func debounce(func fn, int ms): func {
         generation = generation + 1;
         let myGen = generation;
         return async.run(func(): any {
-            async.sleep(ms);
+            async.await(async.sleep(ms));
             if (myGen == generation) {
                 return fn(...args);
             }

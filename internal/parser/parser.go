@@ -603,10 +603,20 @@ func (p *Parser) parseDeclarationStatement() ast.Statement {
 	if p.peekTokenIs(token.Assign) {
 		p.nextToken()
 		p.nextToken()
-		stmt.Value = p.parseExpression(lowest)
+		stmt.Value = emptySetForType(stmt.Type, p.parseExpression(lowest))
 	}
 	p.expectPeek(token.Semicolon)
 	return stmt
+}
+
+// emptySetForType reads an empty `{}` as an empty set when the declared type
+// is a set (`set<string> s = {};`): on its own `{}` is an empty dict.
+func emptySetForType(typ *ast.TypeRef, value ast.Expression) ast.Expression {
+	dict, ok := value.(*ast.DictLiteral)
+	if !ok || len(dict.Entries) != 0 || typ == nil || typ.Operator != "" || !strings.EqualFold(typ.Name, "set") {
+		return value
+	}
+	return &ast.SetLiteral{Token: dict.Token, End: dict.End}
 }
 
 func (p *Parser) parseDestructuringStatement(letTok token.Token) *ast.DestructuringStatement {
@@ -2295,7 +2305,7 @@ func (p *Parser) parseParameterList() []ast.Parameter {
 		if !variadic && p.peekTokenIs(token.Assign) {
 			p.nextToken()
 			p.nextToken()
-			param.Default = p.parseExpression(lowest)
+			param.Default = emptySetForType(paramType, p.parseExpression(lowest))
 		}
 		params = append(params, param)
 		if variadic || !p.peekTokenIs(token.Comma) {

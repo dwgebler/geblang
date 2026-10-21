@@ -18,10 +18,35 @@ is a subclass of `Error` and is catchable with `try/catch`.
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `freeze.shallow(v)` | same type | Returns a frozen copy of `v`. Lists, dicts, sets, and class instances are frozen; nested collections are not. Primitives are returned unchanged. |
-| `freeze.deep(v)` | same type | Returns a deeply frozen copy: all nested collections are also frozen recursively. |
+| `freeze.deep(v)` | same type | Returns a deeply frozen value: all nested collections and instances are frozen recursively. Collections are copied (keeping insertion order and element types); class instances are frozen in place. |
 | `freeze.isFrozen(v)` | `bool` | Returns `true` if `v` is frozen or is a primitive (always immutable). |
 
 All three functions work on both the evaluator and VM execution paths.
+
+### Sharing frozen values between tasks
+
+A deeply frozen value can never change, so concurrent tasks and server
+requests may read the same one without copying or locking. This is the way to
+share a large read-only structure, such as a compiled configuration, across
+requests: build it once, `freeze.deep` it, and put it in a `store.Store`. The
+store hands out deeply frozen values by reference instead of copying them (see
+`05-async`).
+
+```gb
+import freeze;
+import store;
+
+let shared = store.Store();
+shared.set("rules", freeze.deep(loadRules()));
+
+# In any request or task: no copy is made.
+let rules = shared.get("rules");
+```
+
+A value only counts as deeply frozen when everything inside it is frozen or
+primitive. A function value inside it (which may capture changing state), or
+a `freeze.shallow` value with mutable contents, makes the store copy it as
+usual.
 
 ### Mutation guards
 

@@ -1,0 +1,65 @@
+/**
+ * @title Empty set declarations (1.37.5)
+ * @summary `{}` is an empty dict on its own, but an empty set when the
+ * declared type is a set: variables, parameter defaults and class fields.
+ * The set keeps its declared element type.
+ */
+import test;
+import reflect;
+
+func count(set<int> xs = {}): int {
+    return xs.length();
+}
+
+func dyn(any v): any {
+    return v;
+}
+
+class Tagged {
+    set<string> tags = {};
+
+    func Tagged() {}
+}
+
+class EmptySetDeclarationTest extends test.Test {
+    @test
+    func typedVariableIsAnEmptySet(): void {
+        set<string> s = {};
+        this.assertEquals("set", typeof(s));
+        this.assertEquals(0, s.length());
+        s.add("a");
+        this.assertTrue(s.contains("a"));
+        this.assertEquals({"T": "string"}, reflect.typeBindings(s));
+    }
+
+    @test
+    func nullableSetType(): void {
+        ?set<int> s = {};
+        this.assertEquals("set", typeof(s));
+    }
+
+    @test
+    func parameterDefaultAndField(): void {
+        this.assertEquals(0, count());
+        let t = Tagged();
+        t.tags.add("x");
+        this.assertEquals(1, t.tags.length());
+        this.assertEquals(0, Tagged().tags.length());
+    }
+
+    @test
+    func elementTypeIsEnforced(): void {
+        set<string> s = {};
+        this.assertThrows(func(): void {
+            s.add(dyn(1));
+        });
+    }
+
+    @test
+    func untypedAndDictTypedStayDicts(): void {
+        let plain = {};
+        dict<string, int> d = {};
+        this.assertEquals("dict", typeof(plain));
+        this.assertEquals("dict", typeof(d));
+    }
+}

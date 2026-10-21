@@ -2,6 +2,7 @@ import test;
 import async;
 import async.tasks as task;
 import async.atomic as atomic;
+import time;
 
 class AsyncTasksTest extends test.Test {
     @test
@@ -31,6 +32,20 @@ class AsyncTasksTest extends test.Test {
         let total = atomic.AtomicInt(0);
         task.forEach([1, 2, 3, 4], func(int x): void { total.add(x); });
         this.assertEquals(10, total.load());
+    }
+
+    @test
+    func retryWaitsBetweenAttempts(): void {
+        # Two failures with delayMs 80 and factor 2 wait 80 + 160 ms.
+        let calls = [0];
+        let started = time.monotonic();
+        let result = task.retry(func(): string {
+            calls[0] = calls[0] + 1;
+            if (calls[0] < 3) { throw RuntimeError("transient ${calls[0]}"); }
+            return "ok";
+        }, {"attempts": 3, "delayMs": 80, "factor": 2.0});
+        this.assertEquals("ok", result);
+        this.assertTrue(time.monotonic() - started >= 240);
     }
 
     @test

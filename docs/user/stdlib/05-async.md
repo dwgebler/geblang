@@ -433,7 +433,9 @@ built for concurrency.
 `store.Store` is that primitive: a thread-safe key-value store. Every operation
 is serialised internally, and values are deep-copied in and out, so a stored
 value is an isolated snapshot that a caller cannot mutate behind the store's
-back.
+back. Copies keep their frozen state. A deeply frozen value (`freeze.deep`)
+can never change, so it is stored and returned by reference instead of being
+copied, which makes sharing a large read-only structure cheap.
 
 ```gb
 import store;

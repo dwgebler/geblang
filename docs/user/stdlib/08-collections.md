@@ -538,6 +538,15 @@ io.println(c["z"]);  # 3
 Sets are unordered collections of unique values.  Like dicts, they use value
 equality for membership.
 
+An empty `{}` on its own is an empty dict. Declared with a set type, it is an
+empty set of that element type, in a variable, a parameter default or a class
+field:
+
+```gb
+set<string> tags = {};          # empty set; only strings may be added
+func f(set<int> seen = {}): int { return seen.length(); }
+```
+
 ### Inspection
 
 | Method | Returns | Description |

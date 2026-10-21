@@ -28,6 +28,19 @@ type chunkSharedMeta struct {
 	// closures (escapedRefs == 0), keyed by instruction shape so a pool
 	// hit can rewrite the wrapper tail in place without reallocating.
 	vmPools sync.Map
+
+	// classValues memoises the *runtime.Class built for a class of this
+	// chunk on loader-backed VMs, keyed by classValueKey. Those classes'
+	// method wrappers close over the loader only, never a VM, and nothing
+	// mutates a runtime.Class after it is built, so every instance of the
+	// class can share one value instead of rebuilding it per construction.
+	classValues sync.Map
+}
+
+type classValueKey struct {
+	loader ModuleLoader
+	module string
+	index  int64
 }
 
 // wrapperShape identifies a wrapper-derived instruction layout: the

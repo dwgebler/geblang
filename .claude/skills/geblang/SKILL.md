@@ -70,9 +70,15 @@ string-cast hook is `__string` (not `toString`); the parent call is `parent()`
    Single quotes are raw (no `${}`, no escapes). Concatenation does not coerce:
    `"n=" + 5` is an error - interpolate or cast.
 8. **`typeof(x)` needs parentheses.** Dict iteration is insertion order, not
-   sorted. An empty `{}` is a dict; an empty set needs a typed declaration.
+   sorted. A bare `{}` is a dict; `set<string> s = {};` (a set-typed variable,
+   parameter default or field) is an empty set.
 9. **Do not name a source file the same as a stdlib module it imports** - the
    resolver picks the local file by filename.
+10. **`async.sleep(ms)` returns a Task and does not block on its own.** Write
+    `await async.sleep(ms);` (or `async.await(async.sleep(ms))`) to pause;
+    an un-awaited call returns immediately.
+11. **`type` is a keyword** (type aliases: `type UserId = string;`), so it
+    can't be a variable or parameter name.
 
 ## CLI workflow
 

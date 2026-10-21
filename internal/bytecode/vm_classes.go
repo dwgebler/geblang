@@ -1597,6 +1597,22 @@ func (vm *VM) RuntimeClassValue(classIndex int64) *runtime.Class {
 	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return nil
 	}
+	// Loader-backed VMs share one class value per chunk class (see
+	// chunkSharedMeta.classValues); a VM without a loader builds method
+	// wrappers that capture itself, so it keeps building its own.
+	if meta := vm.chunk.sharedMeta; meta != nil && vm.moduleLoader != nil {
+		key := classValueKey{loader: vm.moduleLoader, module: vm.moduleName, index: classIndex}
+		if cached, ok := meta.classValues.Load(key); ok {
+			return cached.(*runtime.Class)
+		}
+		built := vm.buildRuntimeClassValue(classIndex)
+		actual, _ := meta.classValues.LoadOrStore(key, built)
+		return actual.(*runtime.Class)
+	}
+	return vm.buildRuntimeClassValue(classIndex)
+}
+
+func (vm *VM) buildRuntimeClassValue(classIndex int64) *runtime.Class {
 	classInfo := vm.curMod.Chunk.Classes[classIndex]
 	return &runtime.Class{
 		Name:            classInfo.Name,

@@ -48,4 +48,19 @@ class DebounceTest extends test.Test {
         async.await(debounced(2));
         this.assertEquals(2, calls);
     }
+
+    @test
+    func theCallWaitsForTheQuietWindow(): void {
+        int calls = 0;
+        let debounced = rate.debounce(func(int x): int {
+            calls = calls + 1;
+            return x;
+        }, 150);
+        let started = time.monotonic();
+        let t = debounced(7);
+        this.assertEquals(0, calls);
+        this.assertEquals(7, async.await(t));
+        this.assertTrue(time.monotonic() - started >= 150);
+        this.assertEquals(1, calls);
+    }
 }

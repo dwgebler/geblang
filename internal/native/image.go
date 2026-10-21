@@ -15,17 +15,15 @@ import (
 	_ "golang.org/x/image/webp" // register webp decoder
 )
 
-var (
-	imageRegMu sync.Mutex
-	imageReg   = map[int64]image.Image{}
-)
+// imageBox is an Image handle's payload; close empties it. The handle owns
+// the box, so the image is freed with the last reference to the handle.
+type imageBox struct {
+	mu  sync.Mutex
+	img image.Image
+}
 
 func putImage(img image.Image) runtime.Value {
-	id := nextSyncID()
-	imageRegMu.Lock()
-	imageReg[id] = img
-	imageRegMu.Unlock()
-	return runtime.NativeObject{Kind: "Image", ID: id}
+	return runtime.NativeObject{Kind: "Image", ID: nextSyncID(), Payload: &imageBox{img: img}}
 }
 
 func imageFromHandle(v runtime.Value, label string) (image.Image, error) {
@@ -33,10 +31,14 @@ func imageFromHandle(v runtime.Value, label string) (image.Image, error) {
 	if !ok || obj.Kind != "Image" {
 		return nil, fmt.Errorf("%s: argument is not an Image handle", label)
 	}
-	imageRegMu.Lock()
-	img, ok := imageReg[obj.ID]
-	imageRegMu.Unlock()
+	box, ok := obj.Payload.(*imageBox)
 	if !ok {
+		return nil, fmt.Errorf("%s: unknown Image handle (closed?)", label)
+	}
+	box.mu.Lock()
+	img := box.img
+	box.mu.Unlock()
+	if img == nil {
 		return nil, fmt.Errorf("%s: unknown Image handle (closed?)", label)
 	}
 	return img, nil
@@ -183,9 +185,11 @@ func registerImage(r *Registry) {
 		if !ok || obj.Kind != "Image" {
 			return nil, fmt.Errorf("image.close: argument is not an Image handle")
 		}
-		imageRegMu.Lock()
-		delete(imageReg, obj.ID)
-		imageRegMu.Unlock()
+		if box, ok := obj.Payload.(*imageBox); ok {
+			box.mu.Lock()
+			box.img = nil
+			box.mu.Unlock()
+		}
 		return runtime.Null{}, nil
 	})
 }

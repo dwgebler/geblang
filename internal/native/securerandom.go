@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"geblang/internal/runtime"
 )
@@ -37,11 +38,10 @@ type secureLogEntry struct {
 	Output runtime.Value   `json:"-"`
 }
 
-var (
-	secureSessionMu    sync.Mutex
-	secureSessionStore = map[int64]*secureSession{}
-	secureSessionNext  int64
-)
+// secureSessionNext numbers session handles. The session itself travels in
+// the handle's Payload, so it is garbage collected with the last reference
+// to the handle instead of living in a process-wide registry.
+var secureSessionNext atomic.Int64
 
 func registerSecureRandom(r *Registry) {
 	r.Register("secureRandom", "openSession", secureRandomOpenSession)
@@ -109,12 +109,7 @@ func registerSecureSession(seed []byte, clientSeed string) (runtime.Value, error
 		clientSeed: clientSeed,
 		commitment: hex.EncodeToString(hash[:]),
 	}
-	secureSessionMu.Lock()
-	secureSessionNext++
-	id := secureSessionNext
-	secureSessionStore[id] = sess
-	secureSessionMu.Unlock()
-	return runtime.NativeObject{Kind: "SecureRandomSession", ID: id}, nil
+	return runtime.NativeObject{Kind: "SecureRandomSession", ID: secureSessionNext.Add(1), Payload: sess}, nil
 }
 
 func lookupSecureSession(arg runtime.Value, name string) (*secureSession, error) {
@@ -122,10 +117,8 @@ func lookupSecureSession(arg runtime.Value, name string) (*secureSession, error)
 	if !ok || obj.Kind != "SecureRandomSession" {
 		return nil, fmt.Errorf("%s: first argument must be a SecureRandomSession handle", name)
 	}
-	secureSessionMu.Lock()
-	sess, ok := secureSessionStore[obj.ID]
-	secureSessionMu.Unlock()
-	if !ok {
+	sess, ok := obj.Payload.(*secureSession)
+	if !ok || sess == nil {
 		return nil, fmt.Errorf("%s: unknown session handle", name)
 	}
 	return sess, nil

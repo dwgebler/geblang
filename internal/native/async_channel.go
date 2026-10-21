@@ -10,20 +10,18 @@ import (
 )
 
 type ChannelHandle struct {
-	ch      chan runtime.Value
-	closed  atomic.Bool
-	cap     int
+	ch     chan runtime.Value
+	closed atomic.Bool
+	cap    int
 	// closeMu serialises the close + send race: send takes RLock,
 	// close takes Lock. The atomic.Bool gate gives the fast path
 	// without contention on the read side.
 	closeMu sync.RWMutex
 }
 
-var (
-	channelMu       sync.Mutex
-	channelNextID   int64
-	channelHandles  = map[int64]*ChannelHandle{}
-)
+// channelNextID numbers channel handles. Each handle carries its
+// *ChannelHandle as the payload, so the channel is freed with the handle.
+var channelNextID atomic.Int64
 
 func registerAsyncChannel(r *Registry) {
 	r.Register("async.channel", "make", func(args []runtime.Value) (runtime.Value, error) {
@@ -32,12 +30,7 @@ func registerAsyncChannel(r *Registry) {
 			return nil, err
 		}
 		h := &ChannelHandle{ch: make(chan runtime.Value, buf), cap: buf}
-		channelMu.Lock()
-		channelNextID++
-		id := channelNextID
-		channelHandles[id] = h
-		channelMu.Unlock()
-		return runtime.NativeObject{Kind: "AsyncChannel", ID: id}, nil
+		return runtime.NativeObject{Kind: "AsyncChannel", ID: channelNextID.Add(1), Payload: h}, nil
 	})
 	r.Register("async.channel", "send", func(args []runtime.Value) (runtime.Value, error) {
 		h, v, err := channelSendArgs(args, "async.channel.send")
@@ -106,13 +99,11 @@ func channelBufSize(args []runtime.Value) (int, error) {
 }
 
 func channelHandleFrom(args []runtime.Value, label string) (*ChannelHandle, error) {
-	id, err := singleHandle(args, "AsyncChannel", label)
+	obj, err := singleHandleObject(args, "AsyncChannel", label)
 	if err != nil {
 		return nil, err
 	}
-	channelMu.Lock()
-	h, ok := channelHandles[id]
-	channelMu.Unlock()
+	h, ok := obj.Payload.(*ChannelHandle)
 	if !ok {
 		return nil, fmt.Errorf("%s: unknown handle", label)
 	}
@@ -127,9 +118,7 @@ func channelSendArgs(args []runtime.Value, label string) (*ChannelHandle, runtim
 	if !ok || obj.Kind != "AsyncChannel" {
 		return nil, nil, fmt.Errorf("%s: argument is not a Channel handle", label)
 	}
-	channelMu.Lock()
-	h, ok := channelHandles[obj.ID]
-	channelMu.Unlock()
+	h, ok := obj.Payload.(*ChannelHandle)
 	if !ok {
 		return nil, nil, fmt.Errorf("%s: unknown handle", label)
 	}
@@ -244,8 +233,6 @@ func ChannelHandleFromValue(v runtime.Value) (*ChannelHandle, bool) {
 	if !ok || obj.Kind != "AsyncChannel" {
 		return nil, false
 	}
-	channelMu.Lock()
-	h, ok := channelHandles[obj.ID]
-	channelMu.Unlock()
+	h, ok := obj.Payload.(*ChannelHandle)
 	return h, ok
 }

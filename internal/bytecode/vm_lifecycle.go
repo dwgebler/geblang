@@ -420,8 +420,8 @@ func (vm *VM) PersistDirtyGlobals(dst []runtime.VMValue) {
 	if len(vm.dirtyGlobals) < n {
 		n = len(vm.dirtyGlobals)
 	}
-	for i := 0; i < n; i++ {
-		if vm.dirtyGlobals[i] {
+	for _, i := range vm.dirtySlots {
+		if i < n {
 			dst[i] = vm.globals[i]
 		}
 	}
@@ -535,9 +535,12 @@ func (vm *VM) resetForReuse() {
 	} else {
 		vm.defers = make([][]deferredAction, 1, 64)
 	}
-	for i := range vm.dirtyGlobals {
-		vm.dirtyGlobals[i] = false
+	for _, i := range vm.dirtySlots {
+		if i < len(vm.dirtyGlobals) {
+			vm.dirtyGlobals[i] = false
+		}
 	}
+	vm.dirtySlots = vm.dirtySlots[:0]
 	vm.pendingThrow = nil
 	vm.exceptionHandlers = vm.exceptionHandlers[:0]
 	vm.constantsExtra = nil

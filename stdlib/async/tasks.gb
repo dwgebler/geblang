@@ -65,7 +65,7 @@ export func retry(callable fn, ?dict<string, any> opts = null): any {
                     waitMs = random.intRange(waitMs // 2, waitMs);
                 }
                 if (waitMs > 0) {
-                    async.sleep(waitMs);
+                    async.await(async.sleep(waitMs));
                 }
                 currentDelay = ((currentDelay as decimal) * factor) as int;
                 if (maxDelay > 0 && currentDelay > maxDelay) {

@@ -17,6 +17,9 @@ type cloneState struct {
 	dicts     map[uintptr]Dict
 	sets      map[uintptr]Set
 	cells     map[*BytecodeCell]*BytecodeCell
+	// keepFrozen makes clones carry the source's Frozen flag. Used by the
+	// shared-store snapshot path, where frozenness is part of the value.
+	keepFrozen bool
 }
 
 // dictIdentity returns a stable pointer key for a dict's shared backing (the data store, or the literal Entries map), so aliases clone once and self-referential dicts terminate.
@@ -37,6 +40,15 @@ func CloneEnvironment(env *Environment) *Environment {
 
 func CloneValue(value Value) Value {
 	state := newCloneState()
+	return state.cloneValue(value)
+}
+
+// CloneSnapshot deep-clones value for a copy-in/copy-out container such as
+// store.Store. Unlike CloneValue, frozen collections and instances stay
+// frozen in the copy.
+func CloneSnapshot(value Value) Value {
+	state := newCloneState()
+	state.keepFrozen = true
 	return state.cloneValue(value)
 }
 
@@ -140,6 +152,7 @@ func (s *cloneState) cloneValue(value Value) Value {
 			return cloned
 		}
 		cloned := &List{Elements: make([]Value, len(value.Elements)), ElementTypes: append([]string(nil), value.ElementTypes...)}
+		cloned.Frozen = s.keepFrozen && value.Frozen
 		s.lists[value] = cloned
 		for i, element := range value.Elements {
 			cloned.Elements[i] = s.cloneValue(element)
@@ -161,6 +174,12 @@ func (s *cloneState) cloneValue(value Value) Value {
 			cloned.PutEntry(key, DictEntry{Key: s.cloneValue(entry.Key), Value: s.cloneValue(entry.Value)})
 			return true
 		})
+		if s.keepFrozen && value.Frozen {
+			cloned.Frozen = true
+			if id != 0 {
+				s.dicts[id] = cloned
+			}
+		}
 		return cloned
 	case Set:
 		var id uintptr
@@ -173,7 +192,7 @@ func (s *cloneState) cloneValue(value Value) Value {
 			}
 		}
 		elements := make(map[string]SetEntry, len(value.Elements))
-		cloned := Set{Elements: elements, ElementTypes: append([]string(nil), value.ElementTypes...)}
+		cloned := Set{Elements: elements, ElementTypes: append([]string(nil), value.ElementTypes...), Frozen: s.keepFrozen && value.Frozen}
 		if id != 0 {
 			s.sets[id] = cloned
 		}
@@ -358,7 +377,26 @@ func (s *cloneState) cloneInstance(instance *Instance) *Instance {
 	if cloned, ok := s.instances[instance]; ok {
 		return cloned
 	}
-	cloned := &Instance{Class: s.cloneClass(instance.Class), Fields: map[string]Value{}}
+	cloned := &Instance{
+		Class:          s.cloneClass(instance.Class),
+		Fields:         map[string]Value{},
+		ExtraTypeNames: append([]string(nil), instance.ExtraTypeNames...),
+	}
+	if len(instance.TypeBindings) > 0 {
+		cloned.TypeBindings = make(map[string]string, len(instance.TypeBindings))
+		for name, bound := range instance.TypeBindings {
+			cloned.TypeBindings[name] = bound
+		}
+	}
+	if s.keepFrozen {
+		cloned.Frozen = instance.Frozen
+		if len(instance.LockedFields) > 0 {
+			cloned.LockedFields = make(map[string]bool, len(instance.LockedFields))
+			for name, locked := range instance.LockedFields {
+				cloned.LockedFields[name] = locked
+			}
+		}
+	}
 	s.instances[instance] = cloned
 	for name, value := range instance.Fields {
 		cloned.Fields[name] = s.cloneValue(value)

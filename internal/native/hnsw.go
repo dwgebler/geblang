@@ -3,7 +3,6 @@ package native
 import (
 	"fmt"
 	"math"
-	"sync"
 
 	"geblang/internal/runtime"
 )
@@ -24,11 +23,6 @@ type annIndex interface {
 	search(query []float32, k int) ([]annResult, error)
 	metricName() string
 }
-
-var (
-	hnswRegMu sync.Mutex
-	hnswReg   = map[int64]annIndex{}
-)
 
 func registerHnsw(r *Registry) {
 	r.Register("hnsw", "new", func(args []runtime.Value) (runtime.Value, error) {
@@ -51,11 +45,7 @@ func registerHnsw(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		id := nextSyncID()
-		hnswRegMu.Lock()
-		hnswReg[id] = idx
-		hnswRegMu.Unlock()
-		return runtime.NativeObject{Kind: "HnswIndex", ID: id}, nil
+		return runtime.NativeObject{Kind: "HnswIndex", ID: nextSyncID(), Payload: idx}, nil
 	})
 
 	r.Register("hnsw", "add", func(args []runtime.Value) (runtime.Value, error) {
@@ -191,10 +181,8 @@ func hnswFromHandle(v runtime.Value, fn string) (annIndex, error) {
 	if !ok || obj.Kind != "HnswIndex" {
 		return nil, fmt.Errorf("%s expects an HnswIndex handle", fn)
 	}
-	hnswRegMu.Lock()
-	idx, ok := hnswReg[obj.ID]
-	hnswRegMu.Unlock()
-	if !ok {
+	idx, ok := obj.Payload.(annIndex)
+	if !ok || idx == nil {
 		return nil, fmt.Errorf("%s: unknown HnswIndex handle", fn)
 	}
 	return idx, nil

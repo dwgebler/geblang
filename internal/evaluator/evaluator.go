@@ -4880,6 +4880,11 @@ func tagCollectionWithTypeRef(value runtime.Value, typ *ast.TypeRef) runtime.Val
 			}
 		}
 		if tag != nil {
+			if v.Frozen {
+				// A frozen list may be shared between tasks; tag a copy of
+				// the header rather than writing to the shared value.
+				return &runtime.List{Elements: v.Elements, Frozen: true, ElementTypes: tag}
+			}
 			v.ElementTypes = tag
 		}
 		return v

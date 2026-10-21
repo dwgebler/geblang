@@ -1,5 +1,57 @@
 # Release Notes
 
+## 1.37.5
+
+### New
+
+- `set<T> s = {};` declares an empty set of `T`, as documented. An empty
+  `{}` takes a set type when the declaration (variable, parameter default or
+  class field) is a set; on its own `{}` is still an empty dict. It was
+  rejected with `cannot assign dict to set<T>`.
+
+- `store.Store` hands out deeply frozen values (`freeze.deep`) by reference
+  instead of copying them on every `get`, so one large read-only structure can
+  be shared cheaply by every request or task. Other values are still copied in
+  and out.
+- On the bytecode VM, `for (i in a..b)` loops over ranges that fit in 64 bits
+  count without allocating, and arithmetic on the loop variable takes the
+  small-integer fast path; such loops run about three times faster.
+- On the bytecode VM, constructing an instance of a class from a multi-module
+  program reuses the class's runtime description instead of rebuilding it for
+  every object.
+- On the bytecode VM, a call into another module tracks the module globals it
+  writes instead of scanning every global slot afterwards, which takes about
+  a third off the fixed cost of each cross-module call.
+
+### Fixes
+
+- `async.rate.debounce` waits for its quiet window before calling the
+  function, `async.tasks.retry` waits its backoff delay between attempts, and
+  the RabbitMQ transport's `receive(timeout)` and subscription loop pause
+  between polls. Each called `async.sleep` without awaiting the task it
+  returns, so it did not wait at all (debounce only appeared to work when the
+  calls were scheduled in order, retry did not back off, and the subscription
+  loop kept a CPU core busy).
+- Native handles are freed with the last reference to them: `secureRandom`
+  sessions (with their audit logs), `store.Store`, `random.Generator`,
+  `async.channel` channels, `async.sync` mutexes, semaphores and wait groups,
+  `async.atomic` values, images and HNSW indexes. Each used to stay in memory
+  until the process exited, so a server opening, for example, a
+  `secureRandom` session per game round grew without bound.
+- The agent guide (`docs/user/AGENTS.md`) and the bundled Claude skill show
+  `async.timeout(task, ms)` (the skill had the arguments reversed), say that
+  `async.sleep` must be awaited, that `type` is a keyword, and how to share
+  deep-frozen data between tasks.
+- `freeze.deep` keeps a dict's insertion order and the element types of typed
+  lists, dicts and sets; frozen dicts came back with their keys sorted.
+- A frozen value stored in a `store.Store` stays frozen when read back
+  (`get`, `getOrSet`, `values`); the copy was mutable.
+- Copying a class instance (`deepCopy`, `store.Store`) keeps its generic type
+  bindings and its extra `instanceof` types.
+- Assigning a frozen list to a typed variable (`list<int> xs = frozen`) no
+  longer writes the new element type onto the frozen list itself, which could
+  race when the list was shared between tasks.
+
 ## 1.37.4
 
 ### New

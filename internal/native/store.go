@@ -11,6 +11,8 @@ import (
 // concurrentStore is the thread-safe shared map backing the `store` module.
 // Values are deep-copied in and out (copy-in/copy-out), so a stored value is an
 // isolated snapshot and a caller cannot mutate shared state outside the lock.
+// Deeply frozen values can never change, so they are stored and handed out by
+// reference instead; copies of other values keep their frozen flags.
 type concurrentStore struct {
 	mu   sync.RWMutex
 	data map[string]storeEntry
@@ -19,23 +21,36 @@ type concurrentStore struct {
 type storeEntry struct {
 	key   runtime.Value
 	value runtime.Value
+	// shared marks a deeply frozen value, handed out without copying.
+	shared bool
 }
 
-var (
-	storeRegMu sync.Mutex
-	storeReg   = map[int64]*concurrentStore{}
-)
+// newStoreEntry snapshots value for storage: deeply frozen values are kept
+// by reference, anything else is deep-copied.
+func newStoreEntry(key, value runtime.Value) storeEntry {
+	if runtime.IsDeepFrozen(value) {
+		return storeEntry{key: key, value: value, shared: true}
+	}
+	return storeEntry{key: key, value: runtime.CloneSnapshot(value)}
+}
+
+// read returns the stored value for a caller: the value itself when it is
+// deeply frozen, otherwise a fresh copy.
+func (e storeEntry) read() runtime.Value {
+	if e.shared {
+		return e.value
+	}
+	return runtime.CloneSnapshot(e.value)
+}
 
 func registerStore(r *Registry) {
 	r.Register("store", "new", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("store.new expects ()")
 		}
-		id := nextSyncID()
-		storeRegMu.Lock()
-		storeReg[id] = &concurrentStore{data: map[string]storeEntry{}}
-		storeRegMu.Unlock()
-		return runtime.NativeObject{Kind: "Store", ID: id}, nil
+		// The handle owns its store (Payload), so the store is freed with
+		// the last reference to the handle.
+		return runtime.NativeObject{Kind: "Store", ID: nextSyncID(), Payload: &concurrentStore{data: map[string]storeEntry{}}}, nil
 	})
 
 	r.Register("store", "set", func(args []runtime.Value) (runtime.Value, error) {
@@ -48,7 +63,7 @@ func registerStore(r *Registry) {
 		}
 		ks := DictKey(args[1])
 		s.mu.Lock()
-		s.data[ks] = storeEntry{key: args[1], value: runtime.CloneValue(args[2])}
+		s.data[ks] = newStoreEntry(args[1], args[2])
 		s.mu.Unlock()
 		return runtime.Null{}, nil
 	})
@@ -68,7 +83,7 @@ func registerStore(r *Registry) {
 		if !ok {
 			return runtime.Null{}, nil
 		}
-		return runtime.CloneValue(entry.value), nil
+		return entry.read(), nil
 	})
 
 	r.Register("store", "has", func(args []runtime.Value) (runtime.Value, error) {
@@ -191,10 +206,11 @@ func registerStore(r *Registry) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if entry, ok := s.data[ks]; ok {
-			return runtime.CloneValue(entry.value), nil
+			return entry.read(), nil
 		}
-		s.data[ks] = storeEntry{key: args[1], value: runtime.CloneValue(args[2])}
-		return runtime.CloneValue(args[2]), nil
+		entry := newStoreEntry(args[1], args[2])
+		s.data[ks] = entry
+		return entry.read(), nil
 	})
 
 	r.Register("store", "compareAndSet", func(args []runtime.Value) (runtime.Value, error) {
@@ -215,7 +231,7 @@ func registerStore(r *Registry) {
 		if !runtime.ValuesEqual(current, args[2]) {
 			return runtime.Bool{Value: false}, nil
 		}
-		s.data[ks] = storeEntry{key: args[1], value: runtime.CloneValue(args[3])}
+		s.data[ks] = newStoreEntry(args[1], args[3])
 		return runtime.Bool{Value: true}, nil
 	})
 }
@@ -225,9 +241,7 @@ func storeFromHandle(v runtime.Value, label string) (*concurrentStore, error) {
 	if !ok || obj.Kind != "Store" {
 		return nil, fmt.Errorf("%s: argument is not a Store handle", label)
 	}
-	storeRegMu.Lock()
-	s, ok := storeReg[obj.ID]
-	storeRegMu.Unlock()
+	s, ok := obj.Payload.(*concurrentStore)
 	if !ok {
 		return nil, fmt.Errorf("%s: unknown Store handle", label)
 	}
@@ -253,7 +267,7 @@ func (s *concurrentStore) snapshotKeys() []runtime.Value {
 	defer s.mu.RUnlock()
 	out := make([]runtime.Value, 0, len(ks))
 	for _, k := range ks {
-		out = append(out, runtime.CloneValue(s.data[k].key))
+		out = append(out, runtime.CloneSnapshot(s.data[k].key))
 	}
 	return out
 }
@@ -264,7 +278,7 @@ func (s *concurrentStore) snapshotValues() []runtime.Value {
 	defer s.mu.RUnlock()
 	out := make([]runtime.Value, 0, len(ks))
 	for _, k := range ks {
-		out = append(out, runtime.CloneValue(s.data[k].value))
+		out = append(out, s.data[k].read())
 	}
 	return out
 }

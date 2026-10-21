@@ -64,6 +64,8 @@ func ShallowFreeze(v Value) Value {
 }
 
 // DeepFreeze recursively freezes v and all mutable values nested within it.
+// Collections are copied (keeping insertion order and element-type tags);
+// instances are frozen in place.
 func DeepFreeze(v Value) Value {
 	switch val := v.(type) {
 	case *List:
@@ -71,20 +73,22 @@ func DeepFreeze(v Value) Value {
 		for i, e := range val.Elements {
 			elems[i] = DeepFreeze(e)
 		}
-		return &List{Elements: elems, Frozen: true}
+		return &List{Elements: elems, Frozen: true, ElementTypes: append([]string(nil), val.ElementTypes...)}
 	case Dict:
-		entries := make(map[string]DictEntry, val.Len())
+		frozen := NewDictHint(val.Len())
 		val.ForEachEntry(func(k string, entry DictEntry) bool {
-			entries[k] = DictEntry{Key: entry.Key, Value: DeepFreeze(entry.Value)}
+			frozen.PutEntry(k, DictEntry{Key: entry.Key, Value: DeepFreeze(entry.Value)})
 			return true
 		})
-		return Dict{Entries: entries, Frozen: true}
+		frozen.Frozen = true
+		frozen.ElementTypes = append([]string(nil), val.ElementTypes...)
+		return frozen
 	case Set:
 		elements := make(map[string]SetEntry, len(val.Elements))
 		for k, entry := range val.Elements {
 			elements[k] = SetEntry{Value: DeepFreeze(entry.Value)}
 		}
-		return Set{Elements: elements, Frozen: true}
+		return Set{Elements: elements, Frozen: true, ElementTypes: append([]string(nil), val.ElementTypes...)}
 	case *Instance:
 		if val != nil {
 			for k, fv := range val.Fields {
@@ -95,6 +99,78 @@ func DeepFreeze(v Value) Value {
 		return val
 	default:
 		return v
+	}
+}
+
+// IsDeepFrozen reports whether v can never change: a primitive, or a frozen
+// collection or instance whose every nested value is itself deeply frozen.
+// Such a value is safe to share between concurrent tasks without copying.
+// Callables, cells, modules and native handles are conservatively treated as
+// mutable because they can reach state outside the value.
+func IsDeepFrozen(v Value) bool {
+	return isDeepFrozen(v, map[any]bool{})
+}
+
+func isDeepFrozen(v Value, seen map[any]bool) bool {
+	switch val := v.(type) {
+	case nil, Null, Bool, Int, SmallInt, Float, Decimal, String, Bytes:
+		return true
+	case *List:
+		if val == nil || !val.Frozen {
+			return false
+		}
+		if seen[val] {
+			return true
+		}
+		seen[val] = true
+		for _, e := range val.Elements {
+			if !isDeepFrozen(e, seen) {
+				return false
+			}
+		}
+		return true
+	case Dict:
+		if !val.Frozen {
+			return false
+		}
+		if id := dictIdentity(val); id != 0 {
+			if seen[id] {
+				return true
+			}
+			seen[id] = true
+		}
+		ok := true
+		val.ForEachEntry(func(_ string, entry DictEntry) bool {
+			ok = isDeepFrozen(entry.Key, seen) && isDeepFrozen(entry.Value, seen)
+			return ok
+		})
+		return ok
+	case Set:
+		if !val.Frozen {
+			return false
+		}
+		for _, entry := range val.Elements {
+			if !isDeepFrozen(entry.Value, seen) {
+				return false
+			}
+		}
+		return true
+	case *Instance:
+		if val == nil || !val.Frozen {
+			return false
+		}
+		if seen[val] {
+			return true
+		}
+		seen[val] = true
+		for _, fv := range val.Fields {
+			if !isDeepFrozen(fv, seen) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
 	}
 }
 

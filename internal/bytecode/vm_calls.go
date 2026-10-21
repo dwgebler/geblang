@@ -3428,16 +3428,13 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	// from racing the shared host globals.
 	if !isolated {
 		vm.globalsMu.Lock()
-		for i, dirty := range callVM.dirtyGlobals {
-			if !dirty {
-				continue
-			}
+		for _, i := range callVM.dirtySlots {
 			if i >= len(callVM.globals) || i >= len(vm.globals) {
 				continue
 			}
 			vm.globals[i] = callVM.globals[i]
 			if i < len(vm.dirtyGlobals) {
-				vm.dirtyGlobals[i] = true
+				vm.markDirtySlot(i)
 			}
 		}
 		vm.globalsMu.Unlock()

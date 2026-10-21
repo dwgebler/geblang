@@ -19,10 +19,7 @@ func registerAsyncAtomic(r *Registry) {
 		id := nextSyncID()
 		v := &atomic.Int64{}
 		v.Store(initial)
-		syncMu.Lock()
-		syncAtomicInts[id] = v
-		syncMu.Unlock()
-		return runtime.NativeObject{Kind: "AsyncAtomicInt", ID: id}, nil
+		return runtime.NativeObject{Kind: "AsyncAtomicInt", ID: id, Payload: v}, nil
 	})
 	r.Register("async.atomic", "intLoad", func(args []runtime.Value) (runtime.Value, error) {
 		v, err := lookupAtomicInt(args, "async.atomic.intLoad")
@@ -90,10 +87,7 @@ func registerAsyncAtomic(r *Registry) {
 		id := nextSyncID()
 		v := &atomic.Bool{}
 		v.Store(initial.Value)
-		syncMu.Lock()
-		syncAtomicBools[id] = v
-		syncMu.Unlock()
-		return runtime.NativeObject{Kind: "AsyncAtomicBool", ID: id}, nil
+		return runtime.NativeObject{Kind: "AsyncAtomicBool", ID: id, Payload: v}, nil
 	})
 	r.Register("async.atomic", "boolLoad", func(args []runtime.Value) (runtime.Value, error) {
 		v, err := lookupAtomicBool(args, "async.atomic.boolLoad")
@@ -138,13 +132,11 @@ func registerAsyncAtomic(r *Registry) {
 }
 
 func lookupAtomicInt(args []runtime.Value, label string) (*atomic.Int64, error) {
-	id, err := singleHandle(args, "AsyncAtomicInt", label)
+	obj, err := singleHandleObject(args, "AsyncAtomicInt", label)
 	if err != nil {
 		return nil, err
 	}
-	syncMu.Lock()
-	v, ok := syncAtomicInts[id]
-	syncMu.Unlock()
+	v, ok := obj.Payload.(*atomic.Int64)
 	if !ok {
 		return nil, fmt.Errorf("%s: unknown handle", label)
 	}
@@ -156,9 +148,7 @@ func atomicIntFromHandle(v runtime.Value, label string) (*atomic.Int64, error) {
 	if !ok || obj.Kind != "AsyncAtomicInt" {
 		return nil, fmt.Errorf("%s: argument is not an AtomicInt handle", label)
 	}
-	syncMu.Lock()
-	a, ok := syncAtomicInts[obj.ID]
-	syncMu.Unlock()
+	a, ok := obj.Payload.(*atomic.Int64)
 	if !ok {
 		return nil, fmt.Errorf("%s: unknown handle", label)
 	}
@@ -166,13 +156,11 @@ func atomicIntFromHandle(v runtime.Value, label string) (*atomic.Int64, error) {
 }
 
 func lookupAtomicBool(args []runtime.Value, label string) (*atomic.Bool, error) {
-	id, err := singleHandle(args, "AsyncAtomicBool", label)
+	obj, err := singleHandleObject(args, "AsyncAtomicBool", label)
 	if err != nil {
 		return nil, err
 	}
-	syncMu.Lock()
-	v, ok := syncAtomicBools[id]
-	syncMu.Unlock()
+	v, ok := obj.Payload.(*atomic.Bool)
 	if !ok {
 		return nil, fmt.Errorf("%s: unknown handle", label)
 	}
@@ -184,9 +172,7 @@ func atomicBoolFromHandle(v runtime.Value, label string) (*atomic.Bool, error) {
 	if !ok || obj.Kind != "AsyncAtomicBool" {
 		return nil, fmt.Errorf("%s: argument is not an AtomicBool handle", label)
 	}
-	syncMu.Lock()
-	a, ok := syncAtomicBools[obj.ID]
-	syncMu.Unlock()
+	a, ok := obj.Payload.(*atomic.Bool)
 	if !ok {
 		return nil, fmt.Errorf("%s: unknown handle", label)
 	}

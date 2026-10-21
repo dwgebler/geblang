@@ -4,18 +4,13 @@ import (
 	"fmt"
 	"geblang/internal/runtime"
 	mrand "math/rand"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// randomGenerators tracks per-generator *mrand.Rand instances keyed by
-// the int64 handle stored in the NativeObject returned by
-// random.Generator(seed). A sync.Mutex protects concurrent access.
-var (
-	randomGeneratorMu sync.Mutex
-	randomGenerators  = map[int64]*mrand.Rand{}
-	randomNextID      int64
-)
+// randomNextID numbers random.Generator handles. Each handle carries its
+// *mrand.Rand as the payload, so the generator is freed with the handle.
+var randomNextID atomic.Int64
 
 // registerRandom registers a deterministic pseudo-random number generator
 // module backed by Go's math/rand. Use this for sampling, shuffling,
@@ -32,9 +27,7 @@ func registerRandom(r *Registry) {
 		// "Random") use it; otherwise fall back to the package default.
 		if len(args) > 0 {
 			if obj, ok := args[0].(runtime.NativeObject); ok && obj.Kind == "Random" {
-				randomGeneratorMu.Lock()
-				gen, ok := randomGenerators[obj.ID]
-				randomGeneratorMu.Unlock()
+				gen, ok := obj.Payload.(*mrand.Rand)
 				if !ok {
 					return nil, nil, fmt.Errorf("%s: unknown generator handle", name)
 				}
@@ -145,11 +138,6 @@ func registerRandom(r *Registry) {
 			return nil, fmt.Errorf("random.Generator seed must be int")
 		}
 		gen := mrand.New(mrand.NewSource(seed))
-		randomGeneratorMu.Lock()
-		randomNextID++
-		id := randomNextID
-		randomGenerators[id] = gen
-		randomGeneratorMu.Unlock()
-		return runtime.NativeObject{Kind: "Random", ID: id}, nil
+		return runtime.NativeObject{Kind: "Random", ID: randomNextID.Add(1), Payload: gen}, nil
 	})
 }

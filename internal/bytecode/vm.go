@@ -35,6 +35,9 @@ type VM struct {
 	// parent rather than slicecopying the entire backing array (which
 	// races the parent's lock-free OpGetGlobal on unrelated slots).
 	dirtyGlobals []bool
+	// dirtySlots lists the slots set in dirtyGlobals, so write-back and reset
+	// touch only the written slots instead of scanning every global.
+	dirtySlots []int
 	// persistGlobals makes the lock-free setGlobal fast path record dirty slots so a loader worker's module-global writes can be written back (cross-module module-global persistence).
 	persistGlobals bool
 	// Cached bound-method closures re-registered every reset; taking the bound method per call allocates.
@@ -397,6 +400,14 @@ type rangeIterator struct {
 	end       *big.Int
 	step      *big.Int
 	exclusive bool
+	// small is set when start, end and step all fit in int64: the loop then
+	// counts in cur/endSmall/stepSmall and yields SmallInt values, with no
+	// big.Int allocation per iteration.
+	small     bool
+	done      bool
+	cur       int64
+	endSmall  int64
+	stepSmall int64
 }
 
 type ExitError struct {
@@ -1260,8 +1271,9 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				cur := vm.curGlobals[slot]
 				if cur.Kind != runtime.VMKindBoxed {
 					vm.curGlobals[slot] = value
-					if vm.persistGlobals && int(slot) < len(vm.dirtyGlobals) {
+					if vm.persistGlobals && int(slot) < len(vm.dirtyGlobals) && !vm.dirtyGlobals[slot] {
 						vm.dirtyGlobals[slot] = true
+						vm.dirtySlots = append(vm.dirtySlots, int(slot))
 					}
 					vm.pushVM(value)
 					continue
@@ -4925,6 +4937,11 @@ func (vm *VM) tagCollectionWithSpec(value runtime.Value, spec vmTypeSpec) (runti
 			for i, a := range spec.args {
 				tag[i] = elementSpecTag(a)
 			}
+			if v.Frozen {
+				// A frozen list may be shared between tasks; tag a copy of
+				// the header rather than writing to the shared value.
+				return &runtime.List{Elements: v.Elements, Frozen: true, ElementTypes: tag}, true
+			}
 			v.ElementTypes = tag
 			return v, true
 		}
@@ -5089,6 +5106,15 @@ func (vm *VM) execRange(instruction Instruction, exclusive bool) error {
 }
 
 func newRangeIterator(value runtime.Range) *iteratorValue {
+	if value.Start.IsInt64() && value.End.IsInt64() && value.Step.IsInt64() && value.Step.Sign() != 0 {
+		return &iteratorValue{rangeIter: &rangeIterator{
+			small:     true,
+			cur:       value.Start.Int64(),
+			endSmall:  value.End.Int64(),
+			stepSmall: value.Step.Int64(),
+			exclusive: value.Exclusive,
+		}}
+	}
 	return &iteratorValue{rangeIter: &rangeIterator{
 		current:   new(big.Int).Set(value.Start),
 		end:       new(big.Int).Set(value.End),
@@ -5123,12 +5149,46 @@ func (iter *iteratorValue) next() (runtime.Value, bool, error) {
 var errUserIterPlaceholder = errors.New("user iterator must be advanced via VM")
 
 func (iter *rangeIterator) next() (runtime.Value, bool) {
+	if iter.small {
+		return iter.nextSmall()
+	}
 	if !rangeContains(iter.current, iter.end, iter.step, iter.exclusive) {
 		return nil, false
 	}
 	value := runtime.Int{Value: new(big.Int).Set(iter.current)}
 	iter.current.Add(iter.current, iter.step)
 	return value, true
+}
+
+// nextSmall is next for a range whose bounds fit in int64. It stops instead
+// of wrapping if the next value would overflow.
+func (iter *rangeIterator) nextSmall() (runtime.Value, bool) {
+	if iter.done {
+		return nil, false
+	}
+	cur, end, step := iter.cur, iter.endSmall, iter.stepSmall
+	var inRange bool
+	switch {
+	case step > 0 && iter.exclusive:
+		inRange = cur < end
+	case step > 0:
+		inRange = cur <= end
+	case iter.exclusive:
+		inRange = cur > end
+	default:
+		inRange = cur >= end
+	}
+	if !inRange {
+		iter.done = true
+		return nil, false
+	}
+	next := cur + step
+	if (step > 0 && next < cur) || (step < 0 && next > cur) {
+		iter.done = true
+	} else {
+		iter.cur = next
+	}
+	return runtime.SmallInt{Value: cur}, true
 }
 
 func rangeContains(current *big.Int, end *big.Int, step *big.Int, exclusive bool) bool {
@@ -5936,8 +5996,9 @@ func (vm *VM) setGlobalVM(slot int64, value runtime.VMValue) error {
 	// Fast path: no wrap-bridge worker can be touching this VM's globals.
 	if !vm.bridgeActive.Load() {
 		vm.curGlobals[slot] = value
-		if vm.persistGlobals && int(slot) < len(vm.dirtyGlobals) {
+		if vm.persistGlobals && int(slot) < len(vm.dirtyGlobals) && !vm.dirtyGlobals[slot] {
 			vm.dirtyGlobals[slot] = true
+			vm.dirtySlots = append(vm.dirtySlots, int(slot))
 		}
 		return nil
 	}
@@ -5956,11 +6017,24 @@ func (vm *VM) markGlobalDirtyLocked(slot int) {
 		return
 	}
 	if slot >= len(vm.dirtyGlobals) {
-		grown := make([]bool, len(vm.globals))
+		size := len(vm.globals)
+		if size <= slot {
+			size = slot + 1
+		}
+		grown := make([]bool, size)
 		copy(grown, vm.dirtyGlobals)
 		vm.dirtyGlobals = grown
 	}
-	vm.dirtyGlobals[slot] = true
+	vm.markDirtySlot(slot)
+}
+
+// markDirtySlot sets slot in dirtyGlobals (which must be long enough) and
+// records it in dirtySlots the first time.
+func (vm *VM) markDirtySlot(slot int) {
+	if !vm.dirtyGlobals[slot] {
+		vm.dirtyGlobals[slot] = true
+		vm.dirtySlots = append(vm.dirtySlots, slot)
+	}
 }
 
 func (vm *VM) getGlobal(slot int64) (runtime.Value, error) {
