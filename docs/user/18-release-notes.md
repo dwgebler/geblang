@@ -1,5 +1,26 @@
 # Release Notes
 
+## 1.37.7
+
+### Fixes
+
+- A collection typed with an interface from another module (for example
+  `list<shapes.Shape>`, `dict<string, shapes.Shape>` or `set<shapes.Shape>`)
+  accepts objects whose class implements that interface. On the bytecode VM,
+  `push`, index assignment and `add` refused every implementing class with
+  `cannot push Square to list<shapes.Shape>`, with or without an import alias;
+  a list literal or a variable declared with the interface type already
+  worked.
+- `geblang check` no longer reports a local class that implements an imported
+  interface (`class Tri implements shapes.Shape`) as incompatible where that
+  interface is expected. A class that does not declare the interface is still
+  an error.
+- `geblang check` rejects arithmetic and bitwise operators on lists, dicts,
+  and sets before runtime. For list concatenation, copy the first list and
+  call `extend` on the copy; class-defined operator overloads remain valid.
+- `geblang check` rejects method-call syntax on callable fields. Call the
+  field value as `(obj.field)(...)` for the same result on both backends.
+
 ## 1.37.6
 
 ### New

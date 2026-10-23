@@ -1,0 +1,10 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag calling a callable field with method syntax.
+ */
+class Reg {
+    callable make;
+    func Reg(callable make) { this.make = make; }
+}
+Reg r = Reg(func(int x): int { return x; });
+r.make(1);

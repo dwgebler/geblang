@@ -114,8 +114,12 @@ func (g *classGraph) surface(className string) (map[string]bool, bool) {
 		for m := range decl.Methods {
 			members[m] = true
 		}
+		// Fields are members too, marked false: calling one with method
+		// syntax (obj.field(...)) fails at runtime on both backends.
 		for f := range decl.Fields {
-			members[f] = true
+			if _, ok := members[f]; !ok {
+				members[f] = false
+			}
 		}
 		for _, iface := range decl.Implements {
 			if !g.addInterfaceMembers(simpleName(iface), members, map[string]bool{}) {

@@ -1365,7 +1365,8 @@ func (a *Analyzer) checkClassMethodCall(call *ast.CallExpression) {
 		return
 	}
 	selector, ok := call.Callee.(*ast.SelectorExpression)
-	if !ok || selector.Name == nil || selector.Optional {
+	// (obj.x)(args) calls the value of obj.x, not a method.
+	if !ok || selector.Name == nil || selector.Optional || selector.Parenthesized {
 		return
 	}
 	receiverType := a.expressionTypeName(selector.Object)
@@ -1376,8 +1377,15 @@ func (a *Analyzer) checkClassMethodCall(call *ast.CallExpression) {
 	if !resolvable {
 		return
 	}
-	if !members[strings.ToLower(selector.Name.Value)] {
+	isMethod, present := members[strings.ToLower(selector.Name.Value)]
+	if !present || !isMethod {
 		if isSelfReceiver(selector.Object) {
+			return
+		}
+		if present {
+			// A field holding a callable is not a method: both backends
+			// throw "unknown method" for obj.field(...).
+			a.errorAt(selector.Name.Token, "%s.%s is a field, not a method; call the value it holds with (%s)(...)", receiverType.name, selector.Name.Value, selector.String())
 			return
 		}
 		a.errorAt(selector.Name.Token, "%s has no method %s", receiverType.name, selector.Name.Value)
@@ -2464,6 +2472,57 @@ func (a *Analyzer) checkDecimalFloatMix(expr *ast.InfixExpression) {
 	}
 }
 
+// checkCollectionOperator flags arithmetic and bitwise operators with a
+// list, dict or set operand: both backends throw "unsupported operands"
+// for them (comparison operators are fine).
+func (a *Analyzer) checkCollectionOperator(expr *ast.InfixExpression) {
+	switch expr.Operator {
+	case "+", "-", "*", "/", "//", "%", "**", "|", "&", "^", "<<", ">>":
+	default:
+		return
+	}
+	lt := a.expressionTypeName(expr.Left)
+	rt := a.expressionTypeName(expr.Right)
+	lc := lt.known && !lt.nullable && collectionKind(lt.name) != ""
+	rc := rt.known && !rt.nullable && collectionKind(rt.name) != ""
+	if !lc && !rc {
+		return
+	}
+	// A class on the left may overload the operator (__add and so on) for a
+	// collection argument; only a primitive left operand is certain to fail.
+	if !lc && !(lt.known && isPrimitiveOperand(lt.name)) {
+		return
+	}
+	if expr.Operator == "+" && lc && rc && collectionKind(lt.name) == "list" && collectionKind(rt.name) == "list" {
+		a.errorAt(expr.Token, "cannot use + on %s and %s: lists have no + operator; copy one and extend it instead (let all = a.copy(); all.extend(b);)", lt.display(), rt.display())
+		return
+	}
+	a.errorAt(expr.Token, "cannot use %s on %s and %s: lists, dicts and sets have no arithmetic or bitwise operators", expr.Operator, lt.display(), rt.display())
+}
+
+func isPrimitiveOperand(name string) bool {
+	switch name {
+	case "int", "float", "decimal", "string", "bool", "bytes":
+		return true
+	}
+	return false
+}
+
+// collectionKind is "list", "dict" or "set" for those types (with or
+// without type arguments), else "".
+func collectionKind(name string) string {
+	base := name
+	if lt := strings.IndexByte(base, '<'); lt >= 0 {
+		base = base[:lt]
+	}
+	// Exact, lowercase: a user class named List or Set is not a built-in.
+	switch strings.TrimSpace(base) {
+	case "list", "dict", "set":
+		return strings.TrimSpace(base)
+	}
+	return ""
+}
+
 func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	if a.exprTypes != nil && expr != nil {
 		a.recordExprType(expr)
@@ -2486,6 +2545,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 			a.analyzeExpression(expr.Right)
 		}
 		a.checkDecimalFloatMix(expr)
+		a.checkCollectionOperator(expr)
 		if expr.Operator == "//" || expr.Operator == "%" || expr.Operator == "/" {
 			if lit, ok := expr.Right.(*ast.IntegerLiteral); ok && strings.Trim(lit.Value, "0_") == "" {
 				a.ruleWarningAt(expr.Token, "div-by-zero", "%q by literal zero always throws at runtime", expr.Operator)
@@ -3134,6 +3194,11 @@ func (a *Analyzer) isAssignableType(target, actual string) bool {
 	}
 	if _, ok := a.classes[target]; ok {
 		return a.classExtends(actual, target)
+	}
+	// An imported interface (shapes.Shape) is not in this module's tables;
+	// a local class or enum that declares it implements it.
+	if strings.Contains(target, ".") && (a.classImplements(actual, target) || a.enumImplements(actual, target)) {
+		return true
 	}
 	return false
 }

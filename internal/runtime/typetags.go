@@ -16,11 +16,14 @@ func ClassImplementsInterface(class *Class, name string) bool {
 }
 
 // InterfaceMatches reports whether iface or any of its parents has name.
+// The VM records an imported interface under its module-qualified name
+// (shapes.Shape) while element tags and hierarchy leaves are bare (Shape),
+// so a qualified side is compared by its bare name, as class names are.
 func InterfaceMatches(iface *Interface, name string) bool {
 	if iface == nil {
 		return false
 	}
-	if strings.EqualFold(iface.Name, name) {
+	if strings.EqualFold(iface.Name, name) || strings.EqualFold(bareTypeName(iface.Name), bareTypeName(name)) {
 		return true
 	}
 	for _, parent := range iface.Parents {
@@ -65,4 +68,12 @@ func ValueSatisfiesHierarchyLeaf(value Value, leaf string) bool {
 		}
 	}
 	return false
+}
+
+// bareTypeName drops a module qualifier: shapes.Shape -> Shape.
+func bareTypeName(name string) string {
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		return name[dot+1:]
+	}
+	return name
 }
