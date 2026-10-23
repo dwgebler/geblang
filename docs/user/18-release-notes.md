@@ -1,5 +1,15 @@
 # Release Notes
 
+## 1.37.6
+
+### New
+
+- Database connections accept an optional transaction deadline with
+  `begin(timeoutMs)`. `execWithTimeout` and `queryWithTimeout` also bound pool
+  waits; streamed query rows retain their deadline until closed or exhausted.
+  SQLite lock waits can still last until the configured busy timeout because
+  the underlying driver does not interrupt a busy handler promptly.
+
 ## 1.37.5
 
 ### New

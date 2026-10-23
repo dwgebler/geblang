@@ -1121,5 +1121,10 @@
             "$0"
         ],
         "description": "messaging.topic AWS SNS topic (subscribe via paired SQS queue)"
-    }
+    },
+  "Database query with deadline": {
+    "prefix": "dbquerytimeout",
+    "body": ["let ${1:rows} = ${2:conn}.queryWithTimeout(${3:1000}, \"${4:SELECT 1}\");", "defer ${1:rows}.close();"],
+    "description": "Query with a deadline covering pool wait and row consumption"
+  }
 }

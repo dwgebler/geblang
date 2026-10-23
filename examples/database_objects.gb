@@ -14,12 +14,12 @@ defer conn.close();
 
 conn.exec("drop table if exists users");
 conn.exec("create table users (id integer primary key, name text, email text)");
-conn.exec(
+conn.execWithTimeout(1000,
     "insert into users (name, email) values (:name, :email)",
     {"name": "Ada", "email": "ada@example.com"}
 );
 
-let rows = conn.query(
+let rows = conn.queryWithTimeout(1000,
     "select id, name from users where email = :email",
     {"email": "ada@example.com"}
 );
@@ -29,7 +29,7 @@ while (rows.next()) {
     io.println(row["name"]);
 }
 
-let tx = conn.begin();
+let tx = conn.begin(1000);
 tx.exec(
     "insert into users (name, email) values (?, ?)",
     ["Grace", "grace@example.com"]

@@ -4476,3 +4476,24 @@ class Sub extends Base {
 let s = Sub();
 `, "base\nhelper\n")
 }
+
+func TestParityDatabaseTimeout(t *testing.T) {
+	runParityStateful(t, `import db;
+import io;
+let c = db.Connection("sqlite", ":memory:");
+c.execWithTimeout(1000, "CREATE TABLE items (n INTEGER)");
+c.execWithTimeout(1000, "INSERT INTO items VALUES (?)", [7]);
+io.println(c.queryWithTimeout(1000, "SELECT n FROM items").all()[0]["n"]);
+let tx = c.begin();
+try { c.begin(20); } catch (Error e) { io.println("begin expired"); }
+try { c.queryWithTimeout(20, "SELECT 1"); } catch (Error e) { io.println("query expired"); }
+try { c.execWithTimeout(20, "SELECT 1"); } catch (Error e) { io.println("exec expired"); }
+io.println(c.stats()["waitCount"]);
+tx.rollback();
+let bounded = c.begin(1000);
+bounded.exec("INSERT INTO items VALUES (8)");
+bounded.commit();
+io.println(c.query("SELECT COUNT(*) AS n FROM items").all()[0]["n"]);
+c.close();
+`, "7\nbegin expired\nquery expired\nexec expired\n3\n2\n")
+}

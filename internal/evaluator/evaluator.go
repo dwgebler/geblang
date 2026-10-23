@@ -280,6 +280,7 @@ type httpFetchStreamHandle struct {
 }
 
 type dbRowsHandle struct {
+	cancel   context.CancelFunc
 	rows     *sql.Rows
 	columns  []string
 	textCols []bool
@@ -300,6 +301,8 @@ type dbStmtHandle struct {
 }
 
 type dbTxHandle struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 	tx     *sql.Tx
 	driver string
 }
@@ -1032,6 +1035,9 @@ func (e *Evaluator) Cleanup() error {
 	e.dbDrivers = map[int64]string{}
 	e.dbMu.Unlock()
 	for _, rows := range dbRows {
+		if rows.cancel != nil {
+			rows.cancel()
+		}
 		if !rows.closed {
 			record(rows.rows.Close())
 		}
@@ -1040,6 +1046,9 @@ func (e *Evaluator) Cleanup() error {
 		record(stmt.stmt.Close())
 	}
 	for _, tx := range txs {
+		if tx.cancel != nil {
+			tx.cancel()
+		}
 		record(tx.tx.Rollback())
 	}
 	for _, db := range dbs {

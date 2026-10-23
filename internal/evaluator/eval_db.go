@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"geblang/internal/ast"
@@ -159,8 +160,8 @@ func (e *Evaluator) dbQueryRows(call *ast.CallExpression, args []runtime.Value) 
 }
 
 func (e *Evaluator) dbBegin(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
+	if len(args) < 1 || len(args) > 2 {
+		return nil, fmt.Errorf("%s expects database handle and optional timeoutMs", call.Callee.String())
 	}
 	driver, err := e.dbDriverFromValue(args[0])
 	if err != nil {
@@ -170,14 +171,25 @@ func (e *Evaluator) dbBegin(call *ast.CallExpression, args []runtime.Value) (run
 	if err != nil {
 		return nil, err
 	}
-	tx, err := db.Begin()
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if len(args) == 2 {
+		ctx, cancel, err = dbTimeoutContext(args[1])
+		if err != nil {
+			return nil, err
+		}
+	}
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		return nil, err
 	}
 	e.dbMu.Lock()
 	defer e.dbMu.Unlock()
 	e.nextTxID++
-	e.txs[e.nextTxID] = &dbTxHandle{tx: tx, driver: driver}
+	e.txs[e.nextTxID] = &dbTxHandle{tx: tx, driver: driver, cancel: cancel, ctx: ctx}
 	return runtime.NewInt64(e.nextTxID), nil
 }
 
@@ -197,7 +209,7 @@ func (e *Evaluator) dbTxExec(call *ast.CallExpression, args []runtime.Value) (ru
 	if err != nil {
 		return nil, err
 	}
-	result, err := tx.tx.Exec(query.Value, sqlArgs...)
+	result, err := tx.tx.ExecContext(tx.ctx, query.Value, sqlArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +233,7 @@ func (e *Evaluator) dbTxExecStandard(call *ast.CallExpression, args []runtime.Va
 	if err != nil {
 		return nil, err
 	}
-	result, err := tx.tx.Exec(query, sqlArgs...)
+	result, err := tx.tx.ExecContext(tx.ctx, query, sqlArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +261,7 @@ func (e *Evaluator) dbTxQuery(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.tx.Query(query.Value, sqlArgs...)
+	rows, err := tx.tx.QueryContext(tx.ctx, query.Value, sqlArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +280,7 @@ func (e *Evaluator) dbTxQueryRows(call *ast.CallExpression, args []runtime.Value
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.tx.Query(query, sqlArgs...)
+	rows, err := tx.tx.QueryContext(tx.ctx, query, sqlArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -283,6 +295,9 @@ func (e *Evaluator) dbCommit(call *ast.CallExpression, args []runtime.Value) (ru
 	if err != nil {
 		return nil, err
 	}
+	if tx.cancel != nil {
+		defer tx.cancel()
+	}
 	return runtime.Null{}, tx.tx.Commit()
 }
 
@@ -293,6 +308,9 @@ func (e *Evaluator) dbRollback(call *ast.CallExpression, args []runtime.Value) (
 	tx, err := e.takeTxHandle(args[0])
 	if err != nil {
 		return nil, err
+	}
+	if tx.cancel != nil {
+		defer tx.cancel()
 	}
 	return runtime.Null{}, tx.tx.Rollback()
 }

@@ -218,7 +218,9 @@ SQL connection pool and returns a connection object.
 |--------|---------|-------------|
 | `exec(sql, args...)` | `dict` | Execute a statement; returns `rowsAffected` and `lastInsertId` |
 | `query(sql, args...)` | `db.Rows` | Run a query and return a streaming cursor |
-| `begin()` | `db.Transaction` | Start a transaction |
+| `begin(timeoutMs?)` | `db.Transaction` | Start a transaction with an optional lifetime deadline |
+| `execWithTimeout(timeoutMs, sql, args...)` | `dict` | Execute with a deadline, including pool wait |
+| `queryWithTimeout(timeoutMs, sql, args...)` | `db.Rows` | Query with a deadline, including pool wait and streaming |
 | `prepare(sql)` | `db.Statement` | Prepare a reusable statement |
 | `configure(options)` | `void` | Set pool options such as `maxOpenConns`, `maxIdleConns`, `connMaxLifetimeMs`, `connMaxIdleTimeMs` |
 | `stats()` | `dict` | Return pool statistics |
@@ -250,6 +252,31 @@ while (rows.next()) {
     io.println(row["name"]);
 }
 ```
+
+### Deadlines and pool contention
+
+Timeouts are positive integer milliseconds. Existing `exec`, `query`, and
+`begin()` calls retain their existing behavior. Timed operations use the SQL
+driver's context cancellation and do not automatically inherit HTTP request
+cancellation. Pool acquisition waits stop at the deadline; an executing driver
+may take longer to return. In particular, SQLite lock waits can outlast the
+context deadline until `busyTimeoutMs` expires or the lock is released. Set an
+appropriate SQLite `busyTimeoutMs` as well as an operation timeout.
+
+`begin(250)` applies one deadline to acquiring a pooled connection and the
+entire transaction. Expiry automatically rolls back the transaction and later
+`commit()` fails. It is not an acquisition-only timeout. Choose a budget that
+covers all transaction work and always commit or roll back promptly.
+
+`queryWithTimeout(250, sql, args...)` keeps its deadline through cursor reading.
+Close the returned `Rows` explicitly or exhaust it with `all()`/iteration to
+release resources promptly. Partial reads can fail when the deadline expires.
+
+`stats()` exposes `waitCount` and `waitDurationMs`: cumulative pool acquisition
+waits and their total duration since pool creation. Compare deltas between
+samples to observe contention. They include cancelled waits and do not measure
+SQL execution time or database lock waits. `inUse`, `idle`, and
+`maxOpenConnections` describe the pool at the sample time.
 
 ## Transactions And Statements
 

@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"geblang/internal/runtime"
@@ -199,11 +200,18 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 	connectionClass.Methods["query"] = []runtime.Function{{Name: "query", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		return e.dbQueryRows(syntheticCall("db.Connection.query"), append([]runtime.Value{this.Fields["handle"]}, args...))
 	}}}
+	connectionClass.Methods["execwithtimeout"] = []runtime.Function{{Name: "execWithTimeout", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		return e.dbTimedOperation(this.Fields["handle"], args, false)
+	}}}
+	connectionClass.Methods["querywithtimeout"] = []runtime.Function{{Name: "queryWithTimeout", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		return e.dbTimedOperation(this.Fields["handle"], args, true)
+	}}}
+
 	connectionClass.Methods["begin"] = []runtime.Function{{Name: "begin", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 0 {
-			return nil, fmt.Errorf("Connection.begin expects no arguments")
+		if len(args) > 1 {
+			return nil, fmt.Errorf("Connection.begin expects optional timeoutMs")
 		}
-		handle, err := e.dbBegin(syntheticCall("db.Connection.begin"), []runtime.Value{this.Fields["handle"]})
+		handle, err := e.dbBegin(syntheticCall("db.Connection.begin"), append([]runtime.Value{this.Fields["handle"]}, args...))
 		if err != nil {
 			return nil, err
 		}
@@ -245,9 +253,16 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 }
 
 func (e *Evaluator) registerDBRows(rows *sql.Rows) (runtime.Value, error) {
+	return e.registerDBRowsContext(rows, nil)
+}
+
+func (e *Evaluator) registerDBRowsContext(rows *sql.Rows, cancel context.CancelFunc) (runtime.Value, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		_ = rows.Close()
+		if cancel != nil {
+			cancel()
+		}
 		return nil, err
 	}
 	class := e.dbRowsClass
@@ -256,12 +271,15 @@ func (e *Evaluator) registerDBRows(rows *sql.Rows) (runtime.Value, error) {
 	}
 	if class == nil {
 		_ = rows.Close()
+		if cancel != nil {
+			cancel()
+		}
 		return nil, fmt.Errorf("Rows class is not initialized")
 	}
 	e.dbMu.Lock()
 	e.nextDBRowsID++
 	id := e.nextDBRowsID
-	e.dbRows[id] = &dbRowsHandle{rows: rows, columns: columns, textCols: sqlTextColumns(rows)}
+	e.dbRows[id] = &dbRowsHandle{rows: rows, cancel: cancel, columns: columns, textCols: sqlTextColumns(rows)}
 	e.dbMu.Unlock()
 	return &runtime.Instance{Class: class, Fields: map[string]runtime.Value{"handle": runtime.NewInt64(id)}}, nil
 }
@@ -293,6 +311,9 @@ func (e *Evaluator) dbRowsClose(instance *runtime.Instance) (runtime.Value, erro
 		return runtime.Null{}, nil
 	}
 	rows.closed = true
+	if rows.cancel != nil {
+		defer rows.cancel()
+	}
 	rows.exhausted = true
 	return runtime.Null{}, rows.rows.Close()
 }
@@ -325,6 +346,9 @@ func dbRowsAdvance(rows *dbRowsHandle) (bool, error) {
 		return false, nil
 	}
 	if !rows.rows.Next() {
+		if rows.cancel != nil {
+			defer rows.cancel()
+		}
 		rows.current = nil
 		rows.exhausted = true
 		rows.closed = true
@@ -339,6 +363,13 @@ func dbRowsAdvance(rows *dbRowsHandle) (bool, error) {
 	}
 	row, err := scanSQLRow(rows.rows, rows.columns, rows.textCols)
 	if err != nil {
+		rows.current = nil
+		rows.exhausted = true
+		rows.closed = true
+		_ = rows.rows.Close()
+		if rows.cancel != nil {
+			rows.cancel()
+		}
 		return false, err
 	}
 	rows.current = row

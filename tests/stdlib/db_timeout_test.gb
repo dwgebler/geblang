@@ -1,0 +1,30 @@
+import test;
+import db;
+
+class DbTimeoutTest extends test.Test {
+    @test
+    func poolWaitExpiresAndRecovers(): void {
+        let c = db.Connection("sqlite", ":memory:");
+        defer c.close();
+        c.execWithTimeout(1000, "CREATE TABLE n (v INTEGER)");
+        let tx = c.begin();
+        this.assertThrows(func(): void { c.begin(20); });
+        this.assertThrows(func(): void { c.queryWithTimeout(20, "SELECT 1"); });
+        this.assertThrows(func(): void { c.execWithTimeout(20, "SELECT 1"); });
+        this.assertEquals(3, c.stats()["waitCount"]);
+        tx.rollback();
+        let bounded = c.begin(1000);
+        bounded.exec("INSERT INTO n VALUES (?)", [7]);
+        bounded.commit();
+        this.assertEquals(7, c.queryWithTimeout(1000, "SELECT v FROM n").all()[0]["v"]);
+    }
+
+    @test
+    func rejectsInvalidTimeout(): void {
+        let c = db.Connection("sqlite", ":memory:");
+        defer c.close();
+        this.assertThrows(func(): void { c.begin(0); });
+        this.assertThrows(func(): void { c.queryWithTimeout(-1, "SELECT 1"); });
+        this.assertThrows(func(): void { c.execWithTimeout(9223372036854775807, "SELECT 1"); });
+    }
+}
