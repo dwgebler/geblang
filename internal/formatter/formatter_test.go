@@ -87,6 +87,27 @@ func TestFormatIfElseIf(t *testing.T) {
 	if !strings.Contains(out, "} else if (") {
 		t.Fatalf("expected else-if chained: %q", out)
 	}
+	if !strings.Contains(out, "} else {") || strings.Contains(out, "\n else") {
+		t.Fatalf("expected the final else on the else-if's closing line: %q", out)
+	}
+}
+
+func TestFormatIfElseIfChainIsStable(t *testing.T) {
+	src := "if (x == 1) {\n    y = 1;\n} else if (x == 2) {\n    y = 2;\n} else if (x == 3) {\n    y = 3;\n} else {\n    y = 4;\n}\nif (x == 1) {\n    y = 1;\n} else if (x == 2) {\n    y = 2;\n}\ny = 5;\n"
+	out := roundtrip(t, src)
+	parseOK(t, out)
+	if out != src {
+		t.Fatalf("else-if chain changed:\n%s", out)
+	}
+}
+
+func TestFormatExportedTypeAliasHasOneSemicolon(t *testing.T) {
+	src := "type A = int;\nexport type B = list<int>;\n"
+	out := roundtrip(t, src)
+	parseOK(t, out)
+	if out != src {
+		t.Fatalf("type aliases changed:\n%s", out)
+	}
 }
 
 func TestFormatWhile(t *testing.T) {

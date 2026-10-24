@@ -1,5 +1,15 @@
 # Release Notes
 
+## 1.37.8
+
+### Fixes
+
+- `geblang fmt` keeps the final `else` of an `if` / `else if` chain on the
+  line of the closing brace (`} else {`). It moved the `else` to a line of
+  its own, indented by one space.
+- `geblang fmt` writes an exported type alias with one semicolon
+  (`export type W = m.Weights;`). It added a second semicolon.
+
 ## 1.37.7
 
 ### Fixes

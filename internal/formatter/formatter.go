@@ -388,6 +388,9 @@ func (f *fmtr) stmtNoPrefix(s ast.Statement) {
 			line += " = " + f.expr(s.Value)
 		}
 		f.writeln(line + ";")
+	case *ast.TypeAliasStatement:
+		// String() already ends the alias with its semicolon.
+		f.writeln(s.String())
 	default:
 		f.writeln(s.String() + ";")
 	}
@@ -505,18 +508,24 @@ func (f *fmtr) bareElements(lit *ast.ListLiteral) string {
 
 func (f *fmtr) fmtIf(s *ast.IfStatement) {
 	f.write(f.pad() + "if (" + f.expr(s.Condition) + ") ")
-	f.blockInline(s.Consequence, func() {
-		for _, ei := range s.ElseIfs {
-			f.write(" else if (" + f.expr(ei.Condition) + ") ")
-			f.blockInline(ei.Body, nil)
-		}
-		if s.Alternative != nil {
-			f.write(" else ")
-			f.block(s.Alternative)
-		} else if len(s.ElseIfs) == 0 {
-			f.nl() // a trailing else-if block already emits its own line terminator
-		}
-	})
+	f.blockInline(s.Consequence, func() { f.fmtElse(s, 0) })
+}
+
+// fmtElse writes the else-if branches from index i, then any else, each on
+// the line of the previous branch's closing brace, and ends the chain's line.
+func (f *fmtr) fmtElse(s *ast.IfStatement, i int) {
+	if i < len(s.ElseIfs) {
+		ei := s.ElseIfs[i]
+		f.write(" else if (" + f.expr(ei.Condition) + ") ")
+		f.blockInline(ei.Body, func() { f.fmtElse(s, i+1) })
+		return
+	}
+	if s.Alternative != nil {
+		f.write(" else ")
+		f.block(s.Alternative)
+	} else {
+		f.nl()
+	}
 }
 
 // blockInline writes a block and calls after() before the trailing newline
