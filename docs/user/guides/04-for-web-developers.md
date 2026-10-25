@@ -718,10 +718,10 @@ block comments, and `/** ... */` for doc blocks.
   values, casts
 - [Async and generators](../09-async-generators.md) - tasks, `await`,
   `async.all`, `async.race`, generators
-- [examples/http_client.gb](../../../examples/http_client.gb) - HTTP client
+- [examples/http_client.gb](https://github.com/dwgebler/geblang/blob/main/examples/http_client.gb) - HTTP client
   patterns
-- [examples/http_server.gb](../../../examples/http_server.gb) - server example
-- [examples/source_web_router.gb](../../../examples/source_web_router.gb) -
+- [examples/http_server.gb](https://github.com/dwgebler/geblang/blob/main/examples/http_server.gb) - server example
+- [examples/source_web_router.gb](https://github.com/dwgebler/geblang/blob/main/examples/source_web_router.gb) -
   router with groups and middleware
-- [examples/web.gb](../../../examples/web.gb) - native web module example
-- [examples/json.gb](../../../examples/json.gb) - JSON encode, decode, streaming
+- [examples/web.gb](https://github.com/dwgebler/geblang/blob/main/examples/web.gb) - native web module example
+- [examples/json.gb](https://github.com/dwgebler/geblang/blob/main/examples/json.gb) - JSON encode, decode, streaming

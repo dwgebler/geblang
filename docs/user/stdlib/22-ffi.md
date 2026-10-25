@@ -45,7 +45,7 @@ declared.
 When you `geblang build` a project, the resolved FFI policy is
 baked into the binary (along with `--allow-ffi` build flags), so
 the binary runs without re-declaring the allow-list. See
-[Bundling](13-bundling.html).
+[Bundling](../13-bundling.md).
 
 `geblang doctor` surfaces the active policy:
 

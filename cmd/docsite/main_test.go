@@ -189,7 +189,7 @@ export func name(): string { return "app"; }
 		t.Fatal(err)
 	}
 
-	pages, err := loadExamplePages(dir)
+	pages, err := loadExamplePages(dir, filepath.Join(dir, "docs"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +218,24 @@ export func name(): string { return "app"; }
 	}
 	if strings.Contains(filePage.HTML, "@title") {
 		t.Fatalf("example code should omit metadata docblock: %q", filePage.HTML)
+	}
+}
+
+func TestExampleReadmeLinksResolveToGeneratedPages(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "examples")
+	docsSource := filepath.Join(filepath.Dir(root), "docs")
+	readme := "[source](main.gb) [guide](../../docs/29-services-yaml.md#parameters) [external](https://example.com/a.md)"
+
+	html := exampleReadmeHTML(readme, root, docsSource, "sample")
+
+	for _, want := range []string{
+		`href="main.html"`,
+		`href="../../services-yaml.html#parameters"`,
+		`href="https://example.com/a.md"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("example readme missing %q: %s", want, html)
+		}
 	}
 }
 

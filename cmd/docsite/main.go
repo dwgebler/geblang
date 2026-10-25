@@ -63,6 +63,67 @@ func (mdLinkRewriter) Transform(node *gast.Document, reader gtext.Reader, _ pars
 	})
 }
 
+type exampleLinkRewriter struct {
+	root       string
+	docsSource string
+	name       string
+}
+
+func (r exampleLinkRewriter) Transform(node *gast.Document, reader gtext.Reader, _ parser.Context) {
+	_ = gast.Walk(node, func(n gast.Node, entering bool) (gast.WalkStatus, error) {
+		if !entering {
+			return gast.WalkContinue, nil
+		}
+		link, ok := n.(*gast.Link)
+		if !ok {
+			return gast.WalkContinue, nil
+		}
+		target := string(link.Destination)
+		if target == "" || strings.HasPrefix(target, "#") || strings.HasPrefix(target, "/") || strings.Contains(target, "://") {
+			return gast.WalkContinue, nil
+		}
+		path, fragment, _ := strings.Cut(target, "#")
+		original := filepath.Clean(filepath.Join(r.root, r.name, path))
+		var output string
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".gb":
+			if rel, err := filepath.Rel(r.root, original); err == nil && !outsideRoot(rel) {
+				output = exampleOutputPath(rel)
+			}
+		case ".md":
+			if rel, err := filepath.Rel(r.docsSource, original); err == nil && !outsideRoot(rel) {
+				output = outputPath(rel)
+			}
+		}
+		if output != "" {
+			link.Destination = []byte(relHref(exampleGroupOutputPath(r.name), output))
+			if fragment != "" {
+				link.Destination = append(link.Destination, []byte("#"+fragment)...)
+			}
+		}
+		return gast.WalkContinue, nil
+	})
+}
+
+func outsideRoot(rel string) bool {
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func exampleReadmeHTML(readme, root, docsSource, name string) string {
+	markdown := goldmark.New(
+		goldmark.WithExtensions(extension.GFM, emoji.Emoji),
+		goldmark.WithParserOptions(
+			parser.WithAutoHeadingID(),
+			parser.WithASTTransformers(
+				util.Prioritized(exampleLinkRewriter{root: root, docsSource: docsSource, name: name}, 998),
+				util.Prioritized(mdLinkRewriter{}, 999),
+			),
+		),
+		goldmark.WithRendererOptions(goldhtml.WithUnsafe()),
+	)
+	return renderMarkdown([]byte(readme), markdown)
+}
+
 func rewriteMarkdownLink(dest string) []byte {
 	target := dest
 	fragment := ""
@@ -99,7 +160,7 @@ func main() {
 		fatal(err)
 	}
 	pages = append(pages, apiPages...)
-	examplePages, err := loadExamplePages(exampleSource)
+	examplePages, err := loadExamplePages(exampleSource, srcDir)
 	if err != nil {
 		fatal(err)
 	}
@@ -306,7 +367,7 @@ type exampleDoc struct {
 	Code        string
 }
 
-func loadExamplePages(source string) ([]page, error) {
+func loadExamplePages(source, docsSource string) ([]page, error) {
 	if strings.TrimSpace(source) == "" {
 		return nil, nil
 	}
@@ -345,7 +406,7 @@ func loadExamplePages(source string) ([]page, error) {
 		return nil, nil
 	}
 	pages := []page{exampleIndexPage(source, examples)}
-	pages = append(pages, exampleGroupPages(source, examples)...)
+	pages = append(pages, exampleGroupPages(source, docsSource, examples)...)
 	for _, example := range examples {
 		pages = append(pages, examplePage(example))
 	}
@@ -444,7 +505,7 @@ func exampleIndexPage(root string, examples []exampleDoc) page {
 	return page{Source: "examples", Origin: root, Output: "examples/index.html", Title: "Examples", HTML: body.String(), Depth: 0}
 }
 
-func exampleGroupPages(root string, examples []exampleDoc) []page {
+func exampleGroupPages(root, docsSource string, examples []exampleDoc) []page {
 	groups := exampleGroups(examples)
 	names := multiFileExampleGroupNames(root, examples)
 	pages := make([]page, 0, len(names))
@@ -456,7 +517,7 @@ func exampleGroupPages(root string, examples []exampleDoc) []page {
 		body.WriteString(`<h1>` + html.EscapeString(title) + `</h1>`)
 		body.WriteString(`<p class="lead">This is a multi-file example. Use the links below to inspect each source file in the example tree.</p>`)
 		if readme, ok := readExampleReadme(root, name); ok {
-			body.WriteString(markdownToHTML([]byte(readme)))
+			body.WriteString(exampleReadmeHTML(readme, root, docsSource, name))
 		}
 		body.WriteString(`<h2>Files</h2><div class="list-group mb-4">`)
 		for _, file := range files {
@@ -730,8 +791,12 @@ func apiSlug(source string) string {
 }
 
 func markdownToHTML(content []byte) string {
+	return renderMarkdown(content, docMarkdown)
+}
+
+func renderMarkdown(content []byte, markdown goldmark.Markdown) string {
 	var buf bytes.Buffer
-	_ = docMarkdown.Convert(content, &buf)
+	_ = markdown.Convert(content, &buf)
 	result := buf.String()
 	result = strings.ReplaceAll(result, "<table>", `<div class="table-responsive"><table class="table table-bordered table-sm">`)
 	result = strings.ReplaceAll(result, "</table>", "</table></div>")

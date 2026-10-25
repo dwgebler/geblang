@@ -401,6 +401,6 @@ single-quoted strings `'like this'` do not interpolate.
 - [geo reference](../stdlib/35-geo.md) - geodetic functions
 - [math and datetime](../stdlib/11-math-datetime.md) - special functions, rounding, combinatorics
 - [data formats](../stdlib/07-data-formats.md) - CSV, JSON, YAML, TOML, schema validation
-- [examples/ndarray.gb](../../../examples/ndarray.gb) - runnable array examples
-- [examples/dataframe.gb](../../../examples/dataframe.gb) - runnable dataframe examples
-- [examples/math.gb](../../../examples/math.gb) - math module examples
+- [examples/ndarray.gb](https://github.com/dwgebler/geblang/blob/main/examples/ndarray.gb) - runnable array examples
+- [examples/dataframe.gb](https://github.com/dwgebler/geblang/blob/main/examples/dataframe.gb) - runnable dataframe examples
+- [examples/math.gb](https://github.com/dwgebler/geblang/blob/main/examples/math.gb) - math module examples

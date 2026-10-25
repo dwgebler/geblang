@@ -490,10 +490,10 @@ falsy. Write `if (n != 0)`, `if (ptr != null)`, `if (items.length() > 0)`.
 - [clib.magic](../stdlib/28-clib-magic.md) - MIME and file-type detection
 - [clib.systemd](../stdlib/26-clib-systemd.md) - sd_notify and journald
 - [clib.curses](../stdlib/29-clib-curses.md) - full-screen TUI via libncurses
-- [examples/ffi_libm.gb](../../../examples/ffi_libm.gb) - FFI with libm
-- [examples/ffi_sqlite.gb](../../../examples/ffi_sqlite.gb) - FFI SQLite binding
-- [examples/proc_streaming.gb](../../../examples/proc_streaming.gb) - subprocess streaming
-- [examples/proc_pty.gb](../../../examples/proc_pty.gb) - PTY mode
-- [examples/sockets_echo.gb](../../../examples/sockets_echo.gb) - echo server
-- [examples/binary_pack.gb](../../../examples/binary_pack.gb) - binary packing
-- [examples/bytes.gb](../../../examples/bytes.gb) - byte buffer operations
+- [examples/ffi_libm.gb](https://github.com/dwgebler/geblang/blob/main/examples/ffi_libm.gb) - FFI with libm
+- [examples/ffi_sqlite.gb](https://github.com/dwgebler/geblang/blob/main/examples/ffi_sqlite.gb) - FFI SQLite binding
+- [examples/proc_streaming.gb](https://github.com/dwgebler/geblang/blob/main/examples/proc_streaming.gb) - subprocess streaming
+- [examples/proc_pty.gb](https://github.com/dwgebler/geblang/blob/main/examples/proc_pty.gb) - PTY mode
+- [examples/sockets_echo.gb](https://github.com/dwgebler/geblang/blob/main/examples/sockets_echo.gb) - echo server
+- [examples/binary_pack.gb](https://github.com/dwgebler/geblang/blob/main/examples/binary_pack.gb) - binary packing
+- [examples/bytes.gb](https://github.com/dwgebler/geblang/blob/main/examples/bytes.gb) - byte buffer operations

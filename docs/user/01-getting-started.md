@@ -110,7 +110,7 @@ REPL, and all other tooling to work.
 The binary is self-contained: it embeds the standard library, so copying just
 the `geblang` file anywhere is enough - no extra files and no environment
 variables. (To develop against a stdlib checkout instead, point `GEBLANG_STDLIB`
-at it; see [Modules and Packages](07-modules-packages.html).)
+at it; see [Modules and Packages](07-modules-packages.md).)
 
 **Linux and macOS:**
 

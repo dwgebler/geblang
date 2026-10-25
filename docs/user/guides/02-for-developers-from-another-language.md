@@ -421,5 +421,5 @@ one. Iterate over characters with `.chars()` on a string.
 - [Errors](../08-errors.md) - the error hierarchy and custom error classes.
 - [Async and Generators](../09-async-generators.md) - tasks, channels, and
   lazy generators.
-- [examples/](../../../examples/) - runnable example programs covering the full
+- [examples/](https://github.com/dwgebler/geblang/tree/main/examples) - runnable example programs covering the full
   language surface.
