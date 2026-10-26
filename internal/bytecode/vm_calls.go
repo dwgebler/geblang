@@ -6,6 +6,7 @@ import (
 	argbinding "geblang/internal/binding"
 	"geblang/internal/native"
 	"geblang/internal/overload"
+	"geblang/internal/profiling"
 	"geblang/internal/runtime"
 	"sort"
 	"strings"
@@ -72,6 +73,9 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	// fields to defaults for the new function.
 	frame := &vm.frames[len(vm.frames)-1]
 	frame.functionName = function.Name
+	if profiling.Active {
+		vm.profileSample(0, true)
+	}
 	frame.meta = function.frameMeta
 	frame.returnBindings = nil
 	if function.frameMeta != nil && function.frameMeta.needsBindings && len(args) > 0 {
@@ -490,6 +494,9 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	frame.returnIP = ip
 	frame.returnOverride = nil
 	frame.functionName = function.Name
+	if profiling.Active {
+		vm.profileSample(0, true)
+	}
 	frame.meta = function.frameMeta
 	frame.returnBindings = nil
 	if function.frameMeta != nil && function.frameMeta.needsBindings {
@@ -1000,6 +1007,9 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	frame.returnIP = ip
 	frame.returnOverride = returnOverride
 	frame.functionName = function.Name
+	if profiling.Active {
+		vm.profileSample(0, true)
+	}
 	frame.meta = function.frameMeta
 	frame.returnBindings = nil
 	if function.frameMeta != nil && function.frameMeta.needsBindings {
@@ -2156,12 +2166,12 @@ func (vm *VM) reorderCallableNamedArgs(instruction Instruction, callee runtime.V
 	case runtime.BytecodeFunction:
 		// A cross-module callee's Index indexes its home chunk, not ours.
 		if v.Module != vm.moduleName && vm.moduleLoader != nil {
-			return vm.orderCrossModuleNamedArgs(v.Module, v.Index, v.Name, 0, args, names)
+			return vm.orderCrossModuleNamedArgs(v.Module, v.Index, 0, args, names)
 		}
 		funcIdx = v.Index
 	case runtime.BytecodeClosure:
 		if v.Module != vm.moduleName && vm.moduleLoader != nil {
-			return vm.orderCrossModuleNamedArgs(v.Module, v.FunctionIndex, "<closure>", len(v.Upvalues), args, names)
+			return vm.orderCrossModuleNamedArgs(v.Module, v.FunctionIndex, len(v.Upvalues), args, names)
 		}
 		funcIdx = v.FunctionIndex
 	default:
@@ -3048,7 +3058,7 @@ func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime
 	// Only a foreign-class instance dispatches via the trampoline wrapper; a local instance resolves directly (the wrapper routes cross-module to the loader, so using it on the instance's own module VM would recurse).
 	if instance.Class.Module != vm.moduleName {
 		if nativeMethods := instance.Class.Methods[strings.ToLower(name)]; len(nativeMethods) > 0 && nativeMethods[0].Native != nil {
-			return nativeMethods[0].Native(instance, args)
+			return vm.callNativeMethod(nativeMethods[0], instance, args)
 		}
 	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
@@ -3358,6 +3368,12 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	}
 	// Chain a synchronous same-goroutine module re-entry from inside this callback to the live worker that invoked it (nil when not re-entering).
 	callVM.reentryHost = reentryHost
+	// Profiler link: a VM that has handed out no closures is reachable only from this goroutine, so it stays blocked here while callVM runs.
+	if vm.escapedRefs.Load() == 0 {
+		callVM.profileParent = vm
+	} else {
+		callVM.profileParent = nil
+	}
 	// The callVM is a wrap-bridge worker: its setGlobalVM writes feed the
 	// write-back loop below, so it must take the locked + dirty-tracking
 	// path even if no further wrap fires inside it.

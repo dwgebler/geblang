@@ -3,14 +3,16 @@ package evaluator
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"geblang/internal/ast"
 	"geblang/internal/cdp"
+	"geblang/internal/imagediff"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
 )
@@ -21,10 +23,247 @@ type browserRoute struct {
 	page    *cdp.Page
 }
 
+type browserViewport struct {
+	width, height int
+	scale         float64
+	mobile        bool
+}
+
+// pageSetup is what a browser or context applies to every page it opens.
+type pageSetup struct {
+	viewport  *browserViewport
+	userAgent string
+	locale    string
+	timezone  string
+}
+
+type browserContext struct {
+	browser *cdp.Browser
+	id      string
+	setup   pageSetup
+}
+
+const defaultBrowserTimeout = 30 * time.Second
+
 // jsLit JSON-encodes a string into a safe JavaScript string literal.
 func jsLit(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+func browserErr(err error) error {
+	var te *cdp.TimeoutError
+	if errors.As(err, &te) {
+		return runtime.ClassifiedError{Class: "TimeoutError", Message: te.Error()}
+	}
+	return err
+}
+
+func optsArg(args []runtime.Value, i int, name string) (runtime.Dict, error) {
+	if len(args) <= i {
+		return runtime.NewDict(), nil
+	}
+	switch v := args[i].(type) {
+	case runtime.Dict:
+		return v, nil
+	case runtime.Null:
+		return runtime.NewDict(), nil
+	}
+	return runtime.Dict{}, fmt.Errorf("%s: options must be a dict", name)
+}
+
+func optFloat(d runtime.Dict, key, name string, def float64) (float64, error) {
+	v, ok := dictField(d, key)
+	if !ok {
+		return def, nil
+	}
+	f, err := native.FloatLike(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %s must be a number", name, key)
+	}
+	return f, nil
+}
+
+func optInt(d runtime.Dict, key, name string, def int) (int, error) {
+	v, ok := dictField(d, key)
+	if !ok {
+		return def, nil
+	}
+	n, ok := native.AsInt64(v)
+	if !ok {
+		return 0, fmt.Errorf("%s: %s must be an int", name, key)
+	}
+	return int(n), nil
+}
+
+func optBool(d runtime.Dict, key, name string, def bool) (bool, error) {
+	v, ok := dictField(d, key)
+	if !ok {
+		return def, nil
+	}
+	b, ok := v.(runtime.Bool)
+	if !ok {
+		return false, fmt.Errorf("%s: %s must be a bool", name, key)
+	}
+	return b.Value, nil
+}
+
+func optString(d runtime.Dict, key, name, def string) (string, error) {
+	v, ok := dictField(d, key)
+	if !ok {
+		return def, nil
+	}
+	s, ok := v.(runtime.String)
+	if !ok {
+		return "", fmt.Errorf("%s: %s must be a string", name, key)
+	}
+	return s.Value, nil
+}
+
+func optDict(d runtime.Dict, key, name string) (runtime.Dict, bool, error) {
+	v, ok := dictField(d, key)
+	if !ok {
+		return runtime.Dict{}, false, nil
+	}
+	sub, ok := v.(runtime.Dict)
+	if !ok {
+		return runtime.Dict{}, false, fmt.Errorf("%s: %s must be a dict", name, key)
+	}
+	return sub, true, nil
+}
+
+func optTimeout(d runtime.Dict, name string) (time.Duration, error) {
+	ms, err := optInt(d, "timeoutMs", name, int(defaultBrowserTimeout/time.Millisecond))
+	if err != nil {
+		return 0, err
+	}
+	if ms <= 0 {
+		return 0, fmt.Errorf("%s: timeoutMs must be positive", name)
+	}
+	return time.Duration(ms) * time.Millisecond, nil
+}
+
+func optWaitUntil(d runtime.Dict, name string) (string, error) {
+	v, err := optString(d, "waitUntil", name, "load")
+	if err != nil {
+		return "", err
+	}
+	event, ok := cdp.LifecycleEvent(v)
+	if !ok {
+		return "", fmt.Errorf("%s: waitUntil must be load, domcontentloaded or networkidle", name)
+	}
+	return event, nil
+}
+
+func parseViewport(d runtime.Dict, name string) (*browserViewport, error) {
+	w, err := optInt(d, "width", name, 0)
+	if err != nil {
+		return nil, err
+	}
+	h, err := optInt(d, "height", name, 0)
+	if err != nil {
+		return nil, err
+	}
+	if w <= 0 || h <= 0 {
+		return nil, fmt.Errorf("%s: viewport needs a positive width and height", name)
+	}
+	scale, err := optFloat(d, "deviceScaleFactor", name, 1)
+	if err != nil {
+		return nil, err
+	}
+	mobile, err := optBool(d, "mobile", name, false)
+	if err != nil {
+		return nil, err
+	}
+	return &browserViewport{width: w, height: h, scale: scale, mobile: mobile}, nil
+}
+
+func parseSetup(d runtime.Dict, name string, withContextFields bool) (pageSetup, error) {
+	var s pageSetup
+	if vp, ok, err := optDict(d, "viewport", name); err != nil {
+		return s, err
+	} else if ok {
+		if s.viewport, err = parseViewport(vp, name); err != nil {
+			return s, err
+		}
+	}
+	if !withContextFields {
+		return s, nil
+	}
+	var err error
+	if s.userAgent, err = optString(d, "userAgent", name, ""); err != nil {
+		return s, err
+	}
+	if s.locale, err = optString(d, "locale", name, ""); err != nil {
+		return s, err
+	}
+	if s.timezone, err = optString(d, "timezone", name, ""); err != nil {
+		return s, err
+	}
+	return s, nil
+}
+
+func setViewport(p *cdp.Page, v browserViewport) error {
+	_, err := p.Send("Emulation.setDeviceMetricsOverride", map[string]any{"width": v.width, "height": v.height, "deviceScaleFactor": v.scale, "mobile": v.mobile})
+	if err == nil {
+		_, err = p.Send("Emulation.setTouchEmulationEnabled", map[string]any{"enabled": v.mobile})
+	}
+	return err
+}
+
+func (s pageSetup) apply(p *cdp.Page) error {
+	if s.viewport != nil {
+		if err := setViewport(p, *s.viewport); err != nil {
+			return err
+		}
+	}
+	if s.userAgent != "" {
+		if _, err := p.Send("Emulation.setUserAgentOverride", map[string]any{"userAgent": s.userAgent}); err != nil {
+			return err
+		}
+	}
+	if s.locale != "" {
+		if _, err := p.Send("Emulation.setLocaleOverride", map[string]any{"locale": s.locale}); err != nil {
+			return err
+		}
+	}
+	if s.timezone != "" {
+		if _, err := p.Send("Emulation.setTimezoneOverride", map[string]any{"timezoneId": s.timezone}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// orderedDict builds a dict from alternating string keys and values, keeping their order.
+func orderedDict(pairs ...any) runtime.Dict {
+	d := runtime.NewDict()
+	for i := 0; i+1 < len(pairs); i += 2 {
+		key := runtime.String{Value: pairs[i].(string)}
+		d.PutEntry(dictKey(key), runtime.DictEntry{Key: key, Value: pairs[i+1].(runtime.Value)})
+	}
+	return d
+}
+
+func stringMapDict(m map[string]string) runtime.Dict {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	d := runtime.NewDict()
+	for _, k := range keys {
+		key := runtime.String{Value: k}
+		d.PutEntry(dictKey(key), runtime.DictEntry{Key: key, Value: runtime.String{Value: m[k]}})
+	}
+	return d
+}
+
+func nullableString(s string) runtime.Value {
+	if s == "" {
+		return runtime.Null{}
+	}
+	return runtime.String{Value: s}
 }
 
 func (e *Evaluator) browserLaunch(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -34,34 +273,38 @@ func (e *Evaluator) browserLaunch(call *ast.CallExpression, args []runtime.Value
 	if err := native.RequireBrowser("browser.launch"); err != nil {
 		return nil, err
 	}
+	o, err := optsArg(args, 0, "browser.launch")
+	if err != nil {
+		return nil, err
+	}
 	opts := cdp.LaunchOptions{Headless: true}
-	if len(args) == 1 {
-		o, ok := args[0].(runtime.Dict)
+	if opts.Executable, err = optString(o, "executable", "browser.launch", ""); err != nil {
+		return nil, err
+	}
+	if opts.Headless, err = optBool(o, "headless", "browser.launch", true); err != nil {
+		return nil, err
+	}
+	if ms, err := optInt(o, "timeoutMs", "browser.launch", 0); err != nil {
+		return nil, err
+	} else if ms > 0 {
+		opts.Timeout = time.Duration(ms) * time.Millisecond
+	}
+	if v, ok := dictField(o, "args"); ok {
+		list, ok := v.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("browser.launch: opts must be a dict")
+			return nil, fmt.Errorf("browser.launch: args must be a list of strings")
 		}
-		if v, ok := dictStringField(o, "executable"); ok {
-			opts.Executable = v
-		}
-		if v, ok := dictField(o, "headless"); ok {
-			if b, ok := v.(runtime.Bool); ok {
-				opts.Headless = b.Value
+		for _, el := range list.Elements {
+			s, ok := el.(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("browser.launch: args must be a list of strings")
 			}
+			opts.Args = append(opts.Args, s.Value)
 		}
-		if v, ok := dictField(o, "timeoutMs"); ok {
-			if n, ok := native.AsInt64(v); ok {
-				opts.Timeout = time.Duration(n) * time.Millisecond
-			}
-		}
-		if v, ok := dictField(o, "args"); ok {
-			if list, ok := v.(*runtime.List); ok {
-				for _, el := range list.Elements {
-					if s, ok := el.(runtime.String); ok {
-						opts.Args = append(opts.Args, s.Value)
-					}
-				}
-			}
-		}
+	}
+	setup, err := parseSetup(o, "browser.launch", false)
+	if err != nil {
+		return nil, err
 	}
 	b, err := cdp.Launch(opts)
 	if err != nil {
@@ -71,8 +314,160 @@ func (e *Evaluator) browserLaunch(call *ast.CallExpression, args []runtime.Value
 	id := e.nextBrowserID
 	e.nextBrowserID++
 	e.browsers[id] = b
+	if e.browserSetups == nil {
+		e.browserSetups = map[*cdp.Browser]pageSetup{}
+	}
+	e.browserSetups[b] = setup
 	e.browserMu.Unlock()
 	return &runtime.Instance{Class: e.browserClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(id)}}, nil
+}
+
+func imageArg(v runtime.Value, name string) ([]byte, error) {
+	switch v := v.(type) {
+	case runtime.Bytes:
+		return v.Value, nil
+	case runtime.String:
+		return os.ReadFile(v.Value)
+	}
+	return nil, fmt.Errorf("%s: images must be a file path or bytes", name)
+}
+
+func compareResultDict(r imagediff.Result) runtime.Dict {
+	return orderedDict(
+		"diffPixels", runtime.NewInt64(int64(r.DiffPixels)),
+		"ratio", runtime.Float{Value: r.Ratio},
+		"width", runtime.NewInt64(int64(r.Width)),
+		"height", runtime.NewInt64(int64(r.Height)),
+		"sameSize", runtime.Bool{Value: r.SameSize},
+	)
+}
+
+func optThreshold(o runtime.Dict, name string) (float64, error) {
+	t, err := optFloat(o, "threshold", name, 0.1)
+	if err != nil {
+		return 0, err
+	}
+	if t < 0 || t > 1 {
+		return 0, fmt.Errorf("%s: threshold must be between 0 and 1", name)
+	}
+	return t, nil
+}
+
+func (e *Evaluator) browserCompareImages(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	const name = "browser.compareImages"
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects (a, b, opts?)", name)
+	}
+	var imgs [2][]byte
+	for i := range imgs {
+		data, err := imageArg(args[i], name)
+		if err != nil {
+			return nil, err
+		}
+		imgs[i] = data
+	}
+	o, err := optsArg(args, 2, name)
+	if err != nil {
+		return nil, err
+	}
+	threshold, err := optThreshold(o, name)
+	if err != nil {
+		return nil, err
+	}
+	diffPath, err := optString(o, "diffPath", name, "")
+	if err != nil {
+		return nil, err
+	}
+	a, err := imagediff.Decode(imgs[0])
+	if err != nil {
+		return nil, fmt.Errorf("%s: first image: %w", name, err)
+	}
+	b, err := imagediff.Decode(imgs[1])
+	if err != nil {
+		return nil, fmt.Errorf("%s: second image: %w", name, err)
+	}
+	r, diff := imagediff.Compare(a, b, threshold)
+	if diffPath != "" && diff != nil {
+		if err := imagediff.WritePNG(diffPath, diff); err != nil {
+			return nil, err
+		}
+	}
+	return compareResultDict(r), nil
+}
+
+func handleOf(this *runtime.Instance) (int64, bool) {
+	return native.AsInt64(this.Fields["handle"])
+}
+
+func nativeMethod(cls *runtime.Class, name string, fn func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error)) {
+	cls.Methods[strings.ToLower(name)] = []runtime.Function{{Name: name, Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		v, err := fn(this, args)
+		return v, browserErr(err)
+	}}}
+}
+
+func noArgs(args []runtime.Value, name string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("%s takes no arguments", name)
+	}
+	return nil
+}
+
+func (e *Evaluator) pageInstance(p *cdp.Page) runtime.Value {
+	e.browserMu.Lock()
+	defer e.browserMu.Unlock()
+	for pid, existing := range e.pages {
+		if existing == p {
+			return &runtime.Instance{Class: e.pageClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(pid)}}
+		}
+	}
+	pid := e.nextPageID
+	e.nextPageID++
+	e.pages[pid] = p
+	return &runtime.Instance{Class: e.pageClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(pid)}}
+}
+
+func (e *Evaluator) openPage(b *cdp.Browser, contextID string, setup pageSetup) (runtime.Value, error) {
+	p, err := b.NewPageIn(contextID)
+	if err != nil {
+		return nil, err
+	}
+	if err := setup.apply(p); err != nil {
+		_ = p.Close()
+		return nil, err
+	}
+	return e.pageInstance(p), nil
+}
+
+// listPages wraps the open page targets accepted by keep, attaching to any the program has not seen.
+func (e *Evaluator) listPages(b *cdp.Browser, keep func(cdp.TargetInfo) bool) (runtime.Value, error) {
+	infos, err := b.PageTargetInfos()
+	if err != nil {
+		return nil, err
+	}
+	e.browserMu.Lock()
+	byTarget := map[string]*cdp.Page{}
+	for _, pg := range e.pages {
+		if pg.Browser() == b {
+			byTarget[pg.TargetID] = pg
+		}
+	}
+	e.browserMu.Unlock()
+	out := make([]runtime.Value, 0, len(infos))
+	for _, info := range infos {
+		if !keep(info) {
+			continue
+		}
+		pg, ok := byTarget[info.TargetID]
+		if !ok {
+			if pg, err = b.AttachPage(info.TargetID); err != nil {
+				continue
+			}
+			pg.ContextID = info.ContextID
+		}
+		out = append(out, e.pageInstance(pg))
+	}
+	return &runtime.List{Elements: out}, nil
 }
 
 func (e *Evaluator) browserClass() *runtime.Class {
@@ -80,36 +475,68 @@ func (e *Evaluator) browserClass() *runtime.Class {
 		return e.browserClassCache
 	}
 	get := func(this *runtime.Instance) (*cdp.Browser, error) {
-		id, ok := this.Fields["handle"].(runtime.Int)
+		id, ok := handleOf(this)
 		if !ok {
 			return nil, fmt.Errorf("invalid browser handle")
 		}
 		e.browserMu.Lock()
 		defer e.browserMu.Unlock()
-		b, ok := e.browsers[id.Value.Int64()]
+		b, ok := e.browsers[id]
 		if !ok {
 			return nil, fmt.Errorf("browser is closed")
 		}
 		return b, nil
 	}
 	cls := &runtime.Class{Name: "Browser", Module: "browser", Fields: []runtime.Field{{Name: "handle"}}, Methods: map[string][]runtime.Function{}}
-	cls.Methods["newpage"] = []runtime.Function{{Name: "newPage", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
+	nativeMethod(cls, "newPage", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if err := noArgs(args, "Browser.newPage"); err != nil {
+			return nil, err
+		}
 		b, err := get(this)
 		if err != nil {
 			return nil, err
 		}
-		p, err := b.NewPage()
+		e.browserMu.Lock()
+		setup := e.browserSetups[b]
+		e.browserMu.Unlock()
+		return e.openPage(b, "", setup)
+	})
+	nativeMethod(cls, "newContext", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		b, err := get(this)
+		if err != nil {
+			return nil, err
+		}
+		if len(args) > 1 {
+			return nil, fmt.Errorf("Browser.newContext expects (opts?)")
+		}
+		o, err := optsArg(args, 0, "Browser.newContext")
+		if err != nil {
+			return nil, err
+		}
+		setup, err := parseSetup(o, "Browser.newContext", true)
+		if err != nil {
+			return nil, err
+		}
+		if setup.viewport == nil {
+			e.browserMu.Lock()
+			setup.viewport = e.browserSetups[b].viewport
+			e.browserMu.Unlock()
+		}
+		cid, err := b.NewContext()
 		if err != nil {
 			return nil, err
 		}
 		e.browserMu.Lock()
-		pid := e.nextPageID
-		e.nextPageID++
-		e.pages[pid] = p
+		if e.browserContexts == nil {
+			e.browserContexts = map[int64]*browserContext{}
+		}
+		id := e.nextContextID
+		e.nextContextID++
+		e.browserContexts[id] = &browserContext{browser: b, id: cid, setup: setup}
 		e.browserMu.Unlock()
-		return &runtime.Instance{Class: e.pageClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(pid)}}, nil
-	}}}
-	cls.Methods["version"] = []runtime.Function{{Name: "version", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
+		return &runtime.Instance{Class: e.contextClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(id)}}, nil
+	})
+	nativeMethod(cls, "version", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		b, err := get(this)
 		if err != nil {
 			return nil, err
@@ -119,435 +546,167 @@ func (e *Evaluator) browserClass() *runtime.Class {
 			return nil, err
 		}
 		return runtime.String{Value: v}, nil
-	}}}
-	cls.Methods["pages"] = []runtime.Function{{Name: "pages", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
+	})
+	nativeMethod(cls, "pages", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		b, err := get(this)
 		if err != nil {
 			return nil, err
 		}
-		ids, err := b.PageTargets()
-		if err != nil {
-			return nil, err
-		}
-		e.browserMu.Lock()
-		byTarget := map[string]int64{}
-		for pid, pg := range e.pages {
-			byTarget[pg.TargetID] = pid
-		}
-		e.browserMu.Unlock()
-		out := make([]runtime.Value, 0, len(ids))
-		for _, tid := range ids {
-			pid, ok := byTarget[tid]
-			if !ok {
-				pg, aerr := b.AttachPage(tid)
-				if aerr != nil {
-					continue
-				}
-				e.browserMu.Lock()
-				pid = e.nextPageID
-				e.nextPageID++
-				e.pages[pid] = pg
-				e.browserMu.Unlock()
-			}
-			out = append(out, &runtime.Instance{Class: e.pageClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(pid)}})
-		}
-		return &runtime.List{Elements: out}, nil
-	}}}
-	cls.Methods["close"] = []runtime.Function{{Name: "close", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
-		id, ok := this.Fields["handle"].(runtime.Int)
+		return e.listPages(b, func(cdp.TargetInfo) bool { return true })
+	})
+	nativeMethod(cls, "close", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		id, ok := handleOf(this)
 		if !ok {
 			return runtime.Null{}, nil
 		}
 		e.browserMu.Lock()
-		b := e.browsers[id.Value.Int64()]
-		delete(e.browsers, id.Value.Int64())
+		b := e.browsers[id]
+		delete(e.browsers, id)
+		if b != nil {
+			delete(e.browserSetups, b)
+			for pid, pg := range e.pages {
+				if pg.Browser() == b {
+					delete(e.pages, pid)
+				}
+			}
+			for cid, c := range e.browserContexts {
+				if c.browser == b {
+					delete(e.browserContexts, cid)
+				}
+			}
+		}
 		e.browserMu.Unlock()
 		if b != nil {
 			b.Close()
 		}
 		return runtime.Null{}, nil
-	}}}
+	})
 	e.browserClassCache = cls
 	return cls
 }
 
-func (e *Evaluator) pageClass() *runtime.Class {
-	if e.pageClassCache != nil {
-		return e.pageClassCache
+func cookieList(res json.RawMessage) runtime.Value {
+	var r struct {
+		Cookies json.RawMessage `json:"cookies"`
 	}
-	get := func(this *runtime.Instance) (*cdp.Page, error) {
-		id, ok := this.Fields["handle"].(runtime.Int)
+	if err := json.Unmarshal(res, &r); err != nil || len(r.Cookies) == 0 {
+		return &runtime.List{}
+	}
+	val, perr := native.ParseJSONText(string(r.Cookies))
+	if perr != nil {
+		return &runtime.List{}
+	}
+	return val
+}
+
+func cookieParams(args []runtime.Value, name string) (map[string]any, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects (cookie)", name)
+	}
+	d, ok := args[0].(runtime.Dict)
+	if !ok {
+		return nil, fmt.Errorf("%s: argument must be a dict", name)
+	}
+	raw, err := native.ValueToJSON(d)
+	if err != nil {
+		return nil, err
+	}
+	params, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s: argument must be a dict", name)
+	}
+	return params, nil
+}
+
+func (e *Evaluator) contextClass() *runtime.Class {
+	if e.contextClassCache != nil {
+		return e.contextClassCache
+	}
+	get := func(this *runtime.Instance) (*browserContext, error) {
+		id, ok := handleOf(this)
 		if !ok {
-			return nil, fmt.Errorf("invalid page handle")
+			return nil, fmt.Errorf("invalid context handle")
 		}
 		e.browserMu.Lock()
 		defer e.browserMu.Unlock()
-		p, ok := e.pages[id.Value.Int64()]
+		c, ok := e.browserContexts[id]
 		if !ok {
-			return nil, fmt.Errorf("page is closed")
+			return nil, fmt.Errorf("context is closed")
 		}
-		return p, nil
+		return c, nil
 	}
-	cls := &runtime.Class{Name: "Page", Module: "browser", Fields: []runtime.Field{{Name: "handle"}}, Methods: map[string][]runtime.Function{}}
-	method := func(name string, fn func(p *cdp.Page, args []runtime.Value) (runtime.Value, error)) {
-		cls.Methods[name] = []runtime.Function{{Name: name, Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-			p, err := get(this)
-			if err != nil {
-				return nil, err
-			}
-			return fn(p, args)
-		}}}
-	}
-	method("goto", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("Page.goto expects (url)")
-		}
-		url, ok := args[0].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("Page.goto: url must be a string")
-		}
-		if _, err := p.Send("Page.navigate", map[string]any{"url": url.Value}); err != nil {
+	cls := &runtime.Class{Name: "Context", Module: "browser", Fields: []runtime.Field{{Name: "handle"}}, Methods: map[string][]runtime.Function{}}
+	nativeMethod(cls, "newPage", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if err := noArgs(args, "Context.newPage"); err != nil {
 			return nil, err
 		}
-		return runtime.Null{}, waitForReady(p, 30*time.Second)
-	})
-	method("evaluate", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("Page.evaluate expects (jsExpression)")
-		}
-		js, ok := args[0].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("Page.evaluate: argument must be a string")
-		}
-		return pageEvaluate(p, js.Value)
-	})
-	method("content", func(p *cdp.Page, _ []runtime.Value) (runtime.Value, error) {
-		return pageEvaluate(p, "document.documentElement.outerHTML")
-	})
-	method("title", func(p *cdp.Page, _ []runtime.Value) (runtime.Value, error) {
-		return pageEvaluate(p, "document.title")
-	})
-	method("url", func(p *cdp.Page, _ []runtime.Value) (runtime.Value, error) {
-		return pageEvaluate(p, "location.href")
-	})
-	method("waitfor", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		if len(args) < 1 {
-			return nil, fmt.Errorf("Page.waitFor expects (selector[, timeoutMs])")
-		}
-		sel, ok := args[0].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("Page.waitFor: selector must be a string")
-		}
-		timeout := 30 * time.Second
-		if len(args) == 2 {
-			if n, ok := native.AsInt64(args[1]); ok {
-				timeout = time.Duration(n) * time.Millisecond
-			}
-		}
-		deadline := time.Now().Add(timeout)
-		js := fmt.Sprintf("!!document.querySelector(%s)", jsLit(sel.Value))
-		for {
-			if raw, err := pageEvalRaw(p, js); err == nil && string(raw) == "true" {
-				return runtime.Null{}, nil
-			}
-			if time.Now().After(deadline) {
-				return nil, fmt.Errorf("Page.waitFor: %q not found within %v", sel.Value, timeout)
-			}
-			time.Sleep(25 * time.Millisecond)
-		}
-	})
-	method("click", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		sel, err := selArg(args, "Page.click")
+		c, err := get(this)
 		if err != nil {
 			return nil, err
 		}
-		js := fmt.Sprintf("(() => { const el = document.querySelector(%s); if (!el) throw new Error('no element matches '+%s); el.scrollIntoView({block:'center',inline:'center'}); const r = el.getBoundingClientRect(); return [r.left + r.width/2, r.top + r.height/2]; })()", jsLit(sel), jsLit(sel))
-		raw, err := pageEvalRaw(p, js)
-		if err != nil {
-			return nil, err
-		}
-		var xy []float64
-		if json.Unmarshal(raw, &xy) != nil || len(xy) != 2 {
-			return nil, fmt.Errorf("Page.click: %q is not clickable", sel)
-		}
-		for _, kind := range []string{"mouseMoved", "mousePressed", "mouseReleased"} {
-			params := map[string]any{"type": kind, "x": xy[0], "y": xy[1]}
-			if kind != "mouseMoved" {
-				params["button"] = "left"
-				params["clickCount"] = 1
-			}
-			if _, err := p.Send("Input.dispatchMouseEvent", params); err != nil {
-				return nil, err
-			}
-		}
-		return runtime.Null{}, nil
+		return e.openPage(c.browser, c.id, c.setup)
 	})
-	method("type", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		sel, text, err := twoStrings(args, "Page.type", "text")
+	nativeMethod(cls, "pages", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		c, err := get(this)
 		if err != nil {
 			return nil, err
 		}
-		js := fmt.Sprintf("(() => { const el = document.querySelector(%s); if (!el) throw new Error('no element matches '+%s); el.focus(); })()", jsLit(sel), jsLit(sel))
-		if _, err := pageEvalRaw(p, js); err != nil {
+		return e.listPages(c.browser, func(info cdp.TargetInfo) bool { return info.ContextID == c.id })
+	})
+	nativeMethod(cls, "cookies", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		c, err := get(this)
+		if err != nil {
 			return nil, err
 		}
-		_, err = p.Send("Input.insertText", map[string]any{"text": text})
+		res, err := c.browser.Send("", "Storage.getCookies", map[string]any{"browserContextId": c.id})
+		if err != nil {
+			return nil, err
+		}
+		return cookieList(res), nil
+	})
+	nativeMethod(cls, "setCookie", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		c, err := get(this)
+		if err != nil {
+			return nil, err
+		}
+		cookie, err := cookieParams(args, "Context.setCookie")
+		if err != nil {
+			return nil, err
+		}
+		_, err = c.browser.Send("", "Storage.setCookies", map[string]any{"cookies": []any{cookie}, "browserContextId": c.id})
 		return runtime.Null{}, err
 	})
-	method("fill", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		sel, val, err := twoStrings(args, "Page.fill", "value")
+	nativeMethod(cls, "clearCookies", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		c, err := get(this)
 		if err != nil {
 			return nil, err
 		}
-		js := fmt.Sprintf("(() => { const el = document.querySelector(%s); if (!el) throw new Error('no element matches '+%s); el.value = %s; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); })()", jsLit(sel), jsLit(sel), jsLit(val))
-		_, err = pageEvalRaw(p, js)
+		_, err = c.browser.Send("", "Storage.clearCookies", map[string]any{"browserContextId": c.id})
 		return runtime.Null{}, err
 	})
-	method("press", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		key, err := selArg(args, "Page.press")
-		if err != nil {
-			return nil, err
-		}
-		for _, t := range []string{"keyDown", "keyUp"} {
-			params := map[string]any{"type": t, "key": key, "code": key}
-			if key == "Enter" {
-				params["windowsVirtualKeyCode"] = 13
-				if t == "keyDown" {
-					params["text"] = "\r"
-				}
-			}
-			if _, err := p.Send("Input.dispatchKeyEvent", params); err != nil {
-				return nil, err
-			}
-		}
-		return runtime.Null{}, nil
-	})
-	method("select", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		sel, val, err := twoStrings(args, "Page.select", "value")
-		if err != nil {
-			return nil, err
-		}
-		js := fmt.Sprintf("(() => { const el = document.querySelector(%s); if (!el) throw new Error('no element matches '+%s); el.value = %s; el.dispatchEvent(new Event('change', {bubbles:true})); })()", jsLit(sel), jsLit(sel), jsLit(val))
-		_, err = pageEvalRaw(p, js)
-		return runtime.Null{}, err
-	})
-	method("text", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		sel, err := selArg(args, "Page.text")
-		if err != nil {
-			return nil, err
-		}
-		return pageEvaluate(p, fmt.Sprintf("(() => { const el = document.querySelector(%s); return el ? el.textContent : null; })()", jsLit(sel)))
-	})
-	method("attribute", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		sel, name, err := twoStrings(args, "Page.attribute", "name")
-		if err != nil {
-			return nil, err
-		}
-		return pageEvaluate(p, fmt.Sprintf("(() => { const el = document.querySelector(%s); return el ? el.getAttribute(%s) : null; })()", jsLit(sel), jsLit(name)))
-	})
-	method("reload", func(p *cdp.Page, _ []runtime.Value) (runtime.Value, error) {
-		if _, err := p.Send("Page.reload", nil); err != nil {
-			return nil, err
-		}
-		return runtime.Null{}, waitForReady(p, 30*time.Second)
-	})
-	method("screenshot", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		path, err := selArg(args, "Page.screenshot")
-		if err != nil {
-			return nil, err
-		}
-		return browserCapture(p, "Page.captureScreenshot", map[string]any{"format": "png"}, path)
-	})
-	method("pdf", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		path, err := selArg(args, "Page.pdf")
-		if err != nil {
-			return nil, err
-		}
-		return browserCapture(p, "Page.printToPDF", map[string]any{}, path)
-	})
-	method("cookies", func(p *cdp.Page, _ []runtime.Value) (runtime.Value, error) {
-		res, err := p.Send("Network.getCookies", nil)
-		if err != nil {
-			return nil, err
-		}
-		var r struct {
-			Cookies json.RawMessage `json:"cookies"`
-		}
-		if err := json.Unmarshal(res, &r); err != nil || len(r.Cookies) == 0 {
-			return &runtime.List{}, nil
-		}
-		val, perr := native.ParseJSONText(string(r.Cookies))
-		if perr != nil {
-			return &runtime.List{}, nil
-		}
-		return val, nil
-	})
-	method("setcookie", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("Page.setCookie expects (cookie)")
-		}
-		d, ok := args[0].(runtime.Dict)
-		if !ok {
-			return nil, fmt.Errorf("Page.setCookie: argument must be a dict")
-		}
-		raw, err := native.ValueToJSON(d)
-		if err != nil {
-			return nil, err
-		}
-		params, ok := raw.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("Page.setCookie: argument must be a dict")
-		}
-		_, err = p.Send("Network.setCookie", params)
-		return runtime.Null{}, err
-	})
-	method("clearcookies", func(p *cdp.Page, _ []runtime.Value) (runtime.Value, error) {
-		_, err := p.Send("Network.clearBrowserCookies", nil)
-		return runtime.Null{}, err
-	})
-	method("route", func(p *cdp.Page, args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("Page.route expects (urlPattern, handler)")
-		}
-		pattern, ok := args[0].(runtime.String)
-		handler, ok2 := args[1].(runtime.Function)
-		if !ok || !ok2 {
-			return nil, fmt.Errorf("Page.route: (urlPattern, handler) expected")
-		}
-		if _, err := p.Send("Fetch.enable", map[string]any{"patterns": []map[string]any{{"urlPattern": pattern.Value}}}); err != nil {
-			return nil, err
-		}
-		e.browserMu.Lock()
-		if e.browserRoutes == nil {
-			e.browserRoutes = map[string][]browserRoute{}
-		}
-		e.browserRoutes[p.SessionID] = append(e.browserRoutes[p.SessionID], browserRoute{pattern: pattern.Value, handler: handler, page: p})
-		e.browserMu.Unlock()
-		p.Browser().OnEvent("Fetch.requestPaused", e.handleFetchPaused)
-		return runtime.Null{}, nil
-	})
-	cls.Methods["close"] = []runtime.Function{{Name: "close", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
-		id, ok := this.Fields["handle"].(runtime.Int)
+	nativeMethod(cls, "close", func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		id, ok := handleOf(this)
 		if !ok {
 			return runtime.Null{}, nil
 		}
 		e.browserMu.Lock()
-		p := e.pages[id.Value.Int64()]
-		delete(e.pages, id.Value.Int64())
-		e.browserMu.Unlock()
-		if p != nil {
-			p.Close()
-		}
-		return runtime.Null{}, nil
-	}}}
-	e.pageClassCache = cls
-	return cls
-}
-
-// waitForReady polls document.readyState until the page has finished loading or the deadline passes.
-func waitForReady(p *cdp.Page, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		v, err := pageEvaluate(p, "document.readyState")
-		if err == nil {
-			if s, ok := v.(runtime.String); ok && (s.Value == "complete" || s.Value == "interactive") {
-				return nil
+		c := e.browserContexts[id]
+		delete(e.browserContexts, id)
+		if c != nil {
+			for pid, pg := range e.pages {
+				if pg.Browser() == c.browser && pg.ContextID == c.id {
+					delete(e.pages, pid)
+				}
 			}
 		}
-		if time.Now().After(deadline) {
-			return nil
+		e.browserMu.Unlock()
+		if c != nil {
+			return runtime.Null{}, c.browser.DisposeContext(c.id)
 		}
-		time.Sleep(25 * time.Millisecond)
-	}
-}
-
-// pageEvalRaw runs JS in the page and returns the raw JSON result value, surfacing JS exceptions as an error.
-func pageEvalRaw(p *cdp.Page, js string) (json.RawMessage, error) {
-	res, err := p.Send("Runtime.evaluate", map[string]any{"expression": js, "returnByValue": true, "awaitPromise": true})
-	if err != nil {
-		return nil, err
-	}
-	var r struct {
-		Result struct {
-			Value json.RawMessage `json:"value"`
-		} `json:"result"`
-		ExceptionDetails *struct {
-			Text      string `json:"text"`
-			Exception struct {
-				Description string `json:"description"`
-			} `json:"exception"`
-		} `json:"exceptionDetails"`
-	}
-	if err := json.Unmarshal(res, &r); err != nil {
-		return nil, err
-	}
-	if r.ExceptionDetails != nil {
-		msg := r.ExceptionDetails.Exception.Description
-		if msg == "" {
-			msg = r.ExceptionDetails.Text
-		}
-		return nil, fmt.Errorf("page.evaluate: %s", msg)
-	}
-	return r.Result.Value, nil
-}
-
-func pageEvaluate(p *cdp.Page, js string) (runtime.Value, error) {
-	raw, err := pageEvalRaw(p, js)
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) == 0 || string(raw) == "null" {
 		return runtime.Null{}, nil
-	}
-	val, perr := native.ParseJSONText(string(raw))
-	if perr != nil {
-		return runtime.Null{}, nil
-	}
-	return val, nil
-}
-
-func selArg(args []runtime.Value, name string) (string, error) {
-	if len(args) != 1 {
-		return "", fmt.Errorf("%s expects one string argument", name)
-	}
-	s, ok := args[0].(runtime.String)
-	if !ok {
-		return "", fmt.Errorf("%s: argument must be a string", name)
-	}
-	return s.Value, nil
-}
-
-func twoStrings(args []runtime.Value, name, second string) (string, string, error) {
-	if len(args) != 2 {
-		return "", "", fmt.Errorf("%s expects (selector, %s)", name, second)
-	}
-	a, ok := args[0].(runtime.String)
-	b, ok2 := args[1].(runtime.String)
-	if !ok || !ok2 {
-		return "", "", fmt.Errorf("%s: (selector, %s) must be strings", name, second)
-	}
-	return a.Value, b.Value, nil
-}
-
-func browserCapture(p *cdp.Page, method string, params map[string]any, path string) (runtime.Value, error) {
-	res, err := p.Send(method, params)
-	if err != nil {
-		return nil, err
-	}
-	var r struct {
-		Data string `json:"data"`
-	}
-	if err := json.Unmarshal(res, &r); err != nil {
-		return nil, err
-	}
-	data, err := base64.StdEncoding.DecodeString(r.Data)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return nil, err
-	}
-	return runtime.Null{}, nil
+	})
+	e.contextClassCache = cls
+	return cls
 }
 
 // handleFetchPaused runs on the CDP read goroutine; it dispatches the Geblang route handler on its own goroutine so the read loop stays free to receive the resulting Fetch responses.
@@ -571,7 +730,7 @@ func (e *Evaluator) handleFetchPaused(sessionID string, params json.RawMessage) 
 	var page *cdp.Page
 	var handler runtime.Function
 	for _, r := range routes {
-		if matchURLPattern(r.pattern, ev.Request.URL) {
+		if cdp.MatchURLPattern(r.pattern, ev.Request.URL) {
 			page = r.page
 			handler = r.handler
 			break
@@ -635,38 +794,10 @@ func (e *Evaluator) handleFetchPaused(sessionID string, params json.RawMessage) 
 }
 
 func fetchRequestDict(url, method string, headers map[string]string, resourceType string) runtime.Dict {
-	entries := map[string]runtime.DictEntry{}
-	put := func(k string, v runtime.Value) {
-		key := runtime.String{Value: k}
-		entries[dictKey(key)] = runtime.DictEntry{Key: key, Value: v}
-	}
-	put("url", runtime.String{Value: url})
-	put("method", runtime.String{Value: method})
-	put("resourceType", runtime.String{Value: resourceType})
-	hdr := map[string]runtime.DictEntry{}
-	for k, v := range headers {
-		key := runtime.String{Value: k}
-		hdr[dictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.String{Value: v}}
-	}
-	put("headers", runtime.Dict{Entries: hdr})
-	return runtime.Dict{Entries: entries}
-}
-
-// matchURLPattern matches a CDP-style url pattern (only * is a wildcard) against a URL.
-func matchURLPattern(pattern, url string) bool {
-	var sb strings.Builder
-	sb.WriteString("^")
-	for _, ch := range pattern {
-		if ch == '*' {
-			sb.WriteString(".*")
-		} else {
-			sb.WriteString(regexp.QuoteMeta(string(ch)))
-		}
-	}
-	sb.WriteString("$")
-	re, err := regexp.Compile(sb.String())
-	if err != nil {
-		return false
-	}
-	return re.MatchString(url)
+	return orderedDict(
+		"url", runtime.String{Value: url},
+		"method", runtime.String{Value: method},
+		"resourceType", runtime.String{Value: resourceType},
+		"headers", stringMapDict(headers),
+	)
 }

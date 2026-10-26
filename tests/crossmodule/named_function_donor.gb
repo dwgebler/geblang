@@ -6,4 +6,6 @@ export func join3(int a, int b, int c): string { return "${a}|${b}|${c}"; }
 
 export func withDefault(int a, int b, int c = 99): string { return "${a}|${b}|${c}"; }
 
+export func skipDefaults(int a, ?string p = null, int q = 3, int w = 1): string { return "${a}|${p}|${q}|${w}"; }
+
 export func record(list<string> out, string tag): void { out.push(tag); }

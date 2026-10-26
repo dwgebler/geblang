@@ -28,6 +28,7 @@ import (
 	"geblang/internal/modules"
 	"geblang/internal/native"
 	"geblang/internal/parser"
+	"geblang/internal/profiling"
 	"geblang/internal/runtime"
 	geblangver "geblang/internal/version"
 )
@@ -56,8 +57,13 @@ func main() {
 			}
 		}()
 	}
+	// GEBLANG_PROFILE=path samples the program's Geblang call stacks and
+	// writes a report there (and folded stacks beside it) when it exits.
+	if path := os.Getenv("GEBLANG_PROFILE"); path != "" {
+		profiling.Start(path)
+	}
 	if b, err := bundle.OpenFromExecutable(); err == nil && b != nil {
-		os.Exit(runBundled(b))
+		profiling.Exit(runBundled(b))
 	}
 
 	if len(os.Args) > 1 && (os.Args[1] == "help" || os.Args[1] == "--help" || os.Args[1] == "-h") {
@@ -102,6 +108,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
 		// Explicit alias for the default script path (never re-read as a subcommand).
 		runScriptOrModule(os.Args[2:])
+		profiling.Finish()
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "test" {
@@ -194,6 +201,7 @@ func main() {
 	}
 
 	runScriptOrModule(os.Args[1:])
+	profiling.Finish()
 }
 
 func runScriptOrModule(args []string) {
@@ -231,6 +239,13 @@ func runScriptOrModule(args []string) {
 		case "--allow-browser":
 			native.SetBrowserEnabled(true)
 			args = args[1:]
+		case "--profile":
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "usage: --profile <report-path>")
+				os.Exit(2)
+			}
+			profiling.Start(args[1])
+			args = args[2:]
 		case "-m", "--module":
 			if len(args) < 2 {
 				fmt.Fprintln(os.Stderr, "usage: geblang -m <module> [args...]")
@@ -248,10 +263,10 @@ doneFlags:
 		exitCode, err := runModule(moduleName, args, mode, traceExec, allowFFI, os.Stdout, os.Stderr)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			profiling.Exit(1)
 		}
 		if exitCode != 0 {
-			os.Exit(exitCode)
+			profiling.Exit(exitCode)
 		}
 		return
 	}
@@ -290,10 +305,10 @@ doneFlags:
 	exitCode, err := runScript(args[0], args[1:], source, program, mode, allowFFI, os.Stdout, traceWriter(traceExec, os.Stderr))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		profiling.Exit(1)
 	}
 	if exitCode != 0 {
-		os.Exit(exitCode)
+		profiling.Exit(exitCode)
 	}
 }
 
@@ -321,6 +336,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  geblang --allow-process-control <script.gb>  enable privileged process ops (setuid/setgid, kill/signal by pid)")
 	fmt.Fprintln(writer, "  geblang --allow-onnx <script.gb>   enable local ONNX model inference (loads a native shared library)")
 	fmt.Fprintln(writer, "  geblang --allow-browser <script.gb>  enable headless-browser automation (launches a browser subprocess)")
+	fmt.Fprintln(writer, "  geblang --profile <report> <script.gb>  sample where the program spends its time; write a report and folded stacks")
 	fmt.Fprintln(writer, "  geblang -m <module> [args...]      run the named module's exported main()")
 	fmt.Fprintln(writer, "  geblang repl                       start the interactive REPL")
 	fmt.Fprintln(writer)
@@ -372,11 +388,14 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang repl --vm-strict")
 		return true
 	case "run":
-		fmt.Fprintln(writer, "usage: geblang [run] [--disable-vm|--vm-strict|--trace-exec] [--allow-ffi <path-or-glob>] <script.gb> [args...]")
+		fmt.Fprintln(writer, "usage: geblang [run] [--disable-vm|--vm-strict|--trace-exec] [--allow-ffi <path-or-glob>] [--profile <report>] <script.gb> [args...]")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Runs a script. VM execution is attempted by default and falls back to the evaluator when needed.")
 		fmt.Fprintln(writer, "The `run` verb is optional; `geblang app.gb` and `geblang run app.gb` are equivalent.")
 		fmt.Fprintln(writer, "`--allow-ffi <path-or-glob>` grants FFI access to matching libraries and may be repeated.")
+		fmt.Fprintln(writer, "`--profile <report>` samples the program's call stacks about once a millisecond and, when it exits,")
+		fmt.Fprintln(writer, "writes a report of where the time went to <report> and folded stacks (for flame graphs) beside it.")
+		fmt.Fprintln(writer, "GEBLANG_PROFILE=<report> does the same for any run, including a built binary.")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Examples:")
 		fmt.Fprintln(writer, "  geblang app.gb")
@@ -384,6 +403,7 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang run --allow-ffi 'libm.so.*' app.gb")
 		fmt.Fprintln(writer, "  geblang --vm-strict app.gb --port 8080")
 		fmt.Fprintln(writer, "  geblang --trace-exec app.gb")
+		fmt.Fprintln(writer, "  geblang --profile profile.txt app.gb")
 		return true
 	case "build":
 		fmt.Fprintln(writer, "usage: geblang build --entry module.name --out <path> [--native] [--runtime <path>] [--resource <path>] [--allow-ffi <glob>] [--allow-onnx] [--allow-process-control] [--allow-browser] [--docker [--docker-port N] [--force]] [<package-dir>]")

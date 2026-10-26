@@ -152,6 +152,36 @@ io.println("elapsed_ms = " + (delta["elapsed_ms"] as string));
 io.println("heap_alloc = " + (delta["heap_alloc"] as string));
 ```
 
+### Where a program spends its time
+
+`geblang run --profile profile.txt app.gb` samples the program while it runs
+and, when it exits, writes a report of where the time went:
+
+```sh
+geblang --profile profile.txt tools/simulate.gb 100000
+```
+
+About once a millisecond, each running VM records its Geblang call stack:
+the function it is in and every function that called it, across modules
+and inside `async` tasks. `profile.txt` lists the functions with the most
+samples by own time (the function itself was running), by total time (it
+or anything it called was running) and the hottest lines in loops.
+`profile.folded` beside it holds the whole stacks, one per line, in the
+format flame-graph tools read (`flamegraph.pl`, speedscope, Firefox
+Profiler's importer).
+
+Set `GEBLANG_PROFILE=profile.txt` to profile any run the same way, including
+a built binary or a server; the report is written when the program exits
+(for a server, when it shuts down). A sample is taken at the next function
+call or loop iteration after each tick, and time in a native function
+(`secureRandom`, `json`, a database query) counts towards the Geblang
+function that called it. A call counts towards the function making it. The
+evaluator (`--disable-vm`) samples at each statement and names a closure
+after the module of the function that called it.
+
+Sampling costs one check per function call and loop iteration while it is
+off, and a few percent of run time while it is on.
+
 For engine-level profiling, set `GEBLANG_PPROF=localhost:6060` when
 starting any program (script or built binary) and a standard Go
 `net/http/pprof` endpoint comes up on that address:

@@ -33,13 +33,10 @@ type Browser struct {
 
 	eventMu  sync.Mutex
 	handlers map[string]func(sessionID string, params json.RawMessage)
-}
 
-// Page is an attached page target; commands carry its session id.
-type Page struct {
-	browser   *Browser
-	TargetID  string
-	SessionID string
+	pagesMu   sync.Mutex
+	pages     map[string]*Page
+	downloads downloadLog
 }
 
 type rpcResult struct {
@@ -127,7 +124,7 @@ func Launch(opts LaunchOptions) (*Browser, error) {
 		os.RemoveAll(udd)
 		return nil, fmt.Errorf("connect to devtools: %w", err)
 	}
-	b := &Browser{cmd: cmd, conn: conn, udd: udd, pending: map[int]chan rpcResult{}, handlers: map[string]func(string, json.RawMessage){}}
+	b := &Browser{cmd: cmd, conn: conn, udd: udd, pending: map[int]chan rpcResult{}, handlers: map[string]func(string, json.RawMessage){}, pages: map[string]*Page{}}
 	go b.readLoop()
 	return b, nil
 }
@@ -197,6 +194,7 @@ func (b *Browser) readLoop() {
 			if h != nil {
 				h(msg.SessionID, msg.Params)
 			}
+			b.dispatch(msg.SessionID, msg.Method, msg.Params)
 		}
 	}
 }
@@ -266,9 +264,18 @@ func (b *Browser) OnEvent(method string, h func(sessionID string, params json.Ra
 	b.eventMu.Unlock()
 }
 
-// NewPage creates and attaches to a fresh page target.
+// NewPage creates and attaches to a fresh page target in the default context.
 func (b *Browser) NewPage() (*Page, error) {
-	res, err := b.Send("", "Target.createTarget", map[string]any{"url": "about:blank"})
+	return b.NewPageIn("")
+}
+
+// NewPageIn creates a page in a browser context ("" is the default context).
+func (b *Browser) NewPageIn(contextID string) (*Page, error) {
+	params := map[string]any{"url": "about:blank"}
+	if contextID != "" {
+		params["browserContextId"] = contextID
+	}
+	res, err := b.Send("", "Target.createTarget", params)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +285,11 @@ func (b *Browser) NewPage() (*Page, error) {
 	if err := json.Unmarshal(res, &ct); err != nil {
 		return nil, err
 	}
-	return b.AttachPage(ct.TargetID)
+	p, err := b.AttachPage(ct.TargetID)
+	if p != nil {
+		p.ContextID = contextID
+	}
+	return p, err
 }
 
 // AttachPage attaches to an existing page target and enables its domains.
@@ -293,35 +304,90 @@ func (b *Browser) AttachPage(targetID string) (*Page, error) {
 	if err := json.Unmarshal(res, &at); err != nil {
 		return nil, err
 	}
-	p := &Page{browser: b, TargetID: targetID, SessionID: at.SessionID}
+	p := newPage(b, targetID, at.SessionID)
+	b.pagesMu.Lock()
+	b.pages[at.SessionID] = p
+	b.pagesMu.Unlock()
 	for _, d := range []string{"Page.enable", "Runtime.enable", "DOM.enable", "Network.enable"} {
 		_, _ = p.Send(d, nil)
 	}
+	_, _ = p.Send("Page.setLifecycleEventsEnabled", map[string]any{"enabled": true})
 	return p, nil
+}
+
+// TargetInfo describes an open page target.
+type TargetInfo struct {
+	TargetID  string `json:"targetId"`
+	Type      string `json:"type"`
+	ContextID string `json:"browserContextId"`
 }
 
 // PageTargets returns the targetIds of all open page targets.
 func (b *Browser) PageTargets() ([]string, error) {
+	infos, err := b.PageTargetInfos()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(infos))
+	for _, t := range infos {
+		ids = append(ids, t.TargetID)
+	}
+	return ids, nil
+}
+
+// PageTargetInfos returns every open page target with its browser context.
+func (b *Browser) PageTargetInfos() ([]TargetInfo, error) {
 	res, err := b.Send("", "Target.getTargets", nil)
 	if err != nil {
 		return nil, err
 	}
 	var r struct {
-		TargetInfos []struct {
-			TargetID string `json:"targetId"`
-			Type     string `json:"type"`
-		} `json:"targetInfos"`
+		TargetInfos []TargetInfo `json:"targetInfos"`
 	}
 	if err := json.Unmarshal(res, &r); err != nil {
 		return nil, err
 	}
-	var ids []string
+	var out []TargetInfo
 	for _, t := range r.TargetInfos {
 		if t.Type == "page" {
-			ids = append(ids, t.TargetID)
+			out = append(out, t)
 		}
 	}
-	return ids, nil
+	return out, nil
+}
+
+// NewContext creates an isolated browser context with its own cookies and storage.
+func (b *Browser) NewContext() (string, error) {
+	res, err := b.Send("", "Target.createBrowserContext", map[string]any{})
+	if err != nil {
+		return "", err
+	}
+	var r struct {
+		ContextID string `json:"browserContextId"`
+	}
+	if err := json.Unmarshal(res, &r); err != nil {
+		return "", err
+	}
+	return r.ContextID, nil
+}
+
+// DisposeContext closes a browser context and every page in it.
+func (b *Browser) DisposeContext(contextID string) error {
+	_, err := b.Send("", "Target.disposeBrowserContext", map[string]any{"browserContextId": contextID})
+	return err
+}
+
+func (b *Browser) dispatch(sessionID, method string, params json.RawMessage) {
+	if sessionID == "" {
+		b.downloads.handle(method, params)
+		return
+	}
+	b.pagesMu.Lock()
+	p := b.pages[sessionID]
+	b.pagesMu.Unlock()
+	if p != nil {
+		p.handleEvent(method, params)
+	}
 }
 
 // Version returns the "Browser" product string from Browser.getVersion.
@@ -336,20 +402,6 @@ func (b *Browser) Version() (string, error) {
 	_ = json.Unmarshal(res, &v)
 	return v.Product, nil
 }
-
-// Close shuts down the page session and removes its target.
-func (p *Page) Close() error {
-	_, err := p.browser.Send("", "Target.closeTarget", map[string]any{"targetId": p.TargetID})
-	return err
-}
-
-// Send issues a CDP command on this page's session.
-func (p *Page) Send(method string, params any) (json.RawMessage, error) {
-	return p.browser.Send(p.SessionID, method, params)
-}
-
-// Browser returns the owning browser (for event registration on its connection).
-func (p *Page) Browser() *Browser { return p.browser }
 
 // Close terminates Chrome and cleans up its profile dir.
 func (b *Browser) Close() error {

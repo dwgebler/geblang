@@ -490,7 +490,7 @@ introspection builtins.
 | Module | Purpose |
 |--------|---------|
 | `io` | stdin/stdout, files (`open`, `readText`, `writeText`, `readBytes`), `exists`, `tempDir`. |
-| `sys` | env vars, args, `cwd`, `exit`, `goroutineId`. |
+| `sys` | env vars, args, `cwd`, `exit`, `goroutineId`, `cpuCount`. |
 | `path` / `pathlib` | `join`, `dir`, `base`, `ext`, `abs`; object-style paths. |
 | `json`, `yaml`, `toml`, `xml`, `csv`, `msgpack` | parse / stringify; insertion-ordered. |
 | `encoding` | base64, hex, URL encoding. |
@@ -517,7 +517,7 @@ introspection builtins.
 | `process` | own pid/uid/gid; inspect (`list`/`info`/`exists`); gated control (`kill`/`signal`/`setuid`) behind `--allow-process-control`. |
 | `file` | `File` object wrapping a handle with method-style read/write/seek and `with`-block auto-close. |
 | `llm` | provider-neutral chat/embed client (OpenAI/Anthropic/Bedrock): `chat`, `chatStream`, tool calling, `embed`/`embedBatch`. |
-| `profiler` | `timer()`, `profile()` context managers; CPU/memory/wall. |
+| `profiler` | `timer()`, `profile()` context managers; CPU/memory/wall. Whole-program sampling: `geblang run --profile <report>` / `GEBLANG_PROFILE`. |
 | `image` | decode/encode PNG/JPEG/GIF/WebP, resize, crop, rotate. |
 | `errors` | `wrap`, `is`, stack traces. |
 | `ffi`, `clib.*` | call C libraries (zstd, magic, ncurses, systemd). |

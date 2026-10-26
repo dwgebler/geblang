@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"geblang/internal/native"
+	"geblang/internal/profiling"
 	"geblang/internal/runtime"
 )
 
@@ -75,13 +76,17 @@ type VM struct {
 	moduleLoader      ModuleLoader
 	moduleName        string
 	// reentry* implement goid-free same-call-chain re-entry detection for the module loader: reentryHost links a borrowed worker to the worker that borrowed it (nil for roots), reentryActive marks a worker borrowed and executing for a module, reentryDepth balances nested reuse before release.
-	reentryHost    *VM
-	reentryActive  bool
-	reentryDepth   int
-	modulePaths    []string
-	statefulNative StatefulNativeCaller
-	classIndex     map[string]int
-	natives        *native.Registry
+	reentryHost   *VM
+	reentryActive bool
+	reentryDepth  int
+	// profileTick is the profiling tick this VM last sampled at; profileParent is the worker that invoked this one on the same goroutine (the reentry host, or a method wrapper's invoker), read only by the profiler.
+	profileTick     uint64
+	profileRootTick uint64
+	profileParent   *VM
+	modulePaths     []string
+	statefulNative  StatefulNativeCaller
+	classIndex      map[string]int
+	natives         *native.Registry
 	// nil entries fall through to evalNativeCall (statefuls / errors.is).
 	nativeCache          []native.Function
 	nativeCacheGen       uint64
@@ -198,6 +203,8 @@ type ModuleLoader interface {
 	CallModuleOverloadedNamed(module string, indices []int64, displayName string, args []runtime.Value, names []string, caller *VM) (runtime.Value, error)
 	CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value, caller *VM) (runtime.Value, error)
 	CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *VM) (runtime.Value, error)
+	// CallModuleMethodFrom is CallModuleMethod for a data-only method wrapper (no caller), naming the invoking worker for the profiler only.
+	CallModuleMethodFrom(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, invoker *VM) (runtime.Value, error)
 	// CallModuleMethodNamed dispatches a cross-module instance method with named-argument metadata, binding names in the home chunk so declared defaults engage.
 	CallModuleMethodNamed(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, names []string, caller *VM) (runtime.Value, error)
 	// CallModuleMethodValue dispatches a bound method/static value pinned to funcIndex (first overload) on its home worker; instance is the receiver, nil for a static. Applies the decorator wrapper with the receiver bound.
@@ -209,6 +216,8 @@ type ModuleLoader interface {
 	ModuleMethodParamNames(module string, className string, methodName string) ([]string, error)
 	// ModuleFunctionParamNames exposes a cross-module free function's declared parameter names so named args can be ordered at the call site.
 	ModuleFunctionParamNames(module string, index int64) ([]string, error)
+	// OrderModuleFunctionNamedArgs binds named args to a cross-module function's parameters in its home chunk, filling the declared default of any skipped parameter (a default is a home-chunk constant).
+	OrderModuleFunctionNamedArgs(module string, index int64, paramOffset int, args []runtime.Value, names []string, caller *VM) ([]runtime.Value, error)
 	// ModuleFunctionInfo exposes a cross-module function's declaration, whose index refers to its home chunk.
 	ModuleFunctionInfo(module string, index int64) (FunctionInfo, error)
 	// CallModuleStaticMethodNamed calls a static method of a class in another module, binding named arguments against its home signature.
@@ -575,7 +584,7 @@ func (vm *VM) callForeignDunder(instance *runtime.Instance, name string, args []
 			return nil, false, nil
 		}
 		if methods[0].Native != nil {
-			result, err := methods[0].Native(instance, args)
+			result, err := vm.callNativeMethod(methods[0], instance, args)
 			return result, true, err
 		}
 		if vm.moduleLoader == nil {
@@ -2217,7 +2226,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return err
 			}
 		case OpJump:
-			ip = int(instruction.Operands[0]) - 1
+			target := int(instruction.Operands[0])
+			if target <= ip && profiling.Active {
+				vm.profileSample(int(instruction.Line), false)
+			}
+			ip = target - 1
 		case OpJumpIfFalse:
 			value, err := vm.popVM()
 			if err != nil {

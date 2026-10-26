@@ -1,5 +1,80 @@
 # Release Notes
 
+## 1.38.0
+
+### New
+
+- The `browser` module can capture more than the visible viewport.
+  `screenshot(path, opts)` takes one element (`selector`), a `clip` region or
+  the `fullPage`, in `png`, `jpeg` or `webp` with a `quality`, and can make the
+  background transparent. `screenshotBytes(opts)` returns the image as bytes.
+  `pdf(path, opts)` takes page size, margins, orientation, scale and page
+  ranges. `startScreencast(dir, opts)` and `stopScreencast()` record the page as
+  numbered frames.
+- Visual regression checks: `browser.compareImages(a, b, opts)` compares two
+  PNG, JPEG or WebP images (paths or bytes) pixel by pixel with a per-pixel
+  `threshold`, and can write a highlighted difference image.
+  `page.matchScreenshot(baseline, opts)` compares a screenshot with a stored
+  baseline, creating or updating it as asked.
+- Viewport and device emulation: a `viewport` option on `browser.launch`, and
+  `setViewport`, `setUserAgent`, `emulateMedia` (print media, dark colour
+  scheme, reduced motion), `setTimezone`, `setLocale`, `setOffline`,
+  `setExtraHeaders` and `emulateFocus` on pages.
+- Waiting: `waitForFunction(js, opts)` waits until a JavaScript expression is
+  truthy and returns its value; `waitFor` takes a `state` (`attached`,
+  `visible`, `hidden`, `detached`); `goto`, `reload`, `goBack`, `goForward` and
+  the new `waitForNavigation` take `waitUntil` (`load`, `domcontentloaded`,
+  `networkidle`); `waitForRequest` and `waitForResponse` (with the response
+  body) wait for network traffic, and `requests()` lists it. Every wait takes
+  `timeoutMs` and raises `TimeoutError`.
+- `consoleMessages()`, `pageErrors()` and `clearConsole()` expose what a page
+  logged and threw. `onDialog` and `dialogs()` answer and record `alert`,
+  `confirm` and `prompt` dialogs.
+- Downloads: `setDownloadPath(dir)` and `waitForDownload()`, which names the
+  file after the server's suggested name.
+- Input by coordinates for canvas apps and games: `mouseMove`, `mouseDown`,
+  `mouseUp`, `mouseClick`, `drag` and `wheel`, plus `keyDown`, `keyUp`, key
+  combinations such as `press("Control+A")`, `hover`, `dblclick`, `focus`,
+  `check`, `uncheck`, `setInputFiles`, and `button`, `clickCount` and
+  `position` options on `click`.
+- Element queries: `count`, `isVisible`, `isEnabled`, `texts`, `innerHTML`,
+  `inputValue` and `boundingBox`.
+- `browser.newContext(opts)` returns a `Context` with its own cookies and
+  storage, so several users can run side by side in one browser. Its
+  `viewport`, `userAgent`, `locale` and `timezone` apply to each page it opens.
+- `addInitScript`, `setContent` and `bringToFront` on pages.
+- `geblang run --profile <report>` (or `GEBLANG_PROFILE=<report>`, which also
+  works for built binaries and servers) samples a program's Geblang call stacks
+  about once a millisecond, across modules and `async` tasks, and on exit
+  writes the functions and lines it spent its time in, plus folded stacks for
+  flame-graph tools. Both backends support it.
+- `sys.cpuCount()` returns how many CPUs the process can run code on at once,
+  for sizing a pool of CPU-bound `async` tasks.
+
+### Changes
+
+- `goto` and `reload` now wait for the page's `load` event by default, report
+  a navigation the browser could not complete as an error, and raise
+  `TimeoutError` when the page does not load in time. They previously returned
+  once the document was interactive, and silently after 30 seconds.
+- `waitFor` raises `TimeoutError` (a subclass of `Error`) when the selector does
+  not appear in time.
+- Dialogs no longer block a page: `alert`, `confirm` and `prompt` are dismissed
+  unless `onDialog("accept")` was called, and `beforeunload` is accepted.
+- `press` sends proper key codes for named keys and rejects unknown key names.
+- Calls into another module no longer take one process-wide lock. Calls
+  that read a module's globals share a per-module read lock, and a call that
+  reassigned none takes no lock on return, so CPU-bound `async` tasks calling
+  into the same modules scale better across cores (about 20% more throughput
+  with 12 tasks in one benchmark).
+
+### Fixes
+
+- A call to a function in another module can name a later argument and leave
+  defaulted parameters before it out (`lib.run(1, workers: 4)`). The VM
+  reported "missing argument" for the skipped parameter; the evaluator was
+  already correct.
+
 ## 1.37.8
 
 ### Fixes

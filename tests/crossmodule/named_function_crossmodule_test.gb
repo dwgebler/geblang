@@ -25,6 +25,14 @@ class NamedFunctionCrossModuleTest extends test.Test {
     }
 
     @test
+    func namedSkipsMiddleDefaults(): void {
+        this.assertEquals("1|null|3|4", named_function_donor.skipDefaults(1, w: 4));
+        this.assertEquals("1|null|7|4", named_function_donor.skipDefaults(w: 4, a: 1, q: 7));
+        let f = named_function_donor.skipDefaults;
+        this.assertEquals("1|null|3|9", f(1, w: 9));
+    }
+
+    @test
     func namedProvidedDefault(): void {
         this.assertEquals("1|2|7", named_function_donor.withDefault(c: 7, a: 1, b: 2));
     }

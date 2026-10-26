@@ -31,6 +31,7 @@ io.println(sys.cwd());
 | `platform()` | `string` | Host OS name, such as `linux`, `darwin`, or `windows` |
 | `osVersion()` | `string` | OS kernel/release string (Linux: uname release) |
 | `arch()` | `string` | CPU architecture, such as `amd64` or `arm64` |
+| `cpuCount()` | `int` | How many CPUs this process can run code on at once (see below) |
 | `hostname()` | `string` | Hostname |
 | `pid()` | `int` | Current process ID |
 | `goroutineId()` | `int` | Id of the current goroutine (see below) |
@@ -53,6 +54,15 @@ catchable error naming the platform rather than returning an empty string.
 
 Use `sys.tmpdir()` with `path.join` when you need a location, and `io.tempFile`
 or `io.tempDir` when you want Geblang to create a unique path for you.
+
+`sys.cpuCount()` is the number of CPUs Geblang can run code on at the same
+time: the machine's logical CPUs, or fewer under a container CPU limit or
+`GOMAXPROCS`. Use it to size a pool of CPU-bound `async` tasks; more tasks than
+this only take turns.
+
+```gb
+let workers = sys.cpuCount();
+```
 
 `sys.goroutineId()` returns the id of the goroutine that calls it. It is stable
 for the life of that goroutine and unique among goroutines running at the same

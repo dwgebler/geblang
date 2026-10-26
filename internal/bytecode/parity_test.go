@@ -3625,6 +3625,17 @@ io.println(sys.goroutineId() == a);
 `, "true\ntrue\n")
 }
 
+// TestParitySysCPUCount asserts properties (the count varies per machine).
+func TestParitySysCPUCount(t *testing.T) {
+	runParityWithStdlib(t, `
+import sys;
+import io;
+let n = sys.cpuCount();
+io.println(n >= 1);
+io.println(sys.cpuCount() == n);
+`, "true\ntrue\n")
+}
+
 func TestParityVectorStore(t *testing.T) {
 	runParityWithStdlib(t, `import io;
 import vectorstore as vs;

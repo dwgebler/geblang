@@ -757,6 +757,8 @@ type Function struct {
 	Metadata *FunctionMetadata
 	// NativeNamed invokes a bridge wrapper with named-argument metadata so the home function's declared defaults engage; nil for genuine natives.
 	NativeNamed func(this *Instance, args []Value, names []string) (Value, error)
+	// NativeFrom is Native naming the invoking worker (host typed any to avoid an import cycle), set on cross-module method wrappers so the profiler can link a sampled stack through the call; it dispatches exactly as Native does.
+	NativeFrom func(caller any, this *Instance, args []Value) (Value, error)
 }
 
 func (v Function) TypeName() string { return "func" }

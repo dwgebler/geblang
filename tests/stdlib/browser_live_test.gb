@@ -1,0 +1,130 @@
+/**
+ * @title browser module against a real headless Chrome
+ * @summary Screenshots, image comparison, waits, input, element queries,
+ * console and dialog capture, emulation and contexts. Every test skips unless
+ * the run has --allow-browser and Chrome is installed (make test-browser).
+ */
+import test;
+import browser;
+
+class BrowserLiveTest extends test.Test {
+    func launch(): any {
+        try {
+            return browser.launch({"args": ["--no-sandbox"], "viewport": {"width": 400, "height": 300}});
+        } catch (PermissionError e) {
+            this.skip("needs --allow-browser");
+        } catch (Error e) {
+            this.skip("no Chrome available: " + e.message);
+        }
+        return null;
+    }
+
+    @test
+    func capturesAndComparesScreenshots(): void {
+        let b = this.launch();
+        let p = b.newPage();
+        p.setContent("<body style='margin:0;background:white'><div id='d' style='width:30px;height:20px;background:blue'></div></body>");
+        let png = p.screenshotBytes({"selector": "#d"});
+        let jpeg = p.screenshotBytes({"selector": "#d", "format": "jpeg", "quality": 90});
+        this.assertGreaterThan(0, png.length());
+        let same = browser.compareImages(png, png);
+        this.assertEquals(0, same["diffPixels"]);
+        this.assertEquals(30, same["width"]);
+        let lossy = browser.compareImages(png, jpeg, {"threshold": 0.2});
+        this.assertTrue(lossy["sameSize"]);
+        this.assertEquals(0, lossy["diffPixels"]);
+        let full = p.screenshotBytes();
+        this.assertFalse(browser.compareImages(png, full)["sameSize"]);
+        this.assertThrows(func(): void { p.screenshotBytes({"format": "gif"}); }, "png, jpeg or webp");
+        this.assertThrows(func(): void { p.screenshotBytes({"selector": "#d", "fullPage": true}); }, "only one");
+        this.assertThrows(func(): void { browser.compareImages(png, png, {"threshold": 2}); }, "between 0 and 1");
+        b.close();
+    }
+
+    @test
+    func waitsForConditionsAndStates(): void {
+        let b = this.launch();
+        let p = b.newPage();
+        p.setContent("<p id='x'>x</p>");
+        p.evaluate("setTimeout(() => { window.ready = 42; }, 100); null");
+        this.assertEquals(42, p.waitForFunction("window.ready"));
+        p.evaluate("setTimeout(() => document.getElementById('x').remove(), 100); null");
+        p.waitFor("#x", {"state": "detached"});
+        this.assertThrowsOf(func(): void { p.waitFor("#x", {"state": "visible", "timeoutMs": 100}); }, "TimeoutError");
+        this.assertThrowsOf(func(): void { p.waitForFunction("false", {"timeoutMs": 100}); }, "TimeoutError");
+        this.assertThrows(func(): void { p.waitFor("#x", {"state": "gone"}); }, "attached, detached, visible or hidden");
+        b.close();
+    }
+
+    @test
+    func drivesMouseAndKeyboardAndQueries(): void {
+        let b = this.launch();
+        let p = b.newPage();
+        p.setContent("<body style='margin:0'><div id='pad' style='width:200px;height:100px'></div><input id='t' value='hello'><input id='c' type='checkbox'><span class='i'>one</span><span class='i'>two</span><button id='off' disabled>x</button></body>");
+        p.evaluate("window.log = []; pad.addEventListener('click', e => log.push(e.offsetX + ',' + e.offsetY)); null");
+        p.mouseClick(12, 34);
+        p.drag(1, 1, 50, 50);
+        this.assertEquals("12,34", p.evaluate("log[0]"));
+        p.focus("#t");
+        p.press("Control+A");
+        p.press("Backspace");
+        this.assertEquals("", p.inputValue("#t"));
+        p.check("#c");
+        this.assertEquals(true, p.evaluate("document.getElementById('c').checked"));
+        p.uncheck("#c");
+        this.assertEquals(false, p.evaluate("document.getElementById('c').checked"));
+        this.assertEquals(2, p.count(".i"));
+        this.assertEquals(["one", "two"], p.texts(".i"));
+        this.assertTrue(p.isVisible("#pad"));
+        this.assertFalse(p.isVisible("#missing"));
+        this.assertFalse(p.isEnabled("#off"));
+        this.assertEquals(200, p.boundingBox("#pad")["width"]);
+        this.assertNull(p.boundingBox("#missing"));
+        this.assertThrows(func(): void { p.press("Hyper"); }, "unknown key");
+        this.assertThrows(func(): void { p.mouseClick(1, 1, {"button": "side"}); }, "left, right or middle");
+        b.close();
+    }
+
+    @test
+    func recordsConsoleErrorsAndDialogs(): void {
+        let b = this.launch();
+        let p = b.newPage();
+        p.setContent("<p>c</p>");
+        p.evaluate("console.log('hi', 1); setTimeout(() => { throw new Error('boom'); }, 0); null");
+        p.waitForFunction("new Promise(r => setTimeout(() => r(true), 100))");
+        this.assertEquals("hi 1", p.consoleMessages()[0]["text"]);
+        this.assertContains(p.pageErrors()[0]["message"], "boom");
+        p.clearConsole();
+        this.assertEmpty(p.consoleMessages());
+        this.assertEquals(false, p.evaluate("confirm('ok?')"));
+        p.onDialog("accept", "Ada");
+        this.assertEquals("Ada", p.evaluate("prompt('name?')"));
+        this.assertEquals(2, p.dialogs().length());
+        this.assertTrue(p.dialogs()[1]["accepted"]);
+        b.close();
+    }
+
+    @test
+    func emulatesDevicesAndIsolatesContexts(): void {
+        let b = this.launch();
+        let p = b.newPage();
+        p.setContent("<p>e</p>");
+        this.assertEquals(400, p.evaluate("innerWidth"));
+        p.setViewport(320, 200);
+        this.assertEquals(320, p.evaluate("innerWidth"));
+        p.emulateMedia({"colorScheme": "dark"});
+        this.assertTrue(p.evaluate("matchMedia('(prefers-color-scheme: dark)').matches"));
+        p.setTimezone("Asia/Tokyo");
+        this.assertEquals("Asia/Tokyo", p.evaluate("Intl.DateTimeFormat().resolvedOptions().timeZone"));
+        let one = b.newContext({"userAgent": "One"});
+        let two = b.newContext();
+        this.assertEquals("One", one.newPage().evaluate("navigator.userAgent"));
+        one.setCookie({"name": "k", "value": "v", "url": "https://example.test/"});
+        this.assertEquals(1, one.cookies().length());
+        this.assertEquals(0, two.cookies().length());
+        this.assertEquals(1, one.pages().length());
+        one.close();
+        two.close();
+        b.close();
+    }
+}

@@ -133,13 +133,17 @@ func (b *NativeBridge) registerBytesDefaults() {
 	str := &types.Type{Kind: types.KindString}
 	bytesT := &types.Type{Kind: types.KindBytes}
 	b.Register("bytes", "fromString", BridgeEntry{
-		Imports:    []string{types.OrderedDictImport},
-		Emit:       func(args []ast.Expression, ctx *EmitContext) { emitBytesEncodingArg("BytesFromString", "BytesFromStringEncoding", args, ctx) },
+		Imports: []string{types.OrderedDictImport},
+		Emit: func(args []ast.Expression, ctx *EmitContext) {
+			emitBytesEncodingArg("BytesFromString", "BytesFromStringEncoding", args, ctx)
+		},
 		ReturnType: bytesT,
 	})
 	b.Register("bytes", "toString", BridgeEntry{
-		Imports:    []string{types.OrderedDictImport},
-		Emit:       func(args []ast.Expression, ctx *EmitContext) { emitBytesEncodingArg("BytesToString", "BytesToStringEncoding", args, ctx) },
+		Imports: []string{types.OrderedDictImport},
+		Emit: func(args []ast.Expression, ctx *EmitContext) {
+			emitBytesEncodingArg("BytesToString", "BytesToStringEncoding", args, ctx)
+		},
 		ReturnType: str,
 	})
 	b.Register("bytes", "fromList", transpilertCall("BytesFromList", bytesT))
@@ -330,6 +334,7 @@ func (b *NativeBridge) registerSysDefaults() {
 	null := &types.Type{Kind: types.KindNull}
 	b.Register("sys", "platform", transpilertCall("SysPlatform", str))
 	b.Register("sys", "arch", transpilertCall("SysArch", str))
+	b.Register("sys", "cpuCount", transpilertCall("SysCPUCount", &types.Type{Kind: types.KindInt}))
 	b.Register("sys", "getenv", transpilertCall("SysGetenv", anyT))
 	b.Register("sys", "setenv", transpilertCall("SysSetenv", null))
 	b.Register("sys", "cwd", transpilertCall("SysCwd", str))

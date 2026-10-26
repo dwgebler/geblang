@@ -35,6 +35,7 @@ import (
 	"geblang/internal/desugar"
 	"geblang/internal/native"
 	"geblang/internal/overload"
+	"geblang/internal/profiling"
 	"geblang/internal/runtime"
 	"geblang/internal/typealias"
 
@@ -110,9 +111,10 @@ type Evaluator struct {
 	deferFrames          []*deferFrame
 	yieldFrames          []*yieldFrame
 	callStack            []evalFrame
-	currentLine          int // most recent statement/call/throw line, for error attribution
-	hofCallLine          int // call-site line of the primitive HOF dispatching a callback, so the caller frame's trace line is the HOF call site, not a stale callback line
-	topLevelLine         int // line of the call that left the top-level frame
+	profileTick          uint64 // the profiling tick this evaluator last sampled at
+	currentLine          int    // most recent statement/call/throw line, for error attribution
+	hofCallLine          int    // call-site line of the primitive HOF dispatching a callback, so the caller frame's trace line is the HOF call site, not a stale callback line
+	topLevelLine         int    // line of the call that left the top-level frame
 	callDepth            int
 	maxCallDepth         int
 	// classStack tracks the lexical class of the currently executing
@@ -234,6 +236,10 @@ type Evaluator struct {
 	browserRoutes         map[string][]browserRoute
 	browserClassCache     *runtime.Class
 	pageClassCache        *runtime.Class
+	contextClassCache     *runtime.Class
+	browserSetups         map[*cdp.Browser]pageSetup
+	browserContexts       map[int64]*browserContext
+	nextContextID         int64
 	jsonMu                sync.Mutex
 	nextJSONID            int64
 	jsonReaders           map[int64]*jsonStreamReader
@@ -1102,6 +1108,8 @@ func (e *Evaluator) Cleanup() error {
 	e.browsers = map[int64]*cdp.Browser{}
 	e.pages = map[int64]*cdp.Page{}
 	e.browserRoutes = nil
+	e.browserSetups = nil
+	e.browserContexts = nil
 	e.browserMu.Unlock()
 	for _, b := range browsers {
 		b.Close()
@@ -1238,6 +1246,9 @@ func isHoistedDeclaration(stmt ast.Statement) bool {
 func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) (signal, error) {
 	if line := statementLine(stmt); line > 0 {
 		e.currentLine = line
+	}
+	if profiling.Active {
+		e.profileSample()
 	}
 	switch stmt := stmt.(type) {
 	case *ast.ModuleStatement:

@@ -262,6 +262,13 @@ func (vm *VM) runtimeMethodWrappers(classIndex int64) map[string][]runtime.Funct
 					}
 					return loader.CallModuleMethod(this.Class.Module, this.Class.Name, methodKey, this, args, nil)
 				},
+				NativeFrom: func(caller any, this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+					if this == nil || this.Class == nil {
+						return nil, fmt.Errorf("method receiver is not available")
+					}
+					invoker, _ := caller.(*VM)
+					return loader.CallModuleMethodFrom(this.Class.Module, this.Class.Name, methodKey, this, args, invoker)
+				},
 			}}
 			continue
 		}

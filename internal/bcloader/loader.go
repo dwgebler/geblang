@@ -32,8 +32,10 @@ type Options struct {
 
 // moduleRecord is a loaded module's published state, stored once and read lock-free. globalsVM is mutated in place under globalsMu (cross-module global write-back); the record pointer is stable.
 type moduleRecord struct {
-	module         *runtime.Module
-	chunk          bytecode.Chunk
+	module *runtime.Module
+	chunk  bytecode.Chunk
+	// globalsMu guards globalsVM: restores share the read lock, so concurrent calls into one module never wait on each other; a write-back takes the write lock. Module-global writes persist with lost-update semantics under concurrency (use a thread-safe handle for shared state).
+	globalsMu      sync.RWMutex
 	globalsVM      []runtime.VMValue
 	decorators     bytecode.FunctionDecoratorState
 	ifaceFallbacks bytecode.InterfaceFallbackState
@@ -85,8 +87,6 @@ type Loader struct {
 	loadLock *reentrantMutex
 	loading  map[string]bool
 	vmPools  sync.Map
-	// globalsMu serializes the restore-from / write-back-to a record's globalsVM so concurrent cross-module calls don't race the slice; module-global writes persist with lost-update semantics under concurrency (use a thread-safe handle for shared state).
-	globalsMu sync.Mutex
 	// mainChunk is the entry chunk so cross-module reflect lookups resolve user-script classes.
 	mainChunk    bytecode.Chunk
 	hasMainChunk bool
@@ -277,19 +277,28 @@ func (l *Loader) ifaceFallbackStateFor(module string) bytecode.InterfaceFallback
 }
 
 // restoreModuleGlobals loads a worker's globals: the entry chunk reads live from the main VM; a sub-module restores its live module globals (mutations persist via releaseModuleVM's write-back).
-func (l *Loader) restoreModuleGlobals(vm *bytecode.VM, module string) {
+func (l *Loader) restoreModuleGlobals(vm *bytecode.VM, module string, rec *moduleRecord) {
 	if module == "" && l.mainVM != nil {
 		vm.RestoreGlobals(l.mainVM.GlobalsSnapshot())
 		return
 	}
-	rec, ok := l.recordFor(module)
-	if !ok {
+	if rec == nil {
 		return
 	}
 	vm.SetPersistGlobals(true)
-	l.globalsMu.Lock()
+	rec.globalsMu.RLock()
 	vm.RestoreGlobalsVM(rec.globalsVM)
-	l.globalsMu.Unlock()
+	rec.globalsMu.RUnlock()
+}
+
+// persistModuleGlobals writes a worker's reassigned module globals back to the module's record; a run that reassigned none takes no lock.
+func persistModuleGlobals(vm *bytecode.VM, rec *moduleRecord) {
+	if !vm.HasDirtyGlobals() {
+		return
+	}
+	rec.globalsMu.Lock()
+	vm.PersistDirtyGlobals(rec.globalsVM)
+	rec.globalsMu.Unlock()
 }
 
 // moduleVM returns a pooled (or fresh) host VM bound to the module's
@@ -324,9 +333,10 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.
 	vm.SetModuleName(module)
 	vm.SetModulePaths(l.basePaths)
 	vm.SetStatefulNativeCaller(l.stateful)
-	l.restoreModuleGlobals(vm, module)
+	rec, _ := l.recordFor(module)
+	l.restoreModuleGlobals(vm, module, rec)
 	var decorators bytecode.FunctionDecoratorState
-	if rec, ok := l.recordFor(module); ok {
+	if rec != nil {
 		decorators = rec.decorators
 	}
 	vm.RestoreFunctionDecoratorState(decorators)
@@ -336,6 +346,7 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.
 		caller = nil
 	}
 	vm.SetReentryHost(caller)
+	vm.SetProfileParent(caller)
 	vm.InheritForwardThis(caller)
 	vm.SetReentryActive(true)
 	return vm, pool
@@ -349,13 +360,12 @@ func (l *Loader) releaseModuleVM(pool *sync.Pool, vm *bytecode.VM, err error) {
 	// Persist module-global writes even when the call threw: the evaluator mutates its live environment immediately, so a write before a throw must survive (the dirty slots already hold only the pre-throw writes).
 	if module := vm.ModuleName(); module != "" {
 		if rec, ok := l.recordFor(module); ok {
-			l.globalsMu.Lock()
-			vm.PersistDirtyGlobals(rec.globalsVM)
-			l.globalsMu.Unlock()
+			persistModuleGlobals(vm, rec)
 		}
 	}
 	vm.SetReentryActive(false)
 	vm.SetReentryHost(nil)
+	vm.SetProfileParent(nil)
 	if err == nil && vm.Recyclable() {
 		pool.Put(vm)
 	}
@@ -954,6 +964,26 @@ func (l *Loader) ModuleFunctionParamNames(module string, index int64) ([]string,
 	return chunk.FunctionParamNames(index)
 }
 
+func (l *Loader) OrderModuleFunctionNamedArgs(module string, index int64, paramOffset int, args []runtime.Value, names []string, caller *bytecode.VM) ([]runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script function referenced without a main chunk")
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunkValue(module)
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	vm, pool := l.moduleVM(module, chunk, caller)
+	ordered, err := vm.OrderNamedArgs(index, paramOffset, args, names)
+	l.releaseModuleVM(pool, vm, err)
+	return ordered, err
+}
+
 func (l *Loader) ApplyModuleFieldDecorators(module string, className string, field string, value runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	chunk, ok := l.chunkFor(module)
 	if !ok {
@@ -986,6 +1016,15 @@ func (l *Loader) ModuleFunctionInfo(module string, index int64) (bytecode.Functi
 }
 
 func (l *Loader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+	return l.callModuleMethod(module, className, methodName, instance, args, caller, nil)
+}
+
+// CallModuleMethodFrom is CallModuleMethod with no caller (a data-only method wrapper), recording invoker as the worker's profile parent only.
+func (l *Loader) CallModuleMethodFrom(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, invoker *bytecode.VM) (runtime.Value, error) {
+	return l.callModuleMethod(module, className, methodName, instance, args, nil, invoker)
+}
+
+func (l *Loader) callModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM, invoker *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if module == "" {
 		// Main-chunk classes carry Module="". Sub-VMs running stdlib
@@ -1012,6 +1051,9 @@ func (l *Loader) CallModuleMethod(module string, className string, methodName st
 		chunk = c
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
+	if invoker != nil && pool != nil {
+		vm.SetProfileParent(invoker)
+	}
 	result, err := vm.CallMethodFast(instance, methodName, args)
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
@@ -1175,9 +1217,7 @@ func (l *Loader) PersistModuleGlobals(vm *bytecode.VM) {
 		return
 	}
 	if rec, ok := l.recordFor(module); ok {
-		l.globalsMu.Lock()
-		vm.PersistDirtyGlobals(rec.globalsVM)
-		l.globalsMu.Unlock()
+		persistModuleGlobals(vm, rec)
 	}
 }
 

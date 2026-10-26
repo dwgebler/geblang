@@ -16,6 +16,10 @@ func SysPlatform() string { return runtime.GOOS }
 // SysArch returns the architecture (runtime.GOARCH).
 func SysArch() string { return runtime.GOARCH }
 
+// SysCPUCount returns how many CPUs the process can run code on at once
+// (runtime.GOMAXPROCS).
+func SysCPUCount() int64 { return int64(runtime.GOMAXPROCS(0)) }
+
 // SysGetenv returns the value of name, or nil when the variable is unset.
 func SysGetenv(name string) any {
 	if v, ok := os.LookupEnv(name); ok {

@@ -267,6 +267,14 @@ func (l fakeModuleLoader) ModuleFunctionParamNames(module string, index int64) (
 	return nil, fmt.Errorf("fake loader has no module function metadata")
 }
 
+func (l fakeModuleLoader) CallModuleMethodFrom(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, invoker *bytecode.VM) (runtime.Value, error) {
+	return nil, fmt.Errorf("unexpected module method call %s.%s", className, methodName)
+}
+
+func (l fakeModuleLoader) OrderModuleFunctionNamedArgs(module string, index int64, paramOffset int, args []runtime.Value, names []string, caller *bytecode.VM) ([]runtime.Value, error) {
+	return nil, fmt.Errorf("fake loader has no module function metadata")
+}
+
 func (l fakeModuleLoader) CallModuleStaticMethodNamed(class runtime.BytecodeClass, methodName string, args []runtime.Value, names []string, caller *bytecode.VM) (runtime.Value, error) {
 	return nil, fmt.Errorf("fake loader cannot call module static methods")
 }

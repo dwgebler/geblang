@@ -41,6 +41,12 @@ func registerSys(r *Registry) {
 		}
 		return runtime.String{Value: sysArch()}, nil
 	})
+	r.Register("sys", "cpuCount", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("sys.cpuCount expects no arguments")
+		}
+		return runtime.NewInt64(int64(sysCPUCount())), nil
+	})
 	r.Register("sys", "tmpdir", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("sys.tmpdir expects no arguments")

@@ -448,7 +448,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			// process.Process, http.Response) before falling through to the
 			// bytecode module loader, which has no chunk for native modules.
 			if nativeMethods := instance.Class.Methods[strings.ToLower(nameValue.Value)]; len(nativeMethods) > 0 && nativeMethods[0].Native != nil {
-				result, err := nativeMethods[0].Native(instance, args)
+				result, err := vm.callNativeMethod(nativeMethods[0], instance, args)
 				if err != nil {
 					return vm.propagateModuleError(instruction, ip, err)
 				}
@@ -1081,20 +1081,27 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 }
 
 // orderCrossModuleNamedArgs orders named/positional args into the declared parameter order of a function that lives in another module.
-func (vm *VM) orderCrossModuleNamedArgs(module string, index int64, displayName string, paramOffset int, args []runtime.Value, names []string) ([]runtime.Value, error) {
-	paramNames, perr := vm.moduleLoader.ModuleFunctionParamNames(module, index)
-	if perr != nil {
-		return nil, perr
+func (vm *VM) orderCrossModuleNamedArgs(module string, index int64, paramOffset int, args []runtime.Value, names []string) ([]runtime.Value, error) {
+	return vm.moduleLoader.OrderModuleFunctionNamedArgs(module, index, paramOffset, args, names, vm)
+}
+
+// OrderNamedArgs binds named/positional args to this chunk's function index (skipping paramOffset leading slots), filling declared defaults.
+func (vm *VM) OrderNamedArgs(index int64, paramOffset int, args []runtime.Value, names []string) ([]runtime.Value, error) {
+	if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
+		return nil, fmt.Errorf("function index %d out of range", index)
 	}
-	if paramOffset > len(paramNames) {
-		paramOffset = len(paramNames)
+	ordered, err := vm.orderRuntimeArguments(Instruction{}, vm.curMod.Chunk.Functions[index], args, names, paramOffset)
+	// The caller reports a binding fault at its own call site.
+	var fault *vmRuntimeError
+	if errors.As(err, &fault) {
+		return nil, errors.New(fault.message)
 	}
-	return orderNamedByParamNames(displayName, args, names, paramNames[paramOffset:])
+	return ordered, err
 }
 
 // dispatchCrossModuleNamedFunction orders named args against a free function's home-module parameters, then dispatches through the module loader (the home VM fills declared defaults).
 func (vm *VM) dispatchCrossModuleNamedFunction(instruction Instruction, ip int, fn runtime.BytecodeFunction, args []runtime.Value, names []string) (int, error) {
-	ordered, err := vm.orderCrossModuleNamedArgs(fn.Module, fn.Index, fn.Name, 0, args, names)
+	ordered, err := vm.orderCrossModuleNamedArgs(fn.Module, fn.Index, 0, args, names)
 	if err != nil {
 		return 0, vm.runtimeError(instruction, "%s", err.Error())
 	}
@@ -1184,7 +1191,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			ordered, oerr := vm.orderCrossModuleNamedArgs(closure.Module, closure.FunctionIndex, "<closure>", len(closure.Upvalues), args, names)
+			ordered, oerr := vm.orderCrossModuleNamedArgs(closure.Module, closure.FunctionIndex, len(closure.Upvalues), args, names)
 			if oerr != nil {
 				return 0, vm.runtimeError(instruction, "%s", oerr.Error())
 			}

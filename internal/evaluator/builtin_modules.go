@@ -156,6 +156,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"goroutineId":        e.registryBuiltin("sys", "goroutineId"),
 			"platform":           e.registryBuiltin("sys", "platform"),
 			"arch":               e.registryBuiltin("sys", "arch"),
+			"cpuCount":           e.registryBuiltin("sys", "cpuCount"),
 			"tmpdir":             e.registryBuiltin("sys", "tmpdir"),
 			"homedir":            e.registryBuiltin("sys", "homedir"),
 			"username":           e.registryBuiltin("sys", "username"),
@@ -1073,7 +1074,8 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"session": e.onnxSession,
 		},
 		"browser": {
-			"launch": e.browserLaunch,
+			"launch":        e.browserLaunch,
+			"compareImages": e.browserCompareImages,
 		},
 		"hnsw": {
 			"new":    e.registryBuiltin("hnsw", "new"),

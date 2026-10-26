@@ -7,6 +7,7 @@ import (
 	"geblang/internal/runtime"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -411,6 +412,9 @@ func (vm *VM) RestoreGlobals(globals []runtime.Value) {
 	}
 }
 
+// HasDirtyGlobals reports whether this run reassigned any module global.
+func (vm *VM) HasDirtyGlobals() bool { return len(vm.dirtySlots) > 0 }
+
 // PersistDirtyGlobals copies the slots this run reassigned back into dst (the loader's live module globals), so cross-module module-global writes persist across calls. The caller serializes access to dst.
 func (vm *VM) PersistDirtyGlobals(dst []runtime.VMValue) {
 	n := len(dst)
@@ -562,6 +566,7 @@ func (vm *VM) resetForReuse() {
 	vm.bridgeActive.Store(false)
 	vm.escapedRefs.Store(0)
 	vm.reentryHost = nil
+	vm.profileParent = nil
 	vm.reentryActive = false
 	vm.reentryDepth = 0
 	vm.curMod.Chunk = vm.chunk
@@ -728,6 +733,10 @@ func (vm *VM) SetPersistGlobals(on bool) {
 }
 
 func (vm *VM) SetModulePaths(paths []string) {
+	// A pooled worker is reconfigured every cross-module call, nearly always with the same paths.
+	if slices.Equal(vm.modulePaths, paths) {
+		return
+	}
 	vm.modulePaths = append([]string(nil), paths...)
 }
 

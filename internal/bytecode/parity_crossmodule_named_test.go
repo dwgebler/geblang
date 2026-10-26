@@ -12,6 +12,7 @@ import io;
 export func show4(int a, int b, int c, int d): void { io.println("${a} ${b} ${c} ${d}"); }
 export func show3(int a, int b, int c): void { io.println("${a} ${b} ${c}"); }
 export func withDefault(int a, int b, int c = 99): void { io.println("${a} ${b} ${c}"); }
+export func skipDefaults(int a, ?string p = null, int q = 3, int w = 1): void { io.println("${a} ${p} ${q} ${w}"); }
 `
 
 func writeNamedDonor(t *testing.T) string {
@@ -28,6 +29,17 @@ func TestParityCrossModuleNamedPlain(t *testing.T) {
 	runParityModulesDir(t, dir, `import donor;
 donor.show4(d: 4, a: 1, b: 2, c: 3);
 `, "1 2 3 4\n")
+}
+
+// A named argument may skip defaulted parameters before it; their defaults bind in the home module.
+func TestParityCrossModuleNamedSkipsMiddleDefaults(t *testing.T) {
+	dir := writeNamedDonor(t)
+	runParityModulesDir(t, dir, `import donor;
+donor.skipDefaults(1, w: 4);
+donor.skipDefaults(w: 4, a: 1, q: 7);
+let f = donor.skipDefaults;
+f(1, w: 9);
+`, "1 null 3 4\n1 null 7 4\n1 null 3 9\n")
 }
 
 func TestParityCrossModuleNamedPositionalMix(t *testing.T) {

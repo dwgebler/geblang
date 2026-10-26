@@ -1,0 +1,16 @@
+/**
+ * @title sys.cpuCount (1.38.0)
+ * @summary CPUs the process can run code on at once: at least one, and
+ * the same on every call.
+ */
+import test;
+import sys;
+
+class SysCpuCountTest extends test.Test {
+    @test
+    func positiveAndStable(): void {
+        let n = sys.cpuCount();
+        this.assertTrue(n >= 1);
+        this.assertEquals(n, sys.cpuCount());
+    }
+}
