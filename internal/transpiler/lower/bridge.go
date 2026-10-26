@@ -335,6 +335,7 @@ func (b *NativeBridge) registerSysDefaults() {
 	b.Register("sys", "platform", transpilertCall("SysPlatform", str))
 	b.Register("sys", "arch", transpilertCall("SysArch", str))
 	b.Register("sys", "cpuCount", transpilertCall("SysCPUCount", &types.Type{Kind: types.KindInt}))
+	b.Register("sys", "setGcPercent", transpilertCall("SysSetGCPercent", &types.Type{Kind: types.KindInt}))
 	b.Register("sys", "getenv", transpilertCall("SysGetenv", anyT))
 	b.Register("sys", "setenv", transpilertCall("SysSetenv", null))
 	b.Register("sys", "cwd", transpilertCall("SysCwd", str))

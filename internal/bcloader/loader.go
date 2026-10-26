@@ -301,11 +301,44 @@ func persistModuleGlobals(vm *bytecode.VM, rec *moduleRecord) {
 	rec.globalsMu.Unlock()
 }
 
+// maxPooledVMs bounds the idle workers kept for one module.
+const maxPooledVMs = 256
+
+// vmPool keeps a module's idle worker VMs for reuse. Unlike sync.Pool it is
+// not emptied at every garbage collection: that made a busy program rebuild
+// a worker for most cross-module calls, and the discarded workers made it
+// collect more often still.
+type vmPool struct {
+	mu   sync.Mutex
+	free []*bytecode.VM
+}
+
+func (p *vmPool) Get() *bytecode.VM {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := len(p.free)
+	if n == 0 {
+		return nil
+	}
+	vm := p.free[n-1]
+	p.free[n-1] = nil
+	p.free = p.free[:n-1]
+	return vm
+}
+
+func (p *vmPool) Put(vm *bytecode.VM) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.free) < maxPooledVMs {
+		p.free = append(p.free, vm)
+	}
+}
+
 // moduleVM returns a pooled (or fresh) host VM bound to the module's
 // chunk and configured with the module's canonical state. Hosts carry
 // per-call configuration only; pooling them avoids a full VM
 // construction per cross-module call.
-func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.VM) (*bytecode.VM, *sync.Pool) {
+func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.VM) (*bytecode.VM, *vmPool) {
 	// Re-entry: a still-active ancestor worker for this module on the same call chain (hence same goroutine) is reused so the nested call shares its live globals (nil pool marks the borrowed reuse).
 	steps := 0
 	for h := caller; h != nil; h = h.ReentryHost() {
@@ -317,14 +350,14 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.
 			break
 		}
 	}
-	var pool *sync.Pool
+	var pool *vmPool
 	if p, ok := l.vmPools.Load(module); ok {
-		pool = p.(*sync.Pool)
+		pool = p.(*vmPool)
 	} else {
-		p, _ := l.vmPools.LoadOrStore(module, &sync.Pool{})
-		pool = p.(*sync.Pool)
+		p, _ := l.vmPools.LoadOrStore(module, &vmPool{})
+		pool = p.(*vmPool)
 	}
-	vm, _ := pool.Get().(*bytecode.VM)
+	vm := pool.Get()
 	if vm == nil {
 		vm = bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
 	} else {
@@ -352,7 +385,7 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.
 	return vm, pool
 }
 
-func (l *Loader) releaseModuleVM(pool *sync.Pool, vm *bytecode.VM, err error) {
+func (l *Loader) releaseModuleVM(pool *vmPool, vm *bytecode.VM, err error) {
 	if pool == nil { // borrowed reuse; the owner release persists + recycles.
 		vm.DecReentryDepth()
 		return
@@ -372,7 +405,7 @@ func (l *Loader) releaseModuleVM(pool *sync.Pool, vm *bytecode.VM, err error) {
 }
 
 // adoptDestructibles hands a transient worker's destructor lifetimes up to the caller (or the entry VM when caller==nil), so they fire at that owner's exit sweep, not on worker recycle. A borrowed reuse (pool==nil) keeps them with the in-flight owner.
-func (l *Loader) adoptDestructibles(pool *sync.Pool, worker, caller *bytecode.VM) {
+func (l *Loader) adoptDestructibles(pool *vmPool, worker, caller *bytecode.VM) {
 	if pool == nil {
 		return
 	}

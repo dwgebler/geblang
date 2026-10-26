@@ -198,19 +198,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 	case *ast.DictComprehension:
 		return c.compileExpression(desugarDictComprehension(expr))
 	case *ast.RangeExpression:
-		if expr.Start == nil {
-			c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)
-		} else if err := c.compileExpression(expr.Start); err != nil {
-			return err
-		}
-		if expr.End == nil {
-			c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)
-		} else if err := c.compileExpression(expr.End); err != nil {
-			return err
-		}
-		if expr.Step == nil {
-			c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)
-		} else if err := c.compileExpression(expr.Step); err != nil {
+		if err := c.compileRangeOperands(expr); err != nil {
 			return err
 		}
 		if expr.Exclusive {
@@ -3959,4 +3947,16 @@ func (c *Compiler) namedCallToInheritedStatic(classIndex int64, name string, arg
 		}
 	}
 	return false
+}
+
+// compileRangeOperands pushes a range's start, end and step (null when omitted).
+func (c *Compiler) compileRangeOperands(expr *ast.RangeExpression) error {
+	for _, part := range []ast.Expression{expr.Start, expr.End, expr.Step} {
+		if part == nil {
+			c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)
+		} else if err := c.compileExpression(part); err != nil {
+			return err
+		}
+	}
+	return nil
 }

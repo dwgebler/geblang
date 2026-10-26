@@ -1420,6 +1420,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err := vm.iterInit(*instruction); err != nil {
 				return err
 			}
+		case OpForRangeIter:
+			if err := vm.forRangeIter(*instruction); err != nil {
+				return err
+			}
 		case OpIterNext:
 			hasNext, err := vm.iterNext(*instruction)
 			if err != nil {
@@ -5116,6 +5120,46 @@ func (vm *VM) execRange(instruction Instruction, exclusive bool) error {
 	}
 	vm.push(&runtime.List{Elements: elements})
 	return nil
+}
+
+// forRangeIter starts a for-in loop over a range literal. Int bounds that
+// fit in 64 bits (and an omitted or nonzero int step) go straight to a
+// counting iterator; anything else (big ints, char ranges, a zero step, a
+// type error) builds the Range and its iterator as OpBuildRange and
+// OpIterInit do.
+func (vm *VM) forRangeIter(instruction Instruction) error {
+	n := len(vm.stack)
+	if n >= 3 {
+		start, startOK := smallRangeBound(vm.stack[n-3].ToValue(), 0)
+		end, endOK := vm.stack[n-2].ToValue().(runtime.SmallInt)
+		step, stepOK := smallRangeBound(vm.stack[n-1].ToValue(), 1)
+		if startOK && endOK && stepOK && step != 0 {
+			vm.stack = vm.stack[:n-3]
+			// One allocation: the iterator and its range state together.
+			holder := &struct {
+				iter  iteratorValue
+				state rangeIterator
+			}{state: rangeIterator{small: true, cur: start, endSmall: end.Value, stepSmall: step, exclusive: instruction.Operands[0] != 0}}
+			holder.iter.rangeIter = &holder.state
+			vm.push(&holder.iter)
+			return nil
+		}
+	}
+	if err := vm.buildRange(instruction); err != nil {
+		return err
+	}
+	return vm.iterInit(instruction)
+}
+
+// smallRangeBound reads a range start or step: an int64, or fallback when omitted.
+func smallRangeBound(value runtime.Value, fallback int64) (int64, bool) {
+	switch v := value.(type) {
+	case runtime.Null:
+		return fallback, true
+	case runtime.SmallInt:
+		return v.Value, true
+	}
+	return 0, false
 }
 
 func newRangeIterator(value runtime.Range) *iteratorValue {

@@ -686,7 +686,8 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			if start >= end {
 				return &runtime.List{Elements: nil}, nil
 			}
-			return &runtime.List{Elements: value.Elements[start:end]}, nil
+			// A new list: writes to it (or pushes) must not reach the original.
+			return &runtime.List{Elements: append([]runtime.Value(nil), value.Elements[start:end]...)}, nil
 		case runtime.Bytes:
 			if len(args) < 1 || len(args) > 2 {
 				return nil, fmt.Errorf("bytes.slice expects (start[, end])")

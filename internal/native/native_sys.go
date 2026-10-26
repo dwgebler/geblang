@@ -47,6 +47,16 @@ func registerSys(r *Registry) {
 		}
 		return runtime.NewInt64(int64(sysCPUCount())), nil
 	})
+	r.Register("sys", "setGcPercent", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("sys.setGcPercent expects one int (percent)")
+		}
+		percent, ok := AsInt64(args[0])
+		if !ok {
+			return nil, fmt.Errorf("sys.setGcPercent expects an int")
+		}
+		return runtime.NewInt64(int64(sysSetGCPercent(int(percent)))), nil
+	})
 	r.Register("sys", "tmpdir", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("sys.tmpdir expects no arguments")

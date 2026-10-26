@@ -2527,6 +2527,47 @@ func (e *Evaluator) catchMatches(clause ast.CatchClause, err runtime.Error) bool
 	return e.errorTypeMatches(err.Class, simpleTypeName(clause.Type.Name))
 }
 
+// evalSmallRangeLoop runs a for-in loop over a range whose bounds fit in
+// int64, counting in an int64 (no big.Int per value). Like the VM's range
+// iterator it stops instead of wrapping when the next value would overflow.
+func (e *Evaluator) evalSmallRangeLoop(stmt *ast.ForStatement, loopEnv *runtime.Environment, names []*ast.Identifier, cur, end, step int64, exclusive bool) (signal, error) {
+	for {
+		var inRange bool
+		switch {
+		case step > 0 && exclusive:
+			inRange = cur < end
+		case step > 0:
+			inRange = cur <= end
+		case exclusive:
+			inRange = cur > end
+		default:
+			inRange = cur >= end
+		}
+		if !inRange {
+			return signal{}, nil
+		}
+		sig, err := e.evalForInIteration(stmt, loopEnv, names, runtime.SmallInt{Value: cur})
+		if err != nil {
+			return signal{}, err
+		}
+		switch sig.kind {
+		case "break":
+			return signal{}, nil
+		case "continue", "":
+		default:
+			return sig, nil
+		}
+		if sig.exited {
+			return sig, nil
+		}
+		next := cur + step
+		if (step > 0 && next < cur) || (step < 0 && next > cur) {
+			return signal{}, nil
+		}
+		cur = next
+	}
+}
+
 func (e *Evaluator) evalForInStatement(stmt *ast.ForStatement, loopEnv *runtime.Environment) (signal, error) {
 	iterable, err := e.evalExpression(stmt.Iterable, loopEnv)
 	if err != nil {
@@ -2545,6 +2586,9 @@ func (e *Evaluator) evalForInStatement(stmt *ast.ForStatement, loopEnv *runtime.
 		}
 	}
 	if r, ok := iterable.(runtime.Range); ok {
+		if r.Start.IsInt64() && r.End.IsInt64() && r.Step.IsInt64() {
+			return e.evalSmallRangeLoop(stmt, loopEnv, names, r.Start.Int64(), r.End.Int64(), r.Step.Int64(), r.Exclusive)
+		}
 		current := new(big.Int).Set(r.Start)
 		step := new(big.Int).Set(r.Step)
 		for {

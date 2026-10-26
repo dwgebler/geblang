@@ -1121,6 +1121,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"sleep":            Fn([]string{"int milliseconds"}, "void", "Sleeps for a duration."),
 		"platform":         Fn([]string{}, "string", "Returns OS platform."),
 		"arch":             Fn([]string{}, "string", "Returns CPU architecture."),
+		"setGcPercent":     Fn([]string{"int percent"}, "int", "Sets how far the heap may grow past the live data before the next garbage collection, in percent (100 by default, as Go's GOGC), and returns the previous setting. Higher collects less often and uses more memory; a negative value turns collection off. Affects the whole process (1.38.0)."),
 		"cpuCount":         Fn([]string{}, "int", "Returns how many CPUs this process can run code on at once (honours container CPU limits). Size a pool of CPU-bound async tasks with it (1.38.0)."),
 		"hostname":         Fn([]string{}, "string", "Returns the machine hostname."),
 		"username":         Fn([]string{}, "string", "Returns the active OS username."),

@@ -32,6 +32,7 @@ io.println(sys.cwd());
 | `osVersion()` | `string` | OS kernel/release string (Linux: uname release) |
 | `arch()` | `string` | CPU architecture, such as `amd64` or `arm64` |
 | `cpuCount()` | `int` | How many CPUs this process can run code on at once (see below) |
+| `setGcPercent(percent)` | `int` | Sets the garbage collector's target (see below) and returns the previous one |
 | `hostname()` | `string` | Hostname |
 | `pid()` | `int` | Current process ID |
 | `goroutineId()` | `int` | Id of the current goroutine (see below) |
@@ -63,6 +64,22 @@ this only take turns.
 ```gb
 let workers = sys.cpuCount();
 ```
+
+`sys.setGcPercent(percent)` sets how far the heap may grow past the live
+data before the next garbage collection, as a percentage: Go's `GOGC`, 100
+by default. It returns the previous setting. A CPU-bound batch job that
+allocates a lot but keeps little (a simulation, say) can run noticeably
+faster with fewer collections, at the cost of a larger heap:
+
+```gb
+let previous = sys.setGcPercent(400);
+runSimulation();
+sys.setGcPercent(previous);
+```
+
+The setting affects the whole process, so leave it alone in a server that
+shares its memory with other work. A negative value turns garbage
+collection off entirely.
 
 `sys.goroutineId()` returns the id of the goroutine that calls it. It is stable
 for the life of that goroutine and unique among goroutines running at the same

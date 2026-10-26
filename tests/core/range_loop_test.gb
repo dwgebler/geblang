@@ -1,0 +1,41 @@
+/**
+ * @title for-in over range literals (1.38.0)
+ * @summary Range loops count without building a range value when the bounds
+ * fit in 64 bits, and behave exactly as before at the limits.
+ */
+import test;
+
+class RangeLoopTest extends test.Test {
+    @test
+    func countsUpDownAndBySteps(): void {
+        list<int> up = [];
+        for (i in 0..<4) {
+            up.push(i);
+        }
+        this.assertEquals([0, 1, 2, 3], up);
+        list<int> down = [];
+        for (i in 6..0 by -2) {
+            down.push(i);
+        }
+        this.assertEquals([6, 4, 2, 0], down);
+    }
+
+    @test
+    func assigningTheLoopVariableDoesNotSkip(): void {
+        list<int> seen = [];
+        for (i in 0..<3) {
+            seen.push(i);
+            i = 99;
+        }
+        this.assertEquals([0, 1, 2], seen);
+    }
+
+    @test
+    func stopsAtTheInt64Limit(): void {
+        int n = 0;
+        for (i in 9223372036854775806..9223372036854775807) {
+            n += 1;
+        }
+        this.assertEquals(2, n);
+    }
+}

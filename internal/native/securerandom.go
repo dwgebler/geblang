@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"math/big"
 	"strconv"
 	"sync"
@@ -24,6 +25,8 @@ import (
 type secureSession struct {
 	mu         sync.Mutex
 	serverSeed []byte
+	// key derives this session's draws; used only under mu.
+	key        *seedKey
 	clientSeed string
 	nonce      int64
 	commitment string
@@ -106,6 +109,7 @@ func registerSecureSession(seed []byte, clientSeed string) (runtime.Value, error
 	hash := sha256.Sum256(seed)
 	sess := &secureSession{
 		serverSeed: seed,
+		key:        &seedKey{seed: seed, mac: hmac.New(sha256.New, seed)},
 		clientSeed: clientSeed,
 		commitment: hex.EncodeToString(hash[:]),
 	}
@@ -139,6 +143,8 @@ func secureRandomReveal(args []runtime.Value) (runtime.Value, error) {
 	}
 	sess.mu.Lock()
 	sess.revealed = true
+	// No draws follow a reveal, so the keyed HMAC is no longer needed.
+	sess.key.mac = nil
 	out := hex.EncodeToString(sess.serverSeed)
 	sess.mu.Unlock()
 	return runtime.String{Value: out}, nil
@@ -225,11 +231,32 @@ func firstArg(args []runtime.Value) runtime.Value {
 	return args[0]
 }
 
+// seedKey computes HMAC-SHA-256(seed, message). A session's key keys one
+// HMAC once and resets it for each message (Reset returns it to its just-keyed
+// state, so every sum is the same function of seed and message); a key with
+// no mac, as replay uses, keys a fresh HMAC for every message.
+type seedKey struct {
+	seed []byte
+	mac  hash.Hash
+}
+
+// appendSum appends HMAC-SHA-256(seed, msg) to out.
+func (k *seedKey) appendSum(out, msg []byte) []byte {
+	mac := k.mac
+	if mac == nil {
+		mac = hmac.New(sha256.New, k.seed)
+	} else {
+		mac.Reset()
+	}
+	mac.Write(msg)
+	return mac.Sum(out)
+}
+
 // deriveBytes returns n raw bytes by HMAC-SHA-256(serverSeed, message)
 // chunks, concatenated. For n <= 32 only one HMAC is computed; for
 // larger n the message gets a chunk-counter suffix.
-func deriveBytes(serverSeed []byte, message string, n int) []byte {
-	out := make([]byte, 0, n)
+func deriveBytes(key *seedKey, message string, n int) []byte {
+	out := make([]byte, 0, max(n, sha256.Size))
 	chunk := 0
 	for len(out) < n {
 		var msg []byte
@@ -238,9 +265,7 @@ func deriveBytes(serverSeed []byte, message string, n int) []byte {
 		} else {
 			msg = []byte(message + ":chunk:" + strconv.Itoa(chunk))
 		}
-		mac := hmac.New(sha256.New, serverSeed)
-		mac.Write(msg)
-		out = append(out, mac.Sum(nil)...)
+		out = key.appendSum(out, msg)
 		chunk++
 	}
 	return out[:n]
@@ -289,9 +314,9 @@ func sessionRandomBytes(args []runtime.Value) (runtime.Value, error) {
 	if !ok || n < 0 || n > 1024*1024 {
 		return nil, fmt.Errorf("secureRandom.bytes: n must be a non-negative int <= 1048576")
 	}
-	output, err := drawAndLog(sess, "bytes", rest, func(seed []byte, nonce int64) (runtime.Value, error) {
+	output, err := drawAndLog(sess, "bytes", rest, func(key *seedKey, nonce int64) (runtime.Value, error) {
 		msg, _ := makeMessage(sess.clientSeed, nonce, "bytes", rest)
-		out := deriveBytes(seed, msg, int(n))
+		out := deriveBytes(key, msg, int(n))
 		return runtime.Bytes{Value: out}, nil
 	})
 	return output, err
@@ -311,9 +336,9 @@ func secureRandomUintRange(args []runtime.Value) (runtime.Value, error) {
 	if !ok1 || !ok2 || hi <= lo {
 		return nil, fmt.Errorf("secureRandom.uintRange: hi must be > lo and both must be ints")
 	}
-	return drawAndLog(sess, "uintRange", rest, func(seed []byte, nonce int64) (runtime.Value, error) {
+	return drawAndLog(sess, "uintRange", rest, func(key *seedKey, nonce int64) (runtime.Value, error) {
 		msg, _ := makeMessage(sess.clientSeed, nonce, "uintRange", rest)
-		v := uniformUintInRange(seed, msg, uint64(hi-lo))
+		v := uniformUintInRange(key, msg, uint64(hi-lo))
 		return runtime.SmallInt{Value: int64(v) + lo}, nil
 	})
 }
@@ -347,9 +372,9 @@ func secureRandomRandomInt(args []runtime.Value) (runtime.Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	return drawAndLog(sess, "randomInt", rest, func(seed []byte, nonce int64) (runtime.Value, error) {
+	return drawAndLog(sess, "randomInt", rest, func(key *seedKey, nonce int64) (runtime.Value, error) {
 		msg, _ := makeMessage(sess.clientSeed, nonce, "randomInt", rest)
-		return inclusiveIntDraw(seed, msg, lo, hi), nil
+		return inclusiveIntDraw(key, msg, lo, hi), nil
 	})
 }
 
@@ -368,16 +393,16 @@ func inclusiveBounds(args []runtime.Value, label string) (int64, int64, error) {
 	return lo, hi, nil
 }
 
-func inclusiveIntDraw(seed []byte, msg string, lo, hi int64) runtime.Value {
+func inclusiveIntDraw(key *seedKey, msg string, lo, hi int64) runtime.Value {
 	span := uint64(hi) - uint64(lo) + 1
 	// span wraps to 0 only for the full int64 range, where every 64-bit draw is valid.
 	if span == 0 {
-		return runtime.SmallInt{Value: int64(binary.BigEndian.Uint64(deriveBytes(seed, msg, 8)))}
+		return runtime.SmallInt{Value: int64(binary.BigEndian.Uint64(deriveBytes(key, msg, 8)))}
 	}
-	return runtime.SmallInt{Value: int64(uint64(lo) + uniformUintInRange(seed, msg, span))}
+	return runtime.SmallInt{Value: int64(uint64(lo) + uniformUintInRange(key, msg, span))}
 }
 
-func uniformUintInRange(seed []byte, baseMsg string, span uint64) uint64 {
+func uniformUintInRange(key *seedKey, baseMsg string, span uint64) uint64 {
 	// Rejection sampling to avoid modulo bias. Truncate uint64 -> [0, span).
 	maxAccepted := (^uint64(0) / span) * span
 	chunk := 0
@@ -386,7 +411,7 @@ func uniformUintInRange(seed []byte, baseMsg string, span uint64) uint64 {
 		if chunk > 0 {
 			msg = baseMsg + ":resample:" + strconv.Itoa(chunk)
 		}
-		bytes := deriveBytes(seed, msg, 8)
+		bytes := deriveBytes(key, msg, 8)
 		v := binary.BigEndian.Uint64(bytes)
 		if v < maxAccepted {
 			return v % span
@@ -404,9 +429,9 @@ func secureRandomFloat(args []runtime.Value) (runtime.Value, error) {
 	if len(rest) != 0 {
 		return nil, fmt.Errorf("secureRandom.float(session)")
 	}
-	return drawAndLog(sess, "float", rest, func(seed []byte, nonce int64) (runtime.Value, error) {
+	return drawAndLog(sess, "float", rest, func(key *seedKey, nonce int64) (runtime.Value, error) {
 		msg, _ := makeMessage(sess.clientSeed, nonce, "float", rest)
-		bytes := deriveBytes(seed, msg, 8)
+		bytes := deriveBytes(key, msg, 8)
 		v := binary.BigEndian.Uint64(bytes) >> 11
 		f := float64(v) / float64(1<<53)
 		return runtime.Float{Value: f}, nil
@@ -422,9 +447,9 @@ func secureRandomBool(args []runtime.Value) (runtime.Value, error) {
 	if len(rest) != 0 {
 		return nil, fmt.Errorf("secureRandom.bool(session)")
 	}
-	return drawAndLog(sess, "bool", rest, func(seed []byte, nonce int64) (runtime.Value, error) {
+	return drawAndLog(sess, "bool", rest, func(key *seedKey, nonce int64) (runtime.Value, error) {
 		msg, _ := makeMessage(sess.clientSeed, nonce, "bool", rest)
-		b := deriveBytes(seed, msg, 1)
+		b := deriveBytes(key, msg, 1)
 		return runtime.Bool{Value: b[0]&1 == 1}, nil
 	})
 }
@@ -442,9 +467,9 @@ func secureRandomChoice(args []runtime.Value) (runtime.Value, error) {
 	if !ok || len(list.Elements) == 0 {
 		return nil, fmt.Errorf("secureRandom.choice: argument must be a non-empty list")
 	}
-	return drawAndLog(sess, "choice", rest, func(seed []byte, nonce int64) (runtime.Value, error) {
+	return drawAndLog(sess, "choice", rest, func(key *seedKey, nonce int64) (runtime.Value, error) {
 		msg, _ := makeMessage(sess.clientSeed, nonce, "choice", rest)
-		idx := uniformUintInRange(seed, msg, uint64(len(list.Elements)))
+		idx := uniformUintInRange(key, msg, uint64(len(list.Elements)))
 		return list.Elements[idx], nil
 	})
 }
@@ -462,12 +487,12 @@ func secureRandomShuffle(args []runtime.Value) (runtime.Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("secureRandom.shuffle: argument must be a list")
 	}
-	return drawAndLog(sess, "shuffle", rest, func(seed []byte, nonce int64) (runtime.Value, error) {
+	return drawAndLog(sess, "shuffle", rest, func(key *seedKey, nonce int64) (runtime.Value, error) {
 		baseMsg, _ := makeMessage(sess.clientSeed, nonce, "shuffle", rest)
 		out := make([]runtime.Value, len(list.Elements))
 		copy(out, list.Elements)
 		for i := len(out) - 1; i > 0; i-- {
-			j := uniformUintInRange(seed, baseMsg+":swap:"+strconv.Itoa(i), uint64(i+1))
+			j := uniformUintInRange(key, baseMsg+":swap:"+strconv.Itoa(i), uint64(i+1))
 			out[i], out[j] = out[j], out[i]
 		}
 		return &runtime.List{Elements: out}, nil
@@ -504,9 +529,9 @@ func secureRandomWeightedChoice(args []runtime.Value) (runtime.Value, error) {
 	if total == 0 {
 		return nil, fmt.Errorf("secureRandom.weightedChoice: total weight is zero")
 	}
-	return drawAndLog(sess, "weightedChoice", rest, func(seed []byte, nonce int64) (runtime.Value, error) {
+	return drawAndLog(sess, "weightedChoice", rest, func(key *seedKey, nonce int64) (runtime.Value, error) {
 		msg, _ := makeMessage(sess.clientSeed, nonce, "weightedChoice", rest)
-		bytes := deriveBytes(seed, msg, 8)
+		bytes := deriveBytes(key, msg, 8)
 		u := binary.BigEndian.Uint64(bytes) >> 11
 		t := (float64(u) / float64(1<<53)) * total
 		acc := 0.0
@@ -520,14 +545,14 @@ func secureRandomWeightedChoice(args []runtime.Value) (runtime.Value, error) {
 	})
 }
 
-func drawAndLog(sess *secureSession, method string, args []runtime.Value, derive func(seed []byte, nonce int64) (runtime.Value, error)) (runtime.Value, error) {
+func drawAndLog(sess *secureSession, method string, args []runtime.Value, derive func(key *seedKey, nonce int64) (runtime.Value, error)) (runtime.Value, error) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	if sess.revealed {
 		return nil, fmt.Errorf("secureRandom.%s: session has been revealed; no further draws allowed", method)
 	}
 	nonce := sess.nonce
-	output, err := derive(sess.serverSeed, nonce)
+	output, err := derive(sess.key, nonce)
 	if err != nil {
 		return nil, err
 	}
@@ -582,6 +607,9 @@ func secureRandomReplay(args []runtime.Value) (runtime.Value, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Replay keys a fresh HMAC for every message, independently of the
+	// session's reused one, so verifying a round checks that path too.
+	key := &seedKey{seed: seedBytes}
 	clientSeed := clientSeedV.Value
 	method := methodV.Value
 	msg, err := makeMessage(clientSeed, nonceV, method, argsList.Elements)
@@ -597,7 +625,7 @@ func secureRandomReplay(args []runtime.Value) (runtime.Value, error) {
 		if !ok || n < 0 {
 			return nil, fmt.Errorf("replay bytes n invalid")
 		}
-		return runtime.Bytes{Value: deriveBytes(seedBytes, msg, int(n))}, nil
+		return runtime.Bytes{Value: deriveBytes(key, msg, int(n))}, nil
 	case "uintRange":
 		if len(argsList.Elements) != 2 {
 			return nil, fmt.Errorf("replay uintRange expects [lo, hi]")
@@ -607,20 +635,20 @@ func secureRandomReplay(args []runtime.Value) (runtime.Value, error) {
 		if hi <= lo {
 			return nil, fmt.Errorf("replay uintRange: hi must be > lo")
 		}
-		v := uniformUintInRange(seedBytes, msg, uint64(hi-lo))
+		v := uniformUintInRange(key, msg, uint64(hi-lo))
 		return runtime.SmallInt{Value: int64(v) + lo}, nil
 	case "randomInt":
 		lo, hi, err := inclusiveBounds(argsList.Elements, "replay randomInt")
 		if err != nil {
 			return nil, err
 		}
-		return inclusiveIntDraw(seedBytes, msg, lo, hi), nil
+		return inclusiveIntDraw(key, msg, lo, hi), nil
 	case "float":
-		bytes := deriveBytes(seedBytes, msg, 8)
+		bytes := deriveBytes(key, msg, 8)
 		u := binary.BigEndian.Uint64(bytes) >> 11
 		return runtime.Float{Value: float64(u) / float64(1<<53)}, nil
 	case "bool":
-		b := deriveBytes(seedBytes, msg, 1)
+		b := deriveBytes(key, msg, 1)
 		return runtime.Bool{Value: b[0]&1 == 1}, nil
 	case "choice":
 		if len(argsList.Elements) != 1 {
@@ -630,7 +658,7 @@ func secureRandomReplay(args []runtime.Value) (runtime.Value, error) {
 		if !ok || len(list.Elements) == 0 {
 			return nil, fmt.Errorf("replay choice: argument must be a non-empty list")
 		}
-		idx := uniformUintInRange(seedBytes, msg, uint64(len(list.Elements)))
+		idx := uniformUintInRange(key, msg, uint64(len(list.Elements)))
 		return list.Elements[idx], nil
 	case "shuffle":
 		if len(argsList.Elements) != 1 {
@@ -643,7 +671,7 @@ func secureRandomReplay(args []runtime.Value) (runtime.Value, error) {
 		out := make([]runtime.Value, len(list.Elements))
 		copy(out, list.Elements)
 		for i := len(out) - 1; i > 0; i-- {
-			j := uniformUintInRange(seedBytes, msg+":swap:"+strconv.Itoa(i), uint64(i+1))
+			j := uniformUintInRange(key, msg+":swap:"+strconv.Itoa(i), uint64(i+1))
 			out[i], out[j] = out[j], out[i]
 		}
 		return &runtime.List{Elements: out}, nil
@@ -666,7 +694,7 @@ func secureRandomReplay(args []runtime.Value) (runtime.Value, error) {
 			weights[i] = f
 			total += f
 		}
-		bytes := deriveBytes(seedBytes, msg, 8)
+		bytes := deriveBytes(key, msg, 8)
 		u := binary.BigEndian.Uint64(bytes) >> 11
 		t := (float64(u) / float64(1<<53)) * total
 		acc := 0.0

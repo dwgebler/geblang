@@ -26,7 +26,7 @@ func TestSecureRandomSessionIsCollected(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := drawAndLog(sess, "test", nil, func(seed []byte, nonce int64) (geb.Value, error) {
+		if _, err := drawAndLog(sess, "test", nil, func(key *seedKey, nonce int64) (geb.Value, error) {
 			return geb.SmallInt{Value: nonce}, nil
 		}); err != nil {
 			t.Fatal(err)

@@ -1,0 +1,14 @@
+/**
+ * @title sys.setGcPercent (1.38.0)
+ * @summary Sets the garbage collector's target and returns the previous one.
+ */
+import test;
+import sys;
+
+class SysGcPercentTest extends test.Test {
+    @test
+    func returnsThePreviousSetting(): void {
+        let before = sys.setGcPercent(300);
+        this.assertEquals(300, sys.setGcPercent(before));
+    }
+}

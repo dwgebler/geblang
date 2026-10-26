@@ -50,6 +50,9 @@
   flame-graph tools. Both backends support it.
 - `sys.cpuCount()` returns how many CPUs the process can run code on at once,
   for sizing a pool of CPU-bound `async` tasks.
+- `sys.setGcPercent(percent)` sets the garbage collector's target (Go's
+  `GOGC`) and returns the previous one, so a CPU-bound batch job can trade
+  memory for fewer collections.
 
 ### Changes
 
@@ -62,6 +65,11 @@
 - Dialogs no longer block a page: `alert`, `confirm` and `prompt` are dismissed
   unless `onDialog("accept")` was called, and `beforeunload` is accepted.
 - `press` sends proper key codes for named keys and rejects unknown key names.
+- Less garbage for the collector: cross-module calls reuse their worker VMs
+  (they were rebuilt after every collection), a `secureRandom` session keys
+  its HMAC once instead of on every draw (outputs and verification are
+  unchanged), and a `for` loop over a range literal counts without building a
+  range value.
 - Calls into another module no longer take one process-wide lock. Calls
   that read a module's globals share a per-module read lock, and a call that
   reassigned none takes no lock on return, so CPU-bound `async` tasks calling
@@ -70,6 +78,9 @@
 
 ### Fixes
 
+- `list.slice()` returns a new list. It shared the original's storage, so
+  assigning to an element of the slice changed the original, and pushing onto
+  it could overwrite the original's next element.
 - A call to a function in another module can name a later argument and leave
   defaulted parameters before it out (`lib.run(1, workers: 4)`). The VM
   reported "missing argument" for the skipped parameter; the evaluator was

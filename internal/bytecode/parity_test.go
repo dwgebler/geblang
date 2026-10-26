@@ -4508,3 +4508,26 @@ io.println(c.query("SELECT COUNT(*) AS n FROM items").all()[0]["n"]);
 c.close();
 `, "7\nbegin expired\nquery expired\nexec expired\n3\n2\n")
 }
+
+// sys.setGcPercent returns the previous setting, so a caller can restore it.
+func TestParitySysSetGcPercent(t *testing.T) {
+	runParityWithStdlib(t, `
+import sys;
+import io;
+let before = sys.setGcPercent(250);
+io.println(sys.setGcPercent(before));
+io.println(sys.setGcPercent(before) == before);
+`, "250\ntrue\n")
+}
+
+// list.slice returns a new list: writes to or pushes onto it never reach the original.
+func TestParityListSliceIsACopy(t *testing.T) {
+	runParity(t, `import io;
+list<int> a = [1, 2, 3, 4];
+let s = a.slice(0, 2);
+s[0] = 9;
+s.push(8);
+io.println(a);
+io.println(s);
+`, "[1, 2, 3, 4]\n[9, 2, 8]\n")
+}

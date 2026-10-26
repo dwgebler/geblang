@@ -529,10 +529,22 @@ func (c *Compiler) compileForInStatement(stmt *ast.ForStatement) error {
 		c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, slot)
 		targetSlots = append(targetSlots, slot)
 	}
-	if err := c.compileExpression(stmt.Iterable); err != nil {
-		return err
+	if rng, ok := stmt.Iterable.(*ast.RangeExpression); ok {
+		// A range literal goes straight to its iterator.
+		if err := c.compileRangeOperands(rng); err != nil {
+			return err
+		}
+		exclusive := int64(0)
+		if rng.Exclusive {
+			exclusive = 1
+		}
+		c.emitAt(OpForRangeIter, stmt.Token.Line, stmt.Token.Column, exclusive)
+	} else {
+		if err := c.compileExpression(stmt.Iterable); err != nil {
+			return err
+		}
+		c.emitAt(OpIterInit, stmt.Token.Line, stmt.Token.Column)
 	}
-	c.emitAt(OpIterInit, stmt.Token.Line, stmt.Token.Column)
 	iterSlot := c.allocateLocal()
 	c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, iterSlot)
 

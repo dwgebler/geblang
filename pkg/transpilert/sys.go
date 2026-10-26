@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/user"
 	"runtime"
+	"runtime/debug"
 	"strings"
 )
 
@@ -19,6 +20,10 @@ func SysArch() string { return runtime.GOARCH }
 // SysCPUCount returns how many CPUs the process can run code on at once
 // (runtime.GOMAXPROCS).
 func SysCPUCount() int64 { return int64(runtime.GOMAXPROCS(0)) }
+
+// SysSetGCPercent sets the garbage collector's target percentage and
+// returns the previous one (runtime/debug.SetGCPercent).
+func SysSetGCPercent(percent int64) int64 { return int64(debug.SetGCPercent(int(percent))) }
 
 // SysGetenv returns the value of name, or nil when the variable is unset.
 func SysGetenv(name string) any {

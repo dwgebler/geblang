@@ -490,7 +490,7 @@ introspection builtins.
 | Module | Purpose |
 |--------|---------|
 | `io` | stdin/stdout, files (`open`, `readText`, `writeText`, `readBytes`), `exists`, `tempDir`. |
-| `sys` | env vars, args, `cwd`, `exit`, `goroutineId`, `cpuCount`. |
+| `sys` | env vars, args, `cwd`, `exit`, `goroutineId`, `cpuCount`, `setGcPercent`. |
 | `path` / `pathlib` | `join`, `dir`, `base`, `ext`, `abs`; object-style paths. |
 | `json`, `yaml`, `toml`, `xml`, `csv`, `msgpack` | parse / stringify; insertion-ordered. |
 | `encoding` | base64, hex, URL encoding. |

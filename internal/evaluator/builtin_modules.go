@@ -157,6 +157,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"platform":           e.registryBuiltin("sys", "platform"),
 			"arch":               e.registryBuiltin("sys", "arch"),
 			"cpuCount":           e.registryBuiltin("sys", "cpuCount"),
+			"setGcPercent":       e.registryBuiltin("sys", "setGcPercent"),
 			"tmpdir":             e.registryBuiltin("sys", "tmpdir"),
 			"homedir":            e.registryBuiltin("sys", "homedir"),
 			"username":           e.registryBuiltin("sys", "username"),

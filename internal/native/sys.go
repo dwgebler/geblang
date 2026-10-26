@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/user"
 	"runtime"
+	"runtime/debug"
 )
 
 func sysHostname() (string, error) { return os.Hostname() }
@@ -11,6 +12,7 @@ func sysPid() int                  { return os.Getpid() }
 func sysPlatform() string          { return runtime.GOOS }
 func sysArch() string              { return runtime.GOARCH }
 func sysCPUCount() int             { return runtime.GOMAXPROCS(0) }
+func sysSetGCPercent(p int) int    { return debug.SetGCPercent(p) }
 func sysTmpDir() string            { return os.TempDir() }
 func sysEnviron() []string         { return os.Environ() }
 

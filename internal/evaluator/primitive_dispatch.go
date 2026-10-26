@@ -683,7 +683,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if start >= end {
 				return &runtime.List{Elements: nil}, nil
 			}
-			return &runtime.List{Elements: value.Elements[start:end]}, nil
+			// A new list: writes to it (or pushes) must not reach the original.
+			return &runtime.List{Elements: append([]runtime.Value(nil), value.Elements[start:end]...)}, nil
 		case "join":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.join expects one argument (separator)")
