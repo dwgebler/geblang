@@ -27,6 +27,14 @@ class Catalogue {
 
 class NestedAsyncTest extends test.Test {
     @test
+    func asyncCallbacksKeepTheirOwnInstructions(): void {
+        let tasks = [1, 2, 3, 4].map(func(int n): any { return Catalogue().price(n); });
+        list<int> results = [];
+        for (task in tasks) { results.push(task.await() as int); }
+        this.assertEquals([101, 102, 103, 104], results);
+    }
+
+    @test
     func fanOutInsideAnAsyncFunctionRunsConcurrently(): void {
         let started = time.monotonic();
         this.assertEquals([10, 20, 30], lookupAll([1, 2, 3]).await());

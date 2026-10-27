@@ -113,6 +113,11 @@ the same executable configured for diagnostics and debugging.
 
 ### Project Module Navigation
 
+Rename is limited to lexical variables and functions in the current file.
+Class, member and parameter refactors, and ambiguous self-referencing
+initializers, are rejected when the server cannot resolve every required
+constructor, receiver or named-argument edit.
+
 The same features work for your own modules. With `import app.foo` in scope:
 
 - **Go to Definition** (F12) on `foo.bar` opens the module's source file at

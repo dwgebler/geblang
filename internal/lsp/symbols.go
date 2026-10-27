@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"geblang/internal/ast"
 	"geblang/internal/lexer"
@@ -160,7 +161,7 @@ func lineRange(line int, lines []string) Range {
 	l := line - 1
 	return Range{
 		Start: Position{Line: l, Character: 0},
-		End:   Position{Line: l, Character: len(lines[l])},
+		End:   Position{Line: l, Character: utf16Offset(lines[l], len(lines[l]))},
 	}
 }
 
@@ -176,8 +177,8 @@ func nameRange(line int, name string, lines []string) Range {
 		col = 0
 	}
 	return Range{
-		Start: Position{Line: l, Character: col},
-		End:   Position{Line: l, Character: col + len(name)},
+		Start: Position{Line: l, Character: utf16Offset(text, col)},
+		End:   Position{Line: l, Character: utf16Offset(text, col+len(name))},
 	}
 }
 
@@ -188,18 +189,27 @@ func wordAtPosition(source string, line, char int) string {
 		return ""
 	}
 	text := lines[line]
-	if char < 0 || char > len(text) {
+	if char < 0 {
 		return ""
 	}
+	char = byteOffset(text, char)
 	// Expand left
 	start := char
-	for start > 0 && isIdentByte(text[start-1]) {
-		start--
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(text[:start])
+		if !isIdentChar(r) {
+			break
+		}
+		start -= size
 	}
 	// Expand right
 	end := char
-	for end < len(text) && isIdentByte(text[end]) {
-		end++
+	for end < len(text) {
+		r, size := utf8.DecodeRuneInString(text[end:])
+		if !isIdentChar(r) {
+			break
+		}
+		end += size
 	}
 	return text[start:end]
 }

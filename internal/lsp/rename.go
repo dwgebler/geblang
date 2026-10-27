@@ -1,5 +1,10 @@
 package lsp
 
+import (
+	"geblang/internal/lexer"
+	"geblang/internal/token"
+)
+
 // prepareRename validates that the cursor is on a renamable identifier.
 // Returns the identifier's range or null when the cursor isn't on one.
 func (s *server) prepareRename(params TextDocumentPositionParams) any {
@@ -11,19 +16,19 @@ func (s *server) prepareRename(params TextDocumentPositionParams) any {
 	if word == "" {
 		return nil
 	}
+	if len(identifierOccurrences(params.TextDocument.URI, source, word, params.Position, true)) == 0 {
+		return nil
+	}
 	col := columnOfWord(source, params.Position.Line, params.Position.Character, word)
 	if col < 0 {
 		return nil
 	}
 	return Range{
 		Start: Position{Line: params.Position.Line, Character: col},
-		End:   Position{Line: params.Position.Line, Character: col + len(word)},
+		End:   Position{Line: params.Position.Line, Character: col + utf16Offset(word, len(word))},
 	}
 }
 
-// rename produces a WorkspaceEdit replacing every whole-word match of
-// the identifier under the cursor in the current document. Cross-file
-// rename is queued for a follow-up that uses the workspace indexer.
 func (s *server) rename(params RenameParams) any {
 	source, ok := s.document(params.TextDocument.URI)
 	if !ok {
@@ -33,7 +38,11 @@ func (s *server) rename(params RenameParams) any {
 	if word == "" || params.NewName == "" || params.NewName == word {
 		return nil
 	}
-	locations := identifierOccurrences(params.TextDocument.URI, source, word)
+	name := lexer.New(params.NewName)
+	if tok := name.NextToken(); tok.Type != token.Ident || tok.Literal != params.NewName || name.NextToken().Type != token.EOF {
+		return nil
+	}
+	locations := identifierOccurrences(params.TextDocument.URI, source, word, params.Position, true)
 	if len(locations) == 0 {
 		return nil
 	}
@@ -51,6 +60,7 @@ func columnOfWord(source string, line, character int, word string) int {
 	if lineText == "" {
 		return -1
 	}
+	character = byteOffset(lineText, character)
 	start := 0
 	for {
 		idx := indexFrom(lineText, word, start)
@@ -59,7 +69,7 @@ func columnOfWord(source string, line, character int, word string) int {
 		}
 		end := idx + len(word)
 		if character >= idx && character <= end && isWordBoundary(lineText, idx, len(word)) {
-			return idx
+			return utf16Offset(lineText, idx)
 		}
 		start = end
 	}

@@ -781,6 +781,9 @@ func returnTypeChecked(fn runtime.Function) bool {
 }
 
 func functionReturnMatchesExpected(fn runtime.Function, expected *ast.TypeRef) bool {
+	if fn.OriginalEnv != nil {
+		fn.ReturnType = fn.OriginalReturnType
+	}
 	if expected == nil || expected.Operator != "" || expected.Name == "any" {
 		return true
 	}

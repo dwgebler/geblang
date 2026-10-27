@@ -112,9 +112,11 @@ type Evaluator struct {
 	yieldFrames          []*yieldFrame
 	callStack            []evalFrame
 	profileTick          uint64 // the profiling tick this evaluator last sampled at
-	currentLine          int    // most recent statement/call/throw line, for error attribution
-	hofCallLine          int    // call-site line of the primitive HOF dispatching a callback, so the caller frame's trace line is the HOF call site, not a stale callback line
-	topLevelLine         int    // line of the call that left the top-level frame
+	debugPath            string
+	builtinFunctionsOnce sync.Once
+	currentLine          int // most recent statement/call/throw line, for error attribution
+	hofCallLine          int // call-site line of the primitive HOF dispatching a callback, so the caller frame's trace line is the HOF call site, not a stale callback line
+	topLevelLine         int // line of the call that left the top-level frame
 	callDepth            int
 	maxCallDepth         int
 	// classStack tracks the lexical class of the currently executing
@@ -486,6 +488,7 @@ type deferFrame struct {
 }
 
 type evalFrame struct {
+	path     string
 	name     string
 	line     int
 	callLine int // source line of the call that entered this frame
@@ -568,9 +571,14 @@ func newEvaluatorCore(stdout io.Writer, args []string, modulePaths []string) *Ev
 		stdout = io.Discard
 	}
 	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
-	e.builtins = withTestPatches(e.builtinModules())
 	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer})
 	return e
+}
+
+func (e *Evaluator) ensureBuiltinFunctions() {
+	e.builtinFunctionsOnce.Do(func() {
+		e.builtins = withTestPatches(e.builtinModules())
+	})
 }
 
 // NewWithArgsAndModulePaths builds a root evaluator; newEvaluatorCore installs its serialize/deserialize context on its own native registry, so concurrent or independent evaluators never cross-dispatch.
@@ -784,6 +792,7 @@ func (e *Evaluator) registryBuiltin(module, name string) builtinFunc {
 }
 
 func (e *Evaluator) CallBuiltin(module, name string, args []runtime.Value, argNames []string) (runtime.Value, error) {
+	e.ensureBuiltinFunctions()
 	if err := e.ensureBuiltinTypes(); err != nil {
 		return nil, err
 	}
@@ -856,6 +865,7 @@ func (e *Evaluator) childForCallback() *Evaluator {
 	child.nextCookieJarID = e.nextCookieJarID
 	e.httpCookieJarMu.Unlock()
 	child.debug = e.debug
+	child.debugPath = e.debugPath
 	child.threadID = e.threadID // goroutine spawns override this with a fresh id
 	child.debugSuppressed = e.debugSuppressed
 	child.debugEvalCancel = e.debugEvalCancel
@@ -1247,7 +1257,7 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 	if line := statementLine(stmt); line > 0 {
 		e.currentLine = line
 	}
-	if profiling.Active {
+	if profiling.Active.Load() {
 		e.profileSample()
 	}
 	switch stmt := stmt.(type) {
@@ -1315,6 +1325,10 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 			return signal{}, fmt.Errorf("static functions are parsed but not evaluated yet")
 		}
 		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters, env), ReturnType: e.resolveTypeRef(stmt.ReturnType, env), Body: stmt.Body, Env: env, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: blockContainsYield(stmt.Body), DefinitionModule: e.currentModule, DefinitionLine: stmt.Token.Line, DefinitionColumn: stmt.Token.Column}
+		fn.DefinitionPath = e.currentDebugPath()
+		if e.callDepth > 0 {
+			fn.Identity = runtime.NewFunctionIdentity()
+		}
 		decorated, err := e.applyCallableFunctionDecorators(fn, stmt.Decorators, env)
 		if err != nil {
 			return signal{}, err
@@ -1878,7 +1892,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		// outer generic frame's concrete bindings. snapshotTypeBindings
 		// walks the env chain so all reachable bindings come along.
 		captured := snapshotEnvTypeBindings(env)
-		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: expr.Parameters, ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env, Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured}, nil
+		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: expr.Parameters, ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env, Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured, DefinitionPath: e.currentDebugPath()}, nil
 	case *ast.AwaitExpression:
 		value, err := e.evalExpression(expr.Value, env)
 		if err != nil {
@@ -2735,7 +2749,14 @@ dispatchPassthrough:
 	if err != nil {
 		return signal{}, err
 	}
-	for _, value := range values {
+	list, _ := iterable.(*runtime.List)
+	for i, value := range values {
+		if list != nil {
+			if i >= len(list.Elements) {
+				break
+			}
+			value = list.Elements[i]
+		}
 		sig, err := e.evalForInIteration(stmt, loopEnv, names, value)
 		if err != nil {
 			return signal{}, err
@@ -2828,8 +2849,9 @@ func (e *Evaluator) iterateComprehensionFor(c *ast.ComprehensionFor, env *runtim
 	}
 	switch it := iterable.(type) {
 	case *runtime.List:
-		for _, el := range it.Elements {
-			if err := step(el); err != nil {
+		limit := len(it.Elements)
+		for i := 0; i < limit && i < len(it.Elements); i++ {
+			if err := step(it.Elements[i]); err != nil {
 				return err
 			}
 		}
@@ -3341,6 +3363,7 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 		}
 	}
 	functions, ok := map[string]builtinFunc(nil), false
+	e.ensureBuiltinFunctions()
 	if hasImportName {
 		functions, ok = e.builtins[canonical]
 	} else {
@@ -4413,6 +4436,7 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 	// Static methods on a builtin type value (bytes.fromString, string.fromCodePoint)
 	// resolve without an import, matching the bytecode VM.
 	if typeVal, ok := receiver.(runtime.Type); ok {
+		e.ensureBuiltinFunctions()
 		if functions, ok := e.builtins[typeVal.Name]; ok {
 			if fn, ok := functions[name]; ok {
 				return fn(call, args)
@@ -5021,6 +5045,11 @@ func (e *Evaluator) evalRangeExpression(expr *ast.RangeExpression, env *runtime.
 		return nil, err
 	}
 	if startStr != nil {
+		if expr.Step != nil {
+			if _, err := e.evalExpression(expr.Step, env); err != nil {
+				return nil, err
+			}
+		}
 		// Char range: 'a'..'z' produces an eager list<string> of single
 		// character entries covering the inclusive codepoint span. The
 		// `..<` exclusive form omits the last element. Step is fixed at +1.
@@ -5418,10 +5447,7 @@ func bindEvaluatedFunctionCallArgumentsErr(fn runtime.Function, provided []evalu
 		return args, 0, nil
 	}
 	// Decorators are transparent to callers: named args bind to the original signature, invoked positionally on the wrapper.
-	params := fn.Parameters
-	if len(fn.OriginalParameters) > 0 {
-		params = fn.OriginalParameters
-	}
+	params := fn.CallParameters()
 	paramNames := make([]string, len(params))
 	hasDefault := make([]bool, len(params))
 	known := map[string]bool{}
@@ -5475,6 +5501,7 @@ func bindEvaluatedFunctionCallArgumentsErr(fn runtime.Function, provided []evalu
 }
 
 func functionArgumentsMatch(fn runtime.Function, args []runtime.Value) bool {
+	fn.Parameters = fn.CallParameters()
 	if fn.Native != nil && len(fn.Parameters) == 0 {
 		return true
 	}
@@ -5500,6 +5527,7 @@ func functionArgumentsMatch(fn runtime.Function, args []runtime.Value) bool {
 // functionArgumentsMatchWithCallTypeArgs is functionArgumentsMatch with the
 // call site's explicit type args substituted into bound params.
 func functionArgumentsMatchWithCallTypeArgs(fn runtime.Function, args []runtime.Value, typeArgs []*ast.TypeRef) bool {
+	fn.Parameters = fn.CallParameters()
 	if len(typeArgs) == 0 || len(fn.TypeParameters) == 0 {
 		return functionArgumentsMatch(fn, args)
 	}
@@ -5560,6 +5588,7 @@ func functionCheckBindings(fn runtime.Function, receiver *runtime.Instance) map[
 }
 
 func functionArgumentsMatchError(fn runtime.Function, args []runtime.Value, receiver *runtime.Instance) error {
+	fn.Parameters = fn.CallParameters()
 	if fn.Native != nil && len(fn.Parameters) == 0 {
 		return nil
 	}
@@ -5835,6 +5864,32 @@ func (e *Evaluator) applyEnumMethod(fn runtime.Function, args []runtime.Value, r
 }
 
 func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtime.Value, this *runtime.Instance) (runtime.Value, error) {
+	if fn.OriginalEnv != nil {
+		args = append([]runtime.Value(nil), args...)
+		env := runtime.NewEnclosedEnvironment(fn.OriginalEnv)
+		if this != nil {
+			_ = env.Define("this", this, false)
+		}
+		for i, param := range fn.OriginalParameters {
+			if param.Variadic {
+				break
+			}
+			if i >= len(args) {
+				args = append(args, nil)
+			}
+			if args[i] == nil && param.Default != nil {
+				value, err := e.evalExpression(param.Default, env)
+				if err != nil {
+					return nil, err
+				}
+				args[i] = value
+			}
+			if args[i] != nil && param.Name != nil {
+				_ = env.Define(param.Name.Value, args[i], false)
+			}
+		}
+	}
+
 	if fn.IsGenerator {
 		return e.lazyGenerator(fn, args, this), nil
 	}
@@ -6106,7 +6161,11 @@ func (e *Evaluator) pushFunction(fn *runtime.Function, env *runtime.Environment)
 	if len(e.callStack) == 0 {
 		e.topLevelLine = e.currentLine
 	}
-	e.callStack = append(e.callStack, evalFrame{name: name, line: line, callLine: e.currentLine, fn: fn, env: env})
+	path := e.currentDebugPath()
+	if fn != nil && fn.DefinitionPath != "" {
+		path = fn.DefinitionPath
+	}
+	e.callStack = append(e.callStack, evalFrame{name: name, line: line, callLine: e.currentLine, fn: fn, env: env, path: path})
 }
 
 func (e *Evaluator) popFunction() {

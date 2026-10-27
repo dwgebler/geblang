@@ -1,6 +1,7 @@
 package bytecode
 
 import (
+	"geblang/internal/native"
 	"geblang/internal/profiling"
 	"geblang/internal/runtime"
 	"strconv"
@@ -63,7 +64,7 @@ func (vm *VM) profileSample(line int, entering bool) {
 	for i := len(inner) - 1; i >= 0; i-- {
 		frames = append(frames, inner[i])
 	}
-	profiling.Record(frames, leaf)
+	profiling.RecordThread(native.GoroutineID(), t, frames, leaf)
 }
 
 // profileLink is the worker this one was invoked from on the same goroutine.
@@ -79,7 +80,7 @@ func (vm *VM) SetProfileParent(parent *VM) { vm.profileParent = parent }
 
 // callNativeMethod invokes a native method; while profiling, a cross-module wrapper is told which worker invoked it.
 func (vm *VM) callNativeMethod(method runtime.Function, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-	if profiling.Active && method.NativeFrom != nil {
+	if profiling.Active.Load() && method.NativeFrom != nil {
 		return method.NativeFrom(vm, instance, args)
 	}
 	return method.Native(instance, args)

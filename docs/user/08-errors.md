@@ -28,6 +28,10 @@ try {
 
 `finally` runs after the `try`/`catch` path completes.
 
+A return from `finally` replaces a pending return or exception. Breaking or
+continuing a loop inside a `try` does not leave that `try`; its finalizer runs
+when execution actually exits the protected scope.
+
 Catch clauses are checked in order. Put specific error classes before broader
 base classes. `catch (Error e)` acts as a catch-all for any throwable error.
 An untyped `catch { ... }` block also catches everything but does not bind the

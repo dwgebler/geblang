@@ -730,8 +730,10 @@ type Function struct {
 	IsGenerator          bool
 	Native               func(this *Instance, args []Value) (Value, error)
 	ForwardThis          bool
-	// OriginalParameters: pre-decoration signature, used only for named-arg binding.
+	// OriginalParameters preserve the public signature across decorators.
 	OriginalParameters []ast.Parameter
+	OriginalEnv        *Environment
+	OriginalReturnType *ast.TypeRef
 	// OwnerClass is set when the function is a class method/constructor; it
 	// identifies the lexical class for `parent(...)` resolution, which must
 	// dispatch on the declaring class rather than the runtime instance class
@@ -751,6 +753,7 @@ type Function struct {
 	DefinitionModule string
 	DefinitionLine   int
 	DefinitionColumn int
+	DefinitionPath   string
 	// BridgeInvoke (host typed any to avoid a runtime->bytecode import cycle) runs a bridged callback threading the invoking worker as a synchronous re-entry host; nil for non-bridged functions.
 	BridgeInvoke func(host any, args []Value) (Value, error)
 	// Metadata carries the source bytecode function's reflection metadata when this is a module-boundary bridge wrapper; nil for genuine native functions.
@@ -769,9 +772,18 @@ func (v Function) Inspect() string {
 	return "<func>"
 }
 
+func (v Function) CallParameters() []ast.Parameter {
+	if v.OriginalEnv != nil {
+		return v.OriginalParameters
+	}
+	return v.Parameters
+}
+
 type OverloadedFunction struct {
 	Name      string
 	Overloads []Function
+	Callables []Value
+	Defaults  [][]Value
 	// Set for an exported bytecode overload set; a cross-module member call selects a home-chunk overload by Indices.
 	Module  string
 	Indices []int64
@@ -1389,6 +1401,7 @@ func (v *Class) DeclaringModule() string {
 }
 
 type Interface struct {
+	DefinitionPath string
 	Name           string
 	Doc            string
 	Module         string // declaring module, for module-exact instanceof

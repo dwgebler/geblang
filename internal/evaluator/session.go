@@ -181,6 +181,7 @@ func (s *Session) Imports() []string {
 }
 
 func (s *Session) StdlibModules() []string {
+	s.evaluator.ensureBuiltinFunctions()
 	names := make([]string, 0, len(s.evaluator.builtins))
 	for name := range s.evaluator.builtins {
 		names = append(names, name)
@@ -226,6 +227,7 @@ func (s *Session) MemberNames(name string) []string {
 }
 
 func (s *Session) StdlibMemberNames(name string) []string {
+	s.evaluator.ensureBuiltinFunctions()
 	canonical := name
 	if imported, ok := s.evaluator.importNames[name]; ok {
 		canonical = imported

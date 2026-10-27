@@ -698,6 +698,14 @@ func makeLocationDict(module string, line, column int64) runtime.Dict {
 
 // reflectFunctionMetadataValue resolves a same-module BytecodeClosure (a free function passed by value through an `any` binding) to its populated function metadata before delegating.
 func (vm *VM) reflectFunctionMetadataValue(value runtime.Value) (runtime.FunctionMetadata, bool) {
+	if set, ok := value.(runtime.OverloadedFunction); ok && len(set.Indices) > 0 {
+		if info, ok := vm.functionInfoIn(set.Module, set.Indices[0]); ok {
+			fn := bytecodeFunctionFromInfo(info, set.Indices[0], set.Module, false)
+			fn.Parameters = parameterMetadataFromFunctionInfo(info, int(info.UpvalueCount))
+			value = fn
+		}
+	}
+
 	if closure, ok := value.(runtime.BytecodeClosure); ok {
 		if closure.Module == "" || closure.Module == vm.moduleName {
 			if closure.FunctionIndex >= 0 && int(closure.FunctionIndex) < len(vm.curMod.Chunk.Functions) {

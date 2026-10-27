@@ -390,6 +390,8 @@ type exceptionHandler struct {
 }
 
 type iteratorValue struct {
+	list      *runtime.List
+	limit     int
 	values    []runtime.Value
 	index     int
 	rangeIter *rangeIterator
@@ -1863,6 +1865,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				TypeBindings:  capturedBindings,
 				Identity:      identity,
 			})
+		case OpBindFunction:
+			if err := vm.bindNestedFunction(*instruction); err != nil {
+				return err
+			}
 		case OpMakeOverloaded:
 			if len(instruction.Operands) == 0 {
 				return vm.fatalError(*instruction, "make overloaded instruction has no operands")
@@ -2231,7 +2237,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 		case OpJump:
 			target := int(instruction.Operands[0])
-			if target <= ip && profiling.Active {
+			if target <= ip && profiling.Active.Load() {
 				vm.profileSample(int(instruction.Line), false)
 			}
 			ip = target - 1
@@ -4560,8 +4566,7 @@ func (vm *VM) iterInit(instruction Instruction) error {
 func (vm *VM) iteratorFor(instruction Instruction, value runtime.Value) (*iteratorValue, error) {
 	switch v := value.(type) {
 	case *runtime.List:
-		values := append([]runtime.Value(nil), v.Elements...)
-		return &iteratorValue{values: values}, nil
+		return &iteratorValue{list: v, limit: len(v.Elements)}, nil
 	case *runtime.Generator:
 		return &iteratorValue{generator: v}, nil
 	case runtime.Range:
@@ -5130,9 +5135,9 @@ func (vm *VM) execRange(instruction Instruction, exclusive bool) error {
 func (vm *VM) forRangeIter(instruction Instruction) error {
 	n := len(vm.stack)
 	if n >= 3 {
-		start, startOK := smallRangeBound(vm.stack[n-3].ToValue(), 0)
+		start, startOK := smallRangeBound(vm.stack[n-3].ToValue())
 		end, endOK := vm.stack[n-2].ToValue().(runtime.SmallInt)
-		step, stepOK := smallRangeBound(vm.stack[n-1].ToValue(), 1)
+		step, stepOK := smallRangeBound(vm.stack[n-1].ToValue())
 		if startOK && endOK && stepOK && step != 0 {
 			vm.stack = vm.stack[:n-3]
 			// One allocation: the iterator and its range state together.
@@ -5151,11 +5156,8 @@ func (vm *VM) forRangeIter(instruction Instruction) error {
 	return vm.iterInit(instruction)
 }
 
-// smallRangeBound reads a range start or step: an int64, or fallback when omitted.
-func smallRangeBound(value runtime.Value, fallback int64) (int64, bool) {
+func smallRangeBound(value runtime.Value) (int64, bool) {
 	switch v := value.(type) {
-	case runtime.Null:
-		return fallback, true
 	case runtime.SmallInt:
 		return v.Value, true
 	}
@@ -5181,6 +5183,14 @@ func newRangeIterator(value runtime.Range) *iteratorValue {
 }
 
 func (iter *iteratorValue) next() (runtime.Value, bool, error) {
+	if iter.list != nil {
+		if iter.index >= iter.limit || iter.index >= len(iter.list.Elements) {
+			return nil, false, nil
+		}
+		value := iter.list.Elements[iter.index]
+		iter.index++
+		return value, true, nil
+	}
 	if iter.generator != nil {
 		return iter.generator.Next()
 	}
@@ -5328,16 +5338,9 @@ func (vm *VM) buildRange(instruction Instruction) error {
 		vm.push(&runtime.List{Elements: elements})
 		return nil
 	}
-	start := big.NewInt(0)
-	if _, ok := startValue.(runtime.Null); !ok {
-		switch sv := startValue.(type) {
-		case runtime.SmallInt:
-			start = big.NewInt(sv.Value)
-		case runtime.Int:
-			start = sv.Value
-		default:
-			return vm.runtimeError(instruction, "range start must be int")
-		}
+	start, ok := native.IntValueToBigInt(startValue)
+	if !ok {
+		return vm.runtimeError(instruction, "range start must be int")
 	}
 	var endBig *big.Int
 	switch ev := endValue.(type) {
@@ -5348,16 +5351,9 @@ func (vm *VM) buildRange(instruction Instruction) error {
 	default:
 		return vm.runtimeError(instruction, "range end must be int")
 	}
-	step := big.NewInt(1)
-	if _, ok := stepValue.(runtime.Null); !ok {
-		switch sv := stepValue.(type) {
-		case runtime.SmallInt:
-			step = big.NewInt(sv.Value)
-		case runtime.Int:
-			step = sv.Value
-		default:
-			return vm.runtimeError(instruction, "range step must be int")
-		}
+	step, ok := native.IntValueToBigInt(stepValue)
+	if !ok {
+		return vm.runtimeError(instruction, "range step must be int")
 	}
 	if step.Sign() == 0 {
 		return vm.runtimeError(instruction, "range step cannot be zero")

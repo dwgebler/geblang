@@ -1273,6 +1273,12 @@ func (s *freeVarSet) scanBlock(block *ast.BlockStatement) {
 	if block == nil {
 		return
 	}
+	outer := s.defined
+	s.defined = make(map[string]bool, len(outer))
+	for name := range outer {
+		s.defined[name] = true
+	}
+	defer func() { s.defined = outer }()
 	for _, stmt := range block.Statements {
 		s.scanStatement(stmt)
 	}
@@ -1324,9 +1330,16 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 		s.scanExpr(stmt.Condition)
 		s.scanBlock(stmt.Body)
 	case *ast.ForStatement:
+		outer := s.defined
+		s.defined = make(map[string]bool, len(outer))
+		for name := range outer {
+			s.defined[name] = true
+		}
+		defer func() { s.defined = outer }()
 		s.scanStatement(stmt.Init)
 		s.scanExpr(stmt.Condition)
 		s.scanStatement(stmt.Update)
+		s.scanExpr(stmt.Iterable)
 		if stmt.VarName != nil {
 			s.defined[stmt.VarName.Value] = true
 		}
@@ -1335,7 +1348,6 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 				s.defined[v.Value] = true
 			}
 		}
-		s.scanExpr(stmt.Iterable)
 		s.scanExpr(stmt.Step)
 		s.scanBlock(stmt.Body)
 	case *ast.TryStatement:
@@ -1508,35 +1520,11 @@ func (s *freeVarSet) scanExpr(expr ast.Expression) {
 			}
 		}
 	case *ast.ListComprehension:
-		s.scanComprehensionClauses(expr.Clauses)
-		s.scanExpr(expr.Body)
+		s.scanExpr(desugarListComprehension(expr))
 	case *ast.SetComprehension:
-		s.scanComprehensionClauses(expr.Clauses)
-		s.scanExpr(expr.Body)
+		s.scanExpr(desugarSetComprehension(expr))
 	case *ast.DictComprehension:
-		s.scanComprehensionClauses(expr.Clauses)
-		s.scanExpr(expr.KeyBody)
-		s.scanExpr(expr.ValueBody)
-	}
-}
-
-// scanComprehensionClauses mirrors the ForStatement case: loop vars are defined before later clauses/body are scanned.
-func (s *freeVarSet) scanComprehensionClauses(clauses []ast.ComprehensionClause) {
-	for _, clause := range clauses {
-		switch c := clause.(type) {
-		case *ast.ComprehensionFor:
-			if c.VarName != nil {
-				s.defined[c.VarName.Value] = true
-			}
-			for _, v := range c.VarNames {
-				if v != nil {
-					s.defined[v.Value] = true
-				}
-			}
-			s.scanExpr(c.Iterable)
-		case *ast.ComprehensionIf:
-			s.scanExpr(c.Filter)
-		}
+		s.scanExpr(desugarDictComprehension(expr))
 	}
 }
 
@@ -1665,7 +1653,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	}
 	c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)
 	c.emitAt(OpReturn, expr.Token.Line, expr.Token.Column)
-	fn.LocalCount = c.popFunctionLocals()
+	c.chunk.Functions[index].LocalCount = c.popFunctionLocals()
 	c.inFunc--
 	c.returnTypes = c.returnTypes[:len(c.returnTypes)-1]
 	c.popScope()
@@ -3949,11 +3937,17 @@ func (c *Compiler) namedCallToInheritedStatic(classIndex int64, name string, arg
 	return false
 }
 
-// compileRangeOperands pushes a range's start, end and step (null when omitted).
+// Omitted bounds use concrete defaults so explicit null operands stay invalid.
 func (c *Compiler) compileRangeOperands(expr *ast.RangeExpression) error {
-	for _, part := range []ast.Expression{expr.Start, expr.End, expr.Step} {
+	for i, part := range []ast.Expression{expr.Start, expr.End, expr.Step} {
 		if part == nil {
-			c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)
+			var value runtime.Value = runtime.Null{}
+			if i == 0 {
+				value = runtime.SmallInt{Value: 0}
+			} else if i == 2 {
+				value = runtime.SmallInt{Value: 1}
+			}
+			c.emitConstant(value, expr.Token.Line, expr.Token.Column)
 		} else if err := c.compileExpression(part); err != nil {
 			return err
 		}

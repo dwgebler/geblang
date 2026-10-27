@@ -1,0 +1,76 @@
+import test;
+
+func finalizerResult(): int {
+    try { return 1; } finally { return 2; }
+}
+
+class AuditRegressionsTest extends test.Test {
+    @test
+    func finalizerUsesItsOwnLexicalScope(): void {
+        let seen = [0];
+        int x = 1;
+        let run = func(): int {
+            try { int x = 2; return x; } finally { seen[0] = x; }
+        };
+        this.assertEquals(2, run());
+        this.assertEquals(1, seen[0]);
+    }
+
+    @test
+    func finalizerReturnOverridesPendingReturn(): void {
+        this.assertEquals(2, finalizerResult());
+    }
+
+    @test
+    func loopExitDoesNotRunEnclosingFinalizerEarly(): void {
+        list<string> events = [];
+        try {
+            for (i in 0..<3) {
+                if (i == 0) { continue; }
+                break;
+            }
+            events.push("after loop");
+        } finally { events.push("cleanup"); }
+        this.assertEquals(["after loop", "cleanup"], events);
+    }
+
+    @test
+    func iterationSeesReplacementsAndIgnoresAppendedElements(): void {
+        let values = [1, 2, 3];
+        list<int> seen = [];
+        for (value in values) {
+            seen.push(value);
+            if (value == 1) { values[1] = 9; values.push(4); }
+        }
+        this.assertEquals([1, 9, 3], seen);
+    }
+
+    @test
+    func iterationSeesReplacementsAfterStorageGrows(): void {
+        let values = [1, 2, 3];
+        list<int> seen = [];
+        for (value in values) {
+            seen.push(value);
+            if (value == 1) { values.push(4); values[1] = 8; }
+        }
+        this.assertEquals([1, 8, 3], seen);
+    }
+
+    @test
+    func nullRangeOperandsAreRejected(): void {
+        any missing = null;
+        this.assertThrows(func(): void { for (i in missing..<2) {} });
+        this.assertThrows(func(): void { for (i in 0..<2 by missing) {} });
+        this.assertThrows(func(): void { let r = missing..<2; });
+    }
+
+    @test
+    func characterRangeEvaluatesStepExpressionOnce(): void {
+        let calls = [0];
+        let step = func(): int { calls[0] += 1; return 1; };
+        list<string> seen = [];
+        for (ch in 'a'..'c' by step()) { seen.push(ch); }
+        this.assertEquals(["a", "b", "c"], seen);
+        this.assertEquals(1, calls[0]);
+    }
+}

@@ -94,6 +94,14 @@ func functionsIdentical(l, r Function) bool {
 }
 
 func overloadsIdentical(l, r OverloadedFunction) bool {
+	if len(l.Callables) != len(r.Callables) {
+		return false
+	}
+	for i := range l.Callables {
+		if !ValuesIdentical(l.Callables[i], r.Callables[i]) {
+			return false
+		}
+	}
 	if l.Name != r.Name || l.Module != r.Module || len(l.Indices) != len(r.Indices) || len(l.Overloads) != len(r.Overloads) {
 		return false
 	}
@@ -101,6 +109,9 @@ func overloadsIdentical(l, r OverloadedFunction) bool {
 		if l.Indices[i] != r.Indices[i] {
 			return false
 		}
+	}
+	if len(l.Callables) > 0 {
+		return true
 	}
 	for i := range l.Overloads {
 		if !functionsIdentical(l.Overloads[i], r.Overloads[i]) {

@@ -99,6 +99,7 @@ func (e *Evaluator) evalImportStatement(stmt *ast.ImportStatement, env *runtime.
 
 // Stdlib wins externally; self-import falls through to native.
 func (e *Evaluator) resolveImportedModule(canonical, alias string) (*runtime.Module, error) {
+	e.ensureBuiltinFunctions()
 	_, nativeExists := e.builtins[canonical]
 	if path, perr := e.resolveModulePath(canonical); perr == nil && !e.loading[path] {
 		return e.loadUserModule(canonical, alias)
@@ -110,6 +111,7 @@ func (e *Evaluator) resolveImportedModule(canonical, alias string) (*runtime.Mod
 }
 
 func (e *Evaluator) evalFromImportStatement(stmt *ast.FromImportStatement, env *runtime.Environment) (signal, error) {
+	e.ensureBuiltinFunctions()
 	canonical := strings.Join(stmt.Path, ".")
 	if canonical == "" {
 		return signal{}, fmt.Errorf("empty import path")
@@ -203,6 +205,7 @@ func (e *Evaluator) wrapBuiltinAsFunction(canonical, name string, fn builtinFunc
 
 // BuiltinModule lets the bytecode loader fall back to native on self-import.
 func (e *Evaluator) BuiltinModule(canonical, alias string) *runtime.Module {
+	e.ensureBuiltinFunctions()
 	if _, ok := e.builtins[canonical]; !ok {
 		return nil
 	}
@@ -308,9 +311,12 @@ func (e *Evaluator) loadUserModule(canonical, alias string) (*runtime.Module, er
 	e.modulePaths = append([]string{moduleDir}, e.modulePaths...)
 	// Declarations record their declaring module so reflect.location reports it.
 	prevModule := e.currentModule
+	previousDebugPath := e.debugPath
+	e.debugPath = path
 	e.currentModule = canonical
 	sig, err := e.evalTopLevelStatements(program.Statements, moduleEnv)
 	e.currentModule = prevModule
+	e.debugPath = previousDebugPath
 	e.modulePaths = previousPaths
 	if err != nil {
 		return nil, fmt.Errorf("evaluate module %s: %w", canonical, err)

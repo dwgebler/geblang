@@ -18,7 +18,7 @@ import (
 
 type Compiler struct {
 	chunk           Chunk
-	loops           []loopContext
+	loops           []*loopContext
 	globals         map[string]int64
 	globalTypes     map[string]string
 	globalDeclKinds map[string]globalDecl
@@ -82,6 +82,7 @@ type binding struct {
 }
 
 type loopContext struct {
+	finalizerDepth int
 	continueTarget int
 	continueJumps  []int
 	breakJumps     []int
@@ -90,6 +91,8 @@ type loopContext struct {
 }
 
 type finalizerContext struct {
+	scopes         []map[string]binding
+	loops          []*loopContext
 	body           *ast.BlockStatement
 	popHandler     bool
 	iterSlot       int64

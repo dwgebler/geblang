@@ -19,6 +19,7 @@ import (
 	"geblang/internal/check"
 	"geblang/internal/formatter"
 	"geblang/internal/modules"
+	"geblang/internal/version"
 	"geblang/internal/wslpath"
 )
 
@@ -183,6 +184,9 @@ func (s *server) run() error {
 			return err
 		}
 		s.handle(msg)
+		if msg.Method == "exit" {
+			return nil
+		}
 	}
 }
 
@@ -195,6 +199,7 @@ func (s *server) handle(msg *rawMessage) {
 		go s.workspace.bootstrap(s.snapshotWorkspaceRoots())
 		s.respond(msg.ID, map[string]any{
 			"capabilities": map[string]any{
+				"positionEncoding": "utf-16",
 				"textDocumentSync": 1, // full sync
 				"completionProvider": map[string]any{
 					"triggerCharacters": []string{"."},
@@ -215,7 +220,7 @@ func (s *server) handle(msg *rawMessage) {
 			},
 			"serverInfo": map[string]any{
 				"name":    "geblang-lsp",
-				"version": "1.4.1",
+				"version": version.Geblang,
 			},
 		})
 
@@ -453,8 +458,8 @@ func (s *server) definition(params TextDocumentPositionParams) any {
 			}
 		}
 		r := Range{
-			Start: Position{Line: defLine, Character: col},
-			End:   Position{Line: defLine, Character: col + len(word)},
+			Start: Position{Line: defLine, Character: utf16Offset(lines[defLine], col)},
+			End:   Position{Line: defLine, Character: utf16Offset(lines[defLine], col+len(word))},
 		}
 		return Location{URI: params.TextDocument.URI, Range: r}
 	}
@@ -488,7 +493,7 @@ func (s *server) formatting(uri string) any {
 	}
 	lines := strings.Split(source, "\n")
 	lastLine := len(lines) - 1
-	lastChar := len(lines[lastLine])
+	lastChar := utf16Offset(lines[lastLine], len(lines[lastLine]))
 	wholeDoc := Range{
 		Start: Position{Line: 0, Character: 0},
 		End:   Position{Line: lastLine, Character: lastChar},
@@ -577,12 +582,16 @@ func (s *server) analyze(uri, source string) []Diagnostic {
 	_, raw := check.Source(file, source, opts)
 	diags := make([]Diagnostic, 0, len(raw))
 	for _, d := range raw {
+		r := lineColRange(d.Line, d.Column)
+		text := splitLine(source, r.Start.Line)
+		r.Start.Character = tokenColumn(text, r.Start.Character)
+		r.End.Character = tokenColumn(text, r.End.Character)
 		sev := 1
 		if d.Severity == check.SeverityWarning {
 			sev = 2
 		}
 		diags = append(diags, Diagnostic{
-			Range:    lineColRange(d.Line, d.Column),
+			Range:    r,
 			Severity: sev,
 			Source:   "geblang",
 			Code:     d.Rule,

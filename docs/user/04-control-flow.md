@@ -84,12 +84,19 @@ for (i in 0..<10 by 3) {   # 0 3 6 9 (exclusive upper bound)
 
 The step defaults to 1 when omitted. It can be any integer expression.
 
+An explicit `null` start or step is invalid. Character ranges use adjacent
+codepoints; an explicit `by` expression is evaluated once, but its value does
+not change their stride.
+
 ### What for-in iterates over
 
 `for-in` accepts lists, ranges, generator-returning calls, classes that
 implement the iterator protocol, and (1.16.0) dicts, sets, and strings
 directly:
 
+- A **list** observes replacements to existing elements and visits at most
+  its original length. Appending does not extend the loop; removing elements
+  can shorten it. The same rule applies to list comprehensions.
 - A **dict** yields insertion-ordered `[key, value]` pairs. Two binders
   destructure them: `for (k, v in d) { ... }`.
 - A **set** yields its elements in the same sorted order as `set.toList()`.

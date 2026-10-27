@@ -1,9 +1,4 @@
-// Package profiling is Geblang's sampling profiler. While it runs, a ticker
-// advances a tick counter about once a millisecond; each running VM or
-// evaluator checks the counter at its safepoints (function calls and loop
-// iterations, or statements in the evaluator) and, on a new tick, records its
-// Geblang call stack. A stack is recorded at most once per tick per running
-// VM, so samples measure time spent running Geblang code, not time blocked.
+// Package profiling samples Geblang call stacks at runtime safepoints.
 package profiling
 
 import (
@@ -21,35 +16,40 @@ import (
 // Interval is the sampling period.
 const Interval = time.Millisecond
 
-// Active is set once, before any program code runs, when profiling is on; the
-// safepoints read it without synchronisation.
-var Active bool
+// Active is atomic because cancelled workers can outlive a collection.
+var Active atomic.Bool
 
 var (
-	tick    atomic.Uint64
-	mu      sync.Mutex
-	stacks  map[string]int
-	lines   map[string]int
-	samples int
-	path    string
-	started time.Time
-	stop    chan struct{}
-	done    sync.Once
+	tick       atomic.Uint64
+	mu         sync.Mutex
+	stacks     map[string]int
+	lines      map[string]int
+	samples    int
+	path       string
+	started    time.Time
+	stop       chan struct{}
+	done       sync.Once
+	threadTick uint64
+	threads    map[int64]struct{}
 )
 
 // Start turns profiling on, writing the report to reportPath when Finish
 // runs. It must be called before any Geblang code starts.
 func Start(reportPath string) {
-	if Active {
+	mu.Lock()
+	defer mu.Unlock()
+	if Active.Load() {
 		return
 	}
 	path = reportPath
+	samples = 0
 	stacks = map[string]int{}
 	lines = map[string]int{}
+	threads = map[int64]struct{}{}
 	started = time.Now()
 	stopped := make(chan struct{})
 	stop = stopped
-	Active = true
+	Active.Store(true)
 	go func() {
 		t := time.NewTicker(Interval)
 		defer t.Stop()
@@ -71,7 +71,7 @@ func Collect() func() map[string]int {
 	Start("")
 	return func() map[string]int {
 		close(stop)
-		Active = false
+		Active.Store(false)
 		mu.Lock()
 		defer mu.Unlock()
 		out := stacks
@@ -89,19 +89,41 @@ func Tick() uint64 { return tick.Load() }
 // "module.function" names, and leaf is the innermost function's
 // "module.function:line" (empty when the line is not known).
 func Record(frames []string, leaf string) {
-	key := strings.Join(frames, ";")
 	mu.Lock()
+	defer mu.Unlock()
+	record(frames, leaf)
+}
+
+// RecordThread deduplicates samples across VMs executing on one goroutine.
+func RecordThread(thread int64, sampleTick uint64, frames []string, leaf string) {
+	mu.Lock()
+	defer mu.Unlock()
+	if !Active.Load() || sampleTick != Tick() {
+		return
+	}
+	if threadTick != sampleTick {
+		clear(threads)
+		threadTick = sampleTick
+	}
+	if _, exists := threads[thread]; exists {
+		return
+	}
+	threads[thread] = struct{}{}
+	record(frames, leaf)
+}
+
+func record(frames []string, leaf string) {
+	key := strings.Join(frames, ";")
 	stacks[key]++
 	if leaf != "" {
 		lines[leaf]++
 	}
 	samples++
-	mu.Unlock()
 }
 
 // Finish stops profiling and writes the report (once; later calls do nothing).
 func Finish() {
-	if !Active {
+	if !Active.Load() {
 		return
 	}
 	done.Do(func() {
@@ -122,6 +144,9 @@ func Exit(code int) {
 
 // FoldedPath is where the folded stacks are written beside a report.
 func FoldedPath(reportPath string) string {
+	if filepath.Ext(reportPath) == ".folded" {
+		return reportPath + ".folded"
+	}
 	return strings.TrimSuffix(reportPath, filepath.Ext(reportPath)) + ".folded"
 }
 

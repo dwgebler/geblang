@@ -70,6 +70,14 @@ func (e *Evaluator) SetDebugSourcePath(path string) {
 		e.debug = &debugState{}
 	}
 	e.debug.sourcePath = path
+	e.debugPath = path
+}
+
+func (e *Evaluator) currentDebugPath() string {
+	if n := len(e.callStack); n > 0 && e.callStack[n-1].path != "" {
+		return e.callStack[n-1].path
+	}
+	return e.debugPath
 }
 
 // SuppressDebug toggles debug-hook suppression; nested calls nest.
@@ -139,7 +147,10 @@ func (e *Evaluator) callDebugHook(stmt ast.Statement, env *runtime.Environment, 
 	if line == 0 {
 		return
 	}
-	path := e.debug.sourcePath
+	path := e.currentDebugPath()
+	if path == "" {
+		path = e.debug.sourcePath
+	}
 	frames, frameVars, frameEnvs := e.snapshotFrames(path, line, env)
 	pause := DebugPause{
 		Loc:       DebugLocation{Path: path, Line: line},
@@ -172,7 +183,11 @@ func (e *Evaluator) snapshotFrames(currentPath string, currentLine int, currentE
 		if name == "" {
 			name = "<closure>"
 		}
-		frames = append(frames, DebugFrame{Name: name, Path: currentPath, Line: f.line})
+		path := f.path
+		if path == "" {
+			path = currentPath
+		}
+		frames = append(frames, DebugFrame{Name: name, Path: path, Line: f.line})
 		frameVars = append(frameVars, snapshotEnv(f.env))
 		frameEnvs = append(frameEnvs, f.env)
 	}

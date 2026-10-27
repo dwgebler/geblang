@@ -18,6 +18,23 @@ list<string> sockReceived = [];
 int sockHandlerCalls = 0;
 
 class SocketsTest extends test.Test {
+    @test
+    func callbacksRunWhileClientsAreConstructed(): void {
+        let server = sockets.serve("127.0.0.1", 0, func(sockets.Socket conn): void {
+            conn.writeln("ready");
+            conn.close();
+        });
+        let port = server.localAddr().split(":")[1] as int;
+        int received = 0;
+        for (i in 0..<24) {
+            let client = sockets.dial("127.0.0.1", port);
+            if (client.readLine() == "ready") { received += 1; }
+            client.close();
+        }
+        server.close();
+        this.assertEquals(24, received);
+    }
+
     func resetState(): void {
         sockReceived = [];
         sockHandlerCalls = 0;

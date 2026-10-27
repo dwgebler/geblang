@@ -530,6 +530,13 @@ func (vm *VM) ResetForReuse() { vm.resetForReuse() }
 func (vm *VM) Recyclable() bool { return vm.escapedRefs.Load() == 0 }
 
 func (vm *VM) resetForReuse() {
+	clear(vm.globals)
+	clear(vm.stack[:cap(vm.stack)])
+	clear(vm.localsStack[:cap(vm.localsStack)])
+	clear(vm.frames[:cap(vm.frames)])
+	for _, actions := range vm.defers[:cap(vm.defers)] {
+		clear(actions[:cap(actions)])
+	}
 	vm.stack = vm.stack[:0]
 	vm.localsStack = vm.localsStack[:0]
 	vm.frames = vm.frames[:0]

@@ -28,6 +28,9 @@ func (vm *VM) applyCallableDecorators() error {
 		vm.methodReceiverFuncs = map[int64]bool{}
 	}
 	for index, function := range vm.curMod.Chunk.Functions {
+		if function.UpvalueCount > 0 {
+			continue
+		}
 		current, decorated, err := vm.applyCallableDecoratorsForFunction(int64(index), function)
 		if err != nil {
 			return err
@@ -39,7 +42,7 @@ func (vm *VM) applyCallableDecorators() error {
 			delete(vm.decoratedFuncs, int64(index))
 			continue
 		}
-		vm.decoratedFuncs[int64(index)] = current
+		vm.decoratedFuncs[int64(index)] = vm.boundFunctionValue(int64(index), current)
 	}
 	vm.decoratorsApplied = true
 	return nil
@@ -104,7 +107,10 @@ func (vm *VM) applyCallableDecoratorsForFunction(index int64, function FunctionI
 	if len(function.Decorators) == 0 {
 		return nil, false, nil
 	}
-	var current runtime.Value = vm.bytecodeFunctionValue(index, true)
+	return vm.applyFunctionDecorators(function, vm.bytecodeFunctionValue(index, true))
+}
+
+func (vm *VM) applyFunctionDecorators(function FunctionInfo, current runtime.Value) (runtime.Value, bool, error) {
 	decorated := false
 	for i := len(function.Decorators) - 1; i >= 0; i-- {
 		decorator := function.Decorators[i]
@@ -112,7 +118,9 @@ func (vm *VM) applyCallableDecoratorsForFunction(index int64, function FunctionI
 			continue
 		}
 		if decorator.Target == "method" {
-			vm.methodReceiverFuncs[index] = true
+			if raw, ok := current.(runtime.BytecodeFunction); ok {
+				vm.methodReceiverFuncs[raw.Index] = true
+			}
 		}
 		args, names, err := decoratorCallArguments(current, decorator)
 		if err != nil {
@@ -144,7 +152,7 @@ func (vm *VM) applyCallableDecoratorsForFunction(index int64, function FunctionI
 }
 
 func (vm *VM) decoratorWrapperCompatible(original FunctionInfo, target string, wrapper runtime.Value) bool {
-	originalOffset := 0
+	originalOffset := int(original.UpvalueCount)
 	if target == "method" && len(original.ParamNames) > 0 {
 		originalOffset = 1
 	}

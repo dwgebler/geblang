@@ -36,6 +36,7 @@ func SelectWithIndex(name string, overloads []runtime.Function, args []runtime.V
 }
 
 func bindsPositional(fn runtime.Function, argc int) bool {
+	fn.Parameters = fn.CallParameters()
 	if fn.Native != nil && len(fn.Parameters) == 0 {
 		return true
 	}
@@ -56,6 +57,7 @@ func bindsPositional(fn runtime.Function, argc int) bool {
 }
 
 func argsMatchParamTypes(fn runtime.Function, args []runtime.Value) bool {
+	fn.Parameters = fn.CallParameters()
 	if fn.Native != nil && len(fn.Parameters) == 0 {
 		return true
 	}

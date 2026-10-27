@@ -77,7 +77,9 @@ func (e *Evaluator) applyCallableFunctionDecorators(fn runtime.Function, decorat
 		wrapped = true
 	}
 	if wrapped {
-		current.OriginalParameters = fn.Parameters
+		current.OriginalParameters = fn.CallParameters()
+		current.OriginalEnv = fn.Env
+		current.OriginalReturnType = fn.ReturnType
 	}
 	return current, nil
 }
@@ -326,6 +328,7 @@ func mergeInterfaceMembers(stmt *ast.ClassStatement, ifaces []*runtime.Interface
 
 func (e *Evaluator) buildInterface(stmt *ast.InterfaceStatement, env *runtime.Environment) (*runtime.Interface, error) {
 	iface := &runtime.Interface{Name: stmt.Name.Value, Doc: stmt.Doc, Module: e.currentModule, TypeParameters: typeParameterNames(stmt.Generics), Methods: e.resolveFunctionSignatures(stmt.Methods, env), Defaults: stmt.Defaults, Fields: stmt.Fields}
+	iface.DefinitionPath = e.currentDebugPath()
 	for _, parentRef := range stmt.Parents {
 		parentValue, ok, err := e.resolveTypeValue(parentRef, env)
 		if err != nil {
@@ -383,6 +386,7 @@ func (e *Evaluator) ensureBuiltinTypes() error {
 }
 
 func (e *Evaluator) installBuiltinTypes(env *runtime.Environment) error {
+	e.ensureBuiltinFunctions()
 	testClass := &runtime.Class{
 		Name:    "Test",
 		Fields:  []runtime.Field{},
@@ -548,6 +552,7 @@ func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment)
 				return nil, err
 			}
 			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: typeParameterNames(member.Generics), TypeParamConstraints: typeParamConstraints(member.Generics), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env, Decorators: member.Decorators, Target: "method", Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: true}
+			fn.DefinitionPath = e.currentDebugPath()
 			if len(member.Decorators) > 0 {
 				e.currentLine = member.Token.Line
 			}
@@ -634,6 +639,10 @@ func (e *Evaluator) foldInterfaceDefaultsIntoEnum(enum *runtime.EnumDef, iface *
 			return err
 		}
 		fn := runtime.Function{Name: def.Name.Value, Doc: def.Doc, TypeParameters: typeParameterNames(def.Generics), TypeParamConstraints: typeParamConstraints(def.Generics), Parameters: e.resolveParameters(def.Parameters, env), ReturnType: e.resolveTypeRef(def.ReturnType, env), Body: def.Body, Env: env, Decorators: def.Decorators, Target: "method", Async: def.Async, IsGenerator: blockContainsYield(def.Body), ForwardThis: true}
+		fn.DefinitionPath = e.currentDebugPath()
+		if iface.DefinitionPath != "" {
+			fn.DefinitionPath = iface.DefinitionPath
+		}
 		enum.Methods[key] = append(enum.Methods[key], fn)
 	}
 	return nil
@@ -801,6 +810,12 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 	if err := mergeInterfaceMembers(stmt, implementedIfaces); err != nil {
 		return nil, err
 	}
+	defaultPaths := map[*ast.FunctionStatement]string{}
+	for _, iface := range implementedIfaces {
+		for _, method := range iface.Defaults {
+			defaultPaths[method] = iface.DefinitionPath
+		}
+	}
 	for _, member := range stmt.Members {
 		switch member := member.(type) {
 		case *ast.DeclarationStatement:
@@ -848,6 +863,10 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 			}
 			methodTypeParams := append(typeParameterNames(member.Generics), classTypeParams...)
 			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(member.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env, Decorators: member.Decorators, Target: target, Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: !member.Static}
+			fn.DefinitionPath = e.currentDebugPath()
+			if path := defaultPaths[member]; path != "" {
+				fn.DefinitionPath = path
+			}
 			if len(member.Decorators) > 0 {
 				e.currentLine = member.Token.Line
 			}
@@ -876,6 +895,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 		dtor := stmt.Destructor
 		methodTypeParams := append(typeParameterNames(dtor.Generics), classTypeParams...)
 		fn := runtime.Function{Name: "~" + dtor.Name.Value, Doc: dtor.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(dtor.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(dtor.Parameters, env), ReturnType: e.resolveTypeRef(dtor.ReturnType, env), Body: dtor.Body, Env: env, Decorators: dtor.Decorators, Target: "method", Async: dtor.Async, IsGenerator: false, ForwardThis: true}
+		fn.DefinitionPath = e.currentDebugPath()
 		if len(dtor.Decorators) > 0 {
 			e.currentLine = dtor.Token.Line
 		}

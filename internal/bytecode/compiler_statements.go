@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/runtime"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -214,6 +215,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 	case *ast.SimpleStatement:
 		return c.compileSimpleStatement(stmt)
 	case *ast.ReturnStatement:
+		returnSlot := int64(-1)
 		if c.inFunc > 0 && stmt.Value != nil && len(c.finalizers) == 0 {
 			if emitted, err := c.tryEmitTailCall(stmt); err != nil {
 				return err
@@ -239,8 +241,15 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 			}
 			c.emitAt(OpPop, stmt.Token.Line, stmt.Token.Column)
 		}
-		if err := c.compileActiveFinalizers(stmt.Token.Line, stmt.Token.Column, true); err != nil {
+		if c.inFunc > 0 && len(c.finalizers) > 0 {
+			returnSlot = c.allocateLocal()
+			c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, returnSlot)
+		}
+		if err := c.compileActiveFinalizers(stmt.Token.Line, stmt.Token.Column, 0, true); err != nil {
 			return err
+		}
+		if returnSlot >= 0 {
+			c.emitAt(OpGetLocal, stmt.Token.Line, stmt.Token.Column, returnSlot)
 		}
 		c.emitAt(OpReturn, stmt.Token.Line, stmt.Token.Column)
 		return nil
@@ -400,7 +409,7 @@ func (c *Compiler) compileWhileStatement(stmt *ast.WhileStatement) error {
 	if err != nil {
 		return err
 	}
-	c.loops = append(c.loops, loopContext{continueTarget: loopStart})
+	c.loops = append(c.loops, &loopContext{continueTarget: loopStart, finalizerDepth: len(c.finalizers)})
 	if err := c.compileBlock(stmt.Body); err != nil {
 		c.loops = c.loops[:len(c.loops)-1]
 		return err
@@ -484,7 +493,7 @@ func (c *Compiler) compileForStatement(stmt *ast.ForStatement) error {
 		}
 		exitJump = jp
 	}
-	c.loops = append(c.loops, loopContext{continueTarget: -1})
+	c.loops = append(c.loops, &loopContext{continueTarget: -1, finalizerDepth: len(c.finalizers)})
 	if err := c.compileBlock(stmt.Body); err != nil {
 		c.loops = c.loops[:len(c.loops)-1]
 		return err
@@ -522,13 +531,6 @@ func (c *Compiler) compileForInStatement(stmt *ast.ForStatement) error {
 	c.emitConstant(runtime.Null{}, stmt.Token.Line, stmt.Token.Column)
 	valueSlot := c.allocateLocal()
 	c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, valueSlot)
-	targetSlots := make([]int64, 0, len(names))
-	for _, name := range names {
-		c.emitConstant(runtime.Null{}, stmt.Token.Line, stmt.Token.Column)
-		slot := c.defineLocal(name.Value)
-		c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, slot)
-		targetSlots = append(targetSlots, slot)
-	}
 	if rng, ok := stmt.Iterable.(*ast.RangeExpression); ok {
 		// A range literal goes straight to its iterator.
 		if err := c.compileRangeOperands(rng); err != nil {
@@ -548,6 +550,14 @@ func (c *Compiler) compileForInStatement(stmt *ast.ForStatement) error {
 	iterSlot := c.allocateLocal()
 	c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, iterSlot)
 
+	targetSlots := make([]int64, 0, len(names))
+	for _, name := range names {
+		c.emitConstant(runtime.Null{}, stmt.Token.Line, stmt.Token.Column)
+		slot := c.defineLocal(name.Value)
+		c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, slot)
+		targetSlots = append(targetSlots, slot)
+	}
+
 	loopStart := len(c.chunk.Instructions)
 	nextJump := c.emitJump(OpIterNext, stmt.Token.Line, stmt.Token.Column)
 	c.chunk.Instructions[nextJump].Operands = append(c.chunk.Instructions[nextJump].Operands, iterSlot, valueSlot)
@@ -560,7 +570,7 @@ func (c *Compiler) compileForInStatement(stmt *ast.ForStatement) error {
 		c.emitAt(OpUnpackList, stmt.Token.Line, stmt.Token.Column, operands...)
 	}
 
-	c.loops = append(c.loops, loopContext{continueTarget: loopStart, iterSlot: iterSlot, hasIterSlot: true})
+	c.loops = append(c.loops, &loopContext{continueTarget: loopStart, iterSlot: iterSlot, hasIterSlot: true, finalizerDepth: len(c.finalizers)})
 	c.pushFinalizer(finalizerContext{iterSlot: iterSlot, hasIterSlot: true})
 	if err := c.compileBlock(stmt.Body); err != nil {
 		c.popFinalizer()
@@ -616,18 +626,46 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	 * statics, and for registering the resulting function index
 	 * under `class.StaticMethods` rather than `class.Methods` (see
 	 * compileClassStatement). */
-	index := c.nextFunctionIndex(name)
+	nestedStatement := c.inFunc > 0 && receiverName == "" && !strings.Contains(name, ".")
+	var index int64
+	if nestedStatement {
+		index = c.declareFunction(fmt.Sprintf("<nested:%d>", len(c.chunk.Functions)))
+		c.chunk.Functions[index].Name = name
+	} else {
+		index = c.nextFunctionIndex(name)
+	}
+	var captures []struct {
+		name string
+		slot int64
+	}
+	var callableSlot int64
+	if nestedStatement {
+		b, exists := c.scopes[len(c.scopes)-1][name]
+		if !exists {
+			callableSlot = c.defineLocalWithType(name, "callable")
+			c.emitConstant(runtime.Null{}, stmt.Token.Line, stmt.Token.Column)
+			c.emitAt(OpSetLocal, stmt.Token.Line, stmt.Token.Column, callableSlot)
+			c.emitAt(OpPop, stmt.Token.Line, stmt.Token.Column)
+		} else {
+			callableSlot = b.slot
+		}
+		scanner := newFreeVarSet(stmt.Parameters)
+		scanner.scanBlock(stmt.Body)
+		scanner.free[name] = true
+		for free := range scanner.free {
+			if b, ok := c.resolveName(free); ok && b.kind == "local" {
+				captures = append(captures, struct {
+					name string
+					slot int64
+				}{free, b.slot})
+			}
+		}
+		sort.Slice(captures, func(i, j int) bool { return captures[i].name < captures[j].name })
+	}
 	skipJump := c.emitJump(OpJump, stmt.Token.Line, stmt.Token.Column)
 	entry := int64(len(c.chunk.Instructions))
 	c.pushScope()
-	// Nested function statements (declared inside another function's body)
-	// share the enclosing function's slot space because their bodies may
-	// reference outer locals directly via resolveName. Only outermost
-	// function and method declarations reset the slot counter.
-	nestedStatement := c.inFunc > 0
-	if !nestedStatement {
-		c.pushFunctionLocals()
-	}
+	c.pushFunctionLocals()
 	paramSlots := make([]int64, 0, len(stmt.Parameters))
 	var constSlots []int64
 	paramNames := make([]string, 0, len(stmt.Parameters))
@@ -636,6 +674,16 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	paramDisplayTypes := make([]string, 0, len(stmt.Parameters))
 	paramDecorators := make([][]runtime.DecoratorMetadata, 0, len(stmt.Parameters))
 	defaultConstants := make([]int64, 0, len(stmt.Parameters))
+	for _, capture := range captures {
+		paramSlots = append(paramSlots, c.defineLocalWithType(capture.name, ""))
+		paramNames = append(paramNames, capture.name)
+		paramDisplayNames = append(paramDisplayNames, capture.name)
+		paramTypes = append(paramTypes, "")
+		paramDisplayTypes = append(paramDisplayTypes, "any")
+		paramDecorators = append(paramDecorators, nil)
+		defaultConstants = append(defaultConstants, -1)
+	}
+	c.chunk.Functions[index].UpvalueCount = int64(len(captures))
 	if receiverName != "" {
 		paramNames = append(paramNames, strings.ToLower(receiverName))
 		paramDisplayNames = append(paramDisplayNames, receiverName)
@@ -649,9 +697,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	allTypeParamConstraintExprs := append(typeParamConstraintExprs(stmt.Generics), c.currentClassTypeParamConstraintExprs()...)
 	for _, param := range stmt.Parameters {
 		if param.Name == nil {
-			if !nestedStatement {
-				c.popFunctionLocals()
-			}
+			c.popFunctionLocals()
 			c.popScope()
 			return fmt.Errorf("function parameter has no name")
 		}
@@ -667,9 +713,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		paramDisplayTypes = append(paramDisplayTypes, declaredTypeName(param.Type))
 		paramDecs, err := c.decoratorsMetadata(param.Decorators, "parameter", 0)
 		if err != nil {
-			if !nestedStatement {
-				c.popFunctionLocals()
-			}
+			c.popFunctionLocals()
 			c.popScope()
 			return err
 		}
@@ -680,9 +724,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		}
 		value, err := c.constantValueFromExpression(param.Default)
 		if err != nil {
-			if !nestedStatement {
-				c.popFunctionLocals()
-			}
+			c.popFunctionLocals()
 			c.popScope()
 			return err
 		}
@@ -736,9 +778,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		if err := prologue(); err != nil {
 			c.inFunc--
 			c.returnTypes = c.returnTypes[:len(c.returnTypes)-1]
-			if !nestedStatement {
-				c.popFunctionLocals()
-			}
+			c.popFunctionLocals()
 			c.popScope()
 			return err
 		}
@@ -749,29 +789,26 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	if err := c.compileBlock(stmt.Body); err != nil {
 		c.inFunc--
 		c.returnTypes = c.returnTypes[:len(c.returnTypes)-1]
-		if !nestedStatement {
-			c.popFunctionLocals()
-		}
+		c.popFunctionLocals()
 		c.popScope()
 		return err
 	}
 	c.emitConstant(runtime.Null{}, stmt.Token.Line, stmt.Token.Column)
 	c.emitAt(OpReturn, stmt.Token.Line, stmt.Token.Column)
-	if nestedStatement {
-		// Inner function shares the outer function's slot space; its
-		// LocalCount tracks the current high-water so the outer can
-		// surface a correct cumulative count when it finishes. The VM
-		// uses the SharesParentFrame flag to skip allocating a fresh
-		// locals slice on call entry.
-		c.chunk.Functions[index].LocalCount = c.locals
-		c.chunk.Functions[index].SharesParentFrame = true
-	} else {
-		c.chunk.Functions[index].LocalCount = c.popFunctionLocals()
-	}
+	c.chunk.Functions[index].LocalCount = c.popFunctionLocals()
 	c.inFunc--
 	c.returnTypes = c.returnTypes[:len(c.returnTypes)-1]
 	c.popScope()
 	c.patchJump(skipJump)
+	if nestedStatement {
+		operands := []int64{index, int64(len(captures))}
+		for _, capture := range captures {
+			operands = append(operands, capture.slot)
+		}
+		c.emitAt(OpMakeClosure, stmt.Token.Line, stmt.Token.Column, operands...)
+		c.emitAt(OpBindFunction, stmt.Token.Line, stmt.Token.Column, callableSlot, index)
+	}
+
 	return nil
 }
 
@@ -781,7 +818,7 @@ func (c *Compiler) compileSimpleStatement(stmt *ast.SimpleStatement) error {
 		if len(c.loops) == 0 {
 			return fmt.Errorf("break is only supported inside bytecode loops")
 		}
-		if err := c.compileActiveFinalizers(stmt.Token.Line, stmt.Token.Column, true); err != nil {
+		if err := c.compileActiveFinalizers(stmt.Token.Line, stmt.Token.Column, c.loops[len(c.loops)-1].finalizerDepth, true); err != nil {
 			return err
 		}
 		jump := c.emitJump(OpJump, stmt.Token.Line, stmt.Token.Column)
@@ -792,7 +829,7 @@ func (c *Compiler) compileSimpleStatement(stmt *ast.SimpleStatement) error {
 		if len(c.loops) == 0 {
 			return fmt.Errorf("continue is only supported inside bytecode loops")
 		}
-		if err := c.compileActiveFinalizers(stmt.Token.Line, stmt.Token.Column, false); err != nil {
+		if err := c.compileActiveFinalizers(stmt.Token.Line, stmt.Token.Column, c.loops[len(c.loops)-1].finalizerDepth, false); err != nil {
 			return err
 		}
 		current := len(c.loops) - 1
@@ -1180,6 +1217,10 @@ func (c *Compiler) argNameIndex(arg ast.CallArgument) int64 {
 }
 
 func (c *Compiler) pushFinalizer(ctx finalizerContext) {
+	if ctx.body != nil {
+		ctx.scopes = append([]map[string]binding(nil), c.scopes...)
+		ctx.loops = append([]*loopContext(nil), c.loops...)
+	}
 	c.finalizers = append(c.finalizers, ctx)
 }
 
@@ -1187,9 +1228,14 @@ func (c *Compiler) popFinalizer() {
 	c.finalizers = c.finalizers[:len(c.finalizers)-1]
 }
 
-func (c *Compiler) compileActiveFinalizers(line int, column int, includeIteratorFinalizers bool) error {
-	for i := len(c.finalizers) - 1; i >= 0; i-- {
-		ctx := c.finalizers[i]
+func (c *Compiler) compileActiveFinalizers(line int, column int, depth int, includeIteratorFinalizers bool) error {
+	finalizers := c.finalizers
+	scopes, loops := c.scopes, c.loops
+	defer func() { c.finalizers, c.scopes, c.loops = finalizers, scopes, loops }()
+	for i := len(finalizers) - 1; i >= depth; i-- {
+		ctx := finalizers[i]
+		// A finalizer cannot re-enter itself through return, break or continue.
+		c.finalizers = finalizers[:i:i]
 		if ctx.hasIterSlot && includeIteratorFinalizers {
 			c.emitAt(OpIterClose, line, column, ctx.iterSlot)
 		}
@@ -1201,9 +1247,11 @@ func (c *Compiler) compileActiveFinalizers(line int, column int, includeIterator
 			c.emitAt(OpWithExit, line, column)
 		}
 		if ctx.body != nil {
+			c.scopes, c.loops = ctx.scopes, ctx.loops
 			if err := c.compileBlock(ctx.body); err != nil {
 				return err
 			}
+			c.scopes, c.loops = scopes, loops
 		}
 	}
 	return nil
@@ -1568,7 +1616,7 @@ func isOrAlternateBuiltinType(name string) bool {
 	return false
 }
 
-func (c *Compiler) patchLoopContinues(loop loopContext, target int) {
+func (c *Compiler) patchLoopContinues(loop *loopContext, target int) {
 	for _, jump := range loop.continueJumps {
 		c.chunk.Instructions[jump].Operands[0] = int64(target)
 	}

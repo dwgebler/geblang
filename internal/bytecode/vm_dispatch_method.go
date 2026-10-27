@@ -32,7 +32,7 @@ func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
 		}
 		if receiver, perr := vm.peek(); perr == nil {
 			if module, ok := receiver.(*runtime.Module); ok {
-				if _, overloaded := module.Exports[name].(runtime.OverloadedFunction); overloaded {
+				if set, overloaded := module.Exports[name].(runtime.OverloadedFunction); overloaded && len(set.Callables) == 0 {
 					return 0, vm.runtimeError(instruction, "cannot use spread with overloaded function %s", name)
 				}
 			}
@@ -778,6 +778,14 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			return ip, nil
 		}
 		if overloaded, ok := value.(runtime.OverloadedFunction); ok {
+			if len(overloaded.Callables) > 0 {
+				result, err := vm.callCallable(overloaded, args)
+				if err != nil {
+					return vm.propagateModuleError(instruction, ip, err)
+				}
+				vm.push(result)
+				return ip, nil
+			}
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
@@ -1129,6 +1137,19 @@ func (vm *VM) dispatchCrossModuleNamedConstruct(instruction Instruction, ip int,
 
 // dispatchNamedCall invokes a callable receiver with named/positional argument metadata. Shared by OpMethodCallNamed and the dict-spread path of OpMethodCallSpread.
 func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtime.Value, methodName string, args []runtime.Value, names []string) (int, error) {
+	if set, ok := receiver.(runtime.OverloadedFunction); ok && len(set.Callables) > 0 && methodName == "__invoke" {
+		selected, ordered, err := vm.selectBoundNamed(instruction, set, args, names)
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		result, err := vm.callCallable(selected, ordered)
+		if err != nil {
+			return vm.propagateModuleError(instruction, ip, err)
+		}
+		vm.push(result)
+		return ip, nil
+	}
+
 	if target, ok := receiver.(runtime.DecoratorTarget); ok && target.Callable != nil {
 		if methodName == "__invoke" {
 			// A reflected method callable binds names against its home signature, engaging a default for an omitted middle parameter that positional ordering cannot express.
@@ -1225,6 +1246,9 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 			return vm.dispatchCrossModuleNamedFunction(instruction, ip, function, args, names)
 		}
 		if overloaded, ok := value.(runtime.OverloadedFunction); ok {
+			if len(overloaded.Callables) > 0 {
+				return vm.dispatchNamedCall(instruction, ip, overloaded, "__invoke", args, names)
+			}
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}

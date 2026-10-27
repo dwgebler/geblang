@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(90)
+	Version = uint16(91)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -339,6 +339,8 @@ const (
 	OpPlantIntLiteralArgs
 	// OpForRangeIter {exclusive} starts a for-in loop over a range literal: it pops start, end and step and pushes the loop's iterator, as OpBuildRange then OpIterInit do, without building the Range when the bounds fit in 64 bits.
 	OpForRangeIter
+	// OpBindFunction {slot,index} binds a lexical named closure and its public signature.
+	OpBindFunction
 )
 
 type Instruction struct {

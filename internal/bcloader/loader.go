@@ -360,8 +360,6 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.
 	vm := pool.Get()
 	if vm == nil {
 		vm = bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	} else {
-		vm.ResetForReuse()
 	}
 	vm.SetModuleName(module)
 	vm.SetModulePaths(l.basePaths)
@@ -400,6 +398,7 @@ func (l *Loader) releaseModuleVM(pool *vmPool, vm *bytecode.VM, err error) {
 	vm.SetReentryHost(nil)
 	vm.SetProfileParent(nil)
 	if err == nil && vm.Recyclable() {
+		vm.ResetForReuse()
 		pool.Put(vm)
 	}
 }

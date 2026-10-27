@@ -206,7 +206,7 @@ func sourcePrefix(source string, pos Position) string {
 	if pos.Character > len(line) {
 		pos.Character = len(line)
 	}
-	return line[:pos.Character]
+	return line[:byteOffset(line, pos.Character)]
 }
 
 func moduleMemberContext(prefix string) (string, bool) {

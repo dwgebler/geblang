@@ -19,6 +19,54 @@ import (
 	"geblang/internal/parser"
 )
 
+func TestParityAuditFinalizersAndIteration(t *testing.T) {
+	runParity(t, `import io;
+func overridden(): int { try { return 1; } finally { return 2; } }
+func nested(): int {
+    try { try { return 1; } finally { return 2; } }
+    finally { io.println("outer"); }
+}
+
+io.println(overridden());
+func add(int a, int b): int { return a + b; }
+io.println(add(10, overridden()));
+io.println(nested());
+try {
+    for (i in 0..<3) { if (i == 0) { continue; } break; }
+    io.println("after loop");
+} finally { io.println("cleanup"); }
+let xs = [1, 2, 3];
+for (x in xs) { io.println(x); if (x == 1) { xs[1] = 9; xs.push(4); } }
+let ys = [1, 2, 3];
+for (y in ys) { io.println(y); if (y == 1) { ys.push(4); ys[1] = 8; } }
+any missing = null;
+try { for (i in missing..<2) { io.println(i); } }
+catch (Error e) { io.println(e.message); }
+try { let r = 0..<2 by missing; io.println(r); }
+catch (Error e) { io.println(e.message); }
+func step(): int { io.println("step"); return 1; }
+for (ch in 'a'..'c' by step()) { io.println(ch); }
+`, "2\n12\nouter\n2\nafter loop\ncleanup\n1\n9\n3\n1\n8\n3\nrange start must be int\nrange step must be int\nstep\na\nb\nc\n")
+}
+
+func TestParityFinalizersKeepTheirLexicalScope(t *testing.T) {
+	runParity(t, `import io;
+func shadowed(): int {
+    int x = 1;
+    try { int x = 2; return x; } finally { io.println(x); }
+}
+func leave(): int {
+    for (i in 0..<2) {
+        try { for (j in 0..<2) { return 1; } }
+        finally { break; }
+    }
+    return 2;
+}
+io.println(shadowed());
+io.println(leave());
+`, "1\n2\n2\n")
+}
+
 // TestParityContainerInspectIsJSONLike pins the Inspect output for
 // dicts, lists, and sets across both backends. Strings inside a
 // container are JSON-quoted; top-level strings stay unquoted to
@@ -4530,4 +4578,181 @@ s.push(8);
 io.println(a);
 io.println(s);
 `, "[1, 2, 3, 4]\n[9, 2, 8]\n")
+}
+
+func TestParityEscapedNamedFunctions(t *testing.T) {
+	runParity(t, `import io;
+func factory(int start): callable {
+ int value = start;
+ func inner(int amount = 1): int { value += amount; return value; }
+ return inner;
+}
+let first = factory(9);
+let second = factory(30);
+io.println(first()); io.println(first(amount: 2)); io.println(second());
+func transitive(): callable {
+ int value = 7;
+ func inner(): int { return value; }
+ return func(): int { return inner(); };
+}
+io.println(transitive()());
+func recursive(): callable {
+ int offset = 2;
+ func fact(int n): int { if (n < 2) { return offset; } return n * fact(n - 1); }
+ return fact;
+}
+io.println(recursive()(4));
+func overloaded(): callable {
+ int offset = 4;
+ func choose(int x): int { return x + offset; }
+ func choose(string x): string { return x + "!"; }
+ return choose;
+}
+let f = overloaded(); io.println(f(3)); io.println(f("yes")); io.println(f is f);
+`, "10\n12\n31\n7\n48\n7\nyes!\ntrue\n")
+}
+
+func TestParityNestedFunctionSignatures(t *testing.T) {
+	runParity(t, `import io;
+func make(): callable {
+ int base = 5;
+ func choose(int x = 2): int { return base + x; }
+ func choose(string x): string { return x + "!"; }
+ return choose;
+}
+let f = make();
+io.println(f(x: 3)); io.println(f(...{"x": "ok"})); io.println(f(...[4]));
+func variadic(): callable {
+ int base = 10;
+ func sum(int... values): int { int total = base; for (value in values) { total += value; } return total; }
+ return sum;
+}
+io.println(variadic()(1, 2, 3));
+func generic(): callable { int base = 2; func pair<T>(T value): string { return "${base}:${value}"; } return pair; }
+io.println(generic()("x"));
+func asynchronous(): callable { int base = 3; async func add(int x = 4): int { return base + x; } return add; }
+io.println(asynchronous()(x: 5).await());
+func generator(): callable { int base = 4; func numbers(): generator<int> { yield base; yield base + 1; } return numbers; }
+for (x in generator()()) { io.println(x); }
+class Base { int value = 9; func make(): callable { func read(): int { return this.value; } return read; } }
+class Child extends Base { func own(): callable { func read(): int { return this.value + 1; } return read; } }
+io.println(Base().make()()); io.println(Child().make()()); io.println(Child().own()());
+`, "8\nok!\n9\n16\n2:x\n8\n4\n5\n9\n9\n10\n")
+}
+
+func TestParityNestedDecoratorsKeepDeclaredSignatures(t *testing.T) {
+	runParity(t, `import io;
+func wrap(callable next): callable { return func(int renamed = 2): int { return next(renamed) + 100; }; }
+func factory(): callable {
+ int base = 5;
+ @wrap func add(int amount = 2): int { return base + amount; }
+ return add;
+}
+let f = factory(); io.println(f(3)); io.println(f(amount: 4)); io.println(f());
+`, "108\n109\n107\n")
+}
+
+func TestParityDecoratorsPreservePublicDefaultsAndOverloads(t *testing.T) {
+	runParity(t, `import io;
+func defaults(callable next): callable { return func(int renamed = 99, int second = 88): int { return renamed + second; }; }
+func forwarding(callable next): callable { return func(any... args): any { return next(...args); }; }
+func factory(): callable {
+ @defaults func add(int amount = 1, int rest = 2): int { return amount + rest; }
+ return add;
+}
+func overloads(): callable {
+ int base = 7;
+ @forwarding func pick(int n): int { return base + n; }
+ func pick(string n): string { return n; }
+ return pick;
+}
+let add = factory(); io.println(add()); io.println(add(rest: 4)); io.println(add(amount: 1));
+let pick = overloads(); io.println(pick(3)); io.println(pick("ok"));
+`, "3\n5\n3\n10\nok\n")
+}
+
+func TestParityNestedNamesAndIdentity(t *testing.T) {
+	runParity(t, `import io;
+func factory(int value): callable { func helper(): int { return value; } return helper; }
+func helper(): int { return 40; }
+let first = factory(9); let second = factory(10);
+io.println(first()); io.println(helper()); io.println(first is first); io.println(first is second);
+`, "9\n40\ntrue\nfalse\n")
+}
+
+func TestParityDecoratedPublicSignatureReflection(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+func defaults(callable next): callable { return func(int renamed = 99, int second = 88): int { return renamed + second; }; }
+@defaults func add(int amount = 1, int rest = 2): int { return amount + rest; }
+func wrap(callable next): callable { return func(any renamed): any { return next(renamed); }; }
+func factory(): callable { @wrap func value(int amount): int { return amount; } return value; }
+io.println(add()); io.println(add(rest: 4));
+let f = factory(); io.println(reflect.returnType(f)); io.println(reflect.parameters(f)[0].get("name"));
+`, "3\n5\nint\namount\n")
+}
+
+func TestParityClosureCapturesFollowBlockScope(t *testing.T) {
+	runParity(t, `import io;
+func factory(): callable {
+ int value = 1;
+ return func(): int {
+  try { int value = 2; return value; } finally { io.println(value); }
+ };
+}
+io.println(factory()());
+func afterLoop(): callable {
+ int value = 9;
+ return func(): int { for (value in [1, 2]) {} return value; };
+}
+io.println(afterLoop()());
+`, "1\n2\n9\n")
+}
+
+func TestParityComprehensionCapturesFollowLoopScope(t *testing.T) {
+	runParity(t, `import io;
+func after(): callable {
+ int value = 9;
+ return func(): int {
+  let xs = [value for value in [1, 2]];
+  let ys = {value for value in [1, 2]};
+  let zs = {value: value for value in [1, 2]};
+  return value;
+ };
+}
+func before(): callable {
+ let value = [3, 4];
+ return func(): any { return [value for value in value]; };
+}
+func named(): callable {
+ let value = [5, 6];
+ func read(): any { return [value for value in value]; }
+ return read;
+}
+io.println(after()()); io.println(before()()); io.println(named()());
+`, "9\n[3, 4]\n[5, 6]\n")
+}
+
+func TestParityNestedAsyncFunctionReportsInvalidArgumentsOnAwait(t *testing.T) {
+	runParity(t, `import io;
+func factory(): callable { async func take(int n): int { return n; } return take; }
+let f = factory();
+let pending = f("bad"); io.println("started");
+try { pending.await(); } catch (Error e) { io.println("caught"); }
+`, "started\ncaught\n")
+}
+
+func TestParitySocketCallbacksRunWhileClientsAreConstructed(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import sockets;
+let server = sockets.serve("127.0.0.1", 0, func(sockets.Socket conn): void { conn.writeln("ready"); conn.close(); });
+let port = server.localAddr().split(":")[1] as int;
+int received = 0;
+for (i in 0..<24) {
+ let client = sockets.dial("127.0.0.1", port);
+ if (client.readLine() == "ready") { received += 1; }
+ client.close();
+}
+server.close(); io.println(received);
+`, "24\n")
 }

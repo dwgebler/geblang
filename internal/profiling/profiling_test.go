@@ -16,7 +16,7 @@ func TestReportListsOwnTotalAndLines(t *testing.T) {
 	Record([]string{"<top level>", "main.outer"}, "")
 	Finish()
 	Finish()
-	Active = false
+	Active.Store(false)
 	text, err := os.ReadFile(report)
 	if err != nil {
 		t.Fatal(err)
@@ -42,10 +42,61 @@ func TestReportListsOwnTotalAndLines(t *testing.T) {
 }
 
 func TestFoldedPathReplacesTheExtension(t *testing.T) {
+	if got := FoldedPath("profile.folded"); got == "profile.folded" {
+		t.Fatal("folded output would overwrite the requested report")
+	}
 	if got := FoldedPath("/tmp/out.txt"); got != "/tmp/out.folded" {
 		t.Errorf("FoldedPath = %q", got)
 	}
 	if got := FoldedPath("profile"); got != "profile.folded" {
 		t.Errorf("FoldedPath = %q", got)
 	}
+}
+
+func TestSamplingCountsEachThreadAtMostOncePerTick(t *testing.T) {
+	stop := Collect()
+	start := Tick()
+
+	for i := 0; i < 20000; i++ {
+		RecordThread(1, Tick(), []string{"first"}, "")
+		RecordThread(1, Tick(), []string{"second VM on first thread"}, "")
+		RecordThread(2, Tick(), []string{"second thread"}, "")
+	}
+	end := Tick()
+	stacks := stop()
+
+	total := 0
+	for _, count := range stacks {
+		total += count
+	}
+	if total < 2 || total > 2*int(end-start+1) {
+		t.Fatalf("%d samples across %d ticks and two threads", total, end-start+1)
+	}
+}
+
+func TestSamplingWhileCollectionsStartAndStop(t *testing.T) {
+	ready := make(chan struct{})
+	finish := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		close(ready)
+		for {
+			select {
+			case <-finish:
+				return
+			default:
+			}
+			if Active.Load() {
+				RecordThread(1, Tick(), []string{"worker"}, "")
+			}
+		}
+	}()
+	<-ready
+	for i := 0; i < 50; i++ {
+		collect := Collect()
+		collect()
+	}
+	close(finish)
+	<-stopped
 }

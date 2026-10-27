@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"reflect"
+	"unicode/utf8"
 
 	"geblang/internal/ast"
 	"geblang/internal/lexer"
@@ -27,21 +28,25 @@ func (s span) startsAfter(o span) bool {
 }
 
 type localBinding struct {
-	name      string
-	line, col int
-	scope     span
+	function      bool
+	renameBlocked bool
+	name          string
+	line, col     int
+	scope         span
 	// hoisted bindings are visible before their own position (comprehension variables).
 	hoisted bool
 	member  bool
 }
 
 type bindingContext struct {
-	scope   span
-	inClass bool
+	initializing string
+	scope        span
+	inClass      bool
 }
 
 type bindingCollector struct {
-	bindings []localBinding
+	bindings  []localBinding
+	ambiguous map[string]bool
 }
 
 var tokenType = reflect.TypeOf(token.Token{})
@@ -54,10 +59,25 @@ func localDefinition(source string, line, char int, word, qualifier string) (Ran
 	c := &bindingCollector{}
 	file := span{endLine: int(^uint(0) >> 1)}
 	c.walk(reflect.ValueOf(prog), bindingContext{scope: file})
+	best := resolveLocalBinding(c.bindings, line, runeColumn(splitLine(source, line), char), word, qualifier)
+	if best == nil {
+		return Range{}, false
+	}
+	text := splitLine(source, best.line)
+	col := tokenColumn(text, best.col)
+	return Range{
+		Start: Position{Line: best.line, Character: col},
+		End:   Position{Line: best.line, Character: col + utf16Offset(best.name, len(best.name))},
+	}, true
+}
 
+func resolveLocalBinding(bindings []localBinding, line, char int, word, qualifier string) *localBinding {
 	var best *localBinding
-	for i := range c.bindings {
-		b := &c.bindings[i]
+	for i := range bindings {
+		b := &bindings[i]
+		if b.name == word && b.line == line && b.col == char {
+			return b
+		}
 		if b.name != word || b.member != (qualifier == "this") || !b.scope.contains(line, char) {
 			continue
 		}
@@ -69,13 +89,7 @@ func localDefinition(source string, line, char int, word, qualifier string) (Ran
 			best = b
 		}
 	}
-	if best == nil {
-		return Range{}, false
-	}
-	return Range{
-		Start: Position{Line: best.line, Character: best.col},
-		End:   Position{Line: best.line, Character: best.col + len(best.name)},
-	}, true
+	return best
 }
 
 func (c *bindingCollector) bind(id *ast.Identifier, scope span, hoisted, member bool) {
@@ -94,7 +108,11 @@ func (c *bindingCollector) bind(id *ast.Identifier, scope span, hoisted, member 
 
 func (c *bindingCollector) bindParameters(params []ast.Parameter, scope span) {
 	for _, p := range params {
+		before := len(c.bindings)
 		c.bind(p.Name, scope, false, false)
+		if len(c.bindings) > before {
+			c.bindings[before].renameBlocked = true
+		}
 	}
 }
 
@@ -121,7 +139,11 @@ func (c *bindingCollector) walk(v reflect.Value, ctx bindingContext) {
 		}
 		for i := 0; i < v.NumField(); i++ {
 			if v.Type().Field(i).IsExported() {
-				c.walk(v.Field(i), ctx)
+				child := ctx
+				if declaration, ok := v.Interface().(ast.DeclarationStatement); ok && declaration.Name != nil && v.Type().Field(i).Name == "Value" {
+					child.initializing = declaration.Name.Value
+				}
+				c.walk(v.Field(i), child)
 			}
 		}
 	}
@@ -130,9 +152,21 @@ func (c *bindingCollector) walk(v reflect.Value, ctx bindingContext) {
 // enter records the bindings a node introduces and returns the context for its children.
 func (c *bindingCollector) enter(node any, ctx bindingContext) bindingContext {
 	switch n := node.(type) {
+	case *ast.Identifier:
+		if ctx.initializing != "" && n.Value == ctx.initializing {
+			if c.ambiguous == nil {
+				c.ambiguous = map[string]bool{}
+			}
+			c.ambiguous[n.Value] = true
+		}
 	case *ast.BlockStatement:
 		ctx.scope = nodeSpan(n)
 	case *ast.ClassStatement:
+		before := len(c.bindings)
+		c.bind(n.Name, ctx.scope, true, false)
+		if len(c.bindings) > before {
+			c.bindings[before].renameBlocked = true
+		}
 		ctx.scope = nodeSpan(n)
 		ctx.inClass = true
 	case *ast.DeclarationStatement:
@@ -142,13 +176,15 @@ func (c *bindingCollector) enter(node any, ctx bindingContext) bindingContext {
 			c.bind(name, ctx.scope, false, false)
 		}
 	case *ast.FunctionStatement:
-		if ctx.inClass {
-			c.bind(n.Name, ctx.scope, false, true)
+		before := len(c.bindings)
+		c.bind(n.Name, ctx.scope, true, ctx.inClass)
+		if len(c.bindings) > before {
+			c.bindings[before].function = true
 		}
-		ctx = bindingContext{scope: nodeSpan(n)}
+		ctx = bindingContext{scope: nodeSpan(n), initializing: ctx.initializing}
 		c.bindParameters(n.Parameters, ctx.scope)
 	case *ast.FunctionLiteral:
-		ctx = bindingContext{scope: nodeSpan(n)}
+		ctx = bindingContext{scope: nodeSpan(n), initializing: ctx.initializing}
 		c.bindParameters(n.Parameters, ctx.scope)
 	case *ast.ForStatement:
 		ctx.scope = nodeSpan(n)
@@ -222,7 +258,7 @@ func growSpan(v reflect.Value, s *span) {
 				return
 			}
 			line, col := tok.Line-1, tok.Column-1
-			end := col + len(tok.Literal)
+			end := col + utf8.RuneCountInString(tok.Literal)
 			if s.startLine < 0 || line < s.startLine || (line == s.startLine && col < s.startCol) {
 				s.startLine, s.startCol = line, col
 			}

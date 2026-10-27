@@ -1,0 +1,172 @@
+import test;
+import reflect;
+
+func counter(int initial): callable {
+    int value = initial;
+    func advance(int amount = 1): int { value += amount; return value; }
+    return advance;
+}
+
+func deferredRead(): callable {
+    int value = 7;
+    func read(): int { return value; }
+    return func(): int { return read(); };
+}
+
+func overloadFactory(): callable {
+    int offset = 4;
+    func choose(int x = 2): int { return x + offset; }
+    func choose(string x): string { return x + "!"; }
+    return choose;
+}
+
+class NamedCaptureBase {
+    int value = 9;
+    func make(): callable { func read(): int { return this.value; } return read; }
+}
+class NamedCaptureChild extends NamedCaptureBase {
+    func own(): callable { func read(): int { return this.value + 1; } return read; }
+}
+
+class EscapedNamedFunctionsTest extends test.Test {
+    @test
+    func escapedFunctionsKeepIndependentMutableEnvironments(): void {
+        let first = counter(9);
+        let second = counter(30);
+        this.assertEquals(10, first());
+        this.assertEquals(12, first(amount: 2));
+        this.assertEquals(31, second());
+        this.assertTrue(first is first);
+        this.assertFalse(first is second);
+        this.assertEquals(7, deferredRead()());
+    }
+
+    @test
+    func recursionSurvivesParentReturn(): void {
+        int offset = 2;
+        func fact(int n): int { if (n < 2) { return offset; } return n * fact(n - 1); }
+        let invoke = func(): int { return fact(4); };
+        this.assertEquals(48, invoke());
+    }
+
+    @test
+    func escapedOverloadsKeepNamesDefaultsSpreadAndIdentity(): void {
+        let choose = overloadFactory();
+        this.assertEquals(6, choose());
+        this.assertEquals(7, choose(x: 3));
+        this.assertEquals("ok!", choose(...{"x": "ok"}));
+        this.assertEquals(8, choose(...[4]));
+        this.assertTrue(choose is choose);
+    }
+
+    @test
+    func nestedFunctionsCaptureMethodReceivers(): void {
+        this.assertEquals(9, NamedCaptureBase().make()());
+        this.assertEquals(9, NamedCaptureChild().make()());
+        this.assertEquals(10, NamedCaptureChild().own()());
+    }
+
+    @test
+    func nestedSignaturesPreserveGenericsVariadicsAsyncAndGenerators(): void {
+        int base = 2;
+        func pair<T>(T value): string { return "${base}:${value}"; }
+        func sum(int... values): int { int total = base; for (value in values) { total += value; } return total; }
+        async func add(int x = 4): int { return base + x; }
+        func numbers(): generator<int> { yield base; yield base + 1; }
+        this.assertEquals("2:x", pair("x"));
+        this.assertEquals(8, sum(1, 2, 3));
+        this.assertEquals(7, add(x: 5).await());
+        list<int> seen = [];
+        for (value in numbers()) { seen.push(value); }
+        this.assertEquals([2, 3], seen);
+    }
+}
+
+func namedCaptureWrap(callable next): callable {
+    return func(int renamed = 2): int { return next(renamed) + 100; };
+}
+func decoratedCapture(): callable {
+    int base = 5;
+    @namedCaptureWrap func add(int amount = 2): int { return base + amount; }
+    return add;
+}
+class DecoratedNamedCaptureTest extends test.Test {
+    @test
+    func wrappersKeepDeclaredArgumentNamesAndDefaults(): void {
+        let f = decoratedCapture();
+        this.assertEquals(108, f(3));
+        this.assertEquals(109, f(amount: 4));
+        this.assertEquals(107, f());
+        this.assertEquals("amount", reflect.parameters(f)[0].get("name"));
+        this.assertEquals("int", reflect.returnType(f));
+    }
+}
+
+func differentCaptureDefaults(callable next): callable {
+    return func(int renamed = 99, int second = 88): int { return renamed + second; };
+}
+func publicDefaultCapture(): callable {
+    @differentCaptureDefaults func add(int amount = 1, int rest = 2): int { return amount + rest; }
+    return add;
+}
+func forwardCapture(callable next): callable { return func(any... args): any { return next(...args); }; }
+func decoratedOverloadCapture(): callable {
+    int base = 7;
+    @forwardCapture func pick(int n): int { return base + n; }
+    func pick(string n): string { return n; }
+    return pick;
+}
+class PublicNamedCaptureTest extends test.Test {
+    @test
+    func decoratedFunctionsUseDeclaredDefaultsAndOverloadTypes(): void {
+        let add = publicDefaultCapture();
+        this.assertEquals(3, add());
+        this.assertEquals(5, add(rest: 4));
+        this.assertEquals(3, add(amount: 1));
+        let pick = decoratedOverloadCapture();
+        this.assertEquals(10, pick(3));
+        this.assertEquals("ok", pick("ok"));
+    }
+}
+
+@differentCaptureDefaults func topLevelDeclaredDefaults(int amount = 1, int rest = 2): int { return amount + rest; }
+class TopLevelDecoratorDefaultsTest extends test.Test {
+    @test
+    func directDecoratedCallsUseDeclaredDefaults(): void {
+        this.assertEquals(3, topLevelDeclaredDefaults());
+        this.assertEquals(5, topLevelDeclaredDefaults(rest: 4));
+    }
+}
+
+class ComprehensionCaptureScopeTest extends test.Test {
+    @test
+    func comprehensionBindingsDoNotHideOuterCaptures(): void {
+        int value = 9;
+        let run = func(): int {
+            let xs = [value for value in [1, 2]];
+            let ys = {value for value in [1, 2]};
+            let zs = {value: value for value in [1, 2]};
+            return value;
+        };
+        this.assertEquals(9, run());
+    }
+    @test
+    func comprehensionIterableResolvesBeforeItsOwnBinding(): void {
+        let value = [3, 4];
+        let run = func(): any { return [value for value in value]; };
+        func named(): any { return [value for value in value]; }
+        this.assertEquals([3, 4], run());
+        this.assertEquals([3, 4], named());
+    }
+}
+
+class AsyncNamedCaptureValidationTest extends test.Test {
+    @test
+    func nestedAsyncCallsReportInvalidArgumentsOnAwait(): void {
+        async func take(int n): int { return n; }
+        let f = take;
+        any invalid = "bad";
+        let pending = f(invalid);
+        this.assertThrows(func(): void { pending.await(); });
+    }
+}

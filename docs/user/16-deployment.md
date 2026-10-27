@@ -161,7 +161,7 @@ and, when it exits, writes a report of where the time went:
 geblang --profile profile.txt tools/simulate.gb 100000
 ```
 
-About once a millisecond, each running VM records its Geblang call stack:
+About once a millisecond, each running goroutine records its Geblang call stack:
 the function it is in and every function that called it, across modules
 and inside `async` tasks. `profile.txt` lists the functions with the most
 samples by own time (the function itself was running), by total time (it
@@ -169,6 +169,10 @@ or anything it called was running) and the hottest lines in loops.
 `profile.folded` beside it holds the whole stacks, one per line, in the
 format flame-graph tools read (`flamegraph.pl`, speedscope, Firefox
 Profiler's importer).
+
+Workers on the same goroutine contribute at most one sample per tick. If the
+requested report already ends in `.folded`, its stack output is written to
+`<report>.folded` so the text report is preserved.
 
 Set `GEBLANG_PROFILE=profile.txt` to profile any run the same way, including
 a built binary or a server; the report is written when the program exits

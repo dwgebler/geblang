@@ -214,7 +214,11 @@ func (s *cloneState) cloneValue(value Value) Value {
 		for i, overload := range value.Overloads {
 			overloads[i] = s.cloneFunction(overload)
 		}
-		return OverloadedFunction{Name: value.Name, Overloads: overloads}
+		callables := make([]Value, len(value.Callables))
+		for i, callable := range value.Callables {
+			callables[i] = s.cloneValue(callable)
+		}
+		return OverloadedFunction{Name: value.Name, Overloads: overloads, Module: value.Module, Indices: append([]int64(nil), value.Indices...), Callables: callables, Defaults: value.Defaults}
 	case *Module:
 		return s.cloneModule(value)
 	case BytecodeFunction:
@@ -257,6 +261,8 @@ func (s *cloneState) cloneValue(value Value) Value {
 }
 
 func (s *cloneState) cloneFunction(fn Function) Function {
+	fn.OriginalEnv = s.cloneEnvironment(fn.OriginalEnv)
+	fn.OriginalReturnType = cloneTypeRef(fn.OriginalReturnType)
 	fn.Env = s.cloneEnvironment(fn.Env)
 	fn.TypeParameters = append([]string(nil), fn.TypeParameters...)
 	fn.TypeParamConstraints = cloneTypeParamConstraints(fn.TypeParamConstraints)

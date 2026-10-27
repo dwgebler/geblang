@@ -1252,6 +1252,10 @@ func reflectFunctionMetadataValue(value runtime.Value) (runtime.FunctionMetadata
 }
 
 func functionMetadataFromRuntimeFunction(fn runtime.Function) runtime.FunctionMetadata {
+	fn.Parameters = fn.CallParameters()
+	if fn.OriginalEnv != nil {
+		fn.ReturnType = fn.OriginalReturnType
+	}
 	parameters := make([]runtime.ParameterMetadata, 0, len(fn.Parameters))
 	for _, param := range fn.Parameters {
 		name := ""

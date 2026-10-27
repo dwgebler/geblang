@@ -4,6 +4,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"geblang/internal/ast"
 	"geblang/internal/lexer"
@@ -60,20 +61,29 @@ func selectorQualifier(source string, line, char int) string {
 		return ""
 	}
 	text := lines[line]
-	if char < 0 || char > len(text) {
+	if char < 0 {
 		return ""
 	}
+	char = byteOffset(text, char)
 	start := char
-	for start > 0 && isIdentByte(text[start-1]) {
-		start--
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(text[:start])
+		if !isIdentChar(r) {
+			break
+		}
+		start -= size
 	}
 	if start == 0 || text[start-1] != '.' {
 		return ""
 	}
 	end := start - 1
 	qStart := end
-	for qStart > 0 && isIdentByte(text[qStart-1]) {
-		qStart--
+	for qStart > 0 {
+		r, size := utf8.DecodeLastRuneInString(text[:qStart])
+		if !isIdentChar(r) {
+			break
+		}
+		qStart -= size
 	}
 	return text[qStart:end]
 }

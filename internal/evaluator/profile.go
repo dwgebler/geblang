@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"geblang/internal/native"
 	"geblang/internal/profiling"
 	"strconv"
 )
@@ -36,5 +37,5 @@ func (e *Evaluator) profileSample() {
 	} else {
 		leaf = ""
 	}
-	profiling.Record(frames, leaf)
+	profiling.RecordThread(native.GoroutineID(), t, frames, leaf)
 }

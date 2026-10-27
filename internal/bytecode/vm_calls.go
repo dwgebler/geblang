@@ -73,7 +73,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	// fields to defaults for the new function.
 	frame := &vm.frames[len(vm.frames)-1]
 	frame.functionName = function.Name
-	if profiling.Active {
+	if profiling.Active.Load() {
 		vm.profileSample(0, true)
 	}
 	frame.meta = function.frameMeta
@@ -225,7 +225,12 @@ func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Tas
 // goroutine AFTER this returns so the snapshot copies are happen-before
 // the worker's reads.
 func (parent *VM) spawnAsyncWorker() *VM {
-	worker := NewVMWithModuleLoader(parent.chunk, parent.stdout, parent.moduleLoader)
+	chunk := parent.chunk
+	if parent.wrapperBase != nil {
+		// A pooled wrapper's instruction tail changes when its next call starts.
+		chunk.Instructions = append([]Instruction(nil), chunk.Instructions...)
+	}
+	worker := NewVMWithModuleLoader(chunk, parent.stdout, parent.moduleLoader)
 	worker.restoreGlobalsVM(parent.globals)
 	worker.SetModuleName(parent.moduleName)
 	worker.SetModulePaths(parent.modulePaths)
@@ -494,7 +499,7 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	frame.returnIP = ip
 	frame.returnOverride = nil
 	frame.functionName = function.Name
-	if profiling.Active {
+	if profiling.Active.Load() {
 		vm.profileSample(0, true)
 	}
 	frame.meta = function.frameMeta
@@ -1007,7 +1012,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	frame.returnIP = ip
 	frame.returnOverride = returnOverride
 	frame.functionName = function.Name
-	if profiling.Active {
+	if profiling.Active.Load() {
 		vm.profileSample(0, true)
 	}
 	frame.meta = function.frameMeta
@@ -1128,6 +1133,10 @@ func (vm *VM) startClosureFunction(instruction Instruction, ip int, closure runt
 		return 0, vm.runtimeError(instruction, "closure function index out of range")
 	}
 	function := &vm.curMod.Chunk.Functions[closure.FunctionIndex]
+	if function.Async && !vm.syncMode {
+		vm.push(vm.startAsyncCallable(closure, args))
+		return ip, nil
+	}
 	if function.IsGenerator && !vm.generatorExecution {
 		vm.push(vm.lazyClosureGenerator(closure, args))
 		return ip, nil
@@ -2000,11 +2009,42 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 				return vm.callCallableSlowHosted(callable, args, h)
 			},
 		}
+	case runtime.OverloadedFunction:
+		if len(callable.Callables) == 0 {
+			return callable
+		}
+		callable.Overloads = append([]runtime.Function(nil), callable.Overloads...)
+		for i, bound := range callable.Callables {
+			bridged := vm.wrapStatefulNativeValue(bound, isolated).(runtime.Function)
+			callable.Overloads[i].Native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				ordered, err := bindBoundArguments(callable, i, args, nil)
+				if err != nil {
+					return nil, err
+				}
+				return bridged.Native(nil, ordered)
+			}
+			callable.Overloads[i].BridgeInvoke = func(host any, args []runtime.Value) (runtime.Value, error) {
+				ordered, err := bindBoundArguments(callable, i, args, nil)
+				if err != nil {
+					return nil, err
+				}
+				return bridged.BridgeInvoke(host, ordered)
+			}
+			callable.Overloads[i].NativeNamed = func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
+				ordered, err := bindBoundArguments(callable, i, args, names)
+				if err != nil {
+					return nil, err
+				}
+				return bridged.Native(nil, ordered)
+			}
+		}
+		return callable
+
 	case *runtime.List:
 		// Share the list (reference semantics like the evaluator); bridge nested closures in place.
 		for i := range callable.Elements {
 			switch callable.Elements[i].(type) {
-			case runtime.BytecodeFunction, runtime.BytecodeClosure:
+			case runtime.BytecodeFunction, runtime.BytecodeClosure, runtime.OverloadedFunction:
 				callable.Elements[i] = vm.wrapStatefulNativeValue(callable.Elements[i], false)
 			case *runtime.List, runtime.Dict:
 				vm.wrapStatefulNativeValue(callable.Elements[i], false)
@@ -2017,7 +2057,7 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 		var rewriteVals []runtime.Value
 		callable.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
 			switch entry.Value.(type) {
-			case runtime.BytecodeFunction, runtime.BytecodeClosure:
+			case runtime.BytecodeFunction, runtime.BytecodeClosure, runtime.OverloadedFunction:
 				rewriteKeys = append(rewriteKeys, key)
 				rewriteVals = append(rewriteVals, vm.wrapStatefulNativeValue(entry.Value, false))
 			case *runtime.List, runtime.Dict:
@@ -2258,12 +2298,12 @@ func (vm *VM) callBytecodeInline(funcIndex int64, args []runtime.Value) (runtime
 // loop and inline state mutations would race.
 func (vm *VM) callCallableSlow(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
 	// Force the non-inline path without mutating the shared vm.inDispatchLoop, which a callback on another goroutine would race.
-	return vm.callCallableMode(fn, args, false)
+	return vm.callCallableModeHostedSync(fn, args, false, nil, false)
 }
 
 // callCallableSlowHosted runs a bridged callback threading the invoking worker as the synchronous re-entry host so a module call inside the callback reuses that module's in-flight worker.
 func (vm *VM) callCallableSlowHosted(fn runtime.Value, args []runtime.Value, reentryHost *VM) (runtime.Value, error) {
-	return vm.callCallableModeHosted(fn, args, false, reentryHost)
+	return vm.callCallableModeHostedSync(fn, args, false, reentryHost, false)
 }
 
 // callCallableIsolated runs a per-request server-handler callback on a fresh
@@ -2409,6 +2449,11 @@ func (vm *VM) callCallableMode(fn runtime.Value, args []runtime.Value, allowInli
 }
 
 func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, allowInline bool, reentryHost *VM) (runtime.Value, error) {
+	return vm.callCallableModeHostedSync(fn, args, allowInline, reentryHost, vm.syncMode)
+}
+
+// A bridged callback chooses its own mode without reading its running parent's state.
+func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value, allowInline bool, reentryHost *VM, syncMode bool) (runtime.Value, error) {
 	switch f := fn.(type) {
 	case runtime.Function:
 		if f.BridgeInvoke != nil {
@@ -2423,19 +2468,45 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 		}
 		return f.Native(nil, args)
 	case runtime.OverloadedFunction:
-		pos, chosen, err := overload.SelectWithIndex(f.Name, f.Overloads, args)
+		var pos int
+		var chosen runtime.Function
+		var err error
+		if len(f.Callables) == 1 {
+			chosen = f.Overloads[0]
+		} else {
+			pos, chosen, err = overload.SelectWithIndex(f.Name, f.Overloads, args)
+		}
 		if err != nil {
 			return nil, err
 		}
+		if pos >= 0 && pos < len(f.Callables) {
+			if chosen.Async && !syncMode {
+				return vm.startAsyncCallable(f, args), nil
+			}
+			ordered, err := bindBoundArguments(f, pos, args, nil)
+			if err != nil {
+				return nil, err
+			}
+			if info, ok := vm.functionInfoIn(f.Module, f.Indices[pos]); ok {
+				offset := int(info.UpvalueCount)
+				if len(info.ParamNames)-offset > len(chosen.Parameters) {
+					offset++
+				}
+				if message := vm.argumentMismatchMessage(info, ordered, offset); message != "" {
+					return nil, vm.typedFault(Instruction{}, "TypeError", message)
+				}
+			}
+			return vm.callCallableModeHostedSync(f.Callables[pos], ordered, allowInline, reentryHost, syncMode)
+		}
 		// An async winner yields a Task; route it through the home-chunk BytecodeFunction so the worker runs on its own snapshot (the wrapper closure captures a shared vm and would race), matching the evaluator's post-selection async check.
-		if chosen.Async && !vm.syncMode && pos >= 0 && pos < len(f.Indices) {
+		if chosen.Async && !syncMode && pos >= 0 && pos < len(f.Indices) {
 			bf := runtime.BytecodeFunction{Module: f.Module, Index: f.Indices[pos], Async: true}
 			return vm.startAsyncCallable(bf, args), nil
 		}
-		return vm.callCallableModeHosted(chosen, args, allowInline, reentryHost)
+		return vm.callCallableModeHostedSync(chosen, args, allowInline, reentryHost, syncMode)
 	case runtime.BytecodeFunction:
 		// An async function invoked as a value/callback yields a Task (the worker runs the body synchronously via syncMode), matching the evaluator and the direct-call path. A raw value is a decorated function's original body, already inside the decorated call's Task.
-		if f.Async && !f.Raw && !vm.syncMode {
+		if f.Async && !f.Raw && !syncMode {
 			return vm.startAsyncCallable(f, args), nil
 		}
 		if f.Module != vm.moduleName {
@@ -2468,7 +2539,7 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 		}
 		return vm.CallFunction(f.Index, args)
 	case runtime.BytecodeClosure:
-		if !vm.syncMode && f.Module == vm.moduleName && int(f.FunctionIndex) >= 0 && int(f.FunctionIndex) < len(vm.curMod.Chunk.Functions) && vm.curMod.Chunk.Functions[f.FunctionIndex].Async {
+		if !syncMode && f.Module == vm.moduleName && int(f.FunctionIndex) >= 0 && int(f.FunctionIndex) < len(vm.curMod.Chunk.Functions) && vm.curMod.Chunk.Functions[f.FunctionIndex].Async {
 			return vm.startAsyncCallable(f, args), nil
 		}
 		if f.Module != vm.moduleName {
@@ -3308,7 +3379,6 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 		pool := meta.poolFor(wrapperShape{baseLen: len(base), wrapperLen: len(translated)})
 		wrapperPool = pool
 		if pooled, _ := pool.Get().(*VM); pooled != nil {
-			pooled.resetForReuse()
 			if sameInstructionBase(pooled.wrapperBase, base) {
 				copy(pooled.chunk.Instructions[len(base):], translated)
 			} else {
@@ -3461,6 +3531,7 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 		result, popErr = callVM.pop()
 	}
 	if wrapperPool != nil && popErr == nil && callVM.escapedRefs.Load() == 0 {
+		callVM.resetForReuse()
 		wrapperPool.Put(callVM)
 	}
 	return result, popErr
