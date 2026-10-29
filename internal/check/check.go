@@ -113,6 +113,18 @@ func CrossModuleAnalysis(file string, program *ast.Program, opts Options) []Diag
 	analyzer := semantic.New()
 	if opts.Resolver != nil {
 		analyzer.SetTypeAliasLookup(TypeAliasLookup(program, opts.Resolver, opts.ModuleCache))
+		cache := opts.ModuleCache
+		if cache == nil {
+			cache = NewModuleCache()
+		}
+		analyzer.SetClassRelations(semantic.SourceClassRelations(program, "", func(canonical string) (*ast.Program, bool) {
+			path, err := opts.Resolver.Resolve(canonical)
+			if err != nil {
+				return nil, false
+			}
+			parsed, _, err := cache.load(path)
+			return parsed, err == nil
+		}))
 	}
 	if opts.CrossModule {
 		analyzer.EnableMethodChecks()

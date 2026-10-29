@@ -1450,7 +1450,9 @@ func (f *fmtr) inlineBlock(block *ast.BlockStatement) string {
 		tmp := &fmtr{depth: 0, clean: f.clean}
 		tmp.stmt(block.Statements[0])
 		inner := strings.TrimRight(tmp.buf.String(), "\n")
-		return "{ " + inner + " }"
+		if !strings.Contains(inner, "\n") {
+			return "{ " + inner + " }"
+		}
 	}
 	// Multi-statement: write as indented block (returns string representation)
 	var b strings.Builder

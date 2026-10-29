@@ -18,7 +18,7 @@ var PrimitiveMethods = map[string][]string{
 		"indexOf", "isEmpty", "lastIndexOf", "length", "lower", "matchesRegex",
 		"padEnd", "padStart", "repeat", "replace", "replaceRegex", "reverse",
 		"search", "searchPattern", "slice", "split", "splitRegex", "startsWith", "substring", "toBool",
-		"toDecimal", "toFloat", "toInt", "toString", "trim", "trimEnd",
+		"toDecimal", "toFloat", "toInt", "toIntOrNull", "toDecimalOrNull", "toFloatOrNull", "toString", "trim", "trimEnd",
 		"trimStart", "upper",
 		"capitalize", "title", "isBlank", "lines", "removePrefix", "removeSuffix",
 		"equalsIgnoreCase", "containsIgnoreCase", "isInt", "isDecimal", "isNumeric",

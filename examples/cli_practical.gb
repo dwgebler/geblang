@@ -1,0 +1,44 @@
+import cli;
+import cli.widgets as widgets;
+import io;
+import secureRandom;
+/* Run with an installed Geblang: geblang run cli_practical.gb */
+while (true) {
+    let count = cli.promptInt(
+        "Tosses (1..1000000, blank or q to exit): ",
+        {"min": 1, "max": 1000000, "cancel": ["", "q", "quit", "exit"]}
+    );
+    if (count == null) {
+        break;
+    }
+    int total = count as int;
+    int heads = widgets.withProgress(total, "Tossing coins", func(widgets.ManagedProgress progress): int {
+        int hits = 0;
+        for (i in 0..<total) {
+            if (secureRandom.bool()) {
+                hits += 1;
+            }
+            progress.advance();
+        }
+        return hits;
+    }) as int;
+    io.println("Tosses: ${total}");
+    io.println(
+        cli.table(
+            [
+                {"outcome": "Heads", "count": heads, "share": heads / total},
+                {"outcome": "Tails", "count": total - heads, "share": (total - heads) / total},
+            ],
+            {
+                "columns": [
+                    {"key": "outcome", "header": "Outcome"},
+                    {"key": "count", "header": "Count", "align": "right"},
+                    {"key": "share", "header": "Share", "align": "right", "format": ".2%"},
+                ],
+                "strict": true,
+            }
+        )
+    );
+    io.println("Difference: ${(2 * heads - total).abs()}");
+}
+io.println("Goodbye.");

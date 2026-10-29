@@ -351,6 +351,7 @@ func (e *Evaluator) parseAnalyzedModule(canonical string, path string) (*ast.Pro
 		return nil, fmt.Errorf("module %s: %s:%d:%d: %s", canonical, path, d.Line, d.Column, d.Message)
 	}
 	analyzer := semantic.New()
+	analyzer.SetClassRelations(semantic.SourceClassRelations(program, canonical, e.sourceTypeProgram))
 	analyzer.SetTypeAliasLookup(typealias.ScopedLookup(program, canonical, e.sourceTypeAliasTargets().Target))
 	if diagnostics := analyzer.Analyze(program); len(diagnostics) > 0 {
 		errorMessages := make([]string, 0, len(diagnostics))

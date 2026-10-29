@@ -62,6 +62,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 		}
 		return nil, native.UnknownMethodError(variant.Enum.Name, name)
 	}
+	if name == "toIntOrNull" || name == "toDecimalOrNull" || name == "toFloatOrNull" {
+		if text, ok := receiver.(runtime.String); ok {
+			return native.StringNumberOrNull(text.Value, name, args)
+		}
+		return nil, native.UnknownMethodError(receiver.TypeName(), name)
+	}
 	if target, ok := primitiveConversionTarget(name); ok {
 		if target == "int" {
 			if text, ok := receiver.(runtime.String); ok && len(args) >= 1 {

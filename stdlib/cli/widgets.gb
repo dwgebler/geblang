@@ -1,6 +1,7 @@
 module cli.widgets;
-
 import cli;
+import time;
+import store;
 
 ## Spinner draws a rotating frame to stderr while a long-running
 ## task is in progress. Call `.tick()` periodically (the caller
@@ -61,5 +62,90 @@ export class ProgressBar {
 
     func finish(string finalMessage = ""): void {
         cli.progressFinish(finalMessage);
+    }
+}
+
+export class CancelledError extends Error {
+    func CancelledError(string message = "Operation cancelled") {
+        parent(message);
+    }
+}
+
+/* Cancellation uses shared storage so signal callbacks can request it safely. */
+export class ManagedProgress extends ProgressBar {
+    store.Store _cancellation;
+    bool _enabled;
+    bool _rendered = false;
+    int _interval;
+    int _lastRender;
+
+    func ManagedProgress(int total, string label, dict<string, any> options = {}) {
+        int width = (options.get("width") ?? 30) as int;
+        int interval = (options.get("intervalMs") ?? 80) as int;
+        if (total < 1 || width < 1 || width > 1000 || interval < 0) {
+            throw ValueError("Progress requires positive total, width 1..1000 and non-negative intervalMs");
+        }
+        parent(total, width, label);
+        this._cancellation = store.Store();
+        this._enabled = cli.isTerminal() && ((options.get("enabled") ?? true) as bool);
+        this._interval = interval;
+        this._lastRender = time.monotonic() - interval;
+    }
+
+    func cancel(): void {
+        this._cancellation.set("cancelled", true);
+    }
+
+    func checkCancelled(): void {
+        if (this._cancellation.get("cancelled") == true) {
+            throw CancelledError();
+        }
+    }
+
+    func advance(int n = 1): void {
+        this.set(this.current + n);
+    }
+
+    func set(int value): void {
+        this.checkCancelled();
+        this.current = value < 0 ? 0 : (value > this.total ? this.total : value);
+        this.render();
+    }
+
+    func updateLabel(string label): void {
+        this.label = label;
+        this.render();
+    }
+
+    func render(): void {
+        if (!this._enabled) {
+            return;
+        }
+        int now = time.monotonic();
+        if (now - this._lastRender < this._interval && this.current < this.total) {
+            return;
+        }
+        cli.progressRender(this.current, this.total, this.width, this.label);
+        this._lastRender = now;
+        this._rendered = true;
+    }
+
+    func finish(string finalMessage = ""): void {
+        if (this._rendered) {
+            cli.progressFinish(finalMessage);
+            this._rendered = false;
+        }
+    }
+}
+
+export func withProgress(int total, string label, callable body, dict<string, any> options = {}): any {
+    let progress = ManagedProgress(total, label, options);
+    try {
+        progress.checkCancelled();
+        let result = body(progress);
+        progress.checkCancelled();
+        return result;
+    } finally {
+        progress.finish();
     }
 }

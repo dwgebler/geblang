@@ -1,0 +1,70 @@
+import test;
+import cli;
+
+class TableRecord {
+    int count;
+    func TableRecord(int count) {
+        this.count = count;
+    }
+}
+
+class TableColumnsTest extends test.Test {
+    @test
+    func strictInferredColumnsPreservePositionalAndDictionaryRows(): void {
+        this.assertEquals("1  2\n3  4", cli.table([[1, 2], [3, 4]], {"strict": true}));
+        this.assertEquals(
+            "1  2\n3  4",
+            cli.table([[1, 2], [3, 4]], {"strict": true, "columns": []})
+        );
+        this.assertEquals("n\n-\n7", cli.table([{"n": 7}], {"strict": true, "columns": []}));
+        this.assertThrowsOf(
+            func(): void { cli.table([[1], [2, 3]], {"strict": true}); },
+            "ValueError"
+        );
+    }
+
+    @test
+    func descriptorsFormatAndAlignCells(): void {
+        let output = cli.table(
+            [{"name": "A", "share": 0.5}, {"name": "Long", "share": 1}],
+            {
+                "columns": [
+                    {"key": "name", "header": "Name", "align": "center"},
+                    {"key": "share", "header": "Share", "align": "right", "format": ".2%"},
+                ],
+                "separator": "|",
+            }
+        );
+        this.assertEquals("Name|  Share\n----|-------\n A  | 50.00%\nLong|100.00%", output);
+    }
+
+    @test
+    func accessorReadsTypedRecordsAndKeepsLegacyColumns(): void {
+        let output = cli.table(
+            [TableRecord(7)],
+            {
+                "columns": [
+                    {
+                        "header": "Count",
+                        "value": func(TableRecord row): int { return row.count; },
+                        "align": "right",
+                    },
+                ],
+            }
+        );
+        this.assertEquals("Count\n-----\n    7", output);
+        this.assertEquals("n\n-\n7", cli.table([{"n": 7}], {"columns": ["n"]}));
+    }
+
+    @test
+    func strictMissingKeysRaiseAndLooseKeysStayBlank(): void {
+        this.assertThrowsOf(
+            func(): void { cli.table([{}], {"columns": ["missing"], "strict": true}); },
+            "ValueError"
+        );
+        this.assertEquals(
+            "missing\n-------\n       ",
+            cli.table([{}], {"columns": [{"key": "missing"}]})
+        );
+    }
+}

@@ -439,6 +439,13 @@ func secureRandomFloat(args []runtime.Value) (runtime.Value, error) {
 }
 
 func secureRandomBool(args []runtime.Value) (runtime.Value, error) {
+	if len(args) == 0 {
+		var data [1]byte
+		if _, err := rand.Read(data[:]); err != nil {
+			return nil, err
+		}
+		return runtime.Bool{Value: data[0]&1 == 1}, nil
+	}
 	sess, err := lookupSecureSession(firstArg(args), "secureRandom.bool")
 	if err != nil {
 		return nil, err
@@ -455,6 +462,21 @@ func secureRandomBool(args []runtime.Value) (runtime.Value, error) {
 }
 
 func secureRandomChoice(args []runtime.Value) (runtime.Value, error) {
+	if len(args) == 1 && !isSecureSession(args[0]) {
+		items, ok := args[0].(*runtime.List)
+		if !ok {
+			return nil, runtime.ClassifiedError{Class: "TypeError", Message: "secureRandom.choice expects a list"}
+		}
+		if len(items.Elements) == 0 {
+			return nil, runtime.ClassifiedError{Class: "ValueError", Message: "secureRandom.choice expects a non-empty list"}
+		}
+		index, err := cryptoRandomInt([]runtime.Value{runtime.NewInt64(0), runtime.NewInt64(int64(len(items.Elements) - 1))}, "secureRandom.choice")
+		if err != nil {
+			return nil, err
+		}
+		offset, _ := AsInt64(index)
+		return items.Elements[offset], nil
+	}
 	sess, err := lookupSecureSession(firstArg(args), "secureRandom.choice")
 	if err != nil {
 		return nil, err

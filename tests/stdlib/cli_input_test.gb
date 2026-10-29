@@ -1,0 +1,81 @@
+import test;
+import cli;
+import io;
+
+class CliInputTest extends test.Test {
+    @test
+    func mixedReadersPreserveInputIncludingFinalLine(): void {
+        let lines = io.withStdin("one\ntwo\nthree\nfour", func(): list<any> {
+            return [
+                io.stdinReadLine(),
+                cli.prompt(""),
+                io.readLine(io.stdin()),
+                io.stdinReadAll(),
+                io.stdinReadLine(),
+            ];
+        }) as list<any>;
+
+        this.assertEquals("one", lines[0]);
+        this.assertEquals("two", lines[1]);
+        this.assertEquals("three", lines[2]);
+        this.assertEquals("four", lines[3]);
+        this.assertNull(lines[4]);
+    }
+
+    @test
+    func nestedInputRestoresBufferedOuterLinesAfterFailure(): void {
+        let result = io.withStdin("before\nafter", func(): string {
+            io.stdinReadLine();
+            try {
+                io.withStdin("inside", func(): void {
+                    cli.prompt("");
+                    throw ValueError("test");
+                });
+            } catch (ValueError error) {}
+            return cli.prompt("");
+        });
+
+        this.assertEquals("after", result);
+    }
+
+    @test
+    func redirectInputIsSharedWithConsolePrompts(): void {
+        let result = io.withStdin("unused", func(): list<any> {
+            let restore = io.redirectStdin(io.memory("first\nlast"));
+            try {
+                return [cli.prompt(""), io.stdinReadLine()];
+            } finally {
+                restore();
+            }
+        }) as list<any>;
+
+        this.assertEquals("first", result[0]);
+        this.assertEquals("last", result[1]);
+    }
+
+    @test
+    func confirmAndChooseRetryAndUseDefaults(): void {
+        let yes = io.withStdin("bad\nyes\n", func(): bool { return cli.confirm("?"); });
+        let no = io.withStdin("\n", func(): bool { return cli.confirm("?"); });
+        let choice = io.withStdin(
+            "bad\n2\n",
+            func(): string { return cli.choose("?", ["a", "b"]); }
+        );
+
+        this.assertTrue(yes as bool);
+        this.assertFalse(no as bool);
+        this.assertEquals("b", choice);
+    }
+
+    @test
+    func confirmAndChooseRaiseIOErrorAtEndOfInput(): void {
+        this.assertThrowsOf(
+            func(): void { io.withStdin("", func(): void { cli.confirm("?"); }); },
+            "IOError"
+        );
+        this.assertThrowsOf(
+            func(): void { io.withStdin("", func(): void { cli.choose("?", ["a"], 0); }); },
+            "IOError"
+        );
+    }
+}

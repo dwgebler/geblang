@@ -203,6 +203,9 @@ var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 		"truncateGraphemes":  Fn([]string{"int n"}, "string", "The first n grapheme clusters as a string (the whole string if shorter)."),
 		"format":             Fn([]string{"...any args"}, "string", "printf-style format using % placeholders."),
 		"toString":           Fn([]string{}, "string", "Identity."),
+		"toIntOrNull":        Fn([]string{"int base = 10"}, "?int", "Parses an integer or returns null; without an explicit base uses the same literal syntax as toInt(). Invalid base arguments throw ValueError."),
+		"toDecimalOrNull":    Fn([]string{}, "?decimal", "Parses an exact decimal or returns null for invalid text."),
+		"toFloatOrNull":      Fn([]string{}, "?float", "Parses a float or returns null for invalid or out-of-range text."),
 		"toInt":              Fn([]string{"int base = 10"}, "int", "Parse as int in base 2-36."),
 		"toFloat":            Fn([]string{}, "float", "Parse as float."),
 		"toDecimal":          Fn([]string{}, "decimal", "Parse as decimal."),
@@ -502,26 +505,43 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"concat":        Fn([]string{"bytes left", "bytes right"}, "bytes", "Concatenates byte buffers."),
 	}},
 	"cli": {Functions: map[string]FunctionDoc{
+		"readLine":       Fn([]string{"string label = \"\""}, "?string", "Reads a prompted line, preserving blank input and returning null at EOF."),
+		"promptInt":      Fn([]string{"string label", "dict<string, any> options = {}"}, "?int", "Prompts until an integer passes min/max/choices/validate rules; returns null on EOF or a configured cancel token."),
+		"withContext":    Fn([]string{"dict<string, any> options", "callable body"}, "any", "Runs a body with scoped stdin/stdout/stderr, terminal and quiet options; restores the previous context even on failure."),
+		"isTerminal":     Fn([]string{}, "bool", "Reports whether CLI stderr is a terminal, honoring the active context override."),
 		"prompt":         Fn([]string{"string label", "string default = \"\""}, "string", "Reads interactive console input."),
 		"password":       Fn([]string{"string label"}, "string", "Reads masked console input."),
 		"secret":         Fn([]string{"string label"}, "string", "Reads masked console input."),
-		"confirm":        Fn([]string{"string label", "bool default = false"}, "bool", "Reads a yes/no answer."),
-		"choose":         Fn([]string{"string label", "list<string> choices", "?int defaultIndex = null"}, "string", "Reads a choice from a list."),
+		"confirm":        Fn([]string{"string label", "bool default = false"}, "bool", "Retries invalid yes/no answers, uses the default on blank input and raises IOError at EOF."),
+		"choose":         Fn([]string{"string label", "list<string> choices", "?int defaultIndex = null"}, "string", "Retries invalid choices, uses a zero-based default on blank input and raises IOError at EOF."),
 		"multiChoose":    Fn([]string{"string label", "list<string> choices", "list<int> preselected = []"}, "list<string>", "Selects multiple choices: an arrow-key checkbox UI on a TTY, numbered comma-separated input otherwise."),
 		"style":          Fn([]string{"string text", "dict<string, any> options"}, "string", "Applies ANSI console styling."),
 		"stripAnsi":      Fn([]string{"string text"}, "string", "Removes ANSI escape sequences."),
-		"table":          Fn([]string{"list<dict<string, any>> rows", "any options = null"}, "string", "Formats rows as a console table."),
-		"parseArgs":      Fn([]string{"list<string> argv", "dict<string, any> spec"}, "dict<string, any>", "Parses command-line options."),
+		"table":          Fn([]string{"list<any> rows", "any options = null"}, "string", "Formats rows using string columns or key/header/align/format/value descriptors; strict mode rejects missing keys."),
+		"parseArgs":      Fn([]string{"list<string> argv", "dict<string, any> spec"}, "dict<string, any>", "Parses options with min/max/choices/validate rules; returns an error entry on rejection."),
 		"help":           Fn([]string{"string name", "dict<string, any> spec"}, "string", "Builds usage text for program name from an option specification."),
 		"spinnerTick":    Fn([]string{"int frameIndex", "string message"}, "int", "Renders one spinner frame to stderr; returns the next frame index (1.2.0). Use cli.widgets.Spinner for the OO wrapper."),
 		"spinnerStop":    Fn([]string{"string finalMessage = \"\""}, "void", "Clears the spinner line (1.2.0)."),
 		"progressRender": Fn([]string{"int current", "int total", "int width = 30", "string label = \"\""}, "void", "Renders an ANSI progress bar to stderr (1.2.0). Use cli.widgets.ProgressBar."),
 		"progressFinish": Fn([]string{"string finalMessage = \"\""}, "void", "Clears the progress line (1.2.0)."),
 	}},
-	"cli.widgets": {Classes: map[string]string{
-		"Spinner":     "Terminal spinner that renders to stderr (1.2.0). Construct with `Spinner(message)`; call `.tick()` periodically and `.stop(finalMessage?)` when done.",
-		"ProgressBar": "Terminal progress bar that renders to stderr (1.2.0). Construct with `ProgressBar(total, width = 30, label = \"\")`; call `.advance(n = 1)`, `.set(value)`, `.updateLabel(label)`, or `.finish(finalMessage?)`.",
+	"cli.widgets": {Functions: map[string]FunctionDoc{
+		"withProgress": Fn([]string{"int total", "string label", "callable body", "dict<string, any> options = {}"}, "any", "Runs a body with throttled terminal progress, cooperative cancellation, and guaranteed display cleanup."),
+	}, Classes: map[string]string{
+		"CancelledError":  "Catchable error raised by cooperative progress cancellation.",
+		"ManagedProgress": "Scoped progress with advance/set, cancel/checkCancelled, and throttled terminal rendering. Obtain through withProgress.",
+		"Spinner":         "Terminal spinner that renders to stderr (1.2.0). Construct with `Spinner(message)`; call `.tick()` periodically and `.stop(finalMessage?)` when done.",
+		"ProgressBar":     "Terminal progress bar that renders to stderr (1.2.0). Construct with `ProgressBar(total, width = 30, label = \"\")`; call `.advance(n = 1)`, `.set(value)`, `.updateLabel(label)`, or `.finish(finalMessage?)`.",
 	}, ClassMethods: map[string]map[string]FunctionDoc{
+		"ManagedProgress": {
+			"cancel":         Fn([]string{}, "void", "Requests cooperative cancellation; checkCancelled or the next update raises CancelledError."),
+			"checkCancelled": Fn([]string{}, "void", "Raises CancelledError when cancellation was requested."),
+			"advance":        Fn([]string{"int n = 1"}, "void", "Checks cancellation and advances progress."),
+			"set":            Fn([]string{"int value"}, "void", "Checks cancellation and sets progress, clamping to 0..total."),
+			"updateLabel":    Fn([]string{"string label"}, "void", "Updates the label with throttled rendering."),
+			"render":         Fn([]string{}, "void", "Renders when the terminal and throttle permit."),
+			"finish":         Fn([]string{"string finalMessage = \"\""}, "void", "Clears a rendered progress display."),
+		},
 		"ProgressBar": {
 			"advance":     Fn([]string{"int n"}, "void", "Advances the progress bar by n steps."),
 			"finish":      Fn([]string{"string finalMessage"}, "void", "Completes the progress bar with a final message."),
@@ -2063,8 +2083,8 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"randomBytes":      Fn([]string{"int n"}, "bytes", "Returns n cryptographically random bytes; pass a session first to draw them provably fair.").Or("SecureRandomSession s", "int n"),
 		"randomInt":        Fn([]string{"int min", "int max"}, "int", "Returns a cryptographically random int in [min, max]; pass a session first to draw it provably fair.").Or("SecureRandomSession s", "int min", "int max"),
 		"float":            Fn([]string{"SecureRandomSession s"}, "float", "Returns a uniform float in [0, 1)."),
-		"bool":             Fn([]string{"SecureRandomSession s"}, "bool", "Returns a fair coin flip."),
-		"choice":           Fn([]string{"SecureRandomSession s", "list<any> items"}, "any", "Returns one element of items uniformly at random."),
+		"bool":             Fn([]string{}, "bool", "Returns an OS-backed fair coin flip; pass a session for an audited draw.").Or("SecureRandomSession s"),
+		"choice":           Fn([]string{"list<any> items"}, "any", "Returns one element uniformly using OS randomness; pass a session for an audited draw.").Or("SecureRandomSession s", "list<any> items"),
 		"shuffle":          Fn([]string{"SecureRandomSession s", "list<any> items"}, "list<any>", "Returns a Fisher-Yates shuffled copy."),
 		"weightedChoice":   Fn([]string{"SecureRandomSession s", "list<any> items", "list<float> weights"}, "any", "Returns one element of items with probability proportional to weights."),
 		"verifyCommitment": Fn([]string{"string commit", "string seedHex"}, "bool", "True if sha256(seed) == commit (revealed seed matches the published commitment)."),
@@ -2802,6 +2822,10 @@ var StdlibCatalog = map[string]ModuleDoc{
 			"schema":        Fn([]string{}, "dict<string, any>", "Returns the parser schema for this builder."),
 		},
 		"Option": {
+			"min":      Fn([]string{"any value"}, "Option", "Sets an inclusive numeric minimum."),
+			"max":      Fn([]string{"any value"}, "Option", "Sets an inclusive numeric maximum."),
+			"choices":  Fn([]string{"list<any> values"}, "Option", "Restricts the parsed value to permitted choices."),
+			"validate": Fn([]string{"callable validator"}, "Option", "Adds a validator returning null or an error message."),
 			"default":  Fn([]string{"any value"}, "Option", "Sets the option default and returns the builder."),
 			"help":     Fn([]string{"string text"}, "Option", "Returns formatted help text."),
 			"required": Fn([]string{}, "Option", "Marks the option required and returns the builder."),
@@ -3550,6 +3574,50 @@ func NativeSignature(module, function string) (argbinding.Signature, bool) {
 	if !ok {
 		return argbinding.Signature{}, false
 	}
+	return nativeSignature(function, params), true
+}
+
+// NativeCallSignature selects an overload using names and argument positions.
+func NativeCallSignature(module, function string, args []argbinding.Arg) (argbinding.Signature, bool) {
+	doc, ok := nativeDoc(module, function)
+	if !ok {
+		return argbinding.Signature{}, false
+	}
+	fallback := nativeSignature(function, doc.Params)
+	hasFallback := false
+	for _, params := range append([][]string{doc.Params}, doc.Alternates...) {
+		sig := nativeSignature(function, params)
+		result, err := argbinding.Order(sig, args)
+		if err == nil {
+			if _, err := argbinding.NativeArgOrder(sig, result); err == nil {
+				return sig, true
+			}
+		}
+		known := true
+		for _, arg := range args {
+			if arg.Name == "" {
+				continue
+			}
+			found := false
+			for _, name := range sig.ParamNames {
+				if strings.EqualFold(name, arg.Name) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				known = false
+				break
+			}
+		}
+		if known && !hasFallback {
+			fallback, hasFallback = sig, true
+		}
+	}
+	return fallback, true
+}
+
+func nativeSignature(function string, params []string) argbinding.Signature {
 	sig := argbinding.Signature{FuncName: function}
 	for i, p := range params {
 		sig.ParamNames = append(sig.ParamNames, paramName(p))
@@ -3558,5 +3626,5 @@ func NativeSignature(module, function string) (argbinding.Signature, bool) {
 			sig.Variadic = true
 		}
 	}
-	return sig, true
+	return sig
 }

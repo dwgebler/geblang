@@ -538,9 +538,7 @@ func (e *Evaluator) ioStdin(call *ast.CallExpression, args []runtime.Value) (run
 	if len(args) != 0 {
 		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
 	}
-	return e.registerIOStream(&ioStreamHandle{name: "stdin", reader: readerFunc(func(p []byte) (int, error) {
-		return e.stdin.Read(p)
-	})}), nil
+	return e.registerIOStream(&ioStreamHandle{name: "stdin", reader: e.input, console: e.input}), nil
 }
 
 type writerFunc func([]byte) (int, error)
@@ -587,6 +585,9 @@ func (e *Evaluator) ioReader(value runtime.Value) (io.Reader, error) {
 		}
 		if handle.reader == nil {
 			return nil, fmt.Errorf("%s stream is not readable", handle.name)
+		}
+		if handle.console != nil {
+			return handle.console, nil
 		}
 		if handle.bufReader != nil {
 			return handle.bufReader, nil
@@ -934,16 +935,12 @@ func (e *Evaluator) ioRedirectStdin(call *ast.CallExpression, args []runtime.Val
 	if err != nil {
 		return nil, err
 	}
-	previous := e.stdin
-	previousReader := e.stdinReader
-	e.stdin = reader
-	e.stdinReader = nil
+	restore := e.input.redirect(reader, e.input.state().quiet, false)
 	return runtime.Function{Name: "restoreStdin", Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("stdin restore expects no arguments")
 		}
-		e.stdin = previous
-		e.stdinReader = previousReader
+		restore()
 		return runtime.Null{}, nil
 	}}, nil
 }
@@ -1049,7 +1046,7 @@ func (e *Evaluator) ioStdinReadAll(call *ast.CallExpression, args []runtime.Valu
 	if len(args) != 0 {
 		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
 	}
-	data, err := io.ReadAll(e.stdin)
+	data, err := io.ReadAll(e.input)
 	if err != nil {
 		return nil, err
 	}
@@ -1060,15 +1057,11 @@ func (e *Evaluator) ioStdinReadLine(call *ast.CallExpression, args []runtime.Val
 	if len(args) != 0 {
 		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
 	}
-	if e.stdinReader == nil {
-		e.stdinReader = bufio.NewReader(e.stdin)
-	}
-	line, err := e.stdinReader.ReadString('\n')
-	if err != nil && err != io.EOF {
+	line, eof, err := e.input.readLine()
+	if err != nil {
 		return nil, err
 	}
-	line = strings.TrimRight(line, "\r\n")
-	if err == io.EOF && line == "" {
+	if eof {
 		return runtime.Null{}, nil
 	}
 	return runtime.String{Value: line}, nil
@@ -1103,6 +1096,16 @@ func (e *Evaluator) ioReadLine(call *ast.CallExpression, args []runtime.Value) (
 		}
 		if handle.reader == nil {
 			return nil, fmt.Errorf("%s stream is not readable", handle.name)
+		}
+		if handle.console != nil {
+			line, eof, err := handle.console.readLine()
+			if err != nil {
+				return nil, err
+			}
+			if eof {
+				return runtime.Null{}, nil
+			}
+			return runtime.String{Value: line}, nil
 		}
 		if handle.bufReader == nil {
 			handle.bufReader = bufio.NewReader(handle.reader)
@@ -1148,6 +1151,20 @@ func (e *Evaluator) ioReadLines(call *ast.CallExpression, args []runtime.Value) 
 		}
 		if handle.reader == nil {
 			return nil, fmt.Errorf("%s stream is not readable", handle.name)
+		}
+		if handle.console != nil {
+			var lines []runtime.Value
+			for {
+				line, eof, err := handle.console.readLine()
+				if err != nil {
+					return nil, err
+				}
+				if eof {
+					break
+				}
+				lines = append(lines, runtime.String{Value: line})
+			}
+			return &runtime.List{Elements: lines}, nil
 		}
 		if handle.bufReader == nil {
 			handle.bufReader = bufio.NewReader(handle.reader)

@@ -61,6 +61,7 @@ type Analyzer struct {
 	moduleFuncSigs func(qualifier, name string) ([]MethodSignature, bool)
 	// classFieldType resolves a field's declared type across parents/modules; nil disables field-receiver typing.
 	classFieldType func(className, fieldLower string) (*ast.TypeRef, bool)
+	classRelations func(target, actual string) (bool, bool)
 	// methodChecks enables the unknown-method checks (primitive + class).
 	// Off in the execution path; turned on by the check command.
 	methodChecks bool
@@ -111,6 +112,11 @@ func (a *Analyzer) SetClassMethodSignatureResolver(fn func(string, string) ([]Me
 // field receivers (e.g. `obj.field`) for the member/method checks. Call before Analyze.
 func (a *Analyzer) SetClassFieldTypeResolver(fn func(string, string) (*ast.TypeRef, bool)) {
 	a.classFieldType = fn
+}
+
+// SetClassRelations installs source-based cross-module ancestry resolution.
+func (a *Analyzer) SetClassRelations(fn func(string, string) (bool, bool)) {
+	a.classRelations = fn
 }
 
 // EnableMethodChecks turns on the unknown-method diagnostics (primitive
@@ -3182,6 +3188,11 @@ func (a *Analyzer) infixNumericResult(expr *ast.InfixExpression) typeInfo {
 func (a *Analyzer) isAssignableType(target, actual string) bool {
 	if target == actual {
 		return true
+	}
+	if a.classRelations != nil {
+		if assignable, known := a.classRelations(target, actual); known {
+			return assignable
+		}
 	}
 	if isCallableTypeName(target) {
 		return a.typeHasInvoke(actual)

@@ -896,23 +896,25 @@ auditable after the fact: gaming, lotteries, betting, public
 draws, distributed leader elections, any place where "did the
 house cheat?" is a real question.
 
-It uses a commit / reveal scheme. The server generates a 32-byte
-seed, publishes its SHA-256 commitment up front, draws values
-from an HMAC-SHA-256 stream keyed by that seed, then reveals the
-seed at the end. Anyone holding the commitment and the audit log
-can independently re-derive every draw and check that the seed
-matches its commitment.
+It uses a commit / reveal scheme. `openSession` gets a fresh 32-byte
+server seed from the operating system's cryptographic random source.
+The server publishes its SHA-256 commitment before drawing, derives
+values from HMAC-SHA-256 keyed by that seed, then reveals the seed.
+Anyone with the original commitment, client seed, and complete audit
+log can re-derive the draws. Keep the seed secret until every result
+that depends on it has been decided.
 
 For ordinary cryptographic tokens or session IDs, keep using
-`secrets.*`. `secureRandom` is for the narrower case where the
-caller has to prove fairness, not just unpredictability.
+`secrets.*`. The session-based `secureRandom` overloads serve the narrower
+case where the caller has to prove fairness. Its session-free helpers use
+the operating system's cryptographic random source without an audit log.
 
 ### Surface
 
 | Function | Purpose |
 |----------|---------|
-| `secureRandom.openSession(opts = {})` | Opens a session with a fresh 32-byte server seed. `opts.clientSeed` (string) mixes a caller-supplied nonce into every draw. |
-| `secureRandom.fromSeed(seedHex, clientSeed = "")` | Opens a session from a caller-supplied 64-char hex seed (useful for tests and deterministic replays). |
+| `secureRandom.openSession(opts = {})` | Reads a fresh 32-byte server seed from the OS CSPRNG. `opts.clientSeed` (string) adds caller-supplied input to every draw; it is not the entropy source. |
+| `secureRandom.fromSeed(seedHex, clientSeed = "")` | Opens a session from a caller-supplied hex seed. Use 32 cryptographically random bytes (64 hex characters) for real games; fixed or predictable seeds are for tests and replays. |
 | `secureRandom.commitment(s)` | Returns `sha256(serverSeed)` as a 64-char hex string. Publish this before drawing. |
 | `secureRandom.reveal(s)` | Returns the server seed (hex) and locks the session so no further draws are allowed. |
 | `secureRandom.auditLog(s)` | Returns the per-draw records: `{nonce, method, args, output}` in draw order. |
@@ -922,8 +924,8 @@ caller has to prove fairness, not just unpredictability.
 | `secureRandom.randomInt(min, max)` / `randomInt(s, min, max)` | Uniform integer in `[min, max]`, both ends included (1.35.2). Session optional. |
 | `secureRandom.randomBytes(n)` / `randomBytes(s, n)` | `n` random bytes (1.35.2). Session optional. |
 | `secureRandom.float(s)` | Uniform float in `[0, 1)`. |
-| `secureRandom.bool(s)` | Fair coin flip. |
-| `secureRandom.choice(s, items)` | Uniformly picks one element of `items`. |
+| `secureRandom.bool()` / `bool(s)` | Fair coin flip. Session optional (1.39.0). |
+| `secureRandom.choice(items)` / `choice(s, items)` | Uniformly picks one element of a non-empty list. Session optional (1.39.0); empty lists raise ValueError. |
 | `secureRandom.shuffle(s, items)` | Fisher-Yates shuffled copy. |
 | `secureRandom.weightedChoice(s, items, weights)` | Picks one element with probability proportional to its weight. |
 | `secureRandom.verifyCommitment(commit, seedHex)` | True if `sha256(seedHex) == commit`. |
@@ -940,6 +942,15 @@ import secureRandom;
 
 let roll  = secureRandom.randomInt(1, 6);     # 1..6, both ends included
 let token = secureRandom.randomBytes(16);     # 16 random bytes
+```
+
+For a coin flip or selecting a list item, use `secureRandom.bool()` or
+`secureRandom.choice(items)`. These also use OS cryptographic randomness;
+they require no session and create no audit records:
+
+```gb
+let heads = secureRandom.bool();
+let prize = secureRandom.choice(["book", "mug", "shirt"]);
 ```
 
 Pass a session as the first argument and the same call becomes a
@@ -959,7 +970,64 @@ may be any size. `randomBytes(s, n)` is the same draw as `bytes(s, n)`
 and is logged under the method name `bytes`; `randomInt(s, min, max)` is
 logged as `randomInt`.
 
+### Example: an auditable poker deal
+
+Shuffle a standard deck once, then take cards in order. This gives
+uniform draws without replacement: `choice` on the full deck for each
+card could deal the same card twice. `shuffle` returns a shuffled copy
+and records the input deck and result as one draw (nonce 0). Taking
+cards from that order needs no new randomness for each card.
+
+For a game where the player must rule out the server choosing a seed
+to suit a known client seed, generate a secret seed with `secrets`,
+publish its commitment, **then** accept the player's client seed.
+Create a new session from those two inputs before any draw. Save the
+published commitment outside the server's final audit log so a later
+replacement is detectable.
+
+```gb
+import secrets;
+import secureRandom;
+import io;
+
+let serverSeed = secrets.randomHex(32);
+let precommit = secureRandom.fromSeed(serverSeed);
+let publishedCommitment = secureRandom.commitment(precommit);
+io.println("publish before accepting the player seed: " + publishedCommitment);
+
+let playerSeed = "player-provided-seed-for-hand-42";
+let game = secureRandom.fromSeed(serverSeed, playerSeed);
+let deck = [];
+for (suit in ["C", "D", "H", "S"]) {
+    for (rank in ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"]) {
+        deck.push(rank + suit);
+    }
+}
+let shuffled = secureRandom.shuffle(game, deck);
+let firstCard = shuffled[0];
+let secondCard = shuffled[1];
+io.println("first two cards: " + firstCard + " " + secondCard);
+
+/* Publish only after the hand can no longer be changed. */
+secureRandom.reveal(game);
+io.println(secureRandom.auditLogJson(game));
+```
+
+The published JSON contains the seed, client seed, input deck, shuffled
+deck, and nonce. Check the original commitment against the revealed
+seed, replay the shuffle, and compare the dealt cards with the first
+cards of the replayed deck. Preserve the complete deal order and game
+rules separately if a third party must verify which cards were shown
+to each player. Never reveal the seed while later hands still depend
+on it; use a fresh seed and commitment per independently revealed game.
+
 ### Example: a provably-fair dice roll
+
+For a simpler round where the client seed is already known,
+`openSession` obtains the secret server seed from the OS CSPRNG.
+The `clientSeed` string is additional input to each draw; it does
+not seed the CSPRNG and need not be secret. Publish the commitment
+before the first draw and keep a copy that the server cannot replace.
 
 ```gb
 import secureRandom;
@@ -981,8 +1049,10 @@ io.println(secureRandom.auditLogJson(s));
 
 ### Verifying after the fact
 
-A third party with just the commitment, the published seed, and
-the audit log can re-derive every outcome:
+A third party needs the commitment saved when it was originally
+published, plus the revealed seed and audit log. The example reads
+that earlier commitment from a separate file containing exactly its
+64 hex characters, without a trailing newline:
 
 ```gb
 import secureRandom;
@@ -990,13 +1060,21 @@ import json;
 import io;
 
 let published = json.parse(io.readText("round-1234.json"));
+let priorCommitment = io.readText("round-1234.commitment");
+if (published["commitment"] != priorCommitment) {
+    throw RuntimeError("audit log changed the original commitment");
+}
 if (!secureRandom.verifyCommitment(
-        published["commitment"] as string,
+        priorCommitment,
         published["serverSeed"] as string)) {
     throw RuntimeError("server seed does not match published commitment");
 }
 
+let nextNonce = 0;
 for (draw in published["draws"]) {
+    if (draw["nonce"] != nextNonce) {
+        throw RuntimeError("missing or out-of-order draw");
+    }
     let expected = secureRandom.replay(
         published["serverSeed"] as string,
         published["clientSeed"] as string,
@@ -1007,6 +1085,7 @@ for (draw in published["draws"]) {
     if (draw["output"] != expected) {
         throw RuntimeError("draw " + (draw["nonce"] as string) + " does not replay");
     }
+    nextNonce += 1;
 }
 ```
 
@@ -1020,9 +1099,16 @@ for (draw in published["draws"]) {
   invalidating the commitment.
 - `uintRange` uses rejection sampling so the distribution stays
   unbiased even for ranges that are not powers of two.
+- `shuffle` uses Fisher-Yates with unbiased index draws. Replay checks
+  that a published draw follows the committed seed and recorded inputs;
+  it cannot prove that the server used good entropy, published every
+  game, or followed the claimed dealing rules. A server can still
+  abandon a committed game. The timing of the client seed matters:
+  if the server knows it before committing, it can search for a
+  favorable server seed.
 - Once `reveal` has been called the session refuses further
   draws. This prevents accidentally leaking entropy from a
   revealed seed.
-- For plain unpredictable randomness (session IDs, tokens, OTPs),
-  use `secrets.*`. `secureRandom` is heavier and only worth the
-  cost when the audit trail matters.
+- For plain unpredictable randomness (session IDs, tokens, OTPs), use
+  `secrets.*` or session-free `secureRandom` helpers. Open an audited session
+  when the audit trail matters.

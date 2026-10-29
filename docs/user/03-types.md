@@ -406,6 +406,24 @@ the same thing but chain cleanly and, in two cases, offer finer control:
   is a plain cast.
 - `toInt(base)` on a string parses in the given base.
 
+For input that may be invalid, strings offer `toIntOrNull(base)`,
+`toDecimalOrNull()`, and `toFloatOrNull()`. They return null when the
+corresponding conversion cannot parse the text, avoiding a separate
+predicate and second parse:
+
+```gb
+let count = "42".toIntOrNull(); /* 42 */
+let missing = "no".toIntOrNull(); /* null */
+let hex = "ff".toIntOrNull(16); /* 255 */
+```
+
+With no base argument, integer parsing matches `toInt()`, including
+`0x`/`0o`/`0b` prefixes and digit separators. An explicit base must be
+2..36 and uses the existing base parser. Invalid API arguments still
+raise errors; for example, `"12".toIntOrNull(1)` raises `ValueError`.
+Decimal and float parsing retain the precision and syntax of their
+existing conversions; these helpers do not impose domain validation.
+
 To test before converting (instead of catching a thrown error), a
 string carries three non-throwing predicates:
 

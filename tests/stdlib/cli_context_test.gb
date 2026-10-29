@@ -1,0 +1,137 @@
+import test;
+import cli;
+import io;
+import cli.command;
+
+class CliContextTest extends test.Test {
+    @test
+    func readLinesKeepsStdinUsableAsContextInput(): void {
+        cli.withContext({"stdin": "one\ntwo\n", "quiet": true}, func(): void {
+            let input = io.stdin();
+            this.assertEquals("one", io.readLine(input));
+            this.assertEquals(["two"], io.readLines(input));
+            cli.withContext({"stdin": input}, func(): void { this.assertNull(cli.readLine()); });
+            let restore = io.redirectStdin(input);
+            try {
+                this.assertNull(cli.readLine());
+            } finally {
+                restore();
+            }
+        });
+    }
+
+    @test
+    func terminalOverrideSelectsKeyOrNumberedInput(): void {
+        let keyed = cli.withContext(
+            {"stdin": " \n", "terminal": true, "quiet": true},
+            func(): list<string> { return cli.multiChoose("Pick", ["a", "b"]); }
+        );
+        let numbered = cli.withContext(
+            {"stdin": "2\n", "terminal": false, "quiet": true},
+            func(): list<string> { return cli.multiChoose("Pick", ["a", "b"]); }
+        );
+        this.assertEquals(["a"], keyed);
+        this.assertEquals(["b"], numbered);
+    }
+
+    @test
+    func typedPromptRetriesAllValidationFailures(): void {
+        let output = io.memory();
+        let result = cli.withContext({"stdin": "no\n0\n9\n3\n2\n4\n", "stdout": output}, func(): ?int {
+            return cli.promptInt(
+                "Count: ",
+                {
+                    "min": 1,
+                    "max": 5,
+                    "choices": [2, 4],
+                    "validate": func(int value): ?string { return value == 2 ? "choose four" : null; },
+                }
+            );
+        });
+        this.assertEquals(4, result);
+        this.assertTrue(io.toString(output).contains("Please enter a whole number"));
+        this.assertTrue(io.toString(output).contains("at least 1"));
+        this.assertTrue(io.toString(output).contains("at most 5"));
+        this.assertTrue(io.toString(output).contains("permitted choices"));
+        this.assertTrue(io.toString(output).contains("choose four"));
+    }
+
+    @test
+    func typedPromptDistinguishesDefaultCancelAndEOF(): void {
+        cli.withContext({"stdin": "\n Q \n\n7", "quiet": true}, func(): void {
+            this.assertEquals(3, cli.promptInt("?", {"default": 3, "cancel": [""]}));
+            this.assertNull(cli.promptInt("?", {"cancel": ["q"]}));
+            this.assertEquals(7, cli.promptInt("?"));
+            this.assertNull(cli.promptInt("?", {"default": 8}));
+        });
+    }
+
+    @test
+    func scopedStreamsAndBufferedInputRestoreAfterException(): void {
+        let output = io.memory();
+        let errorOutput = io.memory();
+        cli.withContext({"stdin": "before\nafter", "stdout": output, "stderr": errorOutput, "terminal": false}, func(): void {
+            this.assertEquals("before", cli.readLine("First: "));
+            try {
+                cli.withContext({"stdin": "nested", "quiet": true, "terminal": true}, func(): void {
+                    this.assertTrue(cli.isTerminal());
+                    this.assertEquals("nested", cli.readLine("Hidden"));
+                    throw ValueError("test");
+                });
+            } catch (ValueError error) {}
+            this.assertFalse(cli.isTerminal());
+            this.assertEquals("after", io.stdinReadLine());
+            io.println("done");
+            io.stderrWrite("error");
+        });
+        this.assertEquals("First: done\n", io.toString(output));
+        this.assertEquals("error", io.toString(errorOutput));
+    }
+
+    @test
+    func lineReaderPreservesBlankAndFinalLines(): void {
+        cli.withContext({"stdin": "\nlast", "quiet": true}, func(): void {
+            this.assertEquals("", cli.readLine());
+            this.assertEquals("last", cli.readLine());
+            this.assertNull(cli.readLine());
+        });
+        cli.withContext({"stdin": "\r", "quiet": true}, func(): void {
+            this.assertEquals("", cli.readLine());
+            this.assertNull(cli.readLine());
+        });
+    }
+
+    @test
+    func optionsSharePromptValidationAndKeepErrorResults(): void {
+        let option = command.newOption("count", "int").min(1).max(9).choices([2, 4]).validate(
+            func(int value): ?string { return value == 2 ? "choose four" : null; }
+        );
+        let command = command.newCommand("count", "test").option(option);
+        this.assertNull(command.parse(["--count", "4"])["error"]);
+        for (input in ["0", "10", "3", "2"]) {
+            this.assertTrue(command.parse(["--count", input])["error"] != null);
+        }
+        this.assertTrue(
+            (command.parse(["--count", "2"])["error"] as string).contains("choose four")
+        );
+    }
+
+    @test
+    func invalidPromptConfigurationFailsEvenAtEOF(): void {
+        cli.withContext({"stdin": "", "quiet": true}, func(): void {
+            this.assertThrowsOf(
+                func(): void { cli.promptInt("", {"min": 5, "max": 1}); },
+                "ValueError"
+            );
+            this.assertThrowsOf(
+                func(): void { cli.promptInt("", {"choices": "bad"}); },
+                "ValueError"
+            );
+            this.assertThrowsOf(
+                func(): void { cli.promptInt("", {"default": 0, "min": 1}); },
+                "ValueError"
+            );
+            this.assertThrowsOf(func(): void { cli.promptInt("", {"validate": 1}); }, "TypeError");
+        });
+    }
+}

@@ -1,5 +1,39 @@
 # Release Notes
 
+## 1.39.0
+
+### Added
+
+- Nullable `cli.readLine` and `cli.promptInt` distinguish EOF and cancellation
+  from valid input. Typed prompts retry invalid input and support defaults,
+  bounds, choices and custom validation.
+- Shared validation rules for `cli.parseArgs` and fluent
+  `cli.command.Option` builders.
+- `cli.withContext` scopes input, output, prompt suppression and terminal
+  detection, restoring the previous context after success or failure.
+- `cli.widgets.withProgress` provides throttled terminal progress, guaranteed
+  display cleanup and cooperative cancellation through `CancelledError`.
+- Table column descriptors support alignment, format specifications and
+  typed record accessors. Strict tables reject missing keys.
+- String `toIntOrNull`, `toDecimalOrNull` and `toFloatOrNull` methods return
+  null for invalid numeric text.
+- Session-free `secureRandom.bool()` and `secureRandom.choice(items)` use
+  cryptographic randomness alongside the existing audited overloads.
+
+### Fixes
+
+- CLI and IO readers share buffered stdin without losing piped input.
+  Nested input scopes restore unread outer input after exceptions.
+- Confirmation and choice prompts retry invalid answers and raise `IOError`
+  at EOF. Blank confirmation uses its default, false when omitted.
+- Progress rendering rejects invalid widths and handles very large task
+  counts without integer overflow.
+- Formatting preserves indentation for nested multi-line callbacks.
+- Assigning a local subclass to an imported ancestor type follows the
+  source module's parent chain without loading or executing it.
+- Native named arguments select the matching overload, preserving audited
+  RNG calls alongside their session-free forms.
+
 ## 1.38.1
 
 ### Fixes

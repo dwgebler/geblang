@@ -1,0 +1,29 @@
+import test;
+
+class ParseNumberTest extends test.Test {
+    @test
+    func parsesTheExistingNumericSyntax(): void {
+        this.assertEquals(42, "42".toIntOrNull());
+        this.assertEquals(255, "0xff".toIntOrNull());
+        this.assertEquals(255, "ff".toIntOrNull(16));
+        this.assertEquals(1000, "1_000".toIntOrNull());
+        this.assertEquals(1.25, "1.25".toDecimalOrNull());
+        this.assertEquals(1.25f, "1.25".toFloatOrNull());
+    }
+
+    @test
+    func invalidTextReturnsNull(): void {
+        for (text in ["", "no", "1.2.3"]) {
+            this.assertNull(text.toIntOrNull());
+            this.assertNull(text.toDecimalOrNull());
+            this.assertNull(text.toFloatOrNull());
+        }
+        this.assertNull("1e9999".toFloatOrNull());
+    }
+
+    @test
+    func invalidBasesAreProgrammerErrors(): void {
+        this.assertThrowsOf(func(): void { "12".toIntOrNull(1); }, "ValueError");
+        this.assertThrowsOf(func(): void { "12".toIntOrNull(37); }, "ValueError");
+    }
+}

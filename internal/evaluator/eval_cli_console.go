@@ -11,11 +11,11 @@ import (
 	"geblang/internal/native"
 	"geblang/internal/runtime"
 	"io"
+	"math/big"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"unicode"
 
 	"golang.org/x/text/width"
@@ -404,7 +404,7 @@ func (e *Evaluator) cliPrompt(call *ast.CallExpression, args []runtime.Value) (r
 		defaultValue = value.Value
 	}
 	_, _ = io.WriteString(e.promptWriter(), prompt.Value)
-	line, err := readConsoleLine()
+	line, err := e.readConsoleLine()
 	if err != nil {
 		return nil, err
 	}
@@ -427,7 +427,7 @@ func (e *Evaluator) cliPassword(call *ast.CallExpression, args []runtime.Value) 
 		prompt = value.Value
 	}
 	_, _ = io.WriteString(e.promptWriter(), prompt)
-	line, err := readConsoleSecret()
+	line, err := e.readConsoleSecret()
 	if err != nil {
 		return nil, err
 	}
@@ -444,31 +444,33 @@ func (e *Evaluator) cliConfirm(call *ast.CallExpression, args []runtime.Value) (
 		return nil, fmt.Errorf("%s prompt must be string", call.Callee.String())
 	}
 	defaultValue := false
-	hasDefault := false
 	if len(args) == 2 {
 		value, ok := args[1].(runtime.Bool)
 		if !ok {
 			return nil, fmt.Errorf("%s default must be bool", call.Callee.String())
 		}
 		defaultValue = value.Value
-		hasDefault = true
 	}
-	_, _ = io.WriteString(e.promptWriter(), prompt.Value)
-	line, err := readConsoleLine()
-	if err != nil {
-		return nil, err
-	}
-	answer := strings.ToLower(strings.TrimSpace(line))
-	if answer == "" && hasDefault {
-		return runtime.Bool{Value: defaultValue}, nil
-	}
-	switch answer {
-	case "y", "yes", "true", "1":
-		return runtime.Bool{Value: true}, nil
-	case "n", "no", "false", "0":
-		return runtime.Bool{Value: false}, nil
-	default:
-		return nil, fmt.Errorf("%s expected yes or no", call.Callee.String())
+	for {
+		_, _ = io.WriteString(e.promptWriter(), prompt.Value)
+		line, eof, err := e.input.readLine()
+		if err != nil {
+			return nil, err
+		}
+		if eof {
+			return nil, runtime.ClassifiedError{Class: "IOError", Message: "cli.confirm: input ended"}
+		}
+		answer := strings.ToLower(strings.TrimSpace(line))
+		if answer == "" {
+			return runtime.Bool{Value: defaultValue}, nil
+		}
+		switch answer {
+		case "y", "yes", "true", "1":
+			return runtime.Bool{Value: true}, nil
+		case "n", "no", "false", "0":
+			return runtime.Bool{Value: false}, nil
+		}
+		_, _ = fmt.Fprintln(e.promptWriter(), "Please answer yes or no.")
 	}
 }
 
@@ -496,7 +498,7 @@ func (e *Evaluator) cliChoose(call *ast.CallExpression, args []runtime.Value) (r
 		return nil, fmt.Errorf("%s options must not be empty", call.Callee.String())
 	}
 	defaultIndex := int64(-1)
-	if len(args) == 3 {
+	if len(args) == 3 && args[2] != (runtime.Null{}) {
 		bi, ok := native.IntValueToBigInt(args[2])
 		if !ok || !bi.IsInt64() {
 			return nil, fmt.Errorf("%s default index must be int", call.Callee.String())
@@ -511,24 +513,29 @@ func (e *Evaluator) cliChoose(call *ast.CallExpression, args []runtime.Value) (r
 		_, _ = fmt.Fprintf(e.promptWriter(), "\n  %d) %s", i+1, choice)
 	}
 	_, _ = io.WriteString(e.promptWriter(), "\n> ")
-	line, err := readConsoleLine()
-	if err != nil {
-		return nil, err
-	}
-	line = strings.TrimSpace(line)
-	if line == "" && defaultIndex >= 0 {
-		return runtime.String{Value: choices[defaultIndex]}, nil
-	}
-	index, err := strconv.ParseInt(line, 10, 64)
-	if err == nil && index >= 1 && index <= int64(len(choices)) {
-		return runtime.String{Value: choices[index-1]}, nil
-	}
-	for _, choice := range choices {
-		if strings.EqualFold(choice, line) {
-			return runtime.String{Value: choice}, nil
+	for {
+		line, eof, err := e.input.readLine()
+		if err != nil {
+			return nil, err
 		}
+		if eof {
+			return nil, runtime.ClassifiedError{Class: "IOError", Message: "cli.choose: input ended"}
+		}
+		line = strings.TrimSpace(line)
+		if line == "" && defaultIndex >= 0 {
+			return runtime.String{Value: choices[defaultIndex]}, nil
+		}
+		index, err := strconv.ParseInt(line, 10, 64)
+		if err == nil && index >= 1 && index <= int64(len(choices)) {
+			return runtime.String{Value: choices[index-1]}, nil
+		}
+		for _, choice := range choices {
+			if strings.EqualFold(choice, line) {
+				return runtime.String{Value: choice}, nil
+			}
+		}
+		_, _ = fmt.Fprint(e.promptWriter(), "Please enter a listed choice or its number.\n> ")
 	}
-	return nil, fmt.Errorf("%s invalid choice %q", call.Callee.String(), line)
 }
 
 // cliMultiChoose presents a checkbox list and returns the selected
@@ -646,24 +653,33 @@ func selectedChoices(choices []string, checked []bool) []string {
 }
 
 func (e *Evaluator) runMultiChoose(label string, choices []string, checked []bool) ([]string, error) {
-	// Injected input (io.withStdin) drives the key loop directly, no termios.
-	if override := consoleInputOverride(); override != nil {
-		return e.multiChooseLoop(label, choices, checked, override)
+	state := e.input.state()
+	if state.terminal != nil && !*state.terminal {
+		return e.multiChooseFallback(label, choices, checked)
 	}
-	fd := int(os.Stdin.Fd())
-	restore, err := enterRawMode(fd)
+	if state.keys {
+		return e.multiChooseLoop(label, choices, checked, e.input)
+	}
+	file, ok := state.source.(*os.File)
+	if !ok {
+		if state.terminal != nil && *state.terminal {
+			return e.multiChooseLoop(label, choices, checked, e.input)
+		}
+		return e.multiChooseFallback(label, choices, checked)
+	}
+	restore, err := enterRawMode(int(file.Fd()))
 	if err != nil {
 		return e.multiChooseFallback(label, choices, checked)
 	}
 	defer restore()
-	return e.multiChooseLoop(label, choices, checked, bufio.NewReader(os.Stdin))
+	return e.multiChooseLoop(label, choices, checked, e.input)
 }
 
-func (e *Evaluator) multiChooseLoop(label string, choices []string, checked []bool, in *bufio.Reader) ([]string, error) {
+func (e *Evaluator) multiChooseLoop(label string, choices []string, checked []bool, in *consoleInput) ([]string, error) {
 	state := &multiChooseState{checked: checked}
 	e.renderMultiChoose(label, choices, state, false)
 	for {
-		key, err := readTUIKey(in)
+		key, err := in.readKey()
 		if err == io.EOF {
 			// Input exhausted (ctrl-d or end of injected stream): confirm.
 			break
@@ -748,7 +764,7 @@ func (e *Evaluator) multiChooseFallback(label string, choices []string, checked 
 		_, _ = fmt.Fprintf(e.promptWriter(), "\n  %d) [%s] %s", i+1, mark, choice)
 	}
 	_, _ = io.WriteString(e.promptWriter(), "\nSelect (comma-separated numbers; blank keeps current): ")
-	line, err := readConsoleLine()
+	line, err := e.readConsoleLine()
 	if err != nil {
 		return nil, err
 	}
@@ -787,8 +803,8 @@ func (e *Evaluator) ioWithStdin(call *ast.CallExpression, args []runtime.Value) 
 	if !ok {
 		return nil, fmt.Errorf("%s input must be string", call.Callee.String())
 	}
-	prev := setConsoleInputOverride(bufio.NewReader(strings.NewReader(input.Value)))
-	defer setConsoleInputOverride(prev)
+	restore := e.input.redirect(strings.NewReader(input.Value), true, true)
+	defer restore()
 	return e.callValue(args[1], []runtime.Value{})
 }
 
@@ -797,78 +813,24 @@ func (e *Evaluator) ioWithStdin(call *ast.CallExpression, args []runtime.Value) 
 // not pollute output; this runs on the evaluator on both backends, so
 // io.println (which does not use it) is unaffected and parity holds.
 func (e *Evaluator) promptWriter() io.Writer {
-	if consoleInputOverride() != nil {
+	if e.input.state().quiet {
 		return io.Discard
 	}
 	return e.stdout
 }
 
-func readConsoleLine() (string, error) {
-	reader := consoleLineReader()
-	if override := consoleInputOverride(); override != nil {
-		reader = override
+func (e *Evaluator) readConsoleSecret() (string, error) {
+	state := e.input.state()
+	file, ok := state.source.(*os.File)
+	if state.keys || !ok || (state.terminal != nil && !*state.terminal) {
+		return e.readConsoleLine()
 	}
-	line, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", err
-	}
-	line = strings.TrimRight(line, "\r\n")
-	if err == io.EOF && line == "" {
-		return "", nil
-	}
-	return line, nil
-}
-
-// consoleInputState holds an optional injected input stream. When set
-// (via io.withStdin), the cli readers consume it instead of the real
-// stdin and skip raw-mode termios, so interactive prompts are testable.
-var consoleInputState struct {
-	sync.Mutex
-	reader *bufio.Reader
-}
-
-func consoleInputOverride() *bufio.Reader {
-	consoleInputState.Lock()
-	defer consoleInputState.Unlock()
-	return consoleInputState.reader
-}
-
-func setConsoleInputOverride(r *bufio.Reader) *bufio.Reader {
-	consoleInputState.Lock()
-	defer consoleInputState.Unlock()
-	prev := consoleInputState.reader
-	consoleInputState.reader = r
-	return prev
-}
-
-var consoleReaderState struct {
-	sync.Mutex
-	file   *os.File
-	reader *bufio.Reader
-}
-
-func consoleLineReader() *bufio.Reader {
-	consoleReaderState.Lock()
-	defer consoleReaderState.Unlock()
-	if consoleReaderState.reader == nil || consoleReaderState.file != os.Stdin {
-		consoleReaderState.file = os.Stdin
-		consoleReaderState.reader = bufio.NewReader(os.Stdin)
-	}
-	return consoleReaderState.reader
-}
-
-func readConsoleSecret() (string, error) {
-	if consoleInputOverride() != nil {
-		return readConsoleLine()
-	}
-	fd := int(os.Stdin.Fd())
-	restore, err := disableEcho(fd)
+	restore, err := disableEcho(int(file.Fd()))
 	if err != nil {
-		return readConsoleLine()
+		return e.readConsoleLine()
 	}
-	line, readErr := readConsoleLine()
-	restore()
-	return line, readErr
+	defer restore()
+	return e.readConsoleLine()
 }
 
 func cliStyle(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -1160,6 +1122,9 @@ func (e *Evaluator) cliProgressRender(call *ast.CallExpression, args []runtime.V
 		}
 		label = s.Value
 	}
+	if width < 1 || width > 1000 {
+		return nil, runtime.ClassifiedError{Class: "ValueError", Message: "cli.progressRender width must be in 1..1000"}
+	}
 	if total <= 0 {
 		total = 1
 	}
@@ -1169,8 +1134,13 @@ func (e *Evaluator) cliProgressRender(call *ast.CallExpression, args []runtime.V
 	if current > total {
 		current = total
 	}
-	filled := int(width * current / total)
-	pct := int(100 * current / total)
+	// Scale before division without overflowing large task counts.
+	scaled := func(scale int64) int {
+		n := new(big.Int).Mul(big.NewInt(scale), big.NewInt(current))
+		return int(n.Quo(n, big.NewInt(total)).Int64())
+	}
+	filled := scaled(width)
+	pct := scaled(100)
 	bar := strings.Repeat("#", filled) + strings.Repeat("-", int(width)-filled)
 	line := fmt.Sprintf("\r[%s] %d%% (%d/%d)", bar, pct, current, total)
 	if label != "" {
@@ -1241,6 +1211,10 @@ func renderTable(headers []string, rows [][]string) string {
 }
 
 func renderTableWithSeparator(headers []string, rows [][]string, separator string) string {
+	return renderTableAligned(headers, rows, separator, nil)
+}
+
+func renderTableAligned(headers []string, rows [][]string, separator string, aligns []string) string {
 	widths := []int{}
 	if len(headers) > 0 {
 		widths = make([]int, len(headers))
@@ -1260,7 +1234,7 @@ func renderTableWithSeparator(headers []string, rows [][]string, separator strin
 	}
 	var out strings.Builder
 	if len(headers) > 0 {
-		writeTableRow(&out, headers, widths, separator)
+		writeTableRowAligned(&out, headers, widths, separator, aligns)
 		dashes := make([]string, len(widths))
 		for i, width := range widths {
 			dashes[i] = strings.Repeat("-", width)
@@ -1268,7 +1242,7 @@ func renderTableWithSeparator(headers []string, rows [][]string, separator strin
 		writeTableRow(&out, dashes, widths, separator)
 	}
 	for _, row := range rows {
-		writeTableRow(&out, row, widths, separator)
+		writeTableRowAligned(&out, row, widths, separator, aligns)
 	}
 	return strings.TrimRight(out.String(), "\n")
 }
@@ -1294,6 +1268,10 @@ func isWideRune(r rune) bool {
 }
 
 func writeTableRow(out *strings.Builder, row []string, widths []int, separator string) {
+	writeTableRowAligned(out, row, widths, separator, nil)
+}
+
+func writeTableRowAligned(out *strings.Builder, row []string, widths []int, separator string, aligns []string) {
 	for i, width := range widths {
 		if i > 0 {
 			out.WriteString(separator)
@@ -1302,10 +1280,19 @@ func writeTableRow(out *strings.Builder, row []string, widths []int, separator s
 		if i < len(row) {
 			value = row[i]
 		}
-		out.WriteString(value)
-		if pad := width - displayWidth(value); pad > 0 {
-			out.WriteString(strings.Repeat(" ", pad))
+		pad := width - displayWidth(value)
+		left := 0
+		if i < len(aligns) {
+			if aligns[i] == "right" {
+				left = pad
+			}
+			if aligns[i] == "center" {
+				left = pad / 2
+			}
 		}
+		out.WriteString(strings.Repeat(" ", left))
+		out.WriteString(value)
+		out.WriteString(strings.Repeat(" ", pad-left))
 	}
 	out.WriteByte('\n')
 }

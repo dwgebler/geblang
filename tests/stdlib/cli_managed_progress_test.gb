@@ -1,0 +1,135 @@
+import test;
+import cli;
+import cli.widgets;
+import io;
+import async;
+
+class ChildProgress extends widgets.ManagedProgress {
+    func ChildProgress() {
+        parent(2, "Child", {"enabled": false});
+    }
+    func step(): void {
+        this.advance();
+    }
+}
+
+class ManagedProgressTest extends test.Test {
+    @test
+    func inheritedMethodsAndBaseTypedDispatchKeepManagedBehavior(): void {
+        let progress = ChildProgress();
+        widgets.ProgressBar base = progress;
+        base.set(99);
+        this.assertEquals(2, progress.current);
+        base.set(0);
+        progress.step();
+        this.assertEquals(1, progress.current);
+        progress.cancel();
+        this.assertThrowsOf(func(): void { base.advance(); }, "CancelledError");
+    }
+
+    @test
+    func cancellationRequestsCrossIsolatedCallbackBoundary(): void {
+        this.assertThrowsOf(func(): void {
+            widgets.withProgress(2, "Work", func(widgets.ManagedProgress progress): void {
+                let task = async.run(func(): void { progress.cancel(); });
+                await task;
+                progress.checkCancelled();
+            }, {"enabled": false});
+        }, "CancelledError");
+    }
+
+    @test
+    func renderingThrottlesIntermediateUpdatesAndFlushesCompletion(): void {
+        let errorOutput = io.memory();
+        cli.withContext({"stderr": errorOutput, "terminal": true}, func(): void {
+            widgets.withProgress(5, "Work", func(widgets.ManagedProgress progress): void {
+                progress.advance();
+                progress.advance();
+                progress.updateLabel("Next");
+                progress.set(5);
+            }, {"intervalMs": 100000000});
+        });
+        let output = io.toString(errorOutput);
+        this.assertTrue(output.contains("(1/5) Work"));
+        this.assertFalse(output.contains("(2/5)"));
+        this.assertTrue(output.contains("(5/5) Next"));
+        this.assertTrue(output.endsWith("\r\u{1b}[2K"));
+    }
+
+    @test
+    func lowLevelRenderingRejectsBadWidthsAndHandlesLargeCounts(): void {
+        let errorOutput = io.memory();
+        cli.withContext({"stderr": errorOutput}, func(): void {
+            this.assertThrowsOf(func(): void { cli.progressRender(1, 2, -1); }, "ValueError");
+            this.assertThrowsOf(func(): void { cli.progressRender(1, 2, 1001); }, "ValueError");
+            cli.progressRender(9223372036854775806, 9223372036854775807, 30);
+        });
+        this.assertTrue(io.toString(errorOutput).contains("99%"));
+    }
+
+    @test
+    func nonTerminalHasNoEscapeSequencesAndPreservesResult(): void {
+        let errorOutput = io.memory();
+        let result = cli.withContext({"stderr": errorOutput, "terminal": false}, func(): any {
+            return widgets.withProgress(2, "Work", func(widgets.ManagedProgress progress): int {
+                progress.advance();
+                progress.set(2);
+                return 42;
+            });
+        });
+        this.assertEquals(42, result);
+        this.assertEquals("", io.toString(errorOutput));
+    }
+
+    @test
+    func cancellationRaisesCatchableErrorAndCleansUp(): void {
+        let errorOutput = io.memory();
+        cli.withContext({"stderr": errorOutput, "terminal": true}, func(): void {
+            this.assertThrowsOf(func(): void {
+                widgets.withProgress(2, "Work", func(widgets.ManagedProgress progress): void {
+                    progress.advance();
+                    progress.cancel();
+                    progress.checkCancelled();
+                });
+            }, "CancelledError");
+        });
+        this.assertTrue(io.toString(errorOutput).contains("Work"));
+        this.assertTrue(io.toString(errorOutput).endsWith("\r\u{1b}[2K"));
+    }
+
+    @test
+    func failureCleansUpAndCancellationIsCheckedOnReturn(): void {
+        let errorOutput = io.memory();
+        cli.withContext({"stderr": errorOutput, "terminal": true}, func(): void {
+            this.assertThrowsOf(func(): void {
+                widgets.withProgress(2, "Work", func(widgets.ManagedProgress progress): void {
+                    progress.advance();
+                    throw ValueError("failed");
+                });
+            }, "ValueError");
+            this.assertThrowsOf(
+                func(): void { widgets.withProgress(2, "Work", func(widgets.ManagedProgress progress): void { progress.cancel(); }); },
+                "CancelledError"
+            );
+        });
+        this.assertTrue(io.toString(errorOutput).endsWith("\r\u{1b}[2K"));
+    }
+
+    @test
+    func disabledProgressStaysSilentAndRejectsInvalidConfiguration(): void {
+        let errorOutput = io.memory();
+        cli.withContext({"stderr": errorOutput, "terminal": true}, func(): void {
+            widgets.withProgress(
+                1,
+                "Work",
+                func(widgets.ManagedProgress progress): void { progress.advance(); },
+                {"enabled": false}
+            );
+            this.assertThrowsOf(
+                func(): void { widgets.withProgress(0, "Work", func(any progress): void {}); },
+                "ValueError"
+            );
+        });
+        this.assertEquals("", io.toString(errorOutput));
+    }
+}

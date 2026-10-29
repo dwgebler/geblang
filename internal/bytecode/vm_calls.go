@@ -1587,15 +1587,15 @@ func (vm *VM) bindNativeNamedArgs(name string, args []runtime.Value, names []str
 		return args, false, nil
 	}
 	module, function, _ := strings.Cut(name, ".")
-	sig, ok := native.NativeSignature(module, function)
-	if !ok {
-		return nil, false, fmt.Errorf("named arguments are only supported for Geblang functions and methods")
-	}
 	bargs := make([]argbinding.Arg, len(args))
 	for i := range args {
 		if i < len(names) {
 			bargs[i].Name = names[i]
 		}
+	}
+	sig, ok := native.NativeCallSignature(module, function, bargs)
+	if !ok {
+		return nil, false, fmt.Errorf("named arguments are only supported for Geblang functions and methods")
 	}
 	result, err := argbinding.Order(sig, bargs)
 	if err != nil {

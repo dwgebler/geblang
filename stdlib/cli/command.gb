@@ -1,5 +1,4 @@
 module cli.command;
-
 import cli;
 
 ## Describes a typed command-line option and converts it to cli.parseArgs schema data.
@@ -11,10 +10,12 @@ export class Option {
     bool requiredFlag = false;
     bool hasDefaultValue = false;
     any defaultValue = null;
+    dict<string, any> rules;
 
     func Option(string name, string kind) {
         this.name = name;
         this.kind = kind;
+        this.rules = {};
     }
 
     func short(string name): Option {
@@ -38,6 +39,23 @@ export class Option {
         return this;
     }
 
+    func min(any value): Option {
+        this.rules["min"] = value;
+        return this;
+    }
+    func max(any value): Option {
+        this.rules["max"] = value;
+        return this;
+    }
+    func choices(list<any> values): Option {
+        this.rules["choices"] = values;
+        return this;
+    }
+    func validate(callable validator): Option {
+        this.rules["validate"] = validator;
+        return this;
+    }
+
     func toSchema(): dict<string, any> {
         dict<string, any> out = {"type": this.kind};
         if (!this.shortName.isEmpty()) {
@@ -51,6 +69,9 @@ export class Option {
         }
         if (this.hasDefaultValue) {
             out["default"] = this.defaultValue;
+        }
+        for (key, value in this.rules.items()) {
+            out[key as string] = value;
         }
         return out;
     }

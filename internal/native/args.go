@@ -22,6 +22,10 @@ import (
 // Result dict keys: flag names with their parsed values, "_" for positional
 // args (list of strings), and "error" (null or an error message string).
 func ParseArgv(argv *runtime.List, schema runtime.Dict) runtime.Dict {
+	return ParseArgvValidated(argv, schema, ValidateCLIValue)
+}
+
+func ParseArgvValidated(argv *runtime.List, schema runtime.Dict, validate func(runtime.Value, runtime.Dict) (string, error)) runtime.Dict {
 	longToName := map[string]string{}
 	shortToName := map[string]string{}
 	typeOf := map[string]string{}
@@ -187,6 +191,32 @@ func ParseArgv(argv *runtime.List, schema runtime.Dict) runtime.Dict {
 					parseErr = fmt.Sprintf("required option --%s is missing", name.Value)
 					break
 				}
+			}
+		}
+	}
+
+	if parseErr == "" && validate != nil {
+		for _, key := range schema.EntryKeys() {
+			entry, _ := schema.GetEntry(key)
+			name, ok := entry.Key.(runtime.String)
+			if !ok {
+				continue
+			}
+			spec, ok := entry.Value.(runtime.Dict)
+			if !ok {
+				continue
+			}
+			_, hasDefault := dictLookup(spec, "default")
+			if !provided[name.Value] && !hasDefault {
+				continue
+			}
+			message, err := validate(result[name.Value], spec)
+			if err != nil {
+				message = err.Error()
+			}
+			if message != "" {
+				parseErr = fmt.Sprintf("option --%s: %s", name.Value, message)
+				break
 			}
 		}
 	}

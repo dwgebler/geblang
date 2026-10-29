@@ -62,6 +62,11 @@ func primitiveReMatches(patternArg runtime.Value, text string) (runtime.Value, e
 
 func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) (runtime.Value, error) {
 	switch name {
+	case "toIntOrNull", "toDecimalOrNull", "toFloatOrNull":
+		if text, ok := receiver.(runtime.String); ok {
+			return native.StringNumberOrNull(text.Value, name, args)
+		}
+		return nil, native.UnknownMethodError(receiver.TypeName(), name)
 	case "toInt", "toDecimal", "toFloat", "toBool":
 		if name == "toInt" {
 			if text, ok := receiver.(runtime.String); ok && len(args) >= 1 {

@@ -58,10 +58,9 @@ type Result struct {
 const DefaultMaxCallDepth = 10000
 
 type Evaluator struct {
-	stdout      io.Writer
-	stderr      io.Writer
-	stdin       io.Reader
-	stdinReader *bufio.Reader
+	stdout io.Writer
+	stderr io.Writer
+	input  *consoleInput
 	// declAnnotation distinguishes a declaration annotation from other
 	// expected-type contexts (return position, arg hints) by pointer identity.
 	declAnnotation *ast.TypeRef
@@ -324,6 +323,7 @@ type processHandle struct {
 }
 
 type ioStreamHandle struct {
+	console   *consoleInput
 	name      string
 	reader    io.Reader
 	writer    io.Writer
@@ -570,7 +570,7 @@ func newEvaluatorCore(stdout io.Writer, args []string, modulePaths []string) *Ev
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, input: newConsoleInput(os.Stdin), imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
 	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer})
 	return e
 }
@@ -823,8 +823,7 @@ func (e *Evaluator) CallBuiltin(module, name string, args []runtime.Value, argNa
 func (e *Evaluator) childForCallback() *Evaluator {
 	child := newEvaluatorCore(e.stdout, e.args, e.modulePaths)
 	child.stderr = e.stderr
-	child.stdin = e.stdin
-	child.stdinReader = e.stdinReader
+	child.input = e.input
 	child.parent = e
 	child.maxCallDepth = e.maxCallDepth
 	child.imports = maps.Clone(e.imports)
@@ -3456,21 +3455,23 @@ func (e *Evaluator) evalNativeCallArguments(call *ast.CallExpression, env *runti
 	if !hasNamed || hasSpread {
 		return e.evalCallArguments(call, env)
 	}
-	sig, ok := native.NativeSignature(module, function)
+	bargs := make([]binding.Arg, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		if arg.Name != nil {
+			bargs[i].Name = arg.Name.Value
+		}
+	}
+	sig, ok := native.NativeCallSignature(module, function, bargs)
 	if !ok {
 		return e.evalCallArguments(call, env)
 	}
 	values := make([]runtime.Value, len(call.Arguments))
-	bargs := make([]binding.Arg, len(call.Arguments))
 	for i, arg := range call.Arguments {
 		v, err := e.evalExpression(arg.Value, env)
 		if err != nil {
 			return nil, err
 		}
 		values[i] = v
-		if arg.Name != nil {
-			bargs[i].Name = arg.Name.Value
-		}
 	}
 	result, err := binding.Order(sig, bargs)
 	if err != nil {

@@ -45,6 +45,24 @@ func TestFormatDeclaration(t *testing.T) {
 	}
 }
 
+func TestFormatNestedCallback_IndentsMultilineStatementInsideSingleStatementBody(t *testing.T) {
+	source := `func run(): void {
+    outer(func(): void {
+        inner(func(): void {
+            first();
+            second();
+        });
+    });
+}`
+
+	output := roundtrip(t, source)
+
+	parseOK(t, output)
+	if output != source+"\n" {
+		t.Fatalf("nested callback indentation:\n%s\nwant:\n%s", output, source)
+	}
+}
+
 func TestFormatMultiReturn(t *testing.T) {
 	src := `func pair(): list<int> { return 1, 2; }
 let a, b = pair();

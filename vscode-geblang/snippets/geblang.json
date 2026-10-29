@@ -1,4 +1,23 @@
 {
+    "Validated integer prompt": {
+        "prefix": "clipromptint",
+        "body": [
+            "let ${1:count} = cli.promptInt(\"${2:Count: }\", {\"min\": ${3:1}, \"cancel\": [\"q\"]});",
+            "if (${1:count} == null) { ${4:return;} }"
+        ],
+        "description": "Nullable integer prompt with validation and cancellation"
+    },
+    "Managed CLI progress": {
+        "prefix": "cliwithprogress",
+        "body": [
+            "import cli.widgets as widgets;",
+            "widgets.withProgress(${1:total}, \"${2:Processing}\", func(widgets.ManagedProgress ${3:progress}): void {",
+            "    $0",
+            "    ${3:progress}.advance();",
+            "});"
+        ],
+        "description": "Scoped terminal progress with throttling and cleanup"
+    },
     "Function declaration": {
         "prefix": "func",
         "body": [

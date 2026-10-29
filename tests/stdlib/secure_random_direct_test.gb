@@ -1,0 +1,45 @@
+import test;
+import secureRandom;
+
+class SecureRandomDirectTest extends test.Test {
+    @test
+    func namedCallsSelectDirectAndAuditedOverloads(): void {
+        let session = secureRandom.fromSeed(
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+        );
+        this.assertTrue(secureRandom.bool(s: session) instanceof bool);
+        this.assertEquals(7, secureRandom.choice(s: session, items: [7]));
+        this.assertEquals(7, secureRandom.choice(items: [7], s: session));
+        this.assertEquals(7, secureRandom.choice(session, items: [7]));
+        this.assertEquals(7, secureRandom.choice(S: session, ITEMS: [7]));
+        this.assertEquals(9, secureRandom.choice(items: [9]));
+        this.assertEquals(5, secureRandom.auditLog(session).length());
+    }
+
+    @test
+    func directDrawsHaveExpectedTypesAndMembership(): void {
+        for (i in 0..<20) {
+            this.assertTrue(secureRandom.bool() instanceof bool);
+            this.assertTrue([1, 2, 3].contains(secureRandom.choice([1, 2, 3])));
+        }
+        this.assertEquals(7, secureRandom.choice([7]));
+    }
+
+    @test
+    func directChoiceRejectsInvalidCollections(): void {
+        this.assertThrowsOf(func(): void { secureRandom.choice([]); }, "ValueError");
+        this.assertThrowsOf(func(): void { secureRandom.choice(1); }, "TypeError");
+    }
+
+    @test
+    func auditedConvenienceDrawsStillRecordAndReplay(): void {
+        let seed = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+        let session = secureRandom.fromSeed(seed);
+        let flip = secureRandom.bool(session);
+        let picked = secureRandom.choice(session, [7]);
+
+        this.assertEquals(flip, secureRandom.replay(seed, "", 0, "bool", []));
+        this.assertEquals(picked, secureRandom.replay(seed, "", 1, "choice", [[7]]));
+        this.assertEquals(2, secureRandom.auditLog(session).length());
+    }
+}

@@ -87,19 +87,21 @@ func (e *Evaluator) resolveAliasedTypeValue(ref *ast.TypeRef, env *runtime.Envir
 }
 
 func (e *Evaluator) sourceTypeAliasTargets() *typealias.SourceLookup {
-	return typealias.NewSourceLookup(func(canonical string) (*ast.Program, bool) {
-		path, err := e.resolveModulePath(canonical)
-		if err != nil {
-			return nil, false
-		}
-		source, err := os.ReadFile(path)
-		if err != nil {
-			return nil, false
-		}
-		p := parser.New(lexer.New(string(source)))
-		program := p.ParseProgram()
-		return program, len(p.Errors()) == 0
-	})
+	return typealias.NewSourceLookup(e.sourceTypeProgram)
+}
+
+func (e *Evaluator) sourceTypeProgram(canonical string) (*ast.Program, bool) {
+	path, err := e.resolveModulePath(canonical)
+	if err != nil {
+		return nil, false
+	}
+	source, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	p := parser.New(lexer.New(string(source)))
+	program := p.ParseProgram()
+	return program, len(p.Errors()) == 0
 }
 
 func (e *Evaluator) typeAliasLookup(env *runtime.Environment) typealias.Lookup {

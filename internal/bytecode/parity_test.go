@@ -19,6 +19,172 @@ import (
 	"geblang/internal/parser"
 )
 
+func TestParityCLIContextPromptsAndValidation(t *testing.T) {
+	runParityModulesDir(t, t.TempDir(), `import cli;
+import cli.command;
+import io;
+let output = io.memory();
+let errorOutput = io.memory();
+cli.withContext({"stdin": "bad\n0\n3\n2\n4\n\nQ\n\nlast", "stdout": output, "stderr": errorOutput, "quiet": true, "terminal": false}, func(): void {
+    io.println(cli.promptInt("?", {"min": 1, "max": 4, "choices": [2, 4], "validate": func(int v): ?string { return v == 2 ? "four please" : null; }}));
+    io.println(cli.promptInt("?", {"default": 3}));
+    io.println(cli.promptInt("?", {"cancel": ["q"]}) == null);
+    io.println(cli.readLine() == "");
+    try {
+        cli.withContext({"stdin": "inner", "terminal": true}, func(): void {
+            assert(cli.isTerminal());
+            assert(cli.readLine() == "inner");
+            throw ValueError("test");
+        });
+    } catch (ValueError error) {}
+    io.println(io.stdinReadLine());
+    io.println(cli.readLine() == null);
+    io.println(cli.isTerminal());
+    io.stderrWrite("captured");
+});
+io.println(io.toString(output));
+io.println(io.toString(errorOutput));
+cli.withContext({"stdin":"\r", "quiet":true},func(): void {
+    assert(cli.readLine() == "");
+    assert(cli.readLine() == null);
+});
+cli.withContext({"stdin":"one\ntwo\n", "quiet":true},func(): void {
+    let input = io.stdin();
+    assert(io.readLine(input) == "one");
+    assert(io.readLines(input) == ["two"]);
+    cli.withContext({"stdin":input},func(): void { assert(cli.readLine() == null); });
+    let restore = io.redirectStdin(input);
+    try { assert(cli.readLine() == null); } finally { restore(); }
+});
+let option = command.newOption("count", "int").min(1).max(5).choices([2,4]).validate(func(int v): ?string { return v == 2 ? "four please" : null; });
+let cmd = command.newCommand("example", "test").option(option);
+for (text in ["0", "6", "3", "2"]) { io.println(cmd.parse(["--count",text])["error"] != null); }
+io.println(cmd.parse(["--count","4"])["count"]);
+`, "4\n3\ntrue\ntrue\nlast\ntrue\nfalse\n\ncaptured\ntrue\ntrue\ntrue\ntrue\n4\n")
+}
+
+func TestParityCLIManagedProgressAndTables(t *testing.T) {
+	runParityModulesDir(t, t.TempDir(), `import cli;
+import cli.widgets;
+import io;
+class Record { int n; func Record(int n) { this.n = n; } }
+class ChildProgress extends widgets.ManagedProgress { func ChildProgress() { parent(2,"Child",{"enabled":false}); } }
+widgets.ProgressBar base = ChildProgress();
+base.set(99);
+io.println(base.current);
+let errorOutput = io.memory();
+cli.withContext({"stderr": errorOutput, "terminal": false}, func(): void {
+    io.println(widgets.withProgress(2,"work",func(widgets.ManagedProgress p): int { p.advance(); p.set(2); return 42; }));
+    try {
+        widgets.withProgress(2,"work",func(widgets.ManagedProgress p): void { p.cancel(); p.checkCancelled(); });
+    } catch (widgets.CancelledError error) { io.println("cancelled"); }
+});
+io.println(io.toString(errorOutput) == "");
+cli.withContext({"stderr": errorOutput, "terminal": true}, func(): void {
+    try { widgets.withProgress(2,"work",func(widgets.ManagedProgress p): void { p.advance(); throw ValueError("test"); }); }
+    catch (ValueError error) { io.println("failed"); }
+});
+io.println(io.toString(errorOutput).endsWith("\r\u{1b}[2K"));
+let largeOutput = io.memory();
+cli.withContext({"stderr": largeOutput}, func(): void {
+    try { cli.progressRender(1,2,-1); } catch (ValueError error) { io.println("width rejected"); }
+    cli.progressRender(9223372036854775806,9223372036854775807,30);
+});
+io.println(io.toString(largeOutput).contains("99%"));
+io.println(cli.table([Record(7)],{"columns":[{"header":"Count","align":"right","value":func(Record r): int { return r.n; }}]}));
+io.println(cli.table([{"ratio":0.5}],{"columns":[{"key":"ratio","header":"Share","format":".2%"}]}));
+assert(cli.table([[1,2],[3,4]],{"strict":true}) == "1  2\n3  4");
+assert(cli.table([[1,2],[3,4]],{"strict":true,"columns":[]}) == "1  2\n3  4");
+assert(cli.table([{"n":7}],{"strict":true,"columns":[]}) == "n\n-\n7");
+try { cli.table([[1],[2,3]],{"strict":true}); assert(false); }
+catch (ValueError error) {}
+try { cli.table([{}],{"columns":["missing"],"strict":true}); }
+catch (ValueError error) { io.println("missing rejected"); }
+`, "2\n42\ncancelled\ntrue\nfailed\ntrue\nwidth rejected\ntrue\nCount\n-----\n    7\nShare \n------\n50.00%\nmissing rejected\n")
+}
+
+func TestParityNonThrowingNumericParsing(t *testing.T) {
+	runParity(t, `import io;
+io.println("42".toIntOrNull());
+io.println("0xff".toIntOrNull());
+io.println("ff".toIntOrNull(16));
+io.println("1_000".toIntOrNull());
+io.println("1.25".toDecimalOrNull());
+io.println("1.25".toFloatOrNull());
+for (text in ["", "no", "1.2.3"]) {
+    io.println(text.toIntOrNull() == null);
+    io.println(text.toDecimalOrNull() == null);
+    io.println(text.toFloatOrNull() == null);
+}
+try { "12".toIntOrNull(1); }
+catch (ValueError error) { io.println("bad base"); }
+`, "42\n255\n255\n1000\n1.2500000000\n1.25\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nbad base\n")
+}
+
+func TestParitySecureRandomDirectConveniences(t *testing.T) {
+	runParity(t, `import secureRandom;
+import io;
+for (i in 0..<20) {
+    assert(secureRandom.bool() instanceof bool);
+    assert([1, 2, 3].contains(secureRandom.choice([1, 2, 3])));
+}
+io.println(secureRandom.choice([7]));
+try { secureRandom.choice([]); }
+catch (ValueError error) { io.println("empty rejected"); }
+let session = secureRandom.fromSeed("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+assert(secureRandom.bool(session) instanceof bool);
+io.println(secureRandom.choice(session, [9]));
+io.println(secureRandom.auditLog(session).length());
+assert(secureRandom.bool(s:session) instanceof bool);
+assert(secureRandom.choice(s:session,items:[7]) == 7);
+assert(secureRandom.choice(items:[7],s:session) == 7);
+assert(secureRandom.choice(session,items:[7]) == 7);
+assert(secureRandom.choice(S:session,ITEMS:[7]) == 7);
+assert(secureRandom.choice(items:[9]) == 9);
+`, "7\nempty rejected\n9\n2\n")
+}
+
+func TestParityCLIConfirmationAndChoiceRetry(t *testing.T) {
+	runParityStateful(t, `import io;
+import cli;
+io.println(io.withStdin("maybe\nyes\n", func(): bool { return cli.confirm("Continue? "); }));
+io.println(io.withStdin("\n", func(): bool { return cli.confirm("Continue? "); }));
+io.println(io.withStdin("\n", func(): bool { return cli.confirm("Continue? ", true); }));
+io.println(io.withStdin("bad\n2\n", func(): string { return cli.choose("Pick", ["a", "b"]); }));
+for (kind in ["confirm", "choose"]) {
+    try {
+        io.withStdin("", func(): void {
+            if (kind == "confirm") { cli.confirm("?"); }
+            else { cli.choose("?", ["a"], 0); }
+        });
+    } catch (IOError error) { io.println("ended"); }
+}
+`, "true\nfalse\ntrue\nb\nended\nended\n")
+}
+
+func TestParityCLIInputReadersShareBufferedInput(t *testing.T) {
+	runParityStateful(t, `import io;
+import cli;
+io.withStdin("one\ntwo\nthree\nfour", func(): void {
+    io.println(io.stdinReadLine());
+    io.println(cli.prompt("hidden"));
+    io.println(io.readLine(io.stdin()));
+    io.println(io.stdinReadAll());
+    io.println(io.stdinReadLine() == null);
+});
+io.withStdin("before\nafter", func(): void {
+    io.println(io.stdinReadLine());
+    try {
+        io.withStdin("inside", func(): void {
+            io.println(cli.prompt("hidden"));
+            throw ValueError("test");
+        });
+    } catch (ValueError error) { io.println("caught"); }
+    io.println(cli.prompt("hidden"));
+});
+`, "one\ntwo\nthree\nfour\ntrue\nbefore\ninside\ncaught\nafter\n")
+}
+
 func TestParityAuditFinalizersAndIteration(t *testing.T) {
 	runParity(t, `import io;
 func overridden(): int { try { return 1; } finally { return 2; } }

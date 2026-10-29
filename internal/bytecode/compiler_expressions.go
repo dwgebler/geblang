@@ -1777,7 +1777,13 @@ func validateNativeNamedArgs(module, name string, args []ast.CallArgument) error
 	if native.ForwardsNamedArgs(module, name) {
 		return nil
 	}
-	sig, ok := native.NativeSignature(module, name)
+	bargs := make([]argbinding.Arg, len(args))
+	for i, arg := range args {
+		if arg.Name != nil {
+			bargs[i].Name = arg.Name.Value
+		}
+	}
+	sig, ok := native.NativeCallSignature(module, name, bargs)
 	for _, arg := range args {
 		if arg.Name == nil {
 			continue
@@ -1787,7 +1793,7 @@ func validateNativeNamedArgs(module, name string, args []ast.CallArgument) error
 		}
 		known := false
 		for _, param := range sig.ParamNames {
-			if param == arg.Name.Value {
+			if strings.EqualFold(param, arg.Name.Value) {
 				known = true
 				break
 			}
