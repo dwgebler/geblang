@@ -1,0 +1,29 @@
+import test;
+
+class DictStringLookupTest extends test.Test {
+    @test
+    func stringLookupsPreserveKeyTypesAndInsertionOrder(): void {
+        dict<any, any> values = {
+            "": 7,
+            "1": "string",
+            1: "integer",
+            "s\u{0}\u{65e5}\u{672c}\u{8a9e}": 9,
+        };
+        for (i in 0..<16) {
+            values["padding-${i}"] = i;
+        }
+        this.assertEquals("string", values.get("1"));
+        this.assertEquals("integer", values[1]);
+        this.assertEquals(7, values[""]);
+        this.assertEquals(9, values.get("s\u{0}\u{65e5}\u{672c}\u{8a9e}"));
+        this.assertTrue(values.hasKey("1"));
+        this.assertTrue(values.contains("s\u{0}\u{65e5}\u{672c}\u{8a9e}"));
+        this.assertNull(values.get("missing"));
+        values.delete("1");
+        this.assertFalse(values.hasKey("1"));
+        values["1"] = "again";
+        this.assertEquals("again", values["1"]);
+        this.assertEquals("integer", values.get(1));
+        this.assertEquals("1", values.keys().last());
+    }
+}

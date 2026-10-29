@@ -1,5 +1,43 @@
 # Release Notes
 
+## 1.40.0
+
+### Added
+
+- Source stdlib `money` supplies immutable currency values backed by arbitrary-size
+  integer minor units. Exact construction, currency-checked arithmetic, explicit
+  rounding, total-preserving allocation and exact JSON serialization share the
+  existing locale currency data.
+- `locale.currencyInfo(code)` returns a canonical currency code and its standard
+  fraction digits.
+- `geblang test --jobs N` runs files in isolated worker processes. Output remains
+  in discovery order, failures are aggregated, and the default is one worker.
+
+### Performance
+
+- String-key dictionary reads avoid allocating an encoded key, including
+  indexing, membership, primitive methods and native option lookups.
+- Test preparation validates the merged source and generated runner in one
+  semantic pass. Files without selected tests still receive validation.
+
+- Embedded source stdlib resolution reuses the executable's content digest
+  within a process, retaining version/content cache invalidation.
+
+### Fixes
+
+- Unclosed declaration and control-flow bodies report a syntax error at EOF.
+- Method values inherited through a local subclass of an imported ancestor
+  resolve to the ancestor's module before magic property fallback.
+- Bound method values accept named arguments and omitted defaults, including
+  methods inherited from another module.
+- Omitted collection defaults are fresh for each named call; explicitly supplied
+  collections retain their identity even when equal to a declared default.
+- Variadic method calls check each element's type, including the receiver's
+  concrete generic bindings in direct and stored-method calls.
+- Local descendants acquire concrete type bindings from imported ancestors even
+  when the descendant has no type parameters of its own.
+- Parallel workers use the divergence ledger selected for the parent invocation.
+
 ## 1.39.0
 
 ### Added

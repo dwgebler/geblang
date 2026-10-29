@@ -1371,7 +1371,7 @@ try { s.id = "z"; io.println("MUTATED"); } catch (Error e) { io.println("blocked
 // (println, interpolation, and `as` cast).
 func TestParityCrossModuleStringDunder(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "money.gb"), []byte(`module money;
+	if err := os.WriteFile(filepath.Join(dir, "dunder_fixture.gb"), []byte(`module dunder_fixture;
 export class Money {
     int cents;
     func Money(int cents) { this.cents = cents; }
@@ -1379,11 +1379,11 @@ export class Money {
     func __int(): int { return this.cents; }
 }
 `), 0o644); err != nil {
-		t.Fatalf("write money: %v", err)
+		t.Fatalf("write dunder_fixture: %v", err)
 	}
 	source := `import io;
-import money;
-let m = money.Money(7);
+import dunder_fixture;
+let m = dunder_fixture.Money(7);
 io.println(m);
 io.println("paid ${m}");
 io.println(m as string);

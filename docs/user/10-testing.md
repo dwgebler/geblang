@@ -38,6 +38,35 @@ geblang test tests/calculator_test.gb
 You can pass either a single file or a directory. Directory paths are
 walked recursively for files matching `*_test.gb`.
 
+## Parallel test files
+
+Use `--jobs N` to run up to N files concurrently:
+
+```sh
+geblang test --jobs 4 tests/
+geblang test --jobs 4 --runtime evaluator tests/
+```
+
+The default is `--jobs 1`, preserving sequential execution. With a larger
+value each file runs in an isolated child process, while methods within
+that file remain sequential. `--jobs=N` is also accepted; N must be a
+positive integer. The runner never starts more workers than there are files.
+
+Filters, runtime selection, accepted divergences, capability grants and all
+three output formats work in parallel mode. Output is buffered per file and
+printed in discovery order. The final summary aggregates test totals, failures
+and skips. A parse error or terminated worker is reported with its file name;
+other files still run and the command exits unsuccessfully. Divergence-ledger
+validation happens before any worker starts.
+
+Isolation covers interpreter and process state, including environment-variable
+changes and native globals. External resources such as files, ports and
+databases remain shared: give independent files their own resources, or use
+`--jobs 1` for suites that deliberately coordinate through shared resources.
+Parallel workers receive EOF on standard input; use scoped CLI input or
+`io.withStdin` in interactive tests. Engine profiling stays with the parent
+process; use sequential execution when profiling test execution.
+
 ## Assertions
 
 `test.Test` exposes a fluent set of assertion methods. Each raises an

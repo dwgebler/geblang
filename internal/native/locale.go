@@ -47,6 +47,7 @@ func registerLocale(r *Registry) {
 	r.Register("locale", "canonicalTag", localeCanonicalTag)
 	r.Register("locale", "formatNumber", localeFormatNumber)
 	r.Register("locale", "formatCurrency", localeFormatCurrency)
+	r.Register("locale", "currencyInfo", localeCurrencyInfo)
 	r.Register("locale", "formatDate", localeFormatDate)
 	r.Register("locale", "compare", localeCompare)
 	r.Register("locale", "pluralCategory", localePluralCategory)
@@ -216,6 +217,33 @@ func localeFormatNumber(args []runtime.Value) (runtime.Value, error) {
 		return nil, err
 	}
 	return runtime.String{Value: localeFormatExact(value, tag, minimum, maximum, grouping)}, nil
+}
+
+func localeCurrencyInfo(args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("locale.currencyInfo expects a currency code")
+	}
+	code, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: "locale.currencyInfo code must be a string"}
+	}
+	unit, err := currency.ParseISO(strings.ToUpper(strings.TrimSpace(code.Value)))
+	if err != nil || unit.String() == "XXX" {
+		return nil, runtime.ClassifiedError{Class: "ValueError", Message: "locale.currencyInfo: unknown currency " + code.Value}
+	}
+	digits, _ := currency.Standard.Rounding(unit)
+	result := runtime.NewDictHint(2)
+	for _, field := range []struct {
+		name  string
+		value runtime.Value
+	}{
+		{"code", runtime.String{Value: unit.String()}},
+		{"fractionDigits", runtime.NewInt64(int64(digits))},
+	} {
+		key := runtime.String{Value: field.name}
+		result.PutEntry(DictKey(key), runtime.DictEntry{Key: key, Value: field.value})
+	}
+	return result, nil
 }
 
 func localeFormatCurrency(args []runtime.Value) (runtime.Value, error) {

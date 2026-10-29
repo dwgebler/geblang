@@ -447,7 +447,7 @@ func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []ru
 }
 
 // CallModuleMethodValue dispatches a bound method/static value pinned to funcIndex on its home module worker; instance is the receiver (nil for a static). Applies the method's decorator wrapper with the receiver bound, matching a bound-method value's semantics.
-func (l *Loader) CallModuleMethodValue(module string, funcIndex int64, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+func (l *Loader) CallModuleMethodValue(module string, funcIndex int64, instance *runtime.Instance, args []runtime.Value, names []string, caller *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if module == "" {
 		if !l.hasMainChunk {
@@ -462,7 +462,7 @@ func (l *Loader) CallModuleMethodValue(module string, funcIndex int64, instance 
 		chunk = c
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
-	result, err := vm.CallBoundMethodValue(instance, funcIndex, args)
+	result, err := vm.CallBoundMethodValue(instance, funcIndex, args, names)
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err

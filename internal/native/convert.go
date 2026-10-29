@@ -88,7 +88,7 @@ const (
 	dictKeyPrefixInt     = "i"
 	dictKeyPrefixDecimal = "d"
 	dictKeyPrefixFloat   = "f"
-	dictKeyPrefixString  = "s"
+	dictKeyPrefixString  = runtime.DictStringKeyPrefix
 	dictKeyPrefixBytes   = "y"
 	dictKeyPrefixList    = "L"
 	dictKeyPrefixSet     = "S"
@@ -96,6 +96,14 @@ const (
 	dictKeyPrefixRange   = "r"
 	dictKeyPrefixFrozen  = "O"
 )
+
+// LookupDictEntry keeps transient string keys out of the heap.
+func LookupDictEntry(dict runtime.Dict, key runtime.Value) (runtime.DictEntry, bool) {
+	if text, ok := key.(runtime.String); ok {
+		return dict.GetStringEntry(text.Value)
+	}
+	return dict.GetEntry(DictKey(key))
+}
 
 func DictKey(value runtime.Value) string {
 	switch value := value.(type) {

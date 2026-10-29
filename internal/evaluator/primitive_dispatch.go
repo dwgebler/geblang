@@ -201,7 +201,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 1 {
 				return nil, fmt.Errorf("dict.get expects one argument")
 			}
-			entry, ok := value.GetEntry(dictKey(args[0]))
+			entry, ok := native.LookupDictEntry(value, args[0])
 			if !ok {
 				return runtime.Null{}, nil
 			}
@@ -232,7 +232,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 1 {
 				return nil, fmt.Errorf("dict.hasKey expects one argument")
 			}
-			_, ok := value.GetEntry(dictKey(args[0]))
+			_, ok := native.LookupDictEntry(value, args[0])
 			return runtime.Bool{Value: ok}, nil
 		case "delete", "remove":
 			if len(args) != 1 {
@@ -256,7 +256,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 1 {
 				return nil, fmt.Errorf("dict.contains expects one argument")
 			}
-			_, ok := value.GetEntry(dictKey(args[0]))
+			_, ok := native.LookupDictEntry(value, args[0])
 			return runtime.Bool{Value: ok}, nil
 		case "bfs":
 			if len(args) != 1 {

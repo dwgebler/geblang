@@ -734,7 +734,7 @@ func (p *Parser) parseClassStatement() ast.Statement {
 	}
 	for {
 		p.nextToken()
-		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
+		if p.atBodyEnd() {
 			break
 		}
 		// `func ~ClassName()` is a destructor declaration. We
@@ -822,7 +822,7 @@ func (p *Parser) parseInterfaceStatement() ast.Statement {
 	}
 	for {
 		p.nextToken()
-		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
+		if p.atBodyEnd() {
 			break
 		}
 		if p.curTokenIs(token.Func) {
@@ -1137,7 +1137,7 @@ func (p *Parser) parseSelectStatement() ast.Statement {
 	}
 	for {
 		p.nextToken()
-		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
+		if p.atBodyEnd() {
 			break
 		}
 		switch p.curToken.Type {
@@ -1234,11 +1234,20 @@ func (p *Parser) parseExpressionStatement(requireSemicolon bool) ast.Statement {
 	return stmt
 }
 
+// EOF ends recovery, but never substitutes for a closing brace.
+func (p *Parser) atBodyEnd() bool {
+	if p.curTokenIs(token.EOF) {
+		p.errorf(p.curToken, "expected } before end of input")
+		return true
+	}
+	return p.curTokenIs(token.RBrace)
+}
+
 func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 	block := &ast.BlockStatement{Token: p.curToken}
 	for {
 		p.nextToken()
-		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
+		if p.atBodyEnd() {
 			break
 		}
 		stmt := p.parseStatement()
@@ -1986,7 +1995,7 @@ func (p *Parser) parseMatchExpression() *ast.MatchExpression {
 	}
 	for {
 		p.nextToken()
-		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
+		if p.atBodyEnd() {
 			break
 		}
 		c := ast.MatchCase{Token: p.curToken}
@@ -2134,7 +2143,7 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 	// Variant list, optionally terminated by `;` to begin a method block.
 	for {
 		p.nextToken()
-		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
+		if p.atBodyEnd() {
 			return stmt
 		}
 		if p.curTokenIs(token.Semicolon) {
@@ -2181,7 +2190,7 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 	}
 	for {
 		p.nextToken()
-		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
+		if p.atBodyEnd() {
 			break
 		}
 		if !p.curTokenIs(token.Func) && !(p.curTokenIs(token.Async) && p.peekTokenIs(token.Func)) {

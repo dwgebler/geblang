@@ -3,6 +3,7 @@ package bytecode
 import (
 	"testing"
 
+	"geblang/internal/native"
 	"geblang/internal/runtime"
 )
 
@@ -10,10 +11,14 @@ var primitiveBenchmarkResult runtime.Value
 
 func BenchmarkPrimitiveMethodDispatch(b *testing.B) {
 	dict := runtime.NewDict()
-	dict.PutEntry("s:key", runtime.DictEntry{
+	dict.PutEntry(native.DictKey(runtime.String{Value: "key"}), runtime.DictEntry{
 		Key:   runtime.String{Value: "key"},
 		Value: runtime.SmallInt{Value: 1},
 	})
+	entry, ok := dict.GetEntry(native.DictKey(runtime.String{Value: "key"}))
+	if !ok || entry.Value != (runtime.SmallInt{Value: 1}) {
+		b.Fatal("invalid dictionary benchmark fixture")
+	}
 	list := &runtime.List{Elements: []runtime.Value{
 		runtime.SmallInt{Value: 1},
 		runtime.SmallInt{Value: 2},
@@ -49,10 +54,14 @@ func BenchmarkPrimitiveMethodDispatch(b *testing.B) {
 
 func BenchmarkPrimitiveMethodTemplateShape(b *testing.B) {
 	context := runtime.NewDict()
-	context.PutEntry("s:title", runtime.DictEntry{
+	context.PutEntry(native.DictKey(runtime.String{Value: "title"}), runtime.DictEntry{
 		Key:   runtime.String{Value: "title"},
 		Value: runtime.String{Value: "Geblang"},
 	})
+	result, err := primitiveMethod(context, "get", []runtime.Value{runtime.String{Value: "title"}})
+	if err != nil || result != (runtime.String{Value: "Geblang"}) {
+		b.Fatalf("invalid template benchmark fixture: %v, %v", result, err)
+	}
 	items := &runtime.List{Elements: []runtime.Value{
 		runtime.String{Value: "one"},
 		runtime.String{Value: "two"},

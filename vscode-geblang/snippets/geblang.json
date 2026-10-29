@@ -1,4 +1,13 @@
 {
+    "Exact currency amount": {
+        "prefix": "moneyvalue",
+        "body": [
+            "import money;",
+            "let ${1:price} = money.Money(\"${2:12.34}\", \"${3:GBP}\");",
+            "let ${4:shares} = ${1:price}.split(${5:3});"
+        ],
+        "description": "Exact currency arithmetic and total-preserving allocation"
+    },
     "Validated integer prompt": {
         "prefix": "clipromptint",
         "body": [

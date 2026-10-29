@@ -662,7 +662,7 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 		}
 		for _, field := range class.Fields {
 			key := runtime.String{Value: field.Name}
-			entry, hit := dict.GetEntry(native.DictKey(key))
+			entry, hit := native.LookupDictEntry(dict, key)
 			if hit {
 				value := entry.Value
 				if declared := field.CheckType; declared != nil {
@@ -684,7 +684,7 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 			paramName = param.Name.Value
 		}
 		key := runtime.String{Value: paramName}
-		entry, ok := dict.GetEntry(native.DictKey(key))
+		entry, ok := native.LookupDictEntry(dict, key)
 		if ok {
 			value := entry.Value
 			if param.Type != nil {
@@ -3565,6 +3565,7 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 		}
 		if method, ok := lookupMethod(instance.Class, expr.Name.Value); ok {
 			bound := method
+			bound.TypeBindings = functionCheckBindings(method, instance)
 			bound.Env = bindThis(method.Env, instance)
 			// this is captured on bound.Env; don't also forward the caller's this when this value is invoked inside another method.
 			bound.ForwardThis = false
@@ -3814,7 +3815,7 @@ func fieldsFromDict(d runtime.Dict) map[string]runtime.Value {
 }
 
 func dictField(dict runtime.Dict, key string) (runtime.Value, bool) {
-	entry, ok := dict.GetEntry(dictKey(runtime.String{Value: key}))
+	entry, ok := dict.GetStringEntry(key)
 	if ok {
 		return entry.Value, true
 	}
@@ -4498,7 +4499,7 @@ func (e *Evaluator) evalIndexExpression(expr *ast.IndexExpression, env *runtime.
 		}
 		return listElement(value, i)
 	case runtime.Dict:
-		entry, ok := value.GetEntry(dictKey(index))
+		entry, ok := native.LookupDictEntry(value, index)
 		if !ok {
 			return runtime.Null{}, nil
 		}
@@ -6559,7 +6560,7 @@ func (e *Evaluator) evalContains(needle, container runtime.Value) (runtime.Value
 		}
 		return runtime.Bool{Value: false}, nil
 	case runtime.Dict:
-		_, ok := c.GetEntry(dictKey(needle))
+		_, ok := native.LookupDictEntry(c, needle)
 		return runtime.Bool{Value: ok}, nil
 	case runtime.Set:
 		_, ok := c.Elements[dictKey(needle)]

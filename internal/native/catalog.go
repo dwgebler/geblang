@@ -2201,6 +2201,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"canonicalTag":   Fn([]string{"string tag"}, "string", "Parses and canonicalizes a supported BCP 47 locale tag."),
 		"formatNumber":   Fn([]string{"int|decimal|float value", "string tag", "dict<string, any> opts = {}"}, "string", "Formats a number with locale grouping and decimal symbols."),
 		"formatCurrency": Fn([]string{"int|decimal|float value", "string currency", "string tag", "dict<string, any> opts = {}"}, "string", "Formats an ISO 4217 currency amount."),
+		"currencyInfo":   Fn([]string{"string code"}, "dict<string, any>", "Returns canonical currency code and standard fractionDigits from the currency data shared with formatCurrency."),
 		"formatDate":     Fn([]string{"datetime.Instant instant", "string tag", "string style = \"medium\"", "string zone = \"UTC\""}, "string", "Formats a calendar date after converting to the requested time zone."),
 		"compare":        Fn([]string{"string a", "string b", "string tag", "dict<string, any> opts = {}"}, "int", "Compares strings with locale collation rules."),
 		"pluralCategory": Fn([]string{"int count", "string tag"}, "string", "Returns the CLDR cardinal plural category."),
@@ -2656,6 +2657,25 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"Mailer": {
 			"send":   Fn([]string{"Message message"}, "dict<string, any>", "Sends the message; returns the transport response."),
 			"render": Fn([]string{"Message message"}, "string", "Renders the message to its wire form without sending."),
+		},
+	}},
+	"money": {Functions: map[string]FunctionDoc{
+		"fromMinor": Fn([]string{"int units", "string currency"}, "Money", "Creates an immutable currency amount from exact integer minor units."),
+	}, Classes: map[string]string{
+		"Money": "Immutable currency amount backed by arbitrary-size integer minorUnits. Construct Money(int|decimal|string amount, string currency, string rounding = \"unnecessary\"); floats are rejected.",
+	}, ClassMethods: map[string]map[string]FunctionDoc{
+		"Money": {
+			"amount":   Fn([]string{}, "decimal", "Returns the exact amount in major units."),
+			"add":      Fn([]string{"Money other"}, "Money", "Adds a same-currency amount without changing either operand."),
+			"subtract": Fn([]string{"Money other"}, "Money", "Subtracts a same-currency amount."),
+			"multiply": Fn([]string{"int|decimal factor", "string rounding = \"unnecessary\""}, "Money", "Multiplies by an exact scalar; fractional minor units require explicit rounding."),
+			"divide":   Fn([]string{"int|decimal divisor", "string rounding = \"unnecessary\""}, "Money", "Divides by a nonzero exact scalar with explicit rounding when needed."),
+			"compare":  Fn([]string{"Money other"}, "int", "Compares same-currency amounts, returning -1, 0 or 1."),
+			"abs":      Fn([]string{}, "Money", "Returns the absolute amount."),
+			"split":    Fn([]string{"int parts"}, "list<Money>", "Splits into equal shares preserving every minor unit; earlier shares win ties."),
+			"allocate": Fn([]string{"list<int> weights"}, "list<Money>", "Allocates by nonnegative integer weights using largest remainders, preserving the total."),
+			"format":   Fn([]string{"string tag = \"en\""}, "string", "Formats with locale currency rules."),
+			"toString": Fn([]string{}, "string", "Returns locale-independent currency code and fixed-scale amount, for example GBP 12.34."),
 		},
 	}},
 	"option": {Functions: map[string]FunctionDoc{

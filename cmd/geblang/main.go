@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -501,12 +502,14 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang --vm-strict -m app.main --verbose")
 		return true
 	case "test":
-		fmt.Fprintln(writer, "usage: geblang test [--tag name] [--class ClassName] [--method methodName]")
+		fmt.Fprintln(writer, "usage: geblang test [--jobs N] [--tag name] [--class ClassName] [--method methodName]")
 		fmt.Fprintln(writer, "                    [--runtime vm|evaluator] [--verbose|-v|--format <summary|verbose|teamcity>]")
 		fmt.Fprintln(writer, "                    [--allow-ffi <glob>] [--allow-process-control] [--allow-onnx] [--allow-browser] <file-or-dir>")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Runs Geblang test files. Directory paths discover *_test.gb files recursively.")
 		fmt.Fprintln(writer, "Tests run on the bytecode VM by default; a file the VM cannot compile fails loudly.")
+		fmt.Fprintln(writer, "--jobs N runs up to N files in isolated processes (default 1); methods remain sequential.")
+		fmt.Fprintln(writer, "Parallel output is buffered per file and printed in discovery order; failures are aggregated.")
 		fmt.Fprintln(writer, "--runtime evaluator (alias --disable-vm) runs the whole suite on the tree-walking evaluator.")
 		fmt.Fprintln(writer, "A file with a '# @vm-divergence: <key>' comment and a matching KNOWN_DIVERGENCES.md row")
 		fmt.Fprintln(writer, "runs on the evaluator as an accepted divergence and is reported in the summary.")
@@ -520,6 +523,7 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "Examples:")
 		fmt.Fprintln(writer, "  geblang test tests/user_test.gb")
 		fmt.Fprintln(writer, "  geblang test tests/")
+		fmt.Fprintln(writer, "  geblang test --jobs 4 tests/")
 		fmt.Fprintln(writer, "  geblang test --tag integration tests/")
 		fmt.Fprintln(writer, "  geblang test --verbose tests/")
 		fmt.Fprintln(writer, "  geblang test --format teamcity tests/")
@@ -1517,7 +1521,20 @@ func runTests(args []string) {
 	format := "summary"
 	allowFFI := []string{}
 	evaluatorLane := false
+	jobs := 1
+	workerResultPath := ""
+	workerLedgerRoot := ""
+	capabilityArgs := []string{}
 	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "--jobs=") {
+			var err error
+			jobs, err = parseTestJobs(strings.TrimPrefix(args[i], "--jobs="))
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			continue
+		}
 		if strings.HasPrefix(args[i], "--runtime=") {
 			if err := selectTestRuntime(strings.TrimPrefix(args[i], "--runtime="), &evaluatorLane); err != nil {
 				fmt.Fprintln(os.Stderr, err)
@@ -1526,6 +1543,32 @@ func runTests(args []string) {
 			continue
 		}
 		switch args[i] {
+		case "--jobs":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "geblang test --jobs expects a positive integer")
+				os.Exit(2)
+			}
+			var err error
+			jobs, err = parseTestJobs(args[i+1])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			i++
+		case "--internal-test-ledger-root":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "missing test worker ledger root")
+				os.Exit(2)
+			}
+			workerLedgerRoot = args[i+1]
+			i++
+		case "--internal-test-result":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "missing test worker result path")
+				os.Exit(2)
+			}
+			workerResultPath = args[i+1]
+			i++
 		case "--runtime":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "geblang test --runtime expects vm or evaluator")
@@ -1577,10 +1620,13 @@ func runTests(args []string) {
 			i++
 		case "--allow-process-control":
 			native.SetProcessControlEnabled(true)
+			capabilityArgs = append(capabilityArgs, args[i])
 		case "--allow-onnx":
 			native.SetOnnxEnabled(true)
+			capabilityArgs = append(capabilityArgs, args[i])
 		case "--allow-browser":
 			native.SetBrowserEnabled(true)
+			capabilityArgs = append(capabilityArgs, args[i])
 		default:
 			paths = append(paths, args[i])
 		}
@@ -1592,7 +1638,7 @@ func runTests(args []string) {
 		os.Exit(2)
 	}
 	if len(paths) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: geblang test [--tag name] [--verbose|--format <summary|verbose|teamcity>] <file-or-dir>")
+		fmt.Fprintln(os.Stderr, "usage: geblang test [--jobs N] [--tag name] [--verbose|--format <summary|verbose|teamcity>] <file-or-dir>")
 		os.Exit(2)
 	}
 	files, err := discoverTestFiles(paths[0])
@@ -1604,7 +1650,11 @@ func runTests(args []string) {
 		fmt.Fprintln(os.Stderr, "no test files found")
 		os.Exit(1)
 	}
-	ledger, err := loadDivergenceLedger(paths[0])
+	ledgerRoot := paths[0]
+	if workerResultPath != "" && workerLedgerRoot != "" {
+		ledgerRoot = workerLedgerRoot
+	}
+	ledger, err := loadDivergenceLedger(ledgerRoot)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -1622,23 +1672,82 @@ func runTests(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if workerResultPath != "" {
+		if jobs != 1 || len(files) != 1 {
+			fmt.Fprintln(os.Stderr, "a test worker requires one file and jobs=1")
+			os.Exit(2)
+		}
+		file := files[0]
+		total, failed, skipped, runErr := runTestFile(file, tags, classFilter, methodFilters, format, allowFFI, evaluatorLane || annotations[file] != "")
+		result := testFileResult{Total: total, Failed: failed, Skipped: skipped}
+		if runErr != nil {
+			result.Error = runErr.Error()
+		}
+		if err := writeTestFileResult(workerResultPath, result); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if runErr != nil || failed > 0 {
+			os.Exit(1)
+		}
+		return
+	}
 	total := int64(0)
 	failed := int64(0)
 	skipped := int64(0)
 	divergences := 0
+	fileErrors := 0
 	for _, file := range files {
-		useEval := evaluatorLane || annotations[file] != ""
 		if !evaluatorLane && annotations[file] != "" {
 			divergences++
 		}
-		fileTotal, fileFailed, fileSkipped, err := runTestFile(file, tags, classFilter, methodFilters, format, allowFFI, useEval)
+	}
+	if jobs > 1 {
+		workerArgs := []string{"test", "--jobs", "1", "--format", format, "--internal-test-ledger-root", paths[0]}
+		if evaluatorLane {
+			workerArgs = append(workerArgs, "--runtime", "evaluator")
+		}
+		for _, tag := range tags {
+			workerArgs = append(workerArgs, "--tag", tag)
+		}
+		if classFilter != "" {
+			workerArgs = append(workerArgs, "--class", classFilter)
+		}
+		for _, method := range methodFilters {
+			workerArgs = append(workerArgs, "--method", method)
+		}
+		for _, path := range allowFFI {
+			workerArgs = append(workerArgs, "--allow-ffi", path)
+		}
+		workerArgs = append(workerArgs, capabilityArgs...)
+		results, err := runParallelTestFiles(files, jobs, workerArgs)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		total += fileTotal
-		failed += fileFailed
-		skipped += fileSkipped
+		for index, result := range results {
+			_, _ = os.Stderr.Write(result.stderr)
+			_, _ = os.Stdout.Write(result.stdout)
+			if result.Error != "" {
+				fmt.Fprintf(os.Stderr, "%s: %s\n", files[index], result.Error)
+				fileErrors++
+			}
+			total += result.Total
+			failed += result.Failed
+			skipped += result.Skipped
+		}
+	} else {
+		for _, file := range files {
+			useEval := evaluatorLane || annotations[file] != ""
+			fileTotal, fileFailed, fileSkipped, err := runTestFile(file, tags, classFilter, methodFilters, format, allowFFI, useEval)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
+				os.Exit(1)
+			}
+			total += fileTotal
+			failed += fileFailed
+			skipped += fileSkipped
+		}
 	}
 	passed := total - failed - skipped
 	if divergences > 0 {
@@ -1653,9 +1762,17 @@ func runTests(args []string) {
 	} else {
 		fmt.Printf("tests: total=%d failed=%d passed=%d skipped=%d\n", total, failed, passed, skipped)
 	}
-	if failed > 0 {
+	if failed > 0 || fileErrors > 0 {
 		os.Exit(1)
 	}
+}
+
+func parseTestJobs(value string) (int, error) {
+	jobs, err := strconv.Atoi(value)
+	if err != nil || jobs < 1 {
+		return 0, fmt.Errorf("geblang test --jobs expects a positive integer (got %q)", value)
+	}
+	return jobs, nil
 }
 
 func selectTestRuntime(value string, evaluatorLane *bool) error {

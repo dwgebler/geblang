@@ -924,75 +924,44 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	if function.requiresParamValidation && len(args) > 0 && !compiledConstructorName(function.Name) {
 		receiverBindings = receiverTypeBindings(function, args[0])
 	}
-	if !validateTypes && len(receiverBindings) > 0 {
-		// Prevalidated dispatch never checked T-typed params; enforce just those.
-		typeParams := function.typeParamSet
-		for i, arg := range args {
-			if i == 0 || arg == nil || i >= len(function.ParamTypes) || function.ParamTypes[i] == "" {
-				continue
-			}
-			if function.Variadic && i == len(function.ParamSlots)-1 {
-				break
-			}
-			spec := vm.typeSpec(function.ParamTypes[i])
-			bound, ok := receiverBindings[spec.base]
-			if !ok || bound == "" {
-				continue
-			}
-			if _, isNull := arg.(runtime.Null); isNull && spec.nullable {
-				continue
-			}
-			if !vm.matchValueToTypeSpec(typeParams, arg, vm.typeSpec(bound)) {
-				paramName := ""
-				if i < len(function.ParamNames) {
-					paramName = function.displayParamName(i)
-				}
-				declared := vm.expandTypeAliases(function.ParamTypes[i])
-				suffix := vm.collectionMismatchSuffixStr(arg, declared)
-				gotName := vm.descriptiveRuntimeTypeName(arg)
-				if suffix != "" {
-					gotName = arg.TypeName()
-				}
-				msg := fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, declared, paramName, gotName, suffix)
-				return vm.throwTyped(instruction, ip, "TypeError", msg)
-			}
-		}
-	}
-	if validateTypes && function.requiresParamValidation {
-		// Enforce parameter type annotations (skip the bundled variadic slot).
+	if (validateTypes || len(receiverBindings) > 0) && function.requiresParamValidation {
+		// Variadic annotations describe each element, not the packed list.
 		typeParams := function.typeParamSet
 		inherited := mergedTypeBindings(vm.pendingTypeBindings, receiverBindings)
 		for i, arg := range args {
-			if function.Variadic && i == len(function.ParamSlots)-1 {
-				break
-			}
 			if arg == nil || i >= len(function.ParamTypes) || function.ParamTypes[i] == "" {
 				continue
 			}
-			matches := false
-			if i < len(function.paramTypeSpecs) && function.paramTypeSpecs[i].raw != "" {
-				matches = vm.matchValueToTypeSpecWith(typeParams, inherited, arg, function.paramTypeSpecs[i])
-			} else {
-				matches = vm.matchValueToTypeStrWith(typeParams, inherited, arg, function.ParamTypes[i])
+			values := []runtime.Value{arg}
+			if function.Variadic && i == len(function.ParamSlots)-1 {
+				values = arg.(*runtime.List).Elements
 			}
-			if !matches {
-				paramName := ""
-				if i < len(function.ParamNames) {
-					paramName = function.displayParamName(i)
-				}
-				declared := vm.expandTypeAliases(function.ParamTypes[i])
-				suffix := vm.collectionMismatchSuffixStr(arg, declared)
-				gotName := vm.descriptiveRuntimeTypeName(arg)
-				if suffix != "" {
-					gotName = arg.TypeName()
-				}
-				var msg string
-				if paramName != "" {
-					msg = fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, declared, paramName, gotName, suffix)
+			for _, arg := range values {
+				matches := false
+				if i < len(function.paramTypeSpecs) && function.paramTypeSpecs[i].raw != "" {
+					matches = vm.matchValueToTypeSpecWith(typeParams, inherited, arg, function.paramTypeSpecs[i])
 				} else {
-					msg = fmt.Sprintf("%s expects %s, got %s%s", function.Name, declared, gotName, suffix)
+					matches = vm.matchValueToTypeStrWith(typeParams, inherited, arg, function.ParamTypes[i])
 				}
-				return vm.throwTyped(instruction, ip, "TypeError", msg)
+				if !matches {
+					paramName := ""
+					if i < len(function.ParamNames) {
+						paramName = function.displayParamName(i)
+					}
+					declared := vm.expandTypeAliases(function.ParamTypes[i])
+					suffix := vm.collectionMismatchSuffixStr(arg, declared)
+					gotName := vm.descriptiveRuntimeTypeName(arg)
+					if suffix != "" {
+						gotName = arg.TypeName()
+					}
+					var msg string
+					if paramName != "" {
+						msg = fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, declared, paramName, gotName, suffix)
+					} else {
+						msg = fmt.Sprintf("%s expects %s, got %s%s", function.Name, declared, gotName, suffix)
+					}
+					return vm.throwTyped(instruction, ip, "TypeError", msg)
+				}
 			}
 		}
 	}
@@ -1359,7 +1328,7 @@ func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionIn
 		if defaultIndex < 0 || int(defaultIndex) >= vm.constantsLen() {
 			return nil, vm.runtimeError(instruction, "default argument constant out of range")
 		}
-		ordered[i] = vm.constantValue(defaultIndex)
+		ordered[i] = cloneContainerDefault(vm.constantValue(defaultIndex))
 		assigned[i] = true
 	}
 	// Normalise away trailing arguments that equal their declared
@@ -1371,6 +1340,14 @@ func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionIn
 			break
 		}
 		defaultIndex := function.DefaultConstants[paramIndex]
+		last := len(ordered) - 1
+		if last < len(result.Slots) && result.Slots[last] != argbinding.DefaultSlot {
+			// An explicitly supplied collection keeps its caller's identity.
+			switch ordered[last].(type) {
+			case *runtime.List, runtime.Dict, runtime.Set:
+				return ordered, nil
+			}
+		}
 		if assigned[len(ordered)-1] && defaultIndex >= 0 && int(defaultIndex) < vm.constantsLen() && valuesEqual(ordered[len(ordered)-1], vm.constantValue(defaultIndex)) {
 			ordered = ordered[:len(ordered)-1]
 			continue
@@ -3216,7 +3193,21 @@ func (vm *VM) callBoundDecoratedValue(instance *runtime.Instance, funcIndex int6
 }
 
 // CallBoundMethodValue dispatches a bound method value pinned to funcIndex (first overload, no re-selection) with the receiver, honoring a decorator wrapper. Run on the home-module worker so a bound-method value stays goroutine-safe.
-func (vm *VM) CallBoundMethodValue(instance *runtime.Instance, funcIndex int64, args []runtime.Value) (runtime.Value, error) {
+func (vm *VM) CallBoundMethodValue(instance *runtime.Instance, funcIndex int64, args []runtime.Value, names []string) (runtime.Value, error) {
+	if len(names) > 0 {
+		if funcIndex < 0 || int(funcIndex) >= len(vm.curMod.Chunk.Functions) {
+			return nil, fmt.Errorf("method function index out of range")
+		}
+		offset := 0
+		if instance != nil {
+			offset = 1
+		}
+		ordered, err := vm.orderRuntimeArguments(Instruction{}, vm.curMod.Chunk.Functions[funcIndex], args, names, offset)
+		if err != nil {
+			return nil, err
+		}
+		args = ordered
+	}
 	if res, err, handled := vm.callBoundDecoratedValue(instance, funcIndex, args); handled {
 		return res, err
 	}

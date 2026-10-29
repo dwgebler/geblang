@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	rootembed "geblang"
 	"geblang/internal/ast"
@@ -269,6 +270,11 @@ func gatherStdlibDiskPaths() []string {
 	return paths
 }
 
+// The embedded filesystem cannot change during a process.
+var embeddedStdlibDigest = sync.OnceValues(func() (string, error) {
+	return embeddedStdlibHash(rootembed.StdlibFS)
+})
+
 // ensureEmbeddedStdlib extracts the embedded stdlib to a per-version cache dir once and returns its path (empty on failure).
 func ensureEmbeddedStdlib() string {
 	cache, err := os.UserCacheDir()
@@ -276,7 +282,7 @@ func ensureEmbeddedStdlib() string {
 		cache = os.TempDir()
 	}
 	root := filepath.Join(cache, "geblang")
-	hash, err := embeddedStdlibHash(rootembed.StdlibFS)
+	hash, err := embeddedStdlibDigest()
 	if err != nil {
 		return ""
 	}

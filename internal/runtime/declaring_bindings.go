@@ -91,7 +91,7 @@ func substituteTypeParams(arg string, class *Class, bindings map[string]string) 
 
 // ResolveInheritedTypeBindings rebinds ancestors' type parameters through each extends clause from the instance's own bindings.
 func ResolveInheritedTypeBindings(instance *Instance) {
-	if instance == nil || instance.Class == nil || instance.Class.Parent == nil || len(instance.TypeBindings) == 0 {
+	if instance == nil || instance.Class == nil || instance.Class.Parent == nil {
 		return
 	}
 	owned := map[string]bool{}
@@ -112,6 +112,9 @@ func ResolveInheritedTypeBindings(instance *Instance) {
 			}
 			next[param] = bound
 			if !owned[strings.ToLower(param)] {
+				if instance.TypeBindings == nil {
+					instance.TypeBindings = map[string]string{}
+				}
 				instance.TypeBindings[param] = bound
 				owned[strings.ToLower(param)] = true
 			}

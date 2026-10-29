@@ -128,7 +128,7 @@ func (p *jsonParser) parseObject() (runtime.Value, error) {
 		}
 		entry, cached := p.keyCache[key]
 		if !cached {
-			entry = jsonKeyEntry{mapKey: "s" + key, keyVal: runtime.String{Value: key}}
+			entry = jsonKeyEntry{mapKey: dictKeyPrefixString + key, keyVal: runtime.String{Value: key}}
 			if p.keyCache == nil {
 				p.keyCache = make(map[string]jsonKeyEntry, 16)
 			}

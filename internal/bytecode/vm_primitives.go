@@ -132,7 +132,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.Bool{Value: false}, nil
 		case runtime.Dict:
-			_, ok := value.GetEntry(native.DictKey(args[0]))
+			_, ok := native.LookupDictEntry(value, args[0])
 			return runtime.Bool{Value: ok}, nil
 		case runtime.Set:
 			_, ok := value.Elements[native.DictKey(args[0])]
@@ -796,7 +796,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return value.Elements[i], nil
 		case runtime.Dict:
-			entry, ok := value.GetEntry(dictKeyFor(args[0]))
+			entry, ok := native.LookupDictEntry(value, args[0])
 			if !ok {
 				return runtime.Null{}, nil
 			}
@@ -1082,7 +1082,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, fmt.Errorf("%s has no method hasKey", receiver.TypeName())
 		}
-		_, exists := value.GetEntry(native.DictKey(args[0]))
+		_, exists := native.LookupDictEntry(value, args[0])
 		return runtime.Bool{Value: exists}, nil
 	case "keys":
 		if len(args) != 0 {

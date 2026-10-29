@@ -208,7 +208,7 @@ type ModuleLoader interface {
 	// CallModuleMethodNamed dispatches a cross-module instance method with named-argument metadata, binding names in the home chunk so declared defaults engage.
 	CallModuleMethodNamed(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, names []string, caller *VM) (runtime.Value, error)
 	// CallModuleMethodValue dispatches a bound method/static value pinned to funcIndex (first overload) on its home worker; instance is the receiver, nil for a static. Applies the decorator wrapper with the receiver bound.
-	CallModuleMethodValue(module string, funcIndex int64, instance *runtime.Instance, args []runtime.Value, caller *VM) (runtime.Value, error)
+	CallModuleMethodValue(module string, funcIndex int64, instance *runtime.Instance, args []runtime.Value, names []string, caller *VM) (runtime.Value, error)
 	// CallModuleDestructor fires a cross-module instance's `func ~Class()` in its home chunk on a home worker; caller adopts any destructibles the destructor builds (re-drain).
 	CallModuleDestructor(module string, className string, instance *runtime.Instance, caller *VM) error
 	// ModuleMethodParamNames exposes a cross-module method's declared
@@ -4184,7 +4184,7 @@ func (vm *VM) contains(needle, container runtime.Value) (runtime.Value, error) {
 		}
 		return runtime.Bool{Value: false}, nil
 	case runtime.Dict:
-		_, ok := c.GetEntry(dictKeyFor(needle))
+		_, ok := native.LookupDictEntry(c, needle)
 		return runtime.Bool{Value: ok}, nil
 	case runtime.Set:
 		_, ok := c.Elements[dictKeyFor(needle)]
@@ -4260,7 +4260,7 @@ func (vm *VM) index(instruction Instruction) error {
 		}
 		vm.push(runtime.NewInt64(int64(value.Value[i])))
 	case runtime.Dict:
-		entry, ok := value.GetEntry(dictKeyFor(index))
+		entry, ok := native.LookupDictEntry(value, index)
 		if !ok {
 			vm.push(runtime.Null{})
 			return nil
@@ -5759,7 +5759,7 @@ func stripModulePrefix(typeName string) string {
 func dictKeyFor(value runtime.Value) string {
 	switch v := value.(type) {
 	case runtime.String:
-		return "s" + v.Value
+		return runtime.DictStringKeyPrefix + v.Value
 	case runtime.SmallInt:
 		return "i" + strconv.FormatInt(v.Value, 10)
 	}

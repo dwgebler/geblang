@@ -1,0 +1,29 @@
+import test;
+
+class DelimitedBase {
+    func wrap(string value): string {
+        return "{${value}}";
+    }
+}
+
+class DelimitedChild extends DelimitedBase {
+    func describe(bool first): string {
+        let choose = func(): string {
+            if (first) {
+                return "first";
+            }
+            return "second";
+        };
+        return this.wrap(choose());
+    }
+}
+
+class BodyDelimiterTest extends test.Test {
+    @test
+    func nestedBodiesAndStringBracesRemainDistinct(): void {
+        let child = DelimitedChild();
+        this.assertEquals("{first}", child.describe(true));
+        this.assertEquals("{second}", child.describe(false));
+        this.assertEquals("{}}", child.wrap("}"));
+    }
+}

@@ -71,6 +71,7 @@ Data and transformation:
   checksums, hashes, and compression.
 - [Math, Dates, And UUIDs](math-datetime.html): numeric helpers, time values,
   durations, zones, and UUID generation/parsing.
+- [Money](38-money.md): exact currency values, explicit rounding and total-preserving allocation.
 - [Localization And Translation](localization.html): explicit-locale number,
   currency, and date formatting, collation, and message catalogs.
 - [Security](security.html): secrets, cryptographic helpers, passwords,

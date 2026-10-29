@@ -1,0 +1,236 @@
+module money;
+import locale;
+
+func _checkedRounding(string rounding): void {
+    if (!["unnecessary", "halfEven", "halfAwayFromZero", "halfTowardZero", "towardZero", "awayFromZero", "floor", "ceil"].contains(rounding)) {
+        throw ValueError("money: unknown rounding mode " + rounding);
+    }
+}
+
+func _roundedMinor(decimal amount, int fractionDigits, string rounding): int {
+    _checkedRounding(rounding);
+    decimal scaled = amount * (10 ** fractionDigits);
+    if (scaled.isInt()) {
+        return scaled as int;
+    }
+    if (rounding == "unnecessary") {
+        throw ValueError("money: fractional minor unit requires an explicit rounding mode");
+    }
+    int whole = scaled.truncate() as int;
+    int direction = scaled < 0 ? -1 : 1;
+    if (rounding == "towardZero") {
+        return whole;
+    }
+    if (rounding == "awayFromZero") {
+        return whole + direction;
+    }
+    if (rounding == "floor") {
+        return scaled.floor() as int;
+    }
+    if (rounding == "ceil") {
+        return scaled.ceil() as int;
+    }
+    decimal remainder = (scaled - whole).abs();
+    if (remainder < 0.5) {
+        return whole;
+    }
+    if (remainder > 0.5) {
+        return whole + direction;
+    }
+    if (rounding == "halfTowardZero" || (rounding == "halfEven" && whole.isEven())) {
+        return whole;
+    }
+    return whole + direction;
+}
+
+func _exactAmount(any value): decimal {
+    if (value instanceof int || value instanceof decimal) {
+        return value as decimal;
+    }
+    if (value instanceof string) {
+        let parsed = (value as string).toDecimalOrNull();
+        if (parsed == null) {
+            throw ValueError("money: invalid decimal amount");
+        }
+        return parsed;
+    }
+    throw TypeError("money: amount must be int, decimal or numeric string; floats require an explicit conversion");
+}
+
+@immutable
+export class Money {
+    @immutable
+    string currency;
+    @immutable
+    int minorUnits;
+    @immutable
+    int fractionDigits;
+
+    func Money(any amount, string currency, string rounding = "unnecessary") {
+        let info = locale.currencyInfo(currency);
+        this.currency = info["code"] as string;
+        this.fractionDigits = info["fractionDigits"] as int;
+        this.minorUnits = _roundedMinor(_exactAmount(amount), this.fractionDigits, rounding);
+    }
+
+    func amount(): decimal {
+        return this.minorUnits / (10 ** this.fractionDigits);
+    }
+
+    func _requireCurrency(Money other): void {
+        if (this.currency != other.currency) {
+            throw ValueError("money: currencies must match");
+        }
+    }
+
+    func add(Money other): Money {
+        this._requireCurrency(other);
+        return fromMinor(this.minorUnits + other.minorUnits, this.currency);
+    }
+
+    func subtract(Money other): Money {
+        this._requireCurrency(other);
+        return fromMinor(this.minorUnits - other.minorUnits, this.currency);
+    }
+
+    func multiply(int | decimal factor, string rounding = "unnecessary"): Money {
+        return Money(this.amount() * factor, this.currency, rounding);
+    }
+
+    func divide(int | decimal divisor, string rounding = "unnecessary"): Money {
+        if (divisor == 0) {
+            throw ValueError("money: cannot divide by zero");
+        }
+        return Money(this.amount() / divisor, this.currency, rounding);
+    }
+
+    func compare(Money other): int {
+        this._requireCurrency(other);
+        return this.minorUnits < other.minorUnits ? -1 : (this.minorUnits > other.minorUnits ? 1 : 0);
+    }
+
+    func abs(): Money {
+        return fromMinor(this.minorUnits.abs(), this.currency);
+    }
+
+    func split(int parts): list<Money> {
+        if (parts < 1) {
+            throw ValueError("money: parts must be positive");
+        }
+        list<int> weights = [];
+        for (i in 0..<parts) {
+            weights.push(1);
+        }
+        return this.allocate(weights);
+    }
+
+    func allocate(list<int> weights): list<Money> {
+        if (weights.isEmpty()) {
+            throw ValueError("money: allocation weights must not be empty");
+        }
+        int totalWeight = 0;
+        for (weight in weights) {
+            if (weight < 0) {
+                throw ValueError("money: allocation weights must be non-negative");
+            }
+            totalWeight += weight;
+        }
+        if (totalWeight == 0) {
+            throw ValueError("money: allocation weights must have a positive sum");
+        }
+        int units = this.minorUnits.abs();
+        int remaining = units;
+        list<int> shares = [];
+        list<int> remainders = [];
+        list<int> order = [];
+        for (index in 0..<weights.length()) {
+            int product = units * weights[index];
+            int share = product // totalWeight;
+            shares.push(share);
+            remainders.push(product % totalWeight);
+            order.push(index);
+            remaining -= share;
+        }
+        /* Largest remainders win; input order breaks ties for reproducible refunds. */
+        order = order.sorted(func(int left, int right): int {
+            if (remainders[left] > remainders[right]) {
+                return -1;
+            }
+            if (remainders[left] < remainders[right]) {
+                return 1;
+            }
+            return left - right;
+        });
+        for (index in 0..<remaining) {
+            shares[order[index]] += 1;
+        }
+        int direction = this.minorUnits < 0 ? -1 : 1;
+        list<Money> result = [];
+        for (share in shares) {
+            result.push(fromMinor(share * direction, this.currency));
+        }
+        return result;
+    }
+
+    func format(string tag = "en"): string {
+        return locale.formatCurrency(this.amount(), this.currency, tag);
+    }
+
+    func toString(): string {
+        return this.currency + " " + this.amount().format(this.fractionDigits);
+    }
+    func __string(): string {
+        return this.toString();
+    }
+    func __add(Money other): Money {
+        return this.add(other);
+    }
+    func __sub(Money other): Money {
+        return this.subtract(other);
+    }
+    func __mul(int | decimal factor): Money {
+        return this.multiply(factor);
+    }
+    func __div(int | decimal divisor): Money {
+        return this.divide(divisor);
+    }
+    func __neg(): Money {
+        return fromMinor(-this.minorUnits, this.currency);
+    }
+    func __eq(any other): bool {
+        if (!(other instanceof Money)) {
+            return false;
+        }
+        let value = other as Money;
+        return this.currency == value.currency && this.minorUnits == value.minorUnits;
+    }
+    func __lt(Money other): bool {
+        return this.compare(other) < 0;
+    }
+    func __lte(Money other): bool {
+        return this.compare(other) <= 0;
+    }
+    func __gt(Money other): bool {
+        return this.compare(other) > 0;
+    }
+    func __gte(Money other): bool {
+        return this.compare(other) >= 0;
+    }
+
+    func __serialize(): dict<string, any> {
+        return {"amount": this.amount().format(this.fractionDigits), "currency": this.currency};
+    }
+
+    static func __deserialize(dict<string, any> value): Money {
+        if (!(value.get("amount") instanceof string) || !(value.get("currency") instanceof string)) {
+            throw ValueError("money: serialized amount and currency must be strings");
+        }
+        return Money(value["amount"], value["currency"] as string);
+    }
+}
+
+export func fromMinor(int units, string currency): Money {
+    let info = locale.currencyInfo(currency);
+    int fractionDigits = info["fractionDigits"] as int;
+    return Money(units / (10 ** fractionDigits), info["code"] as string);
+}

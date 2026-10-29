@@ -1,0 +1,32 @@
+module bound_parent_methods;
+string prefix = "parent";
+
+export class Grandparent {
+    func accumulate(list<int> values = [], int n = 1): int {
+        values.push(n);
+        return values.length();
+    }
+    func gather(string head = "a", int ... rest): string {
+        return "${head}:${rest}";
+    }
+
+    int value;
+    func Grandparent(int value) {
+        this.value = value;
+    }
+    func label(string text = "default", int n = 7): string {
+        return "${prefix}:${this.value}:${text}:${n}";
+    }
+}
+
+export class Parent extends Grandparent {
+    func Parent(int value) {
+        parent(value);
+    }
+}
+
+export class GenericBag<T> {
+    func collect(T ... values): string {
+        return "${values}";
+    }
+}

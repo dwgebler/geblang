@@ -573,3 +573,9 @@ if (items.length() > 0) {
     io.println(items.first());
 }
 ```
+
+## Closing Bodies
+
+Every body opened with `{` must close with `}`, including the last declaration
+in a file. An unfinished class, function, interface, enum, match or select body
+is a syntax error at end of input.

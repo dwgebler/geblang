@@ -613,6 +613,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"canonicalTag":   e.registryBuiltin("locale", "canonicalTag"),
 			"formatNumber":   e.registryBuiltin("locale", "formatNumber"),
 			"formatCurrency": e.registryBuiltin("locale", "formatCurrency"),
+			"currencyInfo":   e.registryBuiltin("locale", "currencyInfo"),
 			"formatDate":     e.registryBuiltin("locale", "formatDate"),
 			"compare":        e.registryBuiltin("locale", "compare"),
 			"pluralCategory": e.registryBuiltin("locale", "pluralCategory"),

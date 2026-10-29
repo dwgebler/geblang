@@ -1,0 +1,94 @@
+import test;
+import async;
+
+func wrap(callable next): callable {
+    return func(any ... args): any { return "[" + next(...args) + "]"; };
+}
+
+class NamedMethodBox {
+    func accumulate(list<int> values = [], int n = 1): int {
+        values.push(n);
+        return values.length();
+    }
+    func gather(string head = "a", int ... rest): string {
+        return "${head}:${rest}";
+    }
+
+    @wrap
+    func label(string text = "default", int n = 7): string {
+        return "${text}:${n}";
+    }
+    @wrap
+    static func stamp(string text = "static", int n = 7): string {
+        return "${text}:${n}";
+    }
+    func numbers(int n = 7): generator<int> {
+        yield n;
+        yield n + 1;
+    }
+    async func twice(int n = 7): int {
+        return n * 2;
+    }
+}
+
+func invokeNamedMethod(callable method): string {
+    return method(n: 8);
+}
+
+class GenericBoundBag<T> {
+    func collect(T ... values): string {
+        return "${values}";
+    }
+}
+
+class BoundMethodNamedContextsTest extends test.Test {
+    @test
+    func namedCallsPreserveDecoratorsGeneratorsAsyncAndFailures(): void {
+        let value = NamedMethodBox();
+        let label = value.label;
+        this.assertEquals("[default:2]", label(n: 2));
+        let stamp = NamedMethodBox.stamp;
+        this.assertEquals("[static:3]", stamp(n: 3));
+        let numbers = value.numbers;
+        list<int> actual = [];
+        for (n in numbers(n: 4)) {
+            actual.push(n);
+        }
+        this.assertEquals([4, 5], actual);
+        let twice = value.twice;
+        this.assertEquals(12, async.await(twice(n: 6)));
+        this.assertEquals("[default:8]", invokeNamedMethod(label));
+        this.assertThrows(func(): void { label(unknown: 1); });
+        this.assertEquals("[default:9]", label(n: 9));
+    }
+
+    @test
+    func boundCallsGetFreshDefaultsAndValidateVariadicElements(): void {
+        let value = NamedMethodBox();
+        let accumulate = value.accumulate;
+        this.assertEquals(1, accumulate(n: 2));
+        this.assertEquals(1, accumulate(n: 3));
+        list<int> provided = [5];
+        this.assertEquals(2, accumulate(values: provided, n: 4));
+        this.assertEquals([5, 4], provided);
+        list<int> empty = [];
+        this.assertEquals(1, accumulate(values: empty));
+        this.assertEquals([1], empty);
+        let gather = value.gather;
+        this.assertEquals("y:[3]", gather(rest: 3, head: "y"));
+        this.assertThrowsOf(func(): void { gather(rest: [3, 4], head: "y"); }, "TypeError");
+        this.assertEquals("a:[4, 5]", gather("a", ...[4, 5]));
+    }
+
+    @test
+    func genericVariadicsValidateDirectAndStoredMethods(): void {
+        let bag = GenericBoundBag<int>();
+        let method = bag.collect;
+        this.assertEquals("[3]", method(values: 3));
+        this.assertEquals("[4, 5]", method(...[4, 5]));
+        any bad = "wrong";
+        this.assertThrowsOf(func(): void { method(values: bad); }, "TypeError");
+        this.assertThrowsOf(func(): void { method(bad); }, "TypeError");
+        this.assertThrowsOf(func(): void { bag.collect(bad); }, "TypeError");
+    }
+}

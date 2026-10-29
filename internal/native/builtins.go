@@ -141,8 +141,7 @@ func singleBool(args []runtime.Value, label string) (bool, error) {
 }
 
 func dictLookup(dict runtime.Dict, key string) (runtime.Value, bool) {
-	keyValue := runtime.String{Value: key}
-	entry, ok := dict.GetEntry(DictKey(keyValue))
+	entry, ok := dict.GetStringEntry(key)
 	if !ok {
 		return nil, false
 	}

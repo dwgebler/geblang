@@ -1,0 +1,15 @@
+import io;
+import json;
+import money;
+let subtotal = money.Money("19.99", "GBP");
+let total = subtotal.multiply(1.20, "halfEven");
+io.println(total); /* GBP 23.99 */
+io.println(total.minorUnits); /* 2399 */
+for (share in total.split(3)) {
+    io.println(share); /* GBP 8.00, GBP 8.00, GBP 7.99 */
+}
+let refund = money.fromMinor(-5, "GBP").allocate([1, 2]);
+for (share in refund) {
+    io.println(share); /* GBP -0.02, GBP -0.03 */
+}
+io.println(json.stringify(total)); /* {"amount":"23.99","currency":"GBP"} */

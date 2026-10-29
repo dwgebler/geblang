@@ -327,6 +327,28 @@ func (v Dict) GetEntry(key string) (DictEntry, bool) {
 	return e, ok
 }
 
+// DictStringKeyPrefix separates string keys from other key types.
+const DictStringKeyPrefix = "s"
+
+// GetStringEntry avoids allocating an encoded key for read-only lookups.
+func (v Dict) GetStringEntry(key string) (DictEntry, bool) {
+	if v.data != nil {
+		if v.data.m != nil {
+			entry, ok := v.data.m[DictStringKeyPrefix+key]
+			return entry, ok
+		}
+		for i := uint8(0); i < v.data.n; i++ {
+			encoded := v.data.keys[i]
+			if len(encoded) == len(key)+1 && encoded[0] == DictStringKeyPrefix[0] && encoded[1:] == key {
+				return v.data.vals[i], true
+			}
+		}
+		return DictEntry{}, false
+	}
+	entry, ok := v.Entries[DictStringKeyPrefix+key]
+	return entry, ok
+}
+
 // Len reports the number of entries.
 func (v Dict) Len() int {
 	if v.data != nil {

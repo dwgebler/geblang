@@ -153,8 +153,8 @@ func TestParityDirectEntryStaticMethod(t *testing.T) {
 // Direct entry (Phase 4.3): a cross-module instance dunder (__string) invoked via the native instance-invoker takes the loader's exclusive-worker direct path (CallMethodFast).
 func TestParityDirectEntryCrossModuleDunder(t *testing.T) {
 	runMultiModuleParity(t, map[string]string{
-		"money": "module money;\nexport class Money {\n    int cents;\n    func Money(int c) { this.cents = c; }\n    func __string(): string { return \"$\" + (this.cents as string); }\n}\nexport func make(int c): Money { return Money(c); }\n",
-	}, "import io;\nimport money;\nlet m = money.make(150);\nio.println(\"price=${m}\");\n", "price=$150\n")
+		"dunder_fixture": "module dunder_fixture;\nexport class Money {\n    int cents;\n    func Money(int c) { this.cents = c; }\n    func __string(): string { return \"$\" + (this.cents as string); }\n}\nexport func make(int c): Money { return Money(c); }\n",
+	}, "import io;\nimport dunder_fixture;\nlet m = dunder_fixture.make(150);\nio.println(\"price=${m}\");\n", "price=$150\n")
 }
 
 // Phase 4.6: a cross-module generator function is excluded from direct entry and runs on its own worker (lazyGenerator); the host iterates it across the module boundary.

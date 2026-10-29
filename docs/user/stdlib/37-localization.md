@@ -20,6 +20,7 @@ error.
 
 | Function | Description |
 | --- | --- |
+| `locale.currencyInfo(code)` | Canonical currency code and standard `fractionDigits`, independent of a locale tag. |
 | `locale.formatNumber(value, tag, opts = {})` | Format an int, decimal, or finite float. |
 | `locale.formatCurrency(value, currency, tag, opts = {})` | Format with an ISO 4217 currency code and its usual fraction digits. |
 
@@ -40,6 +41,11 @@ io.println(locale.formatCurrency(1234.5, "EUR", "fr")); /* amount then euro sign
 
 Invalid tags, unknown currency codes, nonnumeric values, and conflicting digit
 limits raise catchable errors.
+
+`locale.currencyInfo(" gbp ")` returns `{"code": "GBP", "fractionDigits": 2}`.
+The code is trimmed and uppercased. Unknown codes and `XXX` raise `ValueError`;
+a nonstring code raises `TypeError`. Each call returns a fresh dictionary.
+For currency-aware arithmetic, use [Money](38-money.md).
 
 ## Dates And Collation
 

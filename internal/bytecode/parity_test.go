@@ -19,6 +19,200 @@ import (
 	"geblang/internal/parser"
 )
 
+func TestParityStringDictionaryLookups(t *testing.T) {
+	runParity(t, `import io;
+ dict<any, any> values = {"": 7, "1": "string", 1: "integer", "s\u{0}\u{65e5}\u{672c}\u{8a9e}": 9};
+ for (i in 0..<16) { values["padding-${i}"] = i; }
+ io.println(values.get("1"));
+ io.println(values[1]);
+ io.println(values[""]);
+ io.println(values.get("s\u{0}\u{65e5}\u{672c}\u{8a9e}"));
+ io.println(values.hasKey("1"));
+ io.println(values.contains("s\u{0}\u{65e5}\u{672c}\u{8a9e}"));
+ io.println(values.get("missing"));
+ values.delete("1");
+ io.println(values.hasKey("1"));
+ values["1"] = "again";
+ io.println(values["1"]);
+ io.println(values.get(1));
+ io.println(values.keys().last());
+ `, "string\ninteger\n7\n9\ntrue\ntrue\nnull\nfalse\nagain\ninteger\n1\n")
+}
+
+func TestParityMoneyExactArithmeticAndAllocation(t *testing.T) {
+	runParityModulesDir(t, t.TempDir(), `import money as cash;
+import locale;
+import json;
+import io;
+class Price extends cash.Money { func Price(any amount, string code) { parent(amount,code); } }
+let value = Price("12.34", "gbp");
+let multiply = value.multiply;
+io.println(multiply(factor:2));
+io.println(multiply(rounding:"halfEven",factor:1.05));
+io.println(value + cash.fromMinor(66,"GBP"));
+for (share in cash.Money(10,"GBP").split(3)) { io.println(share); }
+for (share in cash.fromMinor(-5,"GBP").allocate([1,2,0])) { io.println(share.minorUnits); }
+for (mode in ["halfEven","halfAwayFromZero","floor","ceil"]) { io.println(cash.Money(-1.245,"GBP",mode).minorUnits); }
+for (action in ["fraction","currency","immutable","float"]) {
+    try {
+        if (action == "fraction") { cash.Money(1.001,"GBP"); }
+        else if (action == "currency") { value + cash.Money(1,"USD"); }
+        else if (action == "immutable") { value.minorUnits = 7; }
+        else { cash.Money(1.1f,"GBP"); }
+    } catch (Error error) { io.println(action + " rejected"); }
+}
+let large = cash.Money("900719925474099312345.67","GBP");
+io.println(large.minorUnits);
+io.println(json.parseAs(json.stringify(large),cash.Money) == large);
+let info = locale.currencyInfo(code:" gbp ");
+io.println(info["code"]);
+info["fractionDigits"] = 9;
+io.println(locale.currencyInfo("GBP")["fractionDigits"]);
+io.println(locale.currencyInfo("JPY")["fractionDigits"]);
+io.println(locale.currencyInfo("KWD")["fractionDigits"]);
+`, "GBP 24.68\nGBP 12.96\nGBP 13.00\nGBP 3.34\nGBP 3.33\nGBP 3.33\n-2\n-3\n0\n-124\n-125\n-125\n-124\nfraction rejected\ncurrency rejected\nimmutable rejected\nfloat rejected\n90071992547409931234567\ntrue\nGBP\n2\n0\n3\n")
+}
+
+func TestParityBoundMethodNamedDispatchContexts(t *testing.T) {
+	runParityModulesDir(t, t.TempDir(), `import io;
+import async;
+func wrap(callable next): callable {
+    return func(any ...args): any { return "[" + next(...args) + "]"; };
+}
+class Box {
+    @wrap
+    func label(string text = "default", int n = 7): string { return "${text}:${n}"; }
+    @wrap
+    static func stamp(string text = "static", int n = 7): string { return "${text}:${n}"; }
+    func numbers(int n = 7): generator<int> { yield n; yield n+1; }
+    async func twice(int n = 7): int { return n*2; }
+}
+let label=Box().label;
+io.println(label(n:2));
+let stamp=Box.stamp;
+io.println(stamp(n:3));
+let numbers=Box().numbers;
+for (n in numbers(n:4)) { io.println(n); }
+let twice=Box().twice;
+io.println(async.await(twice(n:6)));
+func higher(callable f): string { return f(n:8); }
+io.println(higher(label));
+try { label(unknown:1); } catch (Error e) { io.println("invalid rejected"); }
+io.println(label(n:9));
+`, "[default:2]\n[static:3]\n4\n5\n12\n[default:8]\ninvalid rejected\n[default:9]\n")
+}
+
+func TestParityGenericVariadicMethodValues(t *testing.T) {
+	const source = `import io;
+class Bag<T> {
+    func collect(T ...values): string { return "${values}"; }
+}
+let bag=Bag<int>();
+let bound=bag.collect;
+io.println(bound(values:3));
+io.println(bound(...[4,5]));
+any bad="wrong";
+try { io.println(bound(values:bad)); } catch (TypeError e) { io.println("rejected named"); }
+try { io.println(bound(bad)); } catch (TypeError e) { io.println("rejected positional"); }
+try { io.println(bag.collect(bad)); } catch (TypeError e) { io.println("rejected direct"); }
+`
+	const want = "[3]\n[4, 5]\nrejected named\nrejected positional\nrejected direct\n"
+	runParity(t, source, want)
+	dir := t.TempDir()
+	writeModule(t, dir, "generic_bound_fixture", `module generic_bound_fixture;
+ export class Bag<T> { func collect(T ...values): string { return "${values}"; } }
+ `)
+	start := strings.Index(source, "let bag=")
+	runParityModulesDir(t, dir, "import io;\nimport generic_bound_fixture;\nclass Bag extends generic_bound_fixture.Bag<int> {}\n"+strings.Replace(source[start:], "Bag<int>()", "Bag()", 1), want)
+}
+
+func TestParityBoundDefaultsAndVariadicValidation(t *testing.T) {
+	source := `import io;
+class Box {
+ func accumulate(list<int> values = [], int n = 1): int { values.push(n); return values.length(); }
+ func gather(string head = "a", int ...rest): string { return "${head}:${rest}"; }
+}
+let accumulate = Box().accumulate;
+io.println(accumulate(n:2));
+io.println(accumulate(n:3));
+list<int> provided = [];
+io.println(accumulate(values:provided));
+io.println(provided);
+let gather = Box().gather;
+io.println(gather(rest:3,head:"y"));
+try { gather(rest:[3,4],head:"y"); } catch (TypeError e) { io.println("rejected"); }
+io.println(gather("a", ...[4,5]));
+`
+	const want = "1\n1\n1\n[1]\ny:[3]\nrejected\na:[4, 5]\n"
+	runParity(t, source, want)
+	dir := t.TempDir()
+	writeModule(t, dir, "bound_fixture", `module bound_fixture;
+ export class Box {
+  func accumulate(list<int> values = [], int n = 1): int { values.push(n); return values.length(); }
+  func gather(string head = "a", int ...rest): string { return "${head}:${rest}"; }
+ }
+ `)
+	ownEnd := strings.Index(source, "let accumulate")
+	runParityModulesDir(t, dir, "import io;\nimport bound_fixture;\nclass Box extends bound_fixture.Box {}\n"+source[ownEnd:], want)
+}
+
+func TestParityBoundMethodNamedDefaults(t *testing.T) {
+	runParity(t, `import io;
+class Box {
+    func label(string text = "default", int n = 7): string { return "${text}:${n}"; }
+}
+let label = Box().label;
+io.println(label(n: 2));
+io.println(label(n: 3, text: "named"));
+io.println("after");
+`, "default:2\nnamed:3\nafter\n")
+}
+
+func TestParityBoundMethodFromImportedAncestor(t *testing.T) {
+	dir := t.TempDir()
+	writeModule(t, dir, "donor", `module donor;
+string prefix = "parent";
+export class Grandparent {
+    int value;
+    func Grandparent(int value) { this.value = value; }
+    func label(string text = "default", int n = 7): string { return "${prefix}:${this.value}:${text}:${n}"; }
+}
+export class Parent extends Grandparent { func Parent(int value) { parent(value); } }
+`)
+	runParityModulesDir(t, dir, `import donor as base;
+import io;
+class Intermediate extends base.Parent {
+    func Intermediate(int value) { parent(value); }
+    func __get(string name): any { return "magic:" + name; }
+}
+class Leaf extends Intermediate { func Leaf(int value) { parent(value); } func own(): string { return "own"; } }
+let instance = Leaf(2);
+let label = instance.label;
+io.println(label());
+instance.value = 9;
+io.println(label(n:4));
+io.println(label(n:3,text:"hello"));
+let own = instance.own;
+io.println(own());
+io.println(instance.missing);
+`, "parent:2:default:7\nparent:9:default:4\nparent:9:hello:3\nown\nmagic:missing\n")
+}
+
+func TestParityNestedBodyDelimiters(t *testing.T) {
+	runParity(t, `import io;
+class Base { func wrap(string value): string { return "{${value}}"; } }
+class Child extends Base {
+    func describe(bool first): string {
+        let choose = func(): string { if (first) { return "first"; } return "second"; };
+        return this.wrap(choose());
+    }
+}
+io.println(Child().describe(true));
+io.println(Child().describe(false));
+io.println(Child().wrap("}"));
+`, "{first}\n{second}\n{}}\n")
+}
+
 func TestParityCLIContextPromptsAndValidation(t *testing.T) {
 	runParityModulesDir(t, t.TempDir(), `import cli;
 import cli.command;

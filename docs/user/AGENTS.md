@@ -32,6 +32,7 @@ Tests are `*_test.gb` files next to source.
 ```
 geblang run main.gb              # run a script
 geblang test tests/              # run *_test.gb under a path
+geblang test --jobs 4 tests/     # isolated parallel files
 geblang check src/               # static check (no execution)
 geblang fmt src/                 # format in place (--clean, --strip-comments)
 geblang doc src/                 # print signatures for a file or dir
@@ -511,6 +512,7 @@ introspection builtins.
 | `collections` | `maxBy`, `groupBy`, `chunk`, `sortBy`, lazy `lazyMap`/`lazyFilter`. |
 | `streams` | lazy iteration pipelines. |
 | `strbuilder` | O(n) string accumulation. |
+| `money` | Immutable currency values: `Money("12.34", "GBP")`, `fromMinor(1234, "GBP")`; explicit rounding and total-preserving `split`/`allocate`. |
 | `math` | trig, log, floor/ceil/round, prime tests, special functions (gamma, error functions, Bessel). |
 | `ndarray` | N-dimensional numeric arrays: broadcasting, views, reductions, linear algebra, seeded random. |
 | `dataframe` | columnar frames: typed columns, expression/predicate filters, `groupBy().agg()`, joins, pivot, CSV/JSON/SQL IO. |

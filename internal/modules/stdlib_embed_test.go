@@ -1,8 +1,10 @@
 package modules
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -11,7 +13,7 @@ import (
 )
 
 func TestEmbeddedStdlibContainsSourceModules(t *testing.T) {
-	for _, p := range []string{"stdlib/llm.gb", "stdlib/llm/openai.gb", "stdlib/rag.gb", "stdlib/geblang.yaml"} {
+	for _, p := range []string{"stdlib/money.gb", "stdlib/llm.gb", "stdlib/llm/openai.gb", "stdlib/rag.gb", "stdlib/geblang.yaml"} {
 		if _, err := rootembed.StdlibFS.ReadFile(p); err != nil {
 			t.Errorf("embedded stdlib missing %s: %v", p, err)
 		}
@@ -63,5 +65,41 @@ func TestEmbeddedStdlibHashChangesWithContentAndPaths(t *testing.T) {
 	}
 	if changed == added {
 		t.Fatal("new module reused the same cache key")
+	}
+}
+
+func TestEnsureEmbeddedStdlibConcurrentReadersSeeCompleteSources(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	var workers sync.WaitGroup
+	failures := make(chan error, 8)
+	for range 8 {
+		workers.Go(func() {
+			dir := ensureEmbeddedStdlib()
+			if dir == "" {
+				failures <- fmt.Errorf("could not resolve stdlib")
+				return
+			}
+			for _, name := range []string{"money.gb", "resources.gb", "geblang.yaml"} {
+				want, err := rootembed.StdlibFS.ReadFile("stdlib/" + name)
+				if err != nil {
+					failures <- err
+					return
+				}
+				got, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					failures <- err
+					return
+				}
+				if string(got) != string(want) {
+					failures <- fmt.Errorf("incomplete source %s", name)
+					return
+				}
+			}
+		})
+	}
+	workers.Wait()
+	close(failures)
+	for err := range failures {
+		t.Error(err)
 	}
 }

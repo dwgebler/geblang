@@ -927,6 +927,9 @@ func (vm *VM) decoratedStaticValue(funcIndex int64, name string) runtime.Value {
 		return runtime.Function{
 			Identity: identity,
 			Name:     name,
+			NativeNamed: func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
+				return vm.CallBoundMethodValue(nil, funcIndex, args, names)
+			},
 			Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				res, err, _ := vm.callBoundDecoratedValue(nil, funcIndex, args)
 				return res, err
@@ -936,11 +939,14 @@ func (vm *VM) decoratedStaticValue(funcIndex int64, name string) runtime.Value {
 	return runtime.Function{
 		Identity: identity,
 		Name:     name,
+		NativeNamed: func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
+			return loader.CallModuleMethodValue(module, funcIndex, nil, args, names, nil)
+		},
 		Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-			return loader.CallModuleMethodValue(module, funcIndex, nil, args, nil)
+			return loader.CallModuleMethodValue(module, funcIndex, nil, args, nil, nil)
 		},
 		BridgeInvoke: func(host any, args []runtime.Value) (runtime.Value, error) {
-			return loader.CallModuleMethodValue(module, funcIndex, nil, args, host.(*VM))
+			return loader.CallModuleMethodValue(module, funcIndex, nil, args, nil, host.(*VM))
 		},
 	}
 }
@@ -961,6 +967,11 @@ func (vm *VM) StaticMethodValueFast(classIndex int64, name string) (runtime.Valu
 func (vm *VM) bindLocalMethod(instance *runtime.Instance, classInfo ClassInfo, name string) (runtime.Value, bool) {
 	indices, ok := vm.lookupMethod(classInfo, name)
 	if !ok || len(indices) == 0 {
+		if module, parent, boundary := vm.crossModuleBoundary(classInfo); boundary && vm.moduleLoader != nil {
+			if home, index, found := vm.moduleLoader.MethodFirstOverload(module, parent, name); found {
+				return vm.bindMethodValue(instance, home, index, name), true
+			}
+		}
 		return nil, false
 	}
 	return vm.bindMethodValue(instance, vm.moduleName, indices[0], name), true
@@ -986,6 +997,9 @@ func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcInd
 		return runtime.Function{
 			Identity: runtime.NewFunctionIdentity(),
 			Name:     name,
+			NativeNamed: func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
+				return vm.CallBoundMethodValue(instance, funcIndex, args, names)
+			},
 			Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				if res, err, handled := vm.callBoundDecoratedValue(instance, funcIndex, args); handled {
 					return res, err
@@ -1001,11 +1015,14 @@ func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcInd
 	return runtime.Function{
 		Identity: runtime.NewFunctionIdentity(),
 		Name:     name,
+		NativeNamed: func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
+			return loader.CallModuleMethodValue(module, funcIndex, instance, args, names, nil)
+		},
 		Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-			return loader.CallModuleMethodValue(module, funcIndex, instance, args, nil)
+			return loader.CallModuleMethodValue(module, funcIndex, instance, args, nil, nil)
 		},
 		BridgeInvoke: func(host any, args []runtime.Value) (runtime.Value, error) {
-			return loader.CallModuleMethodValue(module, funcIndex, instance, args, host.(*VM))
+			return loader.CallModuleMethodValue(module, funcIndex, instance, args, nil, host.(*VM))
 		},
 	}
 }

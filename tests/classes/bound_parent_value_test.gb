@@ -1,0 +1,70 @@
+import test;
+import bound_parent_methods as donor;
+
+class IntermediateBound extends donor.Parent {
+    func IntermediateBound(int value) {
+        parent(value);
+    }
+    func __get(string name): any {
+        return "magic:" + name;
+    }
+}
+
+class LeafBound extends IntermediateBound {
+    func LeafBound(int value) {
+        parent(value);
+    }
+    func own(): string {
+        return "own";
+    }
+}
+
+class BoundParentValueTest extends test.Test {
+    @test
+    func inheritedMethodsKeepTheirReceiverModuleAndDefaults(): void {
+        let instance = LeafBound(2);
+        let label = instance.label;
+        this.assertEquals("parent:2:default:7", label());
+        instance.value = 9;
+        this.assertEquals("parent:9:default:4", label(n: 4));
+        this.assertEquals("parent:9:hello:3", label(n: 3, text: "hello"));
+        let own = instance.own;
+        this.assertEquals("own", own());
+        this.assertEquals("magic:missing", instance.missing);
+    }
+
+    @test
+    func boundCallsGetFreshDefaultsAndValidateVariadicElements(): void {
+        let value = LeafBound(1);
+        let accumulate = value.accumulate;
+        this.assertEquals(1, accumulate(n: 2));
+        this.assertEquals(1, accumulate(n: 3));
+        list<int> provided = [5];
+        this.assertEquals(2, accumulate(values: provided, n: 4));
+        this.assertEquals([5, 4], provided);
+        list<int> empty = [];
+        this.assertEquals(1, accumulate(values: empty));
+        this.assertEquals([1], empty);
+        let gather = value.gather;
+        this.assertEquals("y:[3]", gather(rest: 3, head: "y"));
+        this.assertThrowsOf(func(): void { gather(rest: [3, 4], head: "y"); }, "TypeError");
+        this.assertEquals("a:[4, 5]", gather("a", ...[4, 5]));
+    }
+}
+
+class InheritedGenericBoundBag extends donor.GenericBag<int> {
+}
+
+class InheritedGenericBoundTest extends test.Test {
+    @test
+    func inheritedVariadicsKeepReceiverTypeBindings(): void {
+        let bag = InheritedGenericBoundBag();
+        let method = bag.collect;
+        this.assertEquals("[3]", method(values: 3));
+        this.assertEquals("[4, 5]", method(...[4, 5]));
+        any bad = "wrong";
+        this.assertThrowsOf(func(): void { method(values: bad); }, "TypeError");
+        this.assertThrowsOf(func(): void { method(bad); }, "TypeError");
+        this.assertThrowsOf(func(): void { bag.collect(bad); }, "TypeError");
+    }
+}

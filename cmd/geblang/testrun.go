@@ -47,9 +47,6 @@ func prepareTestProgram(path string, tags []string, classFilter string, methodFi
 	if err := foldEmbeds(base, path); err != nil {
 		return nil, err
 	}
-	if err := analyzeCrossModule(path, base, resolver); err != nil {
-		return nil, err
-	}
 	classes := testClasses(parsed)
 	if classFilter != "" {
 		filtered := classes[:0]
@@ -61,6 +58,10 @@ func prepareTestProgram(path string, tags []string, classFilter string, methodFi
 		classes = filtered
 	}
 	if len(classes) == 0 {
+		// Filtered files still need validation even when no runner is emitted.
+		if err := analyzeCrossModule(path, base, resolver); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
 	runnerProgram, err := parseOnly(buildTestRunner(classes, tags, methodFilters, format))

@@ -1,0 +1,170 @@
+import test;
+import money;
+import locale;
+import json;
+
+class InheritedMoney extends money.Money {
+    func InheritedMoney(any amount, string currency) {
+        parent(amount, currency);
+    }
+    func doubled(): money.Money {
+        return this.multiply(2);
+    }
+}
+
+class MoneyTest extends test.Test {
+    @test
+    func currencyMetadataSharesCanonicalCodesAndDoesNotLeakMutations(): void {
+        let info = locale.currencyInfo(code: " gbp ");
+        this.assertEquals("GBP", info["code"]);
+        this.assertEquals(2, info["fractionDigits"]);
+        info["fractionDigits"] = 9;
+        this.assertEquals(2, locale.currencyInfo("GBP")["fractionDigits"]);
+        this.assertEquals(0, locale.currencyInfo("JPY")["fractionDigits"]);
+        this.assertEquals(3, locale.currencyInfo("KWD")["fractionDigits"]);
+    }
+
+    @test
+    func constructionPreservesExactMajorAndMinorUnits(): void {
+        let value = money.Money("900719925474099312345.67", " gbp ");
+        this.assertEquals("GBP", value.currency);
+        this.assertEquals(90071992547409931234567, value.minorUnits);
+        this.assertEquals(2, value.fractionDigits);
+        this.assertEquals("GBP 900719925474099312345.67", value.toString());
+        this.assertEquals(value, money.fromMinor(value.minorUnits, "GBP"));
+        this.assertEquals(100, money.Money(1, "USD").minorUnits);
+        this.assertEquals(1234, money.Money(1.234, "KWD").minorUnits);
+        this.assertEquals(1234, money.Money(1234, "JPY").minorUnits);
+    }
+
+    @test
+    func constructionRejectsImplicitLossAndInvalidInputs(): void {
+        for (amount in [1.1f, true, [], null]) {
+            this.assertThrowsOf(func(): void { money.Money(amount, "GBP"); }, "TypeError");
+        }
+        for (amount in ["", "bad", "1.2.3"]) {
+            this.assertThrowsOf(func(): void { money.Money(amount, "GBP"); }, "ValueError");
+        }
+        this.assertThrowsOf(func(): void { money.Money(1.001, "GBP"); }, "ValueError");
+        this.assertThrowsOf(func(): void { money.Money(1.1, "JPY"); }, "ValueError");
+        this.assertThrowsOf(func(): void { money.Money(1, "NOT_A_CURRENCY"); }, "ValueError");
+        this.assertThrowsOf(func(): void { money.Money(1, "XXX"); }, "ValueError");
+        this.assertThrowsOf(func(): void { money.Money(1, "GBP", "bad"); }, "ValueError");
+    }
+
+    @test
+    func roundingHandlesSignsTiesAndDirections(): void {
+        let cases = [
+            ["halfEven", 1.245, 124],
+            ["halfEven", 1.255, 126],
+            ["halfEven", -1.245, -124],
+            ["halfEven", -1.255, -126],
+            ["halfAwayFromZero", 1.245, 125],
+            ["halfAwayFromZero", -1.245, -125],
+            ["halfTowardZero", 1.245, 124],
+            ["halfTowardZero", -1.245, -124],
+            ["towardZero", 1.249, 124],
+            ["towardZero", -1.249, -124],
+            ["awayFromZero", 1.241, 125],
+            ["awayFromZero", -1.241, -125],
+            ["floor", 1.249, 124],
+            ["floor", -1.241, -125],
+            ["ceil", 1.241, 125],
+            ["ceil", -1.249, -124],
+            ["halfEven", 1.244, 124],
+            ["halfEven", 1.246, 125],
+        ];
+        for (entry in cases) {
+            let value = money.Money(entry[1], "GBP", entry[0] as string);
+            this.assertEquals(entry[2], value.minorUnits);
+        }
+    }
+
+    @test
+    func arithmeticUsesMinorUnitsAndPreservesOperands(): void {
+        let a = money.Money(12.34, "GBP");
+        let b = money.fromMinor(66, "GBP");
+        this.assertEquals(money.Money(13, "GBP"), a + b);
+        this.assertEquals(money.Money(11.68, "GBP"), a - b);
+        this.assertEquals(money.Money(24.68, "GBP"), a * 2);
+        this.assertEquals(money.Money(6.17, "GBP"), a / 2);
+        this.assertEquals(money.Money(-12.34, "GBP"), -a);
+        this.assertEquals(a, (-a).abs());
+        this.assertEquals(1234, a.minorUnits);
+        this.assertTrue(a > b && a >= b && b < a && b <= a);
+        this.assertEquals(1, a.compare(b));
+        this.assertFalse(a == money.Money(12.34, "USD"));
+        this.assertFalse(a == 1234);
+        this.assertThrowsOf(func(): void { a + money.Money(1, "USD"); }, "ValueError");
+        this.assertThrowsOf(func(): void { a < money.Money(1, "USD"); }, "ValueError");
+        this.assertThrowsOf(func(): void { money.Money(1, "GBP") / 3; }, "ValueError");
+        this.assertThrowsOf(func(): void { a.divide(0); }, "ValueError");
+        this.assertEquals(money.fromMinor(33, "GBP"), money.Money(1, "GBP").divide(3, "halfEven"));
+        this.assertEquals(money.fromMinor(1296, "GBP"), a.multiply(1.05, "halfEven"));
+    }
+
+    @test
+    func allocationUsesLargestRemaindersAndStableTies(): void {
+        let equal = money.Money(10, "GBP").split(3);
+        this.assertEquals(
+            [334, 333, 333],
+            equal.map(func(money.Money value): int { return value.minorUnits; })
+        );
+        let weighted = money.fromMinor(5, "GBP").allocate([1, 2, 0]);
+        this.assertEquals(
+            [2, 3, 0],
+            weighted.map(func(money.Money value): int { return value.minorUnits; })
+        );
+        let refund = money.fromMinor(-5, "GBP").allocate([1, 2, 0]);
+        this.assertEquals(
+            [-2, -3, 0],
+            refund.map(func(money.Money value): int { return value.minorUnits; })
+        );
+        for (units in -30..30) {
+            let shares = money.fromMinor(units, "JPY").allocate([0, 1, 3, 7, 0]);
+            int sum = 0;
+            for (share in shares) {
+                sum += share.minorUnits;
+                this.assertEquals("JPY", share.currency);
+            }
+            this.assertEquals(units, sum);
+            this.assertEquals(0, shares[0].minorUnits);
+            this.assertEquals(0, shares[4].minorUnits);
+        }
+        this.assertThrowsOf(func(): void { money.Money(1, "GBP").split(0); }, "ValueError");
+        for (weights in [[], [0, 0], [-1, 2]]) {
+            this.assertThrowsOf(
+                func(): void { money.Money(1, "GBP").allocate(weights as list<int>); },
+                "ValueError"
+            );
+        }
+    }
+
+    @test
+    func immutableValuesKeepTheirTypeAcrossInheritedAndBoundCalls(): void {
+        let value = InheritedMoney(1, "GBP");
+        this.assertEquals(money.Money(2, "GBP"), value.doubled());
+        money.Money base = value;
+        let multiply = base.multiply;
+        this.assertEquals(money.Money(3, "GBP"), multiply(3));
+        this.assertEquals(money.Money(3, "GBP"), multiply(factor: 3));
+        this.assertThrowsOf(func(): void { value.minorUnits = 7; }, "ImmutableError");
+        this.assertThrowsOf(func(): void { value.currency = "USD"; }, "ImmutableError");
+    }
+
+    @test
+    func formattingAndSerializationPreserveExactAmounts(): void {
+        let value = money.Money("900719925474099312345.67", "GBP");
+        this.assertEquals(locale.formatCurrency(value.amount(), "GBP", "en"), value.format("en"));
+        this.assertEquals(value, json.parseAs(json.stringify(value), money.Money));
+        this.assertContains(json.stringify(value), '"amount":"900719925474099312345.67"');
+        this.assertThrowsOf(
+            func(): void { json.parseAs('{"amount":12.34,"currency":"GBP"}', money.Money); },
+            "ValueError"
+        );
+        this.assertThrowsOf(
+            func(): void { json.parseAs('{"amount":"1.001","currency":"GBP"}', money.Money); },
+            "ValueError"
+        );
+    }
+}

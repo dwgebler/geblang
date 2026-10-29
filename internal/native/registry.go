@@ -128,7 +128,8 @@ func IsPureBuiltinModule(module string) bool {
 var pureBuiltins = map[string]map[string]struct{}{
 	"locale": {
 		"canonicalTag": {}, "formatNumber": {}, "formatCurrency": {},
-		"formatDate": {}, "compare": {}, "pluralCategory": {},
+		"currencyInfo": {},
+		"formatDate":   {}, "compare": {}, "pluralCategory": {},
 	},
 	"i18n_native": {"interpolate": {}},
 	"math": {
