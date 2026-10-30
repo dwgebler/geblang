@@ -1,0 +1,7 @@
+module qcast_acfg;
+
+import qcast_base;
+
+export type W = qcast_base.W;
+
+export func make(): ?W { return qcast_base.W(1); }

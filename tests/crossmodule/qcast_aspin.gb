@@ -1,0 +1,10 @@
+module qcast_aspin;
+
+import qcast_acfg as cfg;
+
+export func go(): int {
+    let w = cfg.make() as cfg.W;
+    return w.n;
+}
+
+export func check(any v): bool { return v instanceof cfg.W; }

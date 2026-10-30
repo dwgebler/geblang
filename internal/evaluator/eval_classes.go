@@ -1749,7 +1749,7 @@ func (e *Evaluator) resolveTypeRef(ref *ast.TypeRef, env *runtime.Environment) *
 	}
 	resolved, ok := env.GetTypeAlias(out.Name)
 	if !ok {
-		if target, exported := e.exportedTypeAlias(out.Name); exported {
+		if target, exported := e.exportedTypeAlias(out.Name, env); exported {
 			resolved, ok = e.resolveTypeRef(target, env), true
 		}
 	}
@@ -1769,7 +1769,9 @@ func (e *Evaluator) resolveTypeRef(ref *ast.TypeRef, env *runtime.Environment) *
 		out.Arguments[i] = e.resolveTypeRef(arg, env)
 	}
 	if dot := strings.LastIndexByte(out.Name, '.'); dot > 0 {
-		if canonical, imported := e.importNames[out.Name[:dot]]; imported {
+		if module := e.moduleForPrefix(out.Name[:dot], env); module != nil {
+			out.ResolvedModule = module.Canonical
+		} else if canonical, imported := e.importNames[out.Name[:dot]]; imported {
 			out.ResolvedModule = canonical
 		}
 	}
@@ -1781,7 +1783,7 @@ func (e *Evaluator) resolveTypeRef(ref *ast.TypeRef, env *runtime.Environment) *
 			}
 		}
 		if nominalValue == nil {
-			if module := e.moduleForPrefix(prefix); module != nil {
+			if module := e.moduleForPrefix(prefix, env); module != nil {
 				nominalValue = module.Exports[member]
 			}
 		}

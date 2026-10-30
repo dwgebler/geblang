@@ -1,0 +1,6 @@
+module qcast_base;
+
+export class W {
+    int n;
+    func W(int n) { this.n = n; }
+}

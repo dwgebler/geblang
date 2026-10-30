@@ -1,5 +1,15 @@
 # Release Notes
 
+## 1.40.2
+
+### Fixes
+
+- Regression in 1.40.1: on the evaluator, a qualified type in a cast (such as
+  `value as cfg.Weights`) resolved its module alias from the most recent import
+  of that alias anywhere in the program instead of from its own module's
+  import. When two modules imported different modules under the same alias,
+  the cast failed with `cannot cast`. The VM was not affected.
+
 ## 1.40.1
 
 ### Added

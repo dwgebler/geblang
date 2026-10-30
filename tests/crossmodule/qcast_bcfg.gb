@@ -1,0 +1,3 @@
+module qcast_bcfg;
+
+export func two(): int { return 2; }

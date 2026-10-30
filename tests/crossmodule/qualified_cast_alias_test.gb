@@ -1,0 +1,16 @@
+/**
+ * @title Qualified casts through a shared import alias
+ * @summary Two modules importing different modules under the same alias each resolve `alias.Type` against their own import.
+ */
+import test;
+import qcast_aspin;
+import qcast_bspin;
+
+class QualifiedCastAliasTest extends test.Test {
+    @test
+    func laterSameAliasDoesNotHijackCasts(): void {
+        this.assertEquals(2, qcast_bspin.go());
+        this.assertEquals(1, qcast_aspin.go());
+        this.assertFalse(qcast_aspin.check(2));
+    }
+}

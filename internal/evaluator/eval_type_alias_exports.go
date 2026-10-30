@@ -28,7 +28,13 @@ func cutLastDot(name string) (string, string, bool) {
 }
 
 // Child evaluators start with an empty module table, so lookups fall back to the parent chain.
-func (e *Evaluator) moduleForPrefix(prefix string) *runtime.Module {
+func (e *Evaluator) moduleForPrefix(prefix string, env *runtime.Environment) *runtime.Module {
+	// The scope's own import wins over the last-write-wins importNames map.
+	if value, ok := env.Get(prefix); ok {
+		if module, ok := value.(*runtime.Module); ok {
+			return module
+		}
+	}
 	canonical := prefix
 	if target, ok := e.importNames[prefix]; ok {
 		canonical = target
@@ -41,12 +47,12 @@ func (e *Evaluator) moduleForPrefix(prefix string) *runtime.Module {
 	return nil
 }
 
-func (e *Evaluator) exportedTypeAliasTarget(name string) (string, bool) {
+func (e *Evaluator) exportedTypeAliasTarget(name string, env *runtime.Environment) (string, bool) {
 	prefix, member, ok := cutLastDot(name)
 	if !ok {
 		return "", false
 	}
-	module := e.moduleForPrefix(prefix)
+	module := e.moduleForPrefix(prefix, env)
 	if module == nil {
 		return "", false
 	}
@@ -54,8 +60,8 @@ func (e *Evaluator) exportedTypeAliasTarget(name string) (string, bool) {
 	return target, ok
 }
 
-func (e *Evaluator) exportedTypeAlias(name string) (*ast.TypeRef, bool) {
-	target, ok := e.exportedTypeAliasTarget(name)
+func (e *Evaluator) exportedTypeAlias(name string, env *runtime.Environment) (*ast.TypeRef, bool) {
+	target, ok := e.exportedTypeAliasTarget(name, env)
 	if !ok {
 		return nil, false
 	}
@@ -75,7 +81,7 @@ func (e *Evaluator) resolveAliasedTypeValue(ref *ast.TypeRef, env *runtime.Envir
 	if !qualified {
 		return nil, false
 	}
-	module := e.moduleForPrefix(prefix)
+	module := e.moduleForPrefix(prefix, env)
 	if module == nil {
 		return nil, false
 	}
@@ -109,6 +115,6 @@ func (e *Evaluator) typeAliasLookup(env *runtime.Environment) typealias.Lookup {
 		if target, ok := env.GetTypeAlias(name); ok {
 			return target.String(), true
 		}
-		return e.exportedTypeAliasTarget(name)
+		return e.exportedTypeAliasTarget(name, env)
 	}
 }

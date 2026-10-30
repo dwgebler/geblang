@@ -148,3 +148,20 @@ io.println(reflect.typeBindings(Pair(null, null)));
 		t.Fatalf("vm output:\n%s\nwant:\n%s", vm, want)
 	}
 }
+
+// Two modules import different modules under the same alias; the later import must not hijack the earlier module's qualified casts.
+func TestParityQualifiedCastUsesOwnImportAlias(t *testing.T) {
+	runParityModulesDir(t, moduleDirFor(t, map[string]string{
+		"qcbase":  "module qcbase;\nexport class W { int n; func W(int n) { this.n = n; } }\n",
+		"qcacfg":  "module qcacfg;\nimport qcbase;\nexport type W = qcbase.W;\nexport func make(): ?W { return qcbase.W(1); }\n",
+		"qcbcfg":  "module qcbcfg;\nexport func two(): int { return 2; }\n",
+		"qcaspin": "module qcaspin;\nimport qcacfg as cfg;\nexport func go(): int { let w = cfg.make() as cfg.W; return w.n; }\nexport func check(any v): bool { return v instanceof cfg.W; }\n",
+		"qcbspin": "module qcbspin;\nimport qcbcfg as cfg;\nexport func go(): int { return cfg.two(); }\n",
+	}), `import io;
+import qcaspin;
+import qcbspin;
+io.println(qcbspin.go());
+io.println(qcaspin.go());
+io.println(qcaspin.check(qcbspin.go()));
+`, "2\n1\nfalse\n")
+}

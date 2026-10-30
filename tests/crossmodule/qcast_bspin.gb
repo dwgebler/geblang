@@ -1,0 +1,5 @@
+module qcast_bspin;
+
+import qcast_bcfg as cfg;
+
+export func go(): int { return cfg.two(); }
