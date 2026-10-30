@@ -1,5 +1,22 @@
 # Release Notes
 
+## 1.40.3
+
+### Performance
+
+- Recovers most of the performance lost in 1.40.1. Releasing references held
+  by popped values and returned call frames no longer clears memory in bulk on
+  every instruction, and values that hold no reference skip the release, so
+  call-heavy and arithmetic code is close to 1.40.0 speed again. Memory is
+  still released as in 1.40.1.
+- JSON encoding runs its cycle and nesting-depth checks only on lists,
+  dictionaries and objects and compares ancestors by identity directly,
+  recovering most of the encoding time added in 1.40.1. The checks themselves
+  are unchanged.
+- Casts to `string`, `int`, `decimal`, `float` and `bool` of values other than
+  objects and errors take a direct path, removing the per-cast overhead added
+  in 1.40.1. Results and errors are unchanged.
+
 ## 1.40.2
 
 ### Fixes

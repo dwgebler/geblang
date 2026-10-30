@@ -284,7 +284,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 				stackArgs := vm.stack[base : base+argc+1]
 				vm.stack = vm.stack[:base]
 				nextIP, err := vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
-				clear(stackArgs)
+				releaseBoxed(stackArgs)
 				if err != nil {
 					return 0, err
 				}

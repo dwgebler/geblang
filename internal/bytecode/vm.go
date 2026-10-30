@@ -871,7 +871,8 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				if l, lok := leftVM.Boxed.(runtime.String); lok {
 					if r, rok := rightVM.Boxed.(runtime.String); rok {
 						vm.stack[n-2] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: l.Value + r.Value}}
-						vm.truncateStack(n - 1)
+						vm.stack[n-1].Boxed = nil
+						vm.stack = vm.stack[:n-1]
 						continue
 					}
 				}
@@ -932,7 +933,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					result = runtime.VMValueSmallInt(v)
 				}
 				vm.stack[n-2] = result
-				vm.truncateStack(n - 1)
+				vm.stack = vm.stack[:n-1] // small-int operands hold no reference
 				continue
 			}
 			// Fallback: materialise both operands as runtime.Value, drop
@@ -984,7 +985,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					result = li == ri
 				}
 				vm.stack[n-2] = runtime.VMValueBool(result)
-				vm.truncateStack(n - 1)
+				vm.stack = vm.stack[:n-1] // small-int operands hold no reference
 				continue
 			}
 			// Fallback for non-SmallInt int values (runtime.Int after overflow):
@@ -1082,7 +1083,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if lvm.Kind == runtime.VMKindSmallInt && rvm.Kind == runtime.VMKindSmallInt {
 				li := lvm.I64
 				ri := rvm.I64
-				vm.truncateStack(n - 2)
+				vm.stack = vm.stack[:n-2] // small-int operands hold no reference
 				var jump bool
 				switch instruction.Op {
 				case OpJumpIfNotLessInt:
@@ -5905,8 +5906,28 @@ func (vm *VM) pushVM(value runtime.VMValue) {
 }
 
 func (vm *VM) truncateStack(n int) {
-	clear(vm.stack[n:])
+	if n == len(vm.stack)-1 {
+		if vm.stack[n].Boxed != nil {
+			vm.stack[n].Boxed = nil
+		}
+		vm.stack = vm.stack[:n]
+		return
+	}
+	vm.truncateStackRange(n)
+}
+
+func (vm *VM) truncateStackRange(n int) {
+	releaseBoxed(vm.stack[n:])
 	vm.stack = vm.stack[:n]
+}
+
+// releaseBoxed drops dead references field-wise: clear() on a pointerful slice costs a bulk barrier per call.
+func releaseBoxed(values []runtime.VMValue) {
+	for i := range values {
+		if values[i].Boxed != nil {
+			values[i].Boxed = nil
+		}
+	}
 }
 
 func (vm *VM) pop() (runtime.Value, error) {

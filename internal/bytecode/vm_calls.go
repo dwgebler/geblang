@@ -132,7 +132,7 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 		stackArgs := vm.stack[n-int(argc) : n]
 		vm.stack = vm.stack[:n-int(argc)]
 		nextIP, err := vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
-		clear(stackArgs)
+		releaseBoxed(stackArgs)
 		return nextIP, err
 	}
 	decorated, hasDecorated := vm.decoratedFuncs[index]
@@ -146,7 +146,7 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 				stackArgs := vm.stack[n-int(argc) : n]
 				vm.stack = vm.stack[:n-int(argc)]
 				nextIP, err := vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
-				clear(stackArgs)
+				releaseBoxed(stackArgs)
 				return nextIP, err
 			}
 		}

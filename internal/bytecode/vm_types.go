@@ -446,6 +446,17 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 			}
 		}
 	}
+	if primitiveCastTargets[target] {
+		if n := len(vm.stack); n > 0 && !castMayDispatch(vm.stack[n-1]) {
+			value, _ := vm.pop()
+			converted, err := castValue(value, target)
+			if err != nil {
+				return 0, vm.callPropagate(instruction, err)
+			}
+			vm.push(converted)
+			return ip, nil
+		}
+	}
 	target = vm.canonicalTypeName(target)
 	declared := target
 	spec := vm.typeSpec(target)
@@ -1253,6 +1264,21 @@ func checkCastDunderReturn(target string, value runtime.Value) error {
 		}
 	}
 	return nil
+}
+
+// Primitive conversions need no checked-cast post-pass: castValue yields exactly the target type.
+var primitiveCastTargets = map[string]bool{"string": true, "int": true, "decimal": true, "float": true, "bool": true}
+
+// castMayDispatch reports values whose cast can run user code (cast dunders) or match by class.
+func castMayDispatch(slot runtime.VMValue) bool {
+	if slot.Kind != runtime.VMKindBoxed {
+		return false
+	}
+	switch slot.Boxed.(type) {
+	case *runtime.Instance, runtime.Error:
+		return true
+	}
+	return false
 }
 
 func castValue(value runtime.Value, target string) (runtime.Value, error) {

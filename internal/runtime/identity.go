@@ -3,6 +3,7 @@ package runtime
 import (
 	"reflect"
 	"sync"
+	"unsafe"
 )
 
 // FunctionIdentity marks one created function value; copies share it, separate creations do not.
@@ -134,6 +135,25 @@ func enumVariantsIdentical(l, r EnumVariant) bool {
 		}
 	}
 	return true
+}
+
+// ContainerIdentity returns the object a list, dict or instance refers to, the identity ValuesIdentical compares.
+func ContainerIdentity(value Value) (unsafe.Pointer, bool) {
+	switch v := value.(type) {
+	case *List:
+		return unsafe.Pointer(v), true
+	case *Instance:
+		return unsafe.Pointer(v), true
+	case Dict:
+		if v.data != nil {
+			return unsafe.Pointer(v.data), true
+		}
+		if v.Order != nil {
+			return unsafe.Pointer(v.Order), true
+		}
+		return reflect.ValueOf(v.Entries).UnsafePointer(), true
+	}
+	return nil, false
 }
 
 func sameDictStore(l, r Dict) bool {

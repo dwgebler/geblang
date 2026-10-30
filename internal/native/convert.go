@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"geblang/internal/runtime"
 
@@ -35,28 +36,41 @@ type ConversionContext struct {
 	ClassDeserializer ClassDeserializerFunc
 	StreamWriter      func(runtime.Value, []byte) (int, error)
 	jsonStream        *jsonStreamState
-	jsonPath          []runtime.Value
+	jsonPath          []unsafe.Pointer
 }
 
 const maxJSONDepth = 512
 
-// Track ancestors, not all visited values: repeated sibling aliases are valid JSON.
-func jsonDescend(ctx ConversionContext, value runtime.Value) (ConversionContext, error) {
+// isJSONContainer spares scalars the context copy of a jsonDescend call.
+func isJSONContainer(value runtime.Value) bool {
 	switch value.(type) {
 	case *runtime.List, runtime.Dict, *runtime.Instance:
-		if len(ctx.jsonPath) >= maxJSONDepth {
-			return ctx, fmt.Errorf("json: maximum nesting depth exceeded")
-		}
+		return true
+	}
+	return false
+}
+
+// Track ancestors, not all visited values: repeated sibling aliases are valid JSON.
+func jsonDescend(ctx ConversionContext, value runtime.Value) (ConversionContext, error) {
+	identity, container := runtime.ContainerIdentity(value)
+	if !container {
+		return ctx, nil
+	}
+	if len(ctx.jsonPath) >= maxJSONDepth {
+		return ctx, fmt.Errorf("json: maximum nesting depth exceeded")
+	}
+	// A nil identity is an empty literal dict, which cannot contain its ancestor.
+	if identity != nil {
 		for _, ancestor := range ctx.jsonPath {
-			if runtime.ValuesIdentical(ancestor, value) {
+			if ancestor == identity {
 				return ctx, fmt.Errorf("json: cyclic value")
 			}
 		}
-		if ctx.jsonPath == nil {
-			ctx.jsonPath = make([]runtime.Value, 0, 16)
-		}
-		ctx.jsonPath = append(ctx.jsonPath, value)
 	}
+	if ctx.jsonPath == nil {
+		ctx.jsonPath = make([]unsafe.Pointer, 0, 16)
+	}
+	ctx.jsonPath = append(ctx.jsonPath, identity)
 	return ctx, nil
 }
 
@@ -381,16 +395,53 @@ var jsonDictPairsPool = sync.Pool{
 	},
 }
 
+// encodeJSONDictSorted keeps its deferred pool release out of encodeJSONValueInto's hot frame.
+func encodeJSONDictSorted(ctx ConversionContext, buf *bytes.Buffer, v runtime.Dict, n int) error {
+	pairsPtr := jsonDictPairsPool.Get().(*jsonDictPairs)
+	pairs := *pairsPtr
+	pairs = pairs[:0]
+	defer func() {
+		clear(pairs)
+		if cap(pairs) <= 4096 {
+			*pairsPtr = pairs[:0]
+			jsonDictPairsPool.Put(pairsPtr)
+		}
+	}()
+	if cap(pairs) < n {
+		pairs = make(jsonDictPairs, 0, n)
+	}
+	v.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+		// The caller validated every key as a string.
+		pairs = append(pairs, jsonDictPair{key: entry.Key.(runtime.String).Value, value: entry.Value})
+		return true
+	})
+	sort.Sort(pairs)
+	for i, p := range pairs {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		if err := encodeJSONString(buf, p.key); err != nil {
+			return err
+		}
+		buf.WriteByte(':')
+		if err := encodeJSONValueInto(ctx, buf, p.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func encodeJSONValueInto(ctx ConversionContext, buf *bytes.Buffer, value runtime.Value) error {
 	if ctx.jsonStream != nil && buf.Len() >= jsonStreamBufferSize {
 		if err := ctx.jsonStream.flush(buf); err != nil {
 			return err
 		}
 	}
-	var err error
-	ctx, err = jsonDescend(ctx, value)
-	if err != nil {
-		return err
+	if isJSONContainer(value) {
+		var err error
+		if ctx, err = jsonDescend(ctx, value); err != nil {
+			return err
+		}
 	}
 	switch v := value.(type) {
 	case runtime.Null:
@@ -506,36 +557,8 @@ func encodeJSONValueInto(ctx ConversionContext, buf *bytes.Buffer, value runtime
 			return nil
 		}
 		// Fallback: collect into the pooled scratch slice and sort.
-		pairsPtr := jsonDictPairsPool.Get().(*jsonDictPairs)
-		pairs := *pairsPtr
-		pairs = pairs[:0]
-		defer func() {
-			clear(pairs)
-			if cap(pairs) <= 4096 {
-				*pairsPtr = pairs[:0]
-				jsonDictPairsPool.Put(pairsPtr)
-			}
-		}()
-		if cap(pairs) < n {
-			pairs = make(jsonDictPairs, 0, n)
-		}
-		v.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
-			// Key type was validated by the sortedness pass above.
-			pairs = append(pairs, jsonDictPair{key: entry.Key.(runtime.String).Value, value: entry.Value})
-			return true
-		})
-		sort.Sort(pairs)
-		for i, p := range pairs {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			if err := encodeJSONString(buf, p.key); err != nil {
-				return err
-			}
-			buf.WriteByte(':')
-			if err := encodeJSONValueInto(ctx, buf, p.value); err != nil {
-				return err
-			}
+		if err := encodeJSONDictSorted(ctx, buf, v, n); err != nil {
+			return err
 		}
 		buf.WriteByte('}')
 		return nil
@@ -652,10 +675,11 @@ func ValueToJSON(value runtime.Value) (any, error) {
 
 // ValueToJSONCtx is ValueToJSON with the backend's serialize context for instance __serialize dispatch.
 func ValueToJSONCtx(ctx ConversionContext, value runtime.Value) (any, error) {
-	var err error
-	ctx, err = jsonDescend(ctx, value)
-	if err != nil {
-		return nil, err
+	if isJSONContainer(value) {
+		var err error
+		if ctx, err = jsonDescend(ctx, value); err != nil {
+			return nil, err
+		}
 	}
 	switch value := value.(type) {
 	case runtime.Null:

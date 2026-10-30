@@ -715,7 +715,7 @@ func (vm *VM) ensureLocalsStackFrom(end, clearFrom int) {
 
 func (vm *VM) popLocalsStackFrame(frame *callFrame) {
 	if !frame.shared && frame.basePointer < len(vm.localsStack) {
-		clear(vm.localsStack[frame.basePointer:])
+		releaseBoxed(vm.localsStack[frame.basePointer:])
 		vm.localsStack = vm.localsStack[:frame.basePointer]
 	}
 	if len(vm.frames) > 1 {
