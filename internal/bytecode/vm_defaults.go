@@ -154,3 +154,16 @@ func (vm *VM) undefinedGlobalError(slot int64) error {
 	}
 	return fmt.Errorf("global is undefined")
 }
+
+// ModuleImportError re-raises a module's failed top-level run as a throw with a module frame; nil leaves err as is.
+func ModuleImportError(module string, err error) error {
+	var thrown vmThrownError
+	if errors.As(err, &thrown) {
+		return vmThrownError{err: runtime.WithModuleFrame(thrown.err, module)}
+	}
+	var rt *vmRuntimeError
+	if errors.As(err, &rt) {
+		return vmThrownError{err: runtime.WithModuleFrame(rt.toRuntimeError(), module)}
+	}
+	return nil
+}

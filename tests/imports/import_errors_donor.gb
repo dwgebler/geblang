@@ -1,0 +1,7 @@
+module import_errors_donor;
+
+func explode(): int { throw ValueError("donor failed to load"); }
+
+init {
+    explode();
+}

@@ -996,6 +996,8 @@ func (e *Evaluator) instantiateClass(class *runtime.Class, args []runtime.Value)
 		}
 	} else if len(args) != 0 {
 		return nil, fmt.Errorf("%s constructor expects no arguments", class.Name)
+	} else if err := e.constructInherited(instance, class.Parent); err != nil {
+		return nil, err
 	}
 	if err := e.checkClassTypeParamConstraints(class, instance.TypeBindings); err != nil {
 		return nil, err
@@ -1222,6 +1224,9 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 		if len(call.Arguments) != 0 {
 			return nil, fmt.Errorf("%s constructor expects no arguments", class.Name)
 		}
+		if err := e.constructInherited(instance, class.Parent); err != nil {
+			return nil, err
+		}
 		if err := e.checkClassTypeParamConstraints(class, instance.TypeBindings); err != nil {
 			return nil, err
 		}
@@ -1256,17 +1261,52 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 }
 
 func (e *Evaluator) applyAutoParentConstructor(instance *runtime.Instance, constructor runtime.Function) error {
-	if instance == nil || instance.Class == nil || instance.Class.Parent == nil || len(instance.Class.Parent.Constructors) == 0 {
+	if instance == nil || instance.Class == nil || instance.Class.Parent == nil {
 		return nil
 	}
 	if evaluatorContainsParentConstructorCall(constructor.Body) {
 		return nil
 	}
+	// The implicit parent call belongs to the child constructor, so traces show its frame.
+	name := constructor.Name
+	if constructor.OwnerClass != nil {
+		name = constructor.OwnerClass.Name + "." + name
+	}
+	e.callStack = append(e.callStack, evalFrame{name: name, callLine: e.currentLine, path: e.currentDebugPath()})
+	defer e.popFunction()
+	if constructor.Body != nil {
+		e.currentLine = constructor.Body.Token.Line
+	}
 	parent := instance.Class.Parent
+	if len(parent.Constructors) == 0 {
+		return e.constructInherited(instance, parent.Parent)
+	}
 	parentConstructor, err := selectOverload(parent.Name, parent.Constructors, nil)
 	if err != nil {
 		return err
 	}
+	return e.runAncestorConstructor(instance, parent, parentConstructor)
+}
+
+// constructInherited runs the nearest constructor at or above class that takes no arguments; one requiring arguments is skipped.
+func (e *Evaluator) constructInherited(instance *runtime.Instance, class *runtime.Class) error {
+	for class != nil && len(class.Constructors) == 0 {
+		if isBuiltinErrorClass(class.Name) {
+			return nil
+		}
+		class = class.Parent
+	}
+	if class == nil {
+		return nil
+	}
+	constructor, err := selectOverload(class.Name, class.Constructors, nil)
+	if err != nil {
+		return nil
+	}
+	return e.runAncestorConstructor(instance, class, constructor)
+}
+
+func (e *Evaluator) runAncestorConstructor(instance *runtime.Instance, parent *runtime.Class, parentConstructor runtime.Function) error {
 	if instance.LockedFields == nil {
 		instance.LockedFields = map[string]bool{}
 	}

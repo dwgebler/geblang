@@ -1,0 +1,28 @@
+/**
+ * @title Errors raised while importing a module
+ * @summary An exception escaping a module's top level keeps its original class
+ * and message, so the importer can catch it, and the module is not cached as
+ * loaded.
+ */
+import test;
+
+func loadDonor(): void {
+    import import_errors_donor;
+}
+
+class ImportErrorsTest extends test.Test {
+    @test
+    func originalErrorIsCatchable(): void {
+        try {
+            loadDonor();
+            this.fail("expected ValueError");
+        } catch (ValueError e) {
+            this.assertEquals("donor failed to load", e.message);
+        }
+    }
+    @test
+    func failedModuleIsNotCached(): void {
+        this.assertThrows(func(): void { loadDonor(); });
+        this.assertThrows(func(): void { loadDonor(); });
+    }
+}

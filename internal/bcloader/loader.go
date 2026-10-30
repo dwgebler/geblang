@@ -218,11 +218,11 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 		return nil, fmt.Errorf("module %s: %s:%d:%d: %s", canonical, path, d.Line, d.Column, d.Message)
 	}
 	if l.opts.Compile == nil {
-		return nil, fmt.Errorf("compile module %s: loader has no Compile callback", canonical)
+		return nil, fmt.Errorf("module %s: loader has no Compile callback", canonical)
 	}
 	chunk, err := l.opts.Compile(canonical, path, source, program, l.modulePaths)
 	if err != nil {
-		return nil, fmt.Errorf("compile module %s: %w", canonical, err)
+		return nil, fmt.Errorf("module %s: %w", canonical, err)
 	}
 	bytecode.ResolveClassTypeAliases(&chunk, SourceTypeAliasLookup(program, canonical, append([]string{filepath.Dir(path)}, l.modulePaths...)))
 	previousPaths := l.modulePaths
@@ -234,6 +234,9 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 	err = vm.Run()
 	l.modulePaths = previousPaths
 	if err != nil {
+		if thrown := bytecode.ModuleImportError(canonical, err); thrown != nil {
+			return nil, thrown
+		}
 		return nil, fmt.Errorf("evaluate module %s: %w", canonical, err)
 	}
 	exports, err := vm.Exports()
@@ -718,6 +721,19 @@ func (l *Loader) CallParentInModule(module string, className string, methodName 
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
+}
+
+// CallInheritedConstructorInModule runs the zero-argument constructor a class inherits, on its home module's worker.
+func (l *Loader) CallInheritedConstructorInModule(module string, className string, instance *runtime.Instance, caller *bytecode.VM) error {
+	chunk, ok := l.chunkValue(module)
+	if !ok {
+		return fmt.Errorf("module %s is not loaded", module)
+	}
+	vm, pool := l.moduleVM(module, chunk, caller)
+	err := vm.ConstructInheritedFrom(className, instance)
+	l.adoptDestructibles(pool, vm, caller)
+	l.releaseModuleVM(pool, vm, err)
+	return err
 }
 
 func (l *Loader) ImmutableFieldsForModuleClass(module string, className string) []string {

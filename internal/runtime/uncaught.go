@@ -117,3 +117,10 @@ func RenderDestructorFailure(className string, err Error) string {
 	}
 	return sb.String()
 }
+
+// WithModuleFrame records that err escaped a module's top level during import; the importer supplies the top-level line.
+func WithModuleFrame(err Error, module string) Error {
+	err.TraceFrames = append(append([]StackFrame(nil), err.TraceFrames...), StackFrame{Name: "<module " + module + ">", CallLine: err.TopLevelLine})
+	err.TopLevelLine = 0
+	return err
+}

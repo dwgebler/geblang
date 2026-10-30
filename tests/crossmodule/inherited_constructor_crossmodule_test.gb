@@ -1,0 +1,25 @@
+/**
+ * @title Inherited constructors across modules
+ * @summary Local subclasses of imported classes run the imported zero-argument
+ * constructor, whether the child declares no constructor or an empty one.
+ */
+import test;
+import inherited_constructor_donor as donor;
+
+class EmptyCtor extends donor.Base { func EmptyCtor() {} }
+class Plain extends donor.Base {}
+class ViaImportedPlain extends donor.Plain {}
+class EmptyViaPlain extends donor.Plain { func EmptyViaPlain() {} }
+class SkipsRequired extends donor.Required {}
+
+class InheritedConstructorCrossModuleTest extends test.Test {
+    @test
+    func importedAncestorsRun(): void {
+        this.assertEquals(12, EmptyCtor().value);
+        this.assertEquals(12, Plain().value);
+        this.assertEquals(12, ViaImportedPlain().value);
+        this.assertEquals(12, EmptyViaPlain().value);
+        this.assertEquals(12, donor.Plain().value);
+        this.assertEquals(1, SkipsRequired().value);
+    }
+}

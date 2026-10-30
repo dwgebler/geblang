@@ -35,6 +35,19 @@
   on the VM, matching the evaluator.
 - `geblang check` type-checks a parameter default against the names in scope
   at that point, not against the parameter itself.
+- An exception raised while importing a module keeps its class and message on
+  both backends and can be caught around the `import`; traces show the module
+  as `<module NAME>`. The evaluator previously replaced it with a generic
+  import error and the VM wrapped runtime faults twice. `sys.exit` during an
+  import now exits on the evaluator too, and module rejections read
+  `module NAME: ...` on both backends.
+- A class without a constructor runs the nearest ancestor constructor that
+  takes no arguments, including through intermediate classes without
+  constructors and across modules. Previously such classes skipped the parent
+  constructor, and the VM skipped it for an empty child constructor whose
+  parent was in another module.
+- Traces for an automatic parent constructor call include the child
+  constructor's frame on both backends.
 - Release dead VM operand/local references after returns and exception unwinding,
   preserving escaped closure cells. Evaluator call/defer frames also release
   completed environments and arguments. Trim unusually large idle worker stacks.

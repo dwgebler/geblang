@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"errors"
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/desugar"
@@ -85,7 +86,7 @@ func (e *Evaluator) evalImportStatement(stmt *ast.ImportStatement, env *runtime.
 	}
 	module, err := e.resolveImportedModule(canonical, alias)
 	if err != nil {
-		return signal{}, err
+		return moduleImportFailure(err)
 	}
 	if err := env.Define(alias, module, true); err != nil {
 		if err := env.Assign(alias, module); err != nil {
@@ -144,7 +145,7 @@ func (e *Evaluator) evalFromImportStatement(stmt *ast.FromImportStatement, env *
 	}
 	module, err := e.loadUserModule(canonical, "")
 	if err != nil {
-		return signal{}, err
+		return moduleImportFailure(err)
 	}
 	for _, item := range stmt.Names {
 		if item.Name == nil {
@@ -305,6 +306,8 @@ func (e *Evaluator) loadUserModule(canonical, alias string) (*runtime.Module, er
 		return nil, err
 	}
 
+	importFrames, _, importTop := e.captureFrames()
+	importLine := e.currentLine
 	moduleEnv := runtime.NewEnvironment()
 	previousPaths := e.modulePaths
 	moduleDir := filepath.Dir(path)
@@ -314,14 +317,28 @@ func (e *Evaluator) loadUserModule(canonical, alias string) (*runtime.Module, er
 	previousDebugPath := e.debugPath
 	e.debugPath = path
 	e.currentModule = canonical
+	importerStack := e.callStack
+	e.callStack = nil
 	sig, err := e.evalTopLevelStatements(program.Statements, moduleEnv)
+	e.callStack = importerStack
 	e.currentModule = prevModule
 	e.debugPath = previousDebugPath
 	e.modulePaths = previousPaths
+	e.currentLine = importLine
+	var thrown thrownError
+	if errors.As(err, &thrown) {
+		return nil, importedModuleThrow(thrown.value, canonical, importFrames, importLine, importTop)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("evaluate module %s: %w", canonical, err)
 	}
-	if sig.kind != "" || sig.exited {
+	if sig.exited {
+		return nil, moduleExit{code: sig.exitCode}
+	}
+	if sig.kind == "throw" && sig.thrown != nil {
+		return nil, importedModuleThrow(*sig.thrown, canonical, importFrames, importLine, importTop)
+	}
+	if sig.kind != "" {
 		return nil, fmt.Errorf("module %s cannot return, throw, break, continue, or exit during import", canonical)
 	}
 	exports, err := exportedValues(program, moduleEnv)
@@ -363,7 +380,7 @@ func (e *Evaluator) parseAnalyzedModule(canonical string, path string) (*ast.Pro
 			errorMessages = append(errorMessages, diagnostic.Message)
 		}
 		if len(errorMessages) > 0 {
-			return nil, fmt.Errorf("analyze module %s: %s", canonical, strings.Join(errorMessages, "\n"))
+			return nil, fmt.Errorf("module %s: %s", canonical, strings.Join(errorMessages, "\n"))
 		}
 	}
 	if err := desugar.Dataclasses(program); err != nil {
@@ -599,4 +616,30 @@ func exportedStatementName(stmt ast.Statement) string {
 	default:
 		return ""
 	}
+}
+
+// moduleExit carries sys.exit out of a module's top level to the importing statement.
+type moduleExit struct{ code int }
+
+func (m moduleExit) Error() string { return fmt.Sprintf("exit(%d)", m.code) }
+
+func moduleImportFailure(err error) (signal, error) {
+	var exit moduleExit
+	if errors.As(err, &exit) {
+		return signal{exited: true, exitCode: exit.code}, nil
+	}
+	return signal{}, err
+}
+
+// importedModuleThrow keeps the module's error and adds the module and importer frames.
+func importedModuleThrow(value runtime.Error, module string, importFrames []runtime.StackFrame, importLine, importTop int) error {
+	value = runtime.WithModuleFrame(value, module)
+	if len(importFrames) > 0 {
+		importFrames[0].CallLine = importLine
+		value.TraceFrames = append(value.TraceFrames, importFrames...)
+		value.TopLevelLine = importTop
+	} else {
+		value.TopLevelLine = importLine
+	}
+	return thrownError{value: value}
 }

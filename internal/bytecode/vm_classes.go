@@ -103,6 +103,11 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 		if len(args) != 0 {
 			return 0, vm.runtimeError(instruction, "%s constructor expects no arguments", classInfo.Name)
 		}
+		if !vm.classExtendsBuiltinError(classInfo) {
+			if err := vm.constructAbove(classInfo, instance, instruction.Line, true); err != nil {
+				return 0, vm.callPropagate(instruction, err)
+			}
+		}
 		if vm.classExtendsBuiltinError(classInfo) {
 			var fields map[string]runtime.Value
 			if len(instance.Fields) > 0 {
@@ -689,7 +694,7 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 				return 0, vm.runtimeError(instruction, "load parent module %s: %s", module, err.Error())
 			}
 			if _, err := vm.moduleLoader.CallParentInModule(module, parentClass, parentClass, instance, args, vm); err != nil {
-				return 0, vm.callPropagate(instruction, err)
+				return 0, vm.callPropagate(instruction, vm.boundaryError(err, int(instruction.Line)))
 			}
 			for _, f := range vm.moduleLoader.ImmutableFieldsForModuleClass(module, parentClass) {
 				instance.LockField(f)
@@ -705,6 +710,9 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 	if len(parent.ConstructorIndices) == 0 {
 		if argc != 0 {
 			return 0, vm.runtimeError(instruction, "%s constructor expects no arguments", parent.Name)
+		}
+		if err := vm.constructAbove(parent, instance, instruction.Line, true); err != nil {
+			return 0, vm.callPropagate(instruction, err)
 		}
 		for _, f := range parent.ImmutableFields {
 			instance.LockField(f)

@@ -1,0 +1,5 @@
+module inherited_constructor_donor;
+
+export class Base { int value = 4; func Base() { this.value = 12; } }
+export class Plain extends Base {}
+export class Required { int value = 1; func Required(int v) { this.value = v; } }

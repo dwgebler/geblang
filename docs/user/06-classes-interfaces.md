@@ -184,6 +184,12 @@ calls the parent constructor. An explicit `parent(...)` call suppresses the
 automatic no-argument parent constructor call, so the parent constructor only
 runs once.
 
+A class that declares no constructor runs the nearest ancestor constructor
+that can be called without arguments, skipping any ancestors that also declare
+none. The same search applies when a child constructor (or `parent()` with no
+arguments) reaches a parent without a constructor. An ancestor constructor that
+requires arguments is not called automatically.
+
 Automatic parent constructor example:
 
 ```gb

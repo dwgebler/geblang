@@ -46,7 +46,7 @@ func newHarnessLoader(stdout io.Writer, stateful bytecode.StatefulNativeCaller) 
 				for _, d := range diagnostics {
 					messages = append(messages, d.Message)
 				}
-				return bytecode.Chunk{}, fmt.Errorf("analyze module %s: %s", canonical, strings.Join(messages, "\n"))
+				return bytecode.Chunk{}, fmt.Errorf("%s", strings.Join(messages, "\n"))
 			}
 			return bytecode.CompileWithOptions(program, source, canonical, bytecode.CompileOptions{TypeAliasLookup: aliases})
 		},

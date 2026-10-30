@@ -3101,7 +3101,7 @@ func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name st
 				if len(args) > 0 {
 					return nil, fmt.Errorf("%s constructor expects no arguments", className)
 				}
-				return runtime.Null{}, nil
+				return runtime.Null{}, vm.constructAbove(classInfo, instance, 0, false)
 			}
 		} else {
 			if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {

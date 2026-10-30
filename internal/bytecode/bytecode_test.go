@@ -303,6 +303,10 @@ func (l fakeModuleLoader) CallModuleDestructor(module string, className string, 
 	return fmt.Errorf("unexpected module destructor call %s.%s", module, className)
 }
 
+func (l fakeModuleLoader) CallInheritedConstructorInModule(module string, className string, instance *runtime.Instance, caller *bytecode.VM) error {
+	return nil
+}
+
 func (l fakeModuleLoader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected cross-module parent call %s.%s", className, methodName)
 }

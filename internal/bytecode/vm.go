@@ -235,6 +235,7 @@ type ModuleLoader interface {
 	// className is looked up in the target chunk regardless of
 	// instance.Class.Name, which is necessary because instance is a
 	// subclass declared in another chunk.
+	CallInheritedConstructorInModule(module string, className string, instance *runtime.Instance, caller *VM) error
 	CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *VM) (runtime.Value, error)
 	// ImmutableFieldsForModuleClass returns the set-once `@immutable`
 	// field names declared on a class in another module, so a subclass
@@ -3216,6 +3217,10 @@ func (vm *VM) importModule(instruction Instruction) error {
 	}
 	module, err := vm.moduleLoader.LoadModule(canonical, alias)
 	if err != nil {
+		var thrown vmThrownError
+		if errors.As(err, &thrown) {
+			return vmThrownError{err: vm.mergeBoundaryFrames(thrown.err, int(instruction.Line))}
+		}
 		return vm.callPropagate(instruction, err)
 	}
 	return vm.setGlobal(instruction.Operands[2], module)

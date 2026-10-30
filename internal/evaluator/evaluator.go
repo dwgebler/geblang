@@ -3261,6 +3261,9 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 			if parentClass != nil && len(call.Arguments) > 0 {
 				return nil, fmt.Errorf("%s constructor expects no arguments", parentClass.Name)
 			}
+			if parentClass != nil {
+				return runtime.Null{}, e.constructInherited(this, parentClass.Parent)
+			}
 			return runtime.Null{}, nil
 		}
 		_, err = e.applyOverloadedFunction(parentClass.Name, parentClass.Constructors, call, env, this, nil)

@@ -1,0 +1,45 @@
+/**
+ * @title Inherited zero-argument constructors
+ * @summary A class without its own constructor runs the nearest ancestor
+ * constructor that can be called without arguments, through any number of
+ * constructor-less levels; a parent constructor that requires arguments is
+ * skipped. An empty child constructor reaches the same ancestor.
+ */
+import test;
+
+class Base { int value = 4; func Base() { this.value = 12; } }
+class Plain extends Base {}
+class Deeper extends Plain {}
+class EmptyCtor extends Plain { func EmptyCtor() {} }
+class Explicit extends Plain { func Explicit() { parent(); } }
+class Required { int value = 1; func Required(int v) { this.value = v; } }
+class SkipsRequired extends Required {}
+class Defaulted { int value = 0; func Defaulted(int v = 9) { this.value = v; } }
+class UsesDefault extends Defaulted {}
+class Failing { func Failing() { throw ValueError("parent failed"); } }
+class FailingChild extends Failing {}
+
+class InheritedConstructorTest extends test.Test {
+    @test
+    func constructorlessChainsRunTheAncestor(): void {
+        this.assertEquals(12, Plain().value);
+        this.assertEquals(12, Deeper().value);
+        this.assertEquals(12, EmptyCtor().value);
+        this.assertEquals(12, Explicit().value);
+        this.assertEquals(9, UsesDefault().value);
+    }
+    @test
+    func requiredArgumentsAreSkipped(): void {
+        this.assertEquals(1, SkipsRequired().value);
+        this.assertThrows(func(): void { Plain(1); });
+    }
+    @test
+    func ancestorErrorsPropagate(): void {
+        try {
+            FailingChild();
+            this.fail("expected ValueError");
+        } catch (ValueError e) {
+            this.assertEquals("parent failed", e.message);
+        }
+    }
+}

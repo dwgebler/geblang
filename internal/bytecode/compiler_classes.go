@@ -364,21 +364,25 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			} else {
 				receiverName = "this"
 			}
-			if !member.Static && strings.EqualFold(member.Name.Value, stmt.Name.Value) && class.ParentIndex >= 0 && !containsParentConstructorCall(member.Body) {
+			crossModuleParent := class.ParentIndex < 0 && strings.Contains(class.ParentName, ".")
+			if !member.Static && strings.EqualFold(member.Name.Value, stmt.Name.Value) && (class.ParentIndex >= 0 || crossModuleParent) && !containsParentConstructorCall(member.Body) {
 				prologue = func() error {
-					parent := c.chunk.Classes[class.ParentIndex]
-					if len(parent.ConstructorIndices) > 0 {
-						if _, _, err := c.selectFunctionIndicesCallIgnoringReturn(parent.Name, parent.ConstructorIndices, nil, 1); err != nil {
-							return err
+					if class.ParentIndex >= 0 {
+						parent := c.chunk.Classes[class.ParentIndex]
+						if len(parent.ConstructorIndices) > 0 {
+							if _, _, err := c.selectFunctionIndicesCallIgnoringReturn(parent.Name, parent.ConstructorIndices, nil, 1); err != nil {
+								return err
+							}
 						}
 					}
 					resolved, ok := c.resolveName("this")
 					if !ok {
 						return fmt.Errorf("auto parent constructor call requires this")
 					}
-					c.emitAt(OpGetLocal, member.Token.Line, member.Token.Column, resolved.slot)
-					c.emitAt(OpCallParentConstructor, member.Token.Line, member.Token.Column, index, 0)
-					c.emitAt(OpPop, member.Token.Line, member.Token.Column)
+					line, column := member.Body.Token.Line, member.Body.Token.Column
+					c.emitAt(OpGetLocal, line, column, resolved.slot)
+					c.emitAt(OpCallParentConstructor, line, column, index, 0)
+					c.emitAt(OpPop, line, column)
 					return nil
 				}
 			}

@@ -325,6 +325,20 @@ Rules:
   script can do: call functions, declare locals, throw exceptions (which
   propagate out of the import). It cannot `return` and is not an event hook.
 
+An exception that escapes a module while it is being imported keeps its
+original class and message, so the importer can catch it around the `import`.
+The module is not cached, so a later import runs it again. Uncaught, the trace
+names the module's top level as `<module NAME>` before the importer's frames:
+
+```text
+uncaught ValueError: config missing
+  at loadConfig (line 4)
+  at <module app.settings> (line 9)
+  at <top level> (line 2)
+```
+
+`sys.exit` during an import ends the program with that exit code.
+
 ### Script files
 
 Files **without** a `module` declaration are scripts. They keep their full
