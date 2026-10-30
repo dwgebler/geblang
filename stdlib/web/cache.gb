@@ -6,6 +6,7 @@ import db;
 import io;
 import json;
 import store;
+import async.sync as sync;
 
 func cacheExpired(dict<string, any> payload): bool {
     if (!payload.hasKey("expiresAt")) {
@@ -14,8 +15,12 @@ func cacheExpired(dict<string, any> payload): bool {
     return (payload["expiresAt"] as int) <= datetime.nowUnix();
 }
 
+func cachePayloadAt(any value, int expiresAt): string {
+    return json.stringify({"value": value, "expiresAt": expiresAt});
+}
+
 func cachePayload(any value, int ttl): string {
-    return json.stringify({"value": value, "expiresAt": datetime.nowUnix() + ttl});
+    return cachePayloadAt(value, datetime.nowUnix() + ttl);
 }
 
 func cacheValueFromPayload(string value): any {
@@ -152,43 +157,62 @@ export func fileCacheStore(string directory, int ttl): FileCacheStore {
 export class MemoryCacheStore {
     any store;
     int ttl;
+    any _bounded;
+    sync.Mutex _lock;
 
-    func MemoryCacheStore(int ttl) {
+    func MemoryCacheStore(int ttl, int capacity = 0) {
+        if (capacity < 0) { throw ValueError("MemoryCacheStore capacity must be non-negative"); }
         this.store = store.Store();
         this.ttl = ttl;
+        this._bounded = capacity > 0 ? store._cacheNew(capacity) : null;
+        this._lock = sync.Mutex();
     }
 
     func get(string name): any {
-        let payload = this.store.get(name);
-        if (payload == null) {
-            return null;
-        }
-        let value = cacheValueFromPayload(payload as string);
-        if (value == null) {
-            this.store.delete(name);
-        }
-        return value;
+        this._lock.lock();
+        try {
+            let payload = this._bounded == null ? this.store.get(name) : store._cacheGet(this._bounded, name);
+            if (payload == null) { return null; }
+            let value = cacheValueFromPayload(payload as string);
+            if (value == null) { this._delete(name); }
+            return value;
+        } finally { this._lock.unlock(); }
     }
 
     func set(string name, any value): bool {
-        this.store.set(name, cachePayload(value, this.ttl));
-        return true;
+        /* User serializers run before the lock so callbacks can use the cache. */
+        int expiresAt = datetime.nowUnix() + this.ttl;
+        string payload = cachePayloadAt(value, expiresAt);
+        this._lock.lock();
+        try {
+            if (this._bounded == null) {
+                this.store.set(name, payload);
+            } else {
+                store._cacheSet(this._bounded, name, payload, expiresAt);
+            }
+            return true;
+        } finally { this._lock.unlock(); }
     }
 
-    func delete(string name): bool {
+    func _delete(string name): bool {
+        if (this._bounded != null) { return store._cacheDelete(this._bounded, name); }
         bool existed = this.store.has(name);
         this.store.delete(name);
         return existed;
     }
 
-    func has(string name): bool {
-        return this.get(name) != null;
+    func delete(string name): bool {
+        this._lock.lock();
+        try { return this._delete(name); }
+        finally { this._lock.unlock(); }
     }
+
+    func has(string name): bool { return this.get(name) != null; }
 }
 
-## Creates an in-process (in-memory) cache store backed by a thread-safe map.
-export func memoryCacheStore(int ttl): MemoryCacheStore {
-    return MemoryCacheStore(ttl);
+## Creates an isolated, thread-safe memory cache; capacity zero is unlimited.
+export func memoryCacheStore(int ttl, int capacity = 0): MemoryCacheStore {
+    return MemoryCacheStore(ttl, capacity);
 }
 
 ## Cache store backed by a database table with cache_key, data, and expiry columns.

@@ -6,6 +6,7 @@ import (
 	"geblang/internal/native"
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 	"math"
 	"math/big"
 	"strconv"
@@ -164,7 +165,7 @@ func instanceMatchesParameterizedClass(instance *runtime.Instance, baseName stri
 	}
 	for i, arg := range args {
 		bound, ok := instance.TypeBindings[declared[i]]
-		if !ok || !typeNamesEqual(bound, simpleTypeName(strings.TrimSpace(arg))) {
+		if !ok || !typealias.EquivalentNames(bound, strings.TrimSpace(arg)) {
 			return false
 		}
 	}
@@ -759,7 +760,7 @@ func matchValueToTypeRefWith(typeParams map[string]bool, inherited map[string]st
 					substituted = &copied
 				}
 			}
-			return matchValueToTypeRef(typeParams, value, substituted)
+			return runtime.MatchesCheckedCast(value, substituted, func(value runtime.Value, typ *ast.TypeRef) bool { return matchValueToTypeRef(typeParams, value, typ) })
 		}
 	}
 	return matchValueToTypeRef(typeParams, value, typ)
@@ -924,25 +925,30 @@ func instanceMatchesTypeArgs(typeParams map[string]bool, instance *runtime.Insta
 	if instance == nil || typ == nil || len(typ.Arguments) == 0 {
 		return true
 	}
-	if instance.Class == nil || len(instance.Class.TypeParameters) == 0 {
+	declaring := instance.Class
+	for declaring != nil && !typeNamesEqual(declaring.Name, typ.Name) {
+		declaring = declaring.Parent
+	}
+	if declaring == nil || len(declaring.TypeParameters) == 0 {
 		return true
 	}
 	if len(instance.TypeBindings) == 0 {
 		return true
 	}
+	bindings := runtime.DeclaringClassBindings(instance, declaring)
 	for i, arg := range typ.Arguments {
-		if i >= len(instance.Class.TypeParameters) {
+		if i >= len(declaring.TypeParameters) {
 			break
 		}
-		if arg == nil || arg.Operator != "" || arg.Name == "" || typeParams[strings.ToLower(arg.Name)] {
+		if arg == nil || (arg.Operator == "" && arg.Name == "") || arg.Name == "any" || typeParams[strings.ToLower(arg.Name)] {
 			continue
 		}
-		paramName := instance.Class.TypeParameters[i]
-		bound, ok := instance.TypeBindings[paramName]
-		if !ok || bound == "" || isOwnTypeParameter(instance.Class.TypeParameters, bound) {
+		paramName := declaring.TypeParameters[i]
+		bound, ok := bindings[paramName]
+		if !ok || bound == "" || isOwnTypeParameter(declaring.TypeParameters, bound) {
 			continue
 		}
-		if !typeNamesEqual(bound, arg.Name) {
+		if !typealias.EquivalentNames(bound, typealias.Qualified(arg).String()) {
 			return false
 		}
 	}
@@ -1061,7 +1067,7 @@ func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 			// T[] syntax: element type is the Name field (e.g. int[] → element type is int)
 			elemType = &ast.TypeRef{Token: typ.Token, Name: typ.Name}
 		}
-		if elemType != nil && !typeParams[strings.ToLower(elemType.Name)] {
+		if elemType != nil && elemType.Name != "any" && !typeParams[strings.ToLower(elemType.Name)] {
 			lst := value.(*runtime.List)
 			for _, elem := range lst.Elements {
 				if !matchValueToTypeRef(typeParams, elem, elemType) {
@@ -1075,7 +1081,7 @@ func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 		if value.TypeName() != "set" {
 			return false
 		}
-		if len(typ.Arguments) > 0 && !typeParams[strings.ToLower(typ.Arguments[0].Name)] {
+		if len(typ.Arguments) > 0 && typ.Arguments[0].Name != "any" && !typeParams[strings.ToLower(typ.Arguments[0].Name)] {
 			s := value.(runtime.Set)
 			for _, entry := range s.Elements {
 				if !matchValueToTypeRef(typeParams, entry.Value, typ.Arguments[0]) {
@@ -1090,9 +1096,15 @@ func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 			return false
 		}
 		if len(typ.Arguments) >= 2 {
-			keyIsTP := typeParams[strings.ToLower(typ.Arguments[0].Name)]
-			valIsTP := typeParams[strings.ToLower(typ.Arguments[1].Name)]
+			keyIsTP := typ.Arguments[0].Name == "any" || typeParams[strings.ToLower(typ.Arguments[0].Name)]
+			valIsTP := typ.Arguments[1].Name == "any" || typeParams[strings.ToLower(typ.Arguments[1].Name)]
 			d := value.(runtime.Dict)
+			if typ.Arguments[0].Name == "string" && !typ.Arguments[0].Nullable && valIsTP {
+				return d.HasOnlyStringKeys()
+			}
+			if keyIsTP && valIsTP {
+				return true
+			}
 			ok := true
 			d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 				if !keyIsTP && !matchValueToTypeRef(typeParams, entry.Key, typ.Arguments[0]) {

@@ -1,0 +1,3 @@
+module cast_factory;
+import cast_calls as calls;
+export func InvocationWorker(): calls.InvocationWorker { return calls.InvocationWorker(); }

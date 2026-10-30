@@ -39,6 +39,20 @@ By default, construction and arithmetic reject a fractional minor unit with
 `ValueError`. For example, GBP 1.001 cannot be stored exactly. Choose a rounding
 mode explicitly when discarding a fractional minor unit is part of your policy.
 
+## Totals
+
+`money.sum(values, currency = null)` totals a `list<money.Money>` by accumulating
+integer minor units, constructing one result. Every value must use the same
+currency. An optional currency is normalized and checked against each value.
+Empty input requires that currency and returns zero; missing or mixed currencies
+raise `ValueError`.
+
+```gb
+let total = money.sum([money.Money("0.10", "GBP"), money.Money("0.20", "GBP")]);
+io.println(total.minorUnits); /* 30 */
+let zero = money.sum([], "JPY");
+```
+
 ## Arithmetic And Rounding
 
 | Operation | Result |

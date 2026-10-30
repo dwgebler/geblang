@@ -67,7 +67,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	}
 	args := make([]runtime.VMValue, paramCount)
 	copy(args, stackArgs)
-	vm.stack = vm.stack[:n-int(argc)]
+	vm.truncateStack(n - int(argc))
 	// Reuse the existing top frame: keep returnIP, returnOverride.
 	// Replace functionName / callLine for stack traces. Reset other
 	// fields to defaults for the new function.
@@ -131,7 +131,9 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 		}
 		stackArgs := vm.stack[n-int(argc) : n]
 		vm.stack = vm.stack[:n-int(argc)]
-		return vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
+		nextIP, err := vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
+		clear(stackArgs)
+		return nextIP, err
 	}
 	decorated, hasDecorated := vm.decoratedFuncs[index]
 	if !hasDecorated || vm.rawFunctionCalls[index] {
@@ -143,7 +145,9 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 				}
 				stackArgs := vm.stack[n-int(argc) : n]
 				vm.stack = vm.stack[:n-int(argc)]
-				return vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
+				nextIP, err := vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
+				clear(stackArgs)
+				return nextIP, err
 			}
 		}
 	}
@@ -208,13 +212,15 @@ func (vm *VM) startAsyncMethod(functionIndex int64, callArgs []runtime.Value) (*
 
 func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Task {
 	task := runtime.NewTask()
+	bindings := vm.pendingTypeBindings
+	vm.pendingTypeBindings = nil
 	// Snapshot parent VM state into a private worker before spawning the
 	// goroutine; the worker touches no parent fields after this point.
 	worker := vm.spawnAsyncWorker()
 	runtime.AsyncEnter()
 	go func() {
 		defer runtime.AsyncLeave()
-		result, err := worker.CallFunction(index, args)
+		result, err := worker.CallFunctionBound(index, args, bindings, false)
 		task.Complete(result, err)
 	}()
 	return task
@@ -263,6 +269,8 @@ func (vm *VM) persistGeneratorGlobals(callVM *VM) {
 
 func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generator {
 	vm.noteEscape()
+	bindings := vm.pendingTypeBindings
+	vm.pendingTypeBindings = nil
 	items := make(chan vmGeneratorItem)
 	doneCh := make(chan struct{})
 	stop := sync.Once{}
@@ -278,7 +286,7 @@ func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generato
 			vm.enableGeneratorPersist(callVM)
 			go func() {
 				defer close(items)
-				_, err := callVM.CallFunction(index, args)
+				_, err := callVM.CallFunctionBound(index, args, bindings, false)
 				vm.persistGeneratorGlobals(callVM)
 				if err != nil {
 					select {
@@ -362,6 +370,10 @@ func (vm *VM) startAsyncCallable(fn runtime.Value, args []runtime.Value) *runtim
 }
 
 func (vm *VM) startAsyncCallableWithForwardThis(fn runtime.Value, args []runtime.Value, receiver *runtime.Instance) *runtime.Task {
+	if len(vm.pendingTypeBindings) > 0 {
+		fn = bindCallableBindings(fn, vm.pendingTypeBindings)
+		vm.pendingTypeBindings = nil
+	}
 	task := runtime.NewTask()
 	// Snapshot parent state into a private worker; the goroutine touches
 	// only the worker, not the parent VM.
@@ -645,9 +657,15 @@ func (vm *VM) matchVMValueToTypeSpecWith(typeParams map[string]bool, inherited m
 	}
 	if len(inherited) > 0 {
 		if bound, ok := inherited[spec.base]; ok && bound != "" {
+			if strings.Contains(bound, ".") {
+				return vm.matchBoundType(typeParams, value.ToValue(), bound)
+			}
 			return vm.matchVMValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
 		}
 		if bound, ok := inherited[spec.baseLower]; ok && bound != "" {
+			if strings.Contains(bound, ".") {
+				return vm.matchBoundType(typeParams, value.ToValue(), bound)
+			}
 			return vm.matchVMValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
 		}
 	}
@@ -761,7 +779,7 @@ func (vm *VM) inferTypeBindingsFromLocals(function *FunctionInfo) map[string]str
 		if len(spec.args) > 0 {
 			slot := function.ParamSlots[i]
 			v, err := vm.getLocal(slot)
-			if err != nil || v == nil {
+			if err != nil || v == nil || isPendingDefault(v) {
 				continue
 			}
 			vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
@@ -769,9 +787,9 @@ func (vm *VM) inferTypeBindingsFromLocals(function *FunctionInfo) map[string]str
 		}
 		if name := strings.TrimPrefix(paramType, "?"); typeParamSet[strings.ToLower(name)] {
 			slot := function.ParamSlots[i]
-			if v, err := vm.getLocal(slot); err == nil && v != nil && v.TypeName() != "null" {
+			if v, err := vm.getLocal(slot); err == nil && v != nil && v.TypeName() != "null" && !isPendingDefault(v) {
 				if _, exists := typeBindings[name]; !exists {
-					typeBindings[name] = v.TypeName()
+					typeBindings[name] = runtime.ReifiedTypeName(v)
 				}
 			}
 		}
@@ -840,7 +858,7 @@ func (vm *VM) bindOrRecurse(spec vmTypeSpec, v runtime.Value, typeParamSet map[s
 		if _, exists := typeBindings[spec.base]; exists {
 			return
 		}
-		typeBindings[spec.base] = v.TypeName()
+		typeBindings[spec.base] = runtime.ReifiedTypeName(v)
 		return
 	}
 	vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
@@ -929,7 +947,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 		typeParams := function.typeParamSet
 		inherited := mergedTypeBindings(vm.pendingTypeBindings, receiverBindings)
 		for i, arg := range args {
-			if arg == nil || i >= len(function.ParamTypes) || function.ParamTypes[i] == "" {
+			if arg == nil || isPendingDefault(arg) || i >= len(function.ParamTypes) || function.ParamTypes[i] == "" {
 				continue
 			}
 			values := []runtime.Value{arg}
@@ -937,29 +955,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 				values = arg.(*runtime.List).Elements
 			}
 			for _, arg := range values {
-				matches := false
-				if i < len(function.paramTypeSpecs) && function.paramTypeSpecs[i].raw != "" {
-					matches = vm.matchValueToTypeSpecWith(typeParams, inherited, arg, function.paramTypeSpecs[i])
-				} else {
-					matches = vm.matchValueToTypeStrWith(typeParams, inherited, arg, function.ParamTypes[i])
-				}
-				if !matches {
-					paramName := ""
-					if i < len(function.ParamNames) {
-						paramName = function.displayParamName(i)
-					}
-					declared := vm.expandTypeAliases(function.ParamTypes[i])
-					suffix := vm.collectionMismatchSuffixStr(arg, declared)
-					gotName := vm.descriptiveRuntimeTypeName(arg)
-					if suffix != "" {
-						gotName = arg.TypeName()
-					}
-					var msg string
-					if paramName != "" {
-						msg = fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, declared, paramName, gotName, suffix)
-					} else {
-						msg = fmt.Sprintf("%s expects %s, got %s%s", function.Name, declared, gotName, suffix)
-					}
+				if msg, ok := vm.paramMismatchMessage(function, i, arg, typeParams, inherited); !ok {
 					return vm.throwTyped(instruction, ip, "TypeError", msg)
 				}
 			}
@@ -1035,6 +1031,9 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	if len(function.TypeParameters) > 0 && len(function.ParamTypes) > 0 {
 		typeParamSet := function.typeParamSet
 		typeBindings := map[string]string{}
+		for name, bound := range vm.pendingTypeBindings {
+			typeBindings[name] = bound
+		}
 		for i, paramType := range function.ParamTypes {
 			if i >= len(function.ParamSlots) {
 				break
@@ -1047,7 +1046,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			}
 			if len(spec.args) > 0 {
 				slot := function.ParamSlots[i]
-				if v, err := vm.getLocal(slot); err == nil && v != nil {
+				if v, err := vm.getLocal(slot); err == nil && v != nil && !isPendingDefault(v) {
 					vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
 				}
 				continue
@@ -1055,9 +1054,9 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			// Direct T parameter.
 			if name := strings.TrimPrefix(paramType, "?"); typeParamSet[strings.ToLower(name)] {
 				slot := function.ParamSlots[i]
-				if v, err := vm.getLocal(slot); err == nil && v != nil && v.TypeName() != "null" {
+				if v, err := vm.getLocal(slot); err == nil && v != nil && v.TypeName() != "null" && !isPendingDefault(v) {
 					if _, exists := typeBindings[name]; !exists {
-						typeBindings[name] = v.TypeName()
+						typeBindings[name] = runtime.ReifiedTypeName(v)
 					}
 				}
 			}
@@ -2431,6 +2430,10 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 
 // A bridged callback chooses its own mode without reading its running parent's state.
 func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value, allowInline bool, reentryHost *VM, syncMode bool) (runtime.Value, error) {
+	if len(vm.pendingTypeBindings) > 0 {
+		fn = bindCallableBindings(fn, vm.pendingTypeBindings)
+		vm.pendingTypeBindings = nil
+	}
 	switch f := fn.(type) {
 	case runtime.Function:
 		if f.BridgeInvoke != nil {
@@ -2445,6 +2448,15 @@ func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value,
 		}
 		return f.Native(nil, args)
 	case runtime.OverloadedFunction:
+		if len(f.TypeArguments) > 0 && len(f.Indices) > 0 && len(f.Callables) == 0 {
+			if f.Module == vm.moduleName {
+				return vm.CallOverloadedFast(f.Indices, f.Name, args, vm, f.TypeArguments)
+			}
+			old := vm.typeArgHandoff
+			vm.typeArgHandoff = f.TypeArguments
+			defer func() { vm.typeArgHandoff = old }()
+			return vm.moduleLoader.CallModuleOverloaded(f.Module, f.Indices, f.Name, args, vm)
+		}
 		var pos int
 		var chosen runtime.Function
 		var err error
@@ -2473,7 +2485,7 @@ func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value,
 					return nil, vm.typedFault(Instruction{}, "TypeError", message)
 				}
 			}
-			return vm.callCallableModeHostedSync(f.Callables[pos], ordered, allowInline, reentryHost, syncMode)
+			return vm.callCallableModeHostedSync(vm.bindCallableTypeArgs(f.Callables[pos], f.TypeArguments), ordered, allowInline, reentryHost, syncMode)
 		}
 		// An async winner yields a Task; route it through the home-chunk BytecodeFunction so the worker runs on its own snapshot (the wrapper closure captures a shared vm and would race), matching the evaluator's post-selection async check.
 		if chosen.Async && !syncMode && pos >= 0 && pos < len(f.Indices) {
@@ -2482,6 +2494,9 @@ func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value,
 		}
 		return vm.callCallableModeHostedSync(chosen, args, allowInline, reentryHost, syncMode)
 	case runtime.BytecodeFunction:
+		if f.Raw && len(vm.frames) > 0 {
+			f.TypeBindings = mergedTypeBindings(f.TypeBindings, vm.frames[len(vm.frames)-1].typeBindings)
+		}
 		// An async function invoked as a value/callback yields a Task (the worker runs the body synchronously via syncMode), matching the evaluator and the direct-call path. A raw value is a decorated function's original body, already inside the decorated call's Task.
 		if f.Async && !f.Raw && !syncMode {
 			return vm.startAsyncCallable(f, args), nil
@@ -2509,7 +2524,10 @@ func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value,
 				}
 				args = append([]runtime.Value{receiver}, args...)
 			}
-			return vm.CallFunctionRaw(f.Index, args)
+			return vm.CallFunctionBound(f.Index, args, f.TypeBindings, true)
+		}
+		if len(f.TypeBindings) > 0 {
+			return vm.CallFunctionBound(f.Index, args, f.TypeBindings, false)
 		}
 		if allowInline && !vm.requiresCallSitePolymorphism {
 			return vm.callBytecodeInline(f.Index, args)
@@ -2593,7 +2611,7 @@ func (vm *VM) CallRawFunctionValue(f runtime.BytecodeFunction, args []runtime.Va
 		}
 		args = append([]runtime.Value{vm.forwardThis}, args...)
 	}
-	return vm.CallFunctionRaw(f.Index, args)
+	return vm.CallFunctionBound(f.Index, args, f.TypeBindings, true)
 }
 
 // InheritForwardThis carries the caller's decorated-method receiver onto a worker about to run code for it.
@@ -2982,29 +3000,41 @@ func (vm *VM) AdoptLiteralArgs(caller *VM) {
 }
 
 // CallOverloadedFast selects a positional overload against the home chunk and calls it; displayName carries the call-site-qualified name for selection errors. An async winner yields a Task unless the caller is already inside an async worker.
-func (vm *VM) CallOverloadedFast(indices []int64, displayName string, args []runtime.Value, caller *VM) (runtime.Value, error) {
+func (vm *VM) CallOverloadedFast(indices []int64, displayName string, args []runtime.Value, caller *VM, providedTypeArgs ...[]string) (runtime.Value, error) {
+	typeArgs := []string(nil)
+	if len(providedTypeArgs) > 0 {
+		typeArgs = providedTypeArgs[0]
+	}
 	literals := vm.pendingLiteralArgs
 	vm.pendingLiteralArgs = nil
-	index, err := vm.selectRuntimeFunctionLiterals(Instruction{}, displayName, indices, args, 0, literals, nil)
+	index, err := vm.selectRuntimeFunctionLiterals(Instruction{}, displayName, indices, args, 0, literals, nil, typeArgs)
 	if err != nil {
 		return nil, err
 	}
+	fn := vm.curMod.Chunk.Functions[index]
+	bound := vm.bindCallTypeArgs(runtime.BytecodeFunction{Module: vm.moduleName, Index: index, Name: fn.Name, TypeParameters: fn.TypeParameters, Async: fn.Async}, typeArgs)
 	if vm.overloadWinnerAsync(index, caller) {
-		return vm.startAsyncFunction(index, args), nil
+		return vm.startAsyncCallable(bound, args), nil
 	}
-	return vm.CallFunctionFast(index, args)
+	return vm.CallFunctionBound(index, args, bound.TypeBindings, false)
 }
 
 // CallOverloadedFastNamed orders named/positional args and selects a matching overload against the home chunk, then calls it.
-func (vm *VM) CallOverloadedFastNamed(indices []int64, displayName string, args []runtime.Value, names []string, caller *VM) (runtime.Value, error) {
-	index, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, displayName, indices, args, names, 0)
+func (vm *VM) CallOverloadedFastNamed(indices []int64, displayName string, args []runtime.Value, names []string, caller *VM, providedTypeArgs ...[]string) (runtime.Value, error) {
+	typeArgs := []string(nil)
+	if len(providedTypeArgs) > 0 {
+		typeArgs = providedTypeArgs[0]
+	}
+	index, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, displayName, indices, args, names, 0, typeArgs)
 	if err != nil {
 		return nil, err
 	}
+	fn := vm.curMod.Chunk.Functions[index]
+	bound := vm.bindCallTypeArgs(runtime.BytecodeFunction{Module: vm.moduleName, Index: index, Name: fn.Name, TypeParameters: fn.TypeParameters, Async: fn.Async}, typeArgs)
 	if vm.overloadWinnerAsync(index, caller) {
-		return vm.startAsyncFunction(index, ordered), nil
+		return vm.startAsyncCallable(bound, ordered), nil
 	}
-	return vm.CallFunctionFast(index, ordered)
+	return vm.CallFunctionBound(index, ordered, bound.TypeBindings, false)
 }
 
 // overloadWinnerAsync reports whether the selected home-chunk overload runs as a Task: async and the caller is not already inside an async worker.
@@ -3154,6 +3184,29 @@ func (vm *VM) CallMethodFast(instance *runtime.Instance, name string, args []run
 	return vm.CallMethod(instance, name, args)
 }
 
+// CallMethodTyped selects in the declaring chunk before handing bindings to the body.
+func (vm *VM) CallMethodTyped(instance *runtime.Instance, name string, args []runtime.Value, names []string, types []string) (runtime.Value, error) {
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return nil, fmt.Errorf("unknown class %s", instance.Class.Name)
+	}
+	indices, ok := vm.lookupMethod(classInfo, name)
+	if !ok {
+		return nil, &runtime.MethodNotFoundError{Class: instance.Class.Name, Method: name}
+	}
+	var index int64
+	var err error
+	if len(names) > 0 {
+		index, args, err = vm.selectRuntimeNamedFunction(Instruction{}, name, indices, args, names, 1, types)
+	} else {
+		index, err = vm.selectRuntimeFunctionWith(Instruction{}, name, indices, args, 1, nil, types)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return vm.CallBoundMethodValue(instance, index, args, nil, types)
+}
+
 // CallMethodFastNamed binds named arguments against the method's home signature (engaging declared defaults, including for an omitted middle parameter) then dispatches positionally through CallMethodFast; the caller runs it on the method's home-module VM.
 func (vm *VM) CallMethodFastNamed(instance *runtime.Instance, name string, args []runtime.Value, names []string) (runtime.Value, error) {
 	classInfo, ok := vm.classInfo(instance.Class.Name)
@@ -3193,7 +3246,15 @@ func (vm *VM) callBoundDecoratedValue(instance *runtime.Instance, funcIndex int6
 }
 
 // CallBoundMethodValue dispatches a bound method value pinned to funcIndex (first overload, no re-selection) with the receiver, honoring a decorator wrapper. Run on the home-module worker so a bound-method value stays goroutine-safe.
-func (vm *VM) CallBoundMethodValue(instance *runtime.Instance, funcIndex int64, args []runtime.Value, names []string) (runtime.Value, error) {
+func (vm *VM) CallBoundMethodValue(instance *runtime.Instance, funcIndex int64, args []runtime.Value, names []string, explicit ...[]string) (runtime.Value, error) {
+	if len(explicit) > 0 && len(explicit[0]) > 0 {
+		if funcIndex < 0 || int(funcIndex) >= len(vm.curMod.Chunk.Functions) {
+			return nil, fmt.Errorf("method function index out of range")
+		}
+		fn := vm.curMod.Chunk.Functions[funcIndex]
+		bound := vm.bindCallTypeArgs(runtime.BytecodeFunction{TypeParameters: fn.TypeParameters}, explicit[0])
+		vm.pendingTypeBindings = bound.TypeBindings
+	}
 	if len(names) > 0 {
 		if funcIndex < 0 || int(funcIndex) >= len(vm.curMod.Chunk.Functions) {
 			return nil, fmt.Errorf("method function index out of range")
@@ -3216,9 +3277,13 @@ func (vm *VM) CallBoundMethodValue(instance *runtime.Instance, funcIndex int64, 
 		if task, ok := vm.startAsyncMethod(funcIndex, callArgs); ok {
 			return task, nil
 		}
-		return vm.CallFunctionFast(funcIndex, callArgs)
+		bindings := vm.pendingTypeBindings
+		vm.pendingTypeBindings = nil
+		return vm.CallFunctionBound(funcIndex, callArgs, bindings, false)
 	}
-	return vm.CallFunctionFast(funcIndex, args)
+	bindings := vm.pendingTypeBindings
+	vm.pendingTypeBindings = nil
+	return vm.CallFunctionBound(funcIndex, args, bindings, false)
 }
 
 // methodDirectIndex resolves a directly-enterable method to its function index, returning ok=false for anything CallMethod must handle (unknown class/method, overload error, decorated, generator, async).
@@ -3261,6 +3326,27 @@ func (vm *VM) CallStaticMethod(classIndex int64, name string, args []runtime.Val
 		return nil, err
 	}
 	return vm.callStaticFunction(functionIndex, args)
+}
+
+func (vm *VM) CallStaticMethodTyped(classIndex int64, name string, args []runtime.Value, names []string, types []string) (runtime.Value, error) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
+		return nil, fmt.Errorf("class index out of range")
+	}
+	indices, ok := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], name)
+	if !ok {
+		return nil, fmt.Errorf("unknown static method %s", name)
+	}
+	var index int64
+	var err error
+	if len(names) > 0 {
+		index, args, err = vm.selectRuntimeNamedFunction(Instruction{}, name, indices, args, names, 0, types)
+	} else {
+		index, err = vm.selectRuntimeFunctionWith(Instruction{}, name, indices, args, 0, nil, types)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return vm.CallBoundMethodValue(nil, index, args, nil, types)
 }
 
 func (vm *VM) callStaticFunction(functionIndex int64, args []runtime.Value) (runtime.Value, error) {
@@ -3549,6 +3635,7 @@ func copyClasses(classes []ClassInfo) []ClassInfo {
 	for i := range copied {
 		copied[i].FieldNames = append([]string(nil), classes[i].FieldNames...)
 		copied[i].FieldDefaults = append([]int64(nil), classes[i].FieldDefaults...)
+		copied[i].FieldDefaultFuncs = append([]int64(nil), classes[i].FieldDefaultFuncs...)
 		copied[i].Methods = copyStringInt64SliceMap(classes[i].Methods)
 		copied[i].StaticValues = copyStringInt64Map(classes[i].StaticValues)
 		copied[i].StaticMethods = copyStringInt64SliceMap(classes[i].StaticMethods)
@@ -3632,7 +3719,7 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 	case OpJump, OpJumpIfFalse, OpIterNext, OpPushExceptionHandler,
 		OpJumpIfNotLessInt, OpJumpIfNotLessEqualInt, OpJumpIfNotGreaterInt,
 		OpJumpIfNotGreaterEqualInt, OpJumpIfNotEqualInt, OpJumpIfEqualInt,
-		OpNullCoalesce, OpOptionalChain:
+		OpNullCoalesce, OpOptionalChain, OpJumpIfArgPresent:
 		if len(instruction.Operands) > 0 && instruction.Operands[0] >= 0 {
 			instruction.Operands[0] += int64(instructionShift)
 		}
@@ -3682,4 +3769,123 @@ func isConstantOperand(op Op, index int) bool {
 	default:
 		return false
 	}
+}
+
+// CallTypeArguments is consumed synchronously before a loader starts any async body.
+func (vm *VM) CallTypeArguments() []string {
+	if vm == nil {
+		return nil
+	}
+	return vm.typeArgHandoff
+}
+
+func (vm *VM) bindCallTypeArgs(function runtime.BytecodeFunction, args []string) runtime.BytecodeFunction {
+	if len(args) == 0 || len(function.TypeParameters) == 0 {
+		return function
+	}
+	bindings := map[string]string{}
+	for name, bound := range function.TypeBindings {
+		bindings[name] = bound
+	}
+	for i, name := range function.TypeParameters {
+		if i < len(args) {
+			bindings[name] = args[i]
+		}
+	}
+	function.TypeBindings = bindings
+	return function
+}
+
+func (vm *VM) bindCallableTypeArgs(value runtime.Value, args []string) runtime.Value {
+	if len(args) == 0 {
+		return value
+	}
+	switch f := value.(type) {
+	case runtime.BytecodeFunction:
+		return vm.bindCallTypeArgs(f, args)
+	case runtime.BytecodeClosure:
+		if info, ok := vm.functionInfoIn(f.Module, f.FunctionIndex); ok {
+			bound := vm.bindCallTypeArgs(runtime.BytecodeFunction{TypeParameters: info.TypeParameters, TypeBindings: f.TypeBindings}, args)
+			f.TypeBindings = bound.TypeBindings
+		}
+		return f
+	case runtime.OverloadedFunction:
+		f.TypeArguments = args
+		f.Overloads = append([]runtime.Function(nil), f.Overloads...)
+		for i, overload := range f.Overloads {
+			bound := vm.bindCallTypeArgs(runtime.BytecodeFunction{TypeParameters: overload.TypeParameters, TypeBindings: overload.TypeBindings}, args)
+			f.Overloads[i].TypeBindings = bound.TypeBindings
+		}
+		return f
+	case runtime.Function:
+		if f.NativeTyped != nil {
+			typed := f.NativeTyped
+			f.Native = func(_ *runtime.Instance, values []runtime.Value) (runtime.Value, error) {
+				return typed(vm, values, nil, args)
+			}
+			f.NativeNamed = func(_ *runtime.Instance, values []runtime.Value, names []string) (runtime.Value, error) {
+				return typed(vm, values, names, args)
+			}
+			f.BridgeInvoke = func(host any, values []runtime.Value) (runtime.Value, error) {
+				return typed(host, values, nil, args)
+			}
+		}
+		return f
+	}
+	return value
+}
+
+func bindCallableBindings(value runtime.Value, bindings map[string]string) runtime.Value {
+	switch f := value.(type) {
+	case runtime.BytecodeFunction:
+		f.TypeBindings = mergedTypeBindings(bindings, f.TypeBindings)
+		return f
+	case runtime.BytecodeClosure:
+		f.TypeBindings = mergedTypeBindings(bindings, f.TypeBindings)
+		return f
+	case runtime.OverloadedFunction:
+		f.Overloads = append([]runtime.Function(nil), f.Overloads...)
+		f.Callables = append([]runtime.Value(nil), f.Callables...)
+		for i := range f.Overloads {
+			f.Overloads[i].TypeBindings = mergedTypeBindings(bindings, f.Overloads[i].TypeBindings)
+		}
+		for i := range f.Callables {
+			f.Callables[i] = bindCallableBindings(f.Callables[i], bindings)
+		}
+		return f
+	}
+	return value
+}
+
+// CallFunctionBound preserves invocation-specific bindings through wrapper and async entry.
+func (vm *VM) CallFunctionBound(index int64, args []runtime.Value, bindings map[string]string, raw bool) (runtime.Value, error) {
+	if len(bindings) == 0 {
+		if raw {
+			return vm.CallFunctionRaw(index, args)
+		}
+		return vm.CallFunctionFast(index, args)
+	}
+	extended := append([]runtime.Value(nil), args...)
+	operands := []int64{int64(len(bindings))}
+	names := make([]string, 0, len(bindings))
+	for name := range bindings {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		operands = append(operands, int64(len(extended)))
+		extended = append(extended, runtime.String{Value: name})
+		operands = append(operands, int64(len(extended)))
+		extended = append(extended, runtime.String{Value: bindings[name]})
+	}
+	wrapper := make([]Instruction, 0, len(args)+3)
+	for i := range args {
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i)}})
+	}
+	wrapper = append(wrapper, Instruction{Op: OpPlantCallTypeBindings, Operands: operands}, Instruction{Op: OpCall, Operands: []int64{index, int64(len(args))}}, Instruction{Op: OpReturn})
+	rawIndex := int64(-1)
+	if raw {
+		rawIndex = index
+	}
+	return vm.runWrapperWithRawCall(extended, wrapper, rawIndex, false, nil, nil)
 }

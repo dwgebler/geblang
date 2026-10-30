@@ -33,6 +33,31 @@ type ClassDeserializerFunc func(class runtime.Value, value runtime.Value) (runti
 type ConversionContext struct {
 	InstanceInvoker   InstanceInvokerFunc
 	ClassDeserializer ClassDeserializerFunc
+	StreamWriter      func(runtime.Value, []byte) (int, error)
+	jsonStream        *jsonStreamState
+	jsonPath          []runtime.Value
+}
+
+const maxJSONDepth = 512
+
+// Track ancestors, not all visited values: repeated sibling aliases are valid JSON.
+func jsonDescend(ctx ConversionContext, value runtime.Value) (ConversionContext, error) {
+	switch value.(type) {
+	case *runtime.List, runtime.Dict, *runtime.Instance:
+		if len(ctx.jsonPath) >= maxJSONDepth {
+			return ctx, fmt.Errorf("json: maximum nesting depth exceeded")
+		}
+		for _, ancestor := range ctx.jsonPath {
+			if runtime.ValuesIdentical(ancestor, value) {
+				return ctx, fmt.Errorf("json: cyclic value")
+			}
+		}
+		if ctx.jsonPath == nil {
+			ctx.jsonPath = make([]runtime.Value, 0, 16)
+		}
+		ctx.jsonPath = append(ctx.jsonPath, value)
+	}
+	return ctx, nil
 }
 
 func invokeInstanceSerialize(ctx ConversionContext, instance *runtime.Instance) (runtime.Value, bool, error) {
@@ -322,12 +347,16 @@ func EncodeJSONValue(value runtime.Value) (string, error) {
 func EncodeJSONValueCtx(ctx ConversionContext, value runtime.Value) (string, error) {
 	buf := jsonEncodeBufPool.Get().(*bytes.Buffer)
 	buf.Reset()
+	defer func() {
+		if buf.Cap() <= 1<<20 {
+			buf.Reset()
+			jsonEncodeBufPool.Put(buf)
+		}
+	}()
 	if err := encodeJSONValueInto(ctx, buf, value); err != nil {
-		jsonEncodeBufPool.Put(buf)
 		return "", err
 	}
 	out := buf.String()
-	jsonEncodeBufPool.Put(buf)
 	return out, nil
 }
 
@@ -353,6 +382,16 @@ var jsonDictPairsPool = sync.Pool{
 }
 
 func encodeJSONValueInto(ctx ConversionContext, buf *bytes.Buffer, value runtime.Value) error {
+	if ctx.jsonStream != nil && buf.Len() >= jsonStreamBufferSize {
+		if err := ctx.jsonStream.flush(buf); err != nil {
+			return err
+		}
+	}
+	var err error
+	ctx, err = jsonDescend(ctx, value)
+	if err != nil {
+		return err
+	}
 	switch v := value.(type) {
 	case runtime.Null:
 		buf.WriteString("null")
@@ -434,7 +473,6 @@ func encodeJSONValueInto(ctx ConversionContext, buf *bytes.Buffer, value runtime
 			}
 			if !first && prev > keyStr.Value {
 				sorted = false
-				return false
 			}
 			prev = keyStr.Value
 			first = false
@@ -471,6 +509,13 @@ func encodeJSONValueInto(ctx ConversionContext, buf *bytes.Buffer, value runtime
 		pairsPtr := jsonDictPairsPool.Get().(*jsonDictPairs)
 		pairs := *pairsPtr
 		pairs = pairs[:0]
+		defer func() {
+			clear(pairs)
+			if cap(pairs) <= 4096 {
+				*pairsPtr = pairs[:0]
+				jsonDictPairsPool.Put(pairsPtr)
+			}
+		}()
 		if cap(pairs) < n {
 			pairs = make(jsonDictPairs, 0, n)
 		}
@@ -485,19 +530,13 @@ func encodeJSONValueInto(ctx ConversionContext, buf *bytes.Buffer, value runtime
 				buf.WriteByte(',')
 			}
 			if err := encodeJSONString(buf, p.key); err != nil {
-				*pairsPtr = pairs[:0]
-				jsonDictPairsPool.Put(pairsPtr)
 				return err
 			}
 			buf.WriteByte(':')
 			if err := encodeJSONValueInto(ctx, buf, p.value); err != nil {
-				*pairsPtr = pairs[:0]
-				jsonDictPairsPool.Put(pairsPtr)
 				return err
 			}
 		}
-		*pairsPtr = pairs[:0]
-		jsonDictPairsPool.Put(pairsPtr)
 		buf.WriteByte('}')
 		return nil
 	case *runtime.Instance:
@@ -613,6 +652,11 @@ func ValueToJSON(value runtime.Value) (any, error) {
 
 // ValueToJSONCtx is ValueToJSON with the backend's serialize context for instance __serialize dispatch.
 func ValueToJSONCtx(ctx ConversionContext, value runtime.Value) (any, error) {
+	var err error
+	ctx, err = jsonDescend(ctx, value)
+	if err != nil {
+		return nil, err
+	}
 	switch value := value.(type) {
 	case runtime.Null:
 		return nil, nil

@@ -56,6 +56,10 @@ Use `any` at dynamic boundaries such as decoded JSON, request dictionaries, and
 extension responses. Convert or validate it before passing values deeper into
 typed application code.
 
+`string.length()` counts Unicode characters; `string.byteLength()` counts
+stored UTF-8 bytes without allocating a bytes copy. For example,
+`"\u{20ac}".length()` is 1 and `"\u{20ac}".byteLength()` is 3.
+
 ## Numeric methods
 
 `int`, `decimal`, and `float` share a core set of numeric operations.
@@ -394,6 +398,19 @@ io.println(typeof(u) as string);   # "User"
 io.println("got a ${typeof(u)}");  # "got a User"
 # "got a " + typeof(u)             # error: a Type is not a string
 ```
+
+### Checked collection and class casts
+
+`as` validates the complete target type, including nested collection elements
+and a generic class's recorded arguments. For example, `["bad"] as list<int>`
+raises `TypeError`, as does casting a `Box<string>` instance to `Box<int>`.
+Successful instance casts preserve identity. `?int[]` means a nullable list of
+integers; `list<?int>` permits null elements instead.
+
+Class identity includes its declaring module. Import aliases and re-exported
+classes retain that identity; an unrelated class with the same name does not
+satisfy the cast. A qualified factory name used as a type resolves to the
+factory's declared return class, preserving facade APIs.
 
 ### Conversion methods
 

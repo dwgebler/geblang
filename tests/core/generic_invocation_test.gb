@@ -1,0 +1,154 @@
+import test;
+import cast_calls as calls;
+import async;
+
+func localConvert<T>(any source): any { return source as T; }
+func localChoice<T>(any source): any { return source as T; }
+func localChoice<T>(any source, int ignored): any { return source as T; }
+async func localLater<T>(any source): any { return source as T; }
+func localSequence<T>(any source): generator<any> { yield source as T; }
+
+class GenericConverter {
+    func convert<T>(any source): any { return source as T; }
+    func choice<T>(any source): any { return source as T; }
+    func choice<T>(any source, int ignored): any { return source as T; }
+}
+
+class GenericInvocationTest extends test.Test {
+    @test
+    func referencesKeepExplicitTypes(): void {
+        let local = localConvert;
+        let many = localChoice;
+        let imported = calls.convert;
+        let instance = GenericConverter();
+        let bound = instance.convert;
+        let overloaded = instance.choice;
+        this.assertEquals(7, local<int>("7"));
+        this.assertEquals("8", local<string>(8));
+        this.assertEquals(9, many<int>("9"));
+        this.assertEquals(10, imported<int>("10"));
+        this.assertEquals(11, bound<int>("11"));
+        this.assertEquals(12, overloaded<int>("12"));
+        this.assertEquals(13, bound<int>(source: "13"));
+        this.assertEquals(14, overloaded<int>(source: "14"));
+    }
+
+    @test
+    func explicitTypesSelectTheMatchingOverload(): void {
+        this.assertEquals("left", calls.pick<string>("x", 1));
+        this.assertEquals("right", calls.pick<int>("x", 1));
+        this.assertEquals("right", calls.pick<int>(code: 1, source: "x"));
+        let pick = calls.pick;
+        this.assertEquals("left", pick<string>("x", 1));
+        this.assertEquals("right", pick<int>("x", 1));
+    }
+
+    @test
+    func failedSpreadDoesNotBindTheNextCall(): void {
+        any invalid = 1;
+        this.assertThrows(func(): void { calls.single<int>(...invalid); });
+        this.assertEquals("ok", calls.echo("ok"));
+    }
+
+    @test
+    func asyncAndGeneratorsCaptureInvocationTypes(): void {
+        let first = localLater<int>("15");
+        let second = localLater<string>(16);
+        let integers = localSequence<int>("17");
+        let strings = localSequence<string>(18);
+        this.assertEquals(15, async.await(first));
+        this.assertEquals("16", async.await(second));
+        for (value in integers) { this.assertEquals(17, value); }
+        for (value in strings) { this.assertEquals("18", value); }
+    }
+}
+
+func forwardInvocation(callable next): callable {
+    return func(any ...args): any { return next(...args); };
+}
+class LocalInvocationWorker {
+    @forwardInvocation
+    static func stat<T>(any source): any { return source as T; }
+    @forwardInvocation
+    async func decoratedLater<T>(any source): any { return source as T; }
+    func pick<T>(T source, int code): string { return "left"; }
+    func pick<U>(string source, U code): string { return "right"; }
+    async func later<T>(any source): any { return source as T; }
+    func sequence<T>(any source): generator<any> { yield source as T; }
+    @forwardInvocation
+    func convert<T>(any source): any { return source as T; }
+}
+class GenericMethodInvocationTest extends test.Test {
+    @test
+    func localAndImportedMethodsKeepBindings(): void {
+        this.assertEquals(3, LocalInvocationWorker.stat<int>(source: "3"));
+        this.assertEquals(4, calls.InvocationWorker.stat<int>(source: "4"));
+        for (worker in [LocalInvocationWorker(), calls.InvocationWorker()]) {
+            this.assertEquals("left", worker.pick<string>("x", 1));
+            this.assertEquals("right", worker.pick<int>("x", 1));
+            this.assertEquals("right", worker.pick<int>(code: 1, source: "x"));
+            this.assertEquals(7, async.await(worker.later<int>(source: "7")));
+            this.assertEquals(5, async.await(worker.decoratedLater<int>(source: "5")));
+            let decoratedLater = worker.decoratedLater;
+            this.assertEquals(6, async.await(decoratedLater<int>(source: "6")));
+            let first = worker.sequence<int>(source: "8");
+            let second = worker.sequence<string>(source: 9);
+            for (value in first) { this.assertEquals(8, value); }
+            for (value in second) { this.assertEquals("9", value); }
+            this.assertEquals(10, worker.convert<int>(source: "10"));
+            let bound = worker.convert;
+            this.assertEquals(11, bound<int>(source: "11"));
+            this.assertEquals("12", bound<string>(source: 12));
+        }
+    }
+}
+
+import cast_factory as factory;
+import async.atomic as atomic;
+class FactoryTypedHolder { factory.InvocationWorker worker; }
+class QualifiedFactoryTypeTest extends test.Test {
+    @test
+    func factoryTypesResolveToTheirDeclaredReturnClass(): void {
+        let holder = FactoryTypedHolder();
+        holder.worker = factory.InvocationWorker();
+        this.assertEquals(7, holder.worker.convert<int>("7"));
+        any value = holder.worker;
+        this.assertTrue((value as factory.InvocationWorker) is value);
+    }
+
+    @test
+    func aliasedAtomicTypesKeepTheirCanonicalNamespace(): void {
+        any value = atomic.AtomicInt(3);
+        let checked = value as atomic.AtomicInt;
+        this.assertEquals(3, checked.load());
+        let collection = [value] as list<atomic.AtomicInt>;
+        this.assertEquals(3, collection[0].load());
+    }
+}
+
+import cast_other;
+func strictGenericParameter<T>(T value): void {}
+class NestedNominalCastTest extends test.Test {
+    @test
+    func checksNominalIdentityInsideCollectionsAndBranches(): void {
+        any worker = calls.InvocationWorker();
+        this.assertThrows(func(): void { let bad = [worker] as list<cast_other.InvocationWorker>; });
+        this.assertThrows(func(): void { let bad = {worker} as set<cast_other.InvocationWorker>; });
+        this.assertThrows(func(): void { let bad = {"x": worker} as dict<string, cast_other.InvocationWorker>; });
+        this.assertThrows(func(): void { let bad = worker as int|cast_other.InvocationWorker; });
+        this.assertThrows(func(): void { let bad = worker as calls.InvocationWorker&cast_other.InvocationWorker; });
+        this.assertThrows(func(): void { strictGenericParameter<cast_other.InvocationWorker>(worker); });
+        this.assertThrows(func(): void { strictGenericParameter<list<cast_other.InvocationWorker>>([worker]); });
+    }
+}
+
+import io;
+import streams;
+class NativeQualifiedCastTest extends test.Test {
+    @test
+    func preservesNativeStreamHandleCasts(): void {
+        let raw = io.memory("native");
+        let stream = raw as streams.IOStream;
+        this.assertEquals("native", stream.readAll());
+    }
+}

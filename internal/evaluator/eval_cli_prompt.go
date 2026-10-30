@@ -73,18 +73,30 @@ func (e *Evaluator) cliParseArgs(call *ast.CallExpression, args []runtime.Value)
 }
 
 func (e *Evaluator) cliPromptInt(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	return e.cliPromptNumber(args, false)
+}
+
+func (e *Evaluator) cliPromptDecimal(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	return e.cliPromptNumber(args, true)
+}
+
+func (e *Evaluator) cliPromptNumber(args []runtime.Value, decimal bool) (runtime.Value, error) {
+	labelName, parserName, invalidMessage := "cli.promptInt", "toIntOrNull", "Please enter a whole number."
+	if decimal {
+		labelName, parserName, invalidMessage = "cli.promptDecimal", "toDecimalOrNull", "Please enter a decimal number."
+	}
 	if len(args) < 1 || len(args) > 2 {
-		return nil, fmt.Errorf("cli.promptInt expects label and optional options")
+		return nil, fmt.Errorf("%s expects label and optional options", labelName)
 	}
 	label, ok := args[0].(runtime.String)
 	if !ok {
-		return nil, fmt.Errorf("cli.promptInt label must be a string")
+		return nil, fmt.Errorf("%s label must be a string", labelName)
 	}
 	options := runtime.NewDict()
 	if len(args) == 2 {
 		options, ok = args[1].(runtime.Dict)
 		if !ok {
-			return nil, fmt.Errorf("cli.promptInt options must be a dict")
+			return nil, fmt.Errorf("%s options must be a dict", labelName)
 		}
 	}
 	if err := native.ValidateCLIRules(options); err != nil {
@@ -97,27 +109,39 @@ func (e *Evaluator) cliPromptInt(call *ast.CallExpression, args []runtime.Value)
 	if value, present := dictField(options, "cancel"); present {
 		items, ok := value.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("cli.promptInt cancel must be a list of strings")
+			return nil, fmt.Errorf("%s cancel must be a list of strings", labelName)
 		}
 		for _, item := range items.Elements {
 			text, ok := item.(runtime.String)
 			if !ok {
-				return nil, fmt.Errorf("cli.promptInt cancel must be a list of strings")
+				return nil, fmt.Errorf("%s cancel must be a list of strings", labelName)
 			}
 			cancel = append(cancel, strings.ToLower(strings.TrimSpace(text.Value)))
 		}
 	}
 	defaultValue, hasDefault := dictField(options, "default")
 	if hasDefault {
-		if _, ok := native.IntValueToBigInt(defaultValue); !ok {
-			return nil, fmt.Errorf("cli.promptInt default must be an int")
+		if decimal {
+			switch value := defaultValue.(type) {
+			case runtime.Decimal:
+			case runtime.Int, runtime.SmallInt:
+				parsed, err := native.StringNumberOrNull(value.Inspect(), "toDecimalOrNull", nil)
+				if err != nil {
+					return nil, err
+				}
+				defaultValue = parsed
+			default:
+				return nil, fmt.Errorf("%s default must be an int or decimal", labelName)
+			}
+		} else if _, ok := native.IntValueToBigInt(defaultValue); !ok {
+			return nil, fmt.Errorf("%s default must be an int", labelName)
 		}
 		message, err := e.validateCLIValue(defaultValue, options)
 		if err != nil {
 			return nil, err
 		}
 		if message != "" {
-			return nil, runtime.ClassifiedError{Class: "ValueError", Message: "cli.promptInt default " + message}
+			return nil, runtime.ClassifiedError{Class: "ValueError", Message: labelName + " default " + message}
 		}
 	}
 	for {
@@ -138,12 +162,12 @@ func (e *Evaluator) cliPromptInt(call *ast.CallExpression, args []runtime.Value)
 				return runtime.Null{}, nil
 			}
 		}
-		value, err := native.StringNumberOrNull(text, "toIntOrNull", nil)
+		value, err := native.StringNumberOrNull(text, parserName, nil)
 		if err != nil {
 			return nil, err
 		}
 		if runtime.IsNull(value) {
-			_, _ = fmt.Fprintln(e.promptWriter(), "Please enter a whole number.")
+			_, _ = fmt.Fprintln(e.promptWriter(), invalidMessage)
 			continue
 		}
 		message, err := e.validateCLIValue(value, options)

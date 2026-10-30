@@ -243,15 +243,21 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports, TypeAliases: typealias.ExportedFromProgram(program, canonical)}
 	for name, value := range module.Exports {
 		if function, ok := value.(runtime.BytecodeFunction); ok {
-			function.Module = canonical
+			if function.Module == "" {
+				function.Module = canonical
+			}
 			module.Exports[name] = function
 		}
 		if class, ok := value.(runtime.BytecodeClass); ok {
-			class.Module = canonical
+			if class.Module == "" {
+				class.Module = canonical
+			}
 			module.Exports[name] = class
 		}
 		if overloaded, ok := value.(runtime.OverloadedFunction); ok {
-			overloaded.Module = canonical
+			if overloaded.Module == "" {
+				overloaded.Module = canonical
+			}
 			module.Exports[name] = overloaded
 		}
 	}
@@ -439,7 +445,7 @@ func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []ru
 	if function.Raw {
 		result, err = vm.CallRawFunctionValue(function, args)
 	} else {
-		result, err = vm.CallFunctionFast(function.Index, args)
+		result, err = vm.CallFunctionBound(function.Index, args, function.TypeBindings, false)
 	}
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
@@ -462,7 +468,7 @@ func (l *Loader) CallModuleMethodValue(module string, funcIndex int64, instance 
 		chunk = c
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
-	result, err := vm.CallBoundMethodValue(instance, funcIndex, args, names)
+	result, err := vm.CallBoundMethodValue(instance, funcIndex, args, names, caller.CallTypeArguments())
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
@@ -564,7 +570,7 @@ func (l *Loader) CallModuleOverloaded(module string, indices []int64, displayNam
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
 	vm.AdoptLiteralArgs(caller)
-	result, err := vm.CallOverloadedFast(indices, displayName, args, caller)
+	result, err := vm.CallOverloadedFast(indices, displayName, args, caller, caller.CallTypeArguments())
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
@@ -576,7 +582,7 @@ func (l *Loader) CallModuleOverloadedNamed(module string, indices []int64, displ
 		return nil, fmt.Errorf("module %s is not loaded", module)
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
-	result, err := vm.CallOverloadedFastNamed(indices, displayName, args, names, caller)
+	result, err := vm.CallOverloadedFastNamed(indices, displayName, args, names, caller, caller.CallTypeArguments())
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
@@ -663,7 +669,13 @@ func (l *Loader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName 
 		return nil, fmt.Errorf("module %s is not loaded", class.Module)
 	}
 	vm, pool := l.moduleVM(class.Module, chunk, caller)
-	result, err := vm.CallStaticMethodFast(class.Index, methodName, args)
+	var result runtime.Value
+	var err error
+	if types := caller.CallTypeArguments(); len(types) > 0 {
+		result, err = vm.CallStaticMethodTyped(class.Index, methodName, args, nil, types)
+	} else {
+		result, err = vm.CallStaticMethodFast(class.Index, methodName, args)
+	}
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
@@ -675,7 +687,13 @@ func (l *Loader) CallModuleStaticMethodNamed(class runtime.BytecodeClass, method
 		return nil, fmt.Errorf("module %s is not loaded", class.Module)
 	}
 	vm, pool := l.moduleVM(class.Module, chunk, caller)
-	result, err := vm.CallStaticMethodNamed(class.Index, methodName, args, names)
+	var result runtime.Value
+	var err error
+	if types := caller.CallTypeArguments(); len(types) > 0 {
+		result, err = vm.CallStaticMethodTyped(class.Index, methodName, args, names, types)
+	} else {
+		result, err = vm.CallStaticMethodNamed(class.Index, methodName, args, names)
+	}
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
@@ -1086,7 +1104,13 @@ func (l *Loader) callModuleMethod(module string, className string, methodName st
 	if invoker != nil && pool != nil {
 		vm.SetProfileParent(invoker)
 	}
-	result, err := vm.CallMethodFast(instance, methodName, args)
+	var result runtime.Value
+	var err error
+	if types := caller.CallTypeArguments(); len(types) > 0 {
+		result, err = vm.CallMethodTyped(instance, methodName, args, nil, types)
+	} else {
+		result, err = vm.CallMethodFast(instance, methodName, args)
+	}
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
@@ -1111,7 +1135,13 @@ func (l *Loader) CallModuleMethodNamed(module string, className string, methodNa
 		chunk = c
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
-	result, err := vm.CallMethodFastNamed(instance, methodName, args, names)
+	var result runtime.Value
+	var err error
+	if types := caller.CallTypeArguments(); len(types) > 0 {
+		result, err = vm.CallMethodTyped(instance, methodName, args, names, types)
+	} else {
+		result, err = vm.CallMethodFastNamed(instance, methodName, args, names)
+	}
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err

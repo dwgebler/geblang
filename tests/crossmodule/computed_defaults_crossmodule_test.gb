@@ -1,0 +1,51 @@
+/**
+ * @title Computed defaults across modules
+ * @summary Imported classes and functions evaluate non-literal defaults in
+ * their declaring module, including through local subclasses, and module-level
+ * static initializers are visible to importers.
+ */
+import test;
+import computed_defaults_donor as donor;
+
+class Child extends donor.Mid { int own = 5 * 5; }
+class Grand extends Child { list<string> names = ["g" + "1"]; }
+class LocalExploding extends donor.Exploding {}
+
+class ComputedDefaultsCrossModuleTest extends test.Test {
+    @test
+    func importedFieldDefaults(): void {
+        for (instance in [donor.Base(), donor.Mid(), Child(), Grand()]) {
+            this.assertEquals(41, instance.computed);
+            this.assertEquals([40], instance.called);
+            this.assertEquals(42, instance.obj.v);
+            this.assertEquals(82, instance.scaled());
+        }
+        let first = Grand();
+        let second = Grand();
+        first.called.push(9);
+        first.obj.v = 0;
+        first.names.push("x");
+        this.assertEquals([40], second.called);
+        this.assertEquals(42, second.obj.v);
+        this.assertEquals(["g1"], second.names);
+        this.assertEquals("mid", second.tag);
+        this.assertEquals(25, second.own);
+    }
+    @test
+    func importedFunctionAndStaticDefaults(): void {
+        this.assertEquals("42 [40]", donor.helper(2));
+        this.assertEquals("3 [40]", donor.helper(2, 3));
+        let reference = donor.helper;
+        this.assertEquals("41 [40]", reference(1));
+        this.assertEquals(400, donor.Config.limit);
+    }
+    @test
+    func importedDefaultErrorsPropagate(): void {
+        try {
+            LocalExploding();
+            this.fail("expected ValueError");
+        } catch (ValueError e) {
+            this.assertEquals("donor boom", e.message);
+        }
+    }
+}

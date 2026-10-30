@@ -425,3 +425,18 @@ func TestRuneIndexOfByteRunesFallback(t *testing.T) {
 		t.Fatalf("end: got %d, want %d", got, len([]rune(s)))
 	}
 }
+
+func TestSingleRuneMetadataPreservesSlicingAndIndexing(t *testing.T) {
+	for _, s := range []string{"\u00e9", "\U0001f600", "\ufffd"} {
+		info := StringRuneInfo(s)
+		if info.RuneCount(s) != 1 || info.RuneAt(s, 0) != s || info.RuneValueAt(s, 0).(String).Value != s {
+			t.Fatalf("index %q", s)
+		}
+		if info.Substring(s, 0, 0) != "" || info.Substring(s, 1, 1) != "" || info.Substring(s, 0, 1) != s {
+			t.Fatalf("slice %q", s)
+		}
+		if info.RuneIndexOfByte(s, 0) != 0 || info.RuneIndexOfByte(s, len(s)) != 1 {
+			t.Fatalf("offset %q", s)
+		}
+	}
+}

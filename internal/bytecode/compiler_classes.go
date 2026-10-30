@@ -272,6 +272,7 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 	defer func() {
 		c.classStack = c.classStack[:len(c.classStack)-1]
 	}()
+	var computedStatics []*ast.DeclarationStatement
 	for _, member := range stmt.Members {
 		switch member := member.(type) {
 		case *ast.DeclarationStatement:
@@ -288,11 +289,12 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 				if member.Value != nil {
 					parsed, err := c.constantValueFromExpression(member.Value)
 					if err != nil {
-						return c.withStatementLocation(member, fmt.Errorf("bytecode compiler only supports literal static %s values", strings.TrimPrefix(member.Kind, "static ")))
-					}
-					value = parsed
-					if ast.IsIntegerLiteral(member.Value) {
-						value = typedIntLiteralConstant(value, staticType)
+						computedStatics = append(computedStatics, member)
+					} else {
+						value = parsed
+						if ast.IsIntegerLiteral(member.Value) {
+							value = typedIntLiteralConstant(value, staticType)
+						}
 					}
 				}
 				class.StaticValues[member.Name.Value] = int64(len(c.chunk.Constants))
@@ -328,16 +330,24 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			class.FieldDecorators = c.appendFieldDecorators(class.FieldDecorators, len(class.FieldNames)-1, fieldDecs)
 			if member.Value == nil {
 				class.FieldDefaults = append(class.FieldDefaults, -1)
+				class.FieldDefaultFuncs = append(class.FieldDefaultFuncs, -1)
 				continue
 			}
 			value, err := c.constantValueFromExpression(member.Value)
 			if err != nil {
-				return c.withStatementLocation(member, fmt.Errorf("bytecode compiler only supports literal class field defaults"))
+				funcIndex, err := c.compileFieldDefaultFunction(index, class.Name, len(class.FieldNames)-1, member, checkType)
+				if err != nil {
+					return c.withStatementLocation(member, err)
+				}
+				class.FieldDefaults = append(class.FieldDefaults, -1)
+				class.FieldDefaultFuncs = append(class.FieldDefaultFuncs, funcIndex)
+				continue
 			}
 			if ast.IsIntegerLiteral(member.Value) {
 				value = typedIntLiteralConstant(value, checkType)
 			}
 			class.FieldDefaults = append(class.FieldDefaults, int64(len(c.chunk.Constants)))
+			class.FieldDefaultFuncs = append(class.FieldDefaultFuncs, -1)
 			c.chunk.Constants = append(c.chunk.Constants, value)
 		case *ast.FunctionStatement:
 			// Flush field metadata into chunk.Classes before compiling
@@ -418,6 +428,15 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 	}
 	c.chunk.Classes[index] = class
 	c.emitAt(OpDefineClass, stmt.Token.Line, stmt.Token.Column, index)
+	for _, member := range computedStatics {
+		if err := c.compileExpressionWithExpected(member.Value, class.StaticTypes[member.Name.Value]); err != nil {
+			return c.withStatementLocation(member, err)
+		}
+		nameIndex := int64(len(c.chunk.Constants))
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: member.Name.Value})
+		c.emitAt(OpSetStaticValue, member.Token.Line, member.Token.Column, index, nameIndex)
+		c.emitAt(OpPop, member.Token.Line, member.Token.Column)
+	}
 	return nil
 }
 

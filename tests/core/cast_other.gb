@@ -1,0 +1,2 @@
+module cast_other;
+export class InvocationWorker {}

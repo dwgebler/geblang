@@ -10,6 +10,7 @@ import (
 )
 
 func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
+	defer func() { vm.pendingCallTypeArgs = nil }()
 	if len(instruction.Operands) < 2 {
 		return 0, vm.fatalError(instruction, "method-call-spread instruction has invalid operands")
 	}
@@ -263,7 +264,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 		for i := 0; i <= argc; i++ {
 			callArgs[i] = vm.stack[base+i].ToValue()
 		}
-		vm.stack = vm.stack[:base]
+		vm.truncateStack(base)
 		if task, ok := vm.startAsyncMethod(functionIndex, callArgs); ok {
 			vm.push(task)
 		} else {
@@ -283,6 +284,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 				stackArgs := vm.stack[base : base+argc+1]
 				vm.stack = vm.stack[:base]
 				nextIP, err := vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
+				clear(stackArgs)
 				if err != nil {
 					return 0, err
 				}
@@ -295,7 +297,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 	for i := 0; i <= argc; i++ {
 		callArgs[i] = vm.stack[base+i].ToValue()
 	}
-	vm.stack = vm.stack[:base]
+	vm.truncateStack(base)
 	instance, ok := callArgs[0].(*runtime.Instance)
 	if !ok {
 		return 0, vm.runtimeError(instruction, "resolved method receiver is not an instance, got %s", callArgs[0].TypeName())
@@ -374,6 +376,9 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	// Consumed here so planted type args cannot leak into a later call.
 	callTypeArgs := vm.pendingCallTypeArgs
 	vm.pendingCallTypeArgs = nil
+	previousTypeArgs := vm.typeArgHandoff
+	vm.typeArgHandoff = callTypeArgs
+	defer func() { vm.typeArgHandoff = previousTypeArgs }()
 	literalArgs := vm.pendingLiteralArgs
 	vm.pendingLiteralArgs = nil
 	nameIndex := instruction.Operands[0]
@@ -399,6 +404,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		return 0, vm.callPropagate(instruction, err)
 	}
 	slots[0] = receiver
+	receiver = vm.bindCallableTypeArgs(receiver, callTypeArgs)
 	args := slots[1:]
 	if target, ok := receiver.(runtime.DecoratorTarget); ok {
 		if nameValue.Value != "__invoke" {
@@ -447,7 +453,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			// For classes from foreign modules, prefer native Go methods (e.g.
 			// process.Process, http.Response) before falling through to the
 			// bytecode module loader, which has no chunk for native modules.
-			if nativeMethods := instance.Class.Methods[strings.ToLower(nameValue.Value)]; len(nativeMethods) > 0 && nativeMethods[0].Native != nil {
+			if nativeMethods := instance.Class.Methods[strings.ToLower(nameValue.Value)]; len(nativeMethods) > 0 && nativeMethods[0].Native != nil && (len(callTypeArgs) == 0 || nativeMethods[0].NativeFrom == nil) {
 				result, err := vm.callNativeMethod(nativeMethods[0], instance, args)
 				if err != nil {
 					return vm.propagateModuleError(instruction, ip, err)
@@ -519,12 +525,15 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			}
 			return vm.throwTyped(instruction, ip, "RuntimeError", fmt.Sprintf("unknown method %s.%s", instance.Class.Name, nameValue.Value))
 		}
-		functionIndex, err := vm.selectRuntimeFunctionLiterals(instruction, nameValue.Value, indices, args, 1, literalArgs, instance.TypeBindings)
+		functionIndex, err := vm.selectRuntimeFunctionLiterals(instruction, nameValue.Value, indices, args, 1, literalArgs, instance.TypeBindings, callTypeArgs)
 		if err != nil {
 			return 0, err
 		}
 		if err := vm.ensureCallableDecorators(); err != nil {
 			return 0, vm.callPropagate(instruction, err)
+		}
+		if b := vm.explicitTypeArgBindings(&vm.curMod.Chunk.Functions[functionIndex], callTypeArgs); len(b) > 0 {
+			vm.pendingTypeBindings = b
 		}
 		if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
 			if vm.curMod.Chunk.Functions[functionIndex].Async && !vm.syncMode {
@@ -545,10 +554,6 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		if vm.curMod.Chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
 			vm.push(vm.lazyGenerator(functionIndex, slots))
 			return ip, nil
-		}
-		// Explicit `<TypeArgs>` on a dynamically-dispatched method call (e.g. `this.m<T>()`) seed the method frame's bindings, matching the statically-resolved path.
-		if b := vm.explicitTypeArgBindings(&vm.curMod.Chunk.Functions[functionIndex], callTypeArgs); len(b) > 0 {
-			vm.pendingTypeBindings = b
 		}
 		nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], slots, nil)
 		if err != nil {
@@ -760,6 +765,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			return 0, vm.runtimeError(instruction, "module %s has no export %s", module.Name, nameValue.Value)
 		}
 		if function, ok := value.(runtime.BytecodeFunction); ok {
+			function = vm.bindCallTypeArgs(function, callTypeArgs)
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
@@ -778,6 +784,15 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			return ip, nil
 		}
 		if overloaded, ok := value.(runtime.OverloadedFunction); ok {
+			if len(callTypeArgs) > 0 {
+				overloaded.TypeArguments = callTypeArgs
+				result, err := vm.callCallable(overloaded, args)
+				if err != nil {
+					return vm.propagateModuleError(instruction, ip, err)
+				}
+				vm.push(result)
+				return ip, nil
+			}
 			if len(overloaded.Callables) > 0 {
 				result, err := vm.callCallable(overloaded, args)
 				if err != nil {
@@ -814,6 +829,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		return 0, vm.runtimeError(instruction, "%s.%s is not callable", module.Name, nameValue.Value)
 	}
 	if function, ok := receiver.(runtime.BytecodeFunction); ok {
+		function = vm.bindCallTypeArgs(function, callTypeArgs)
 		if nameValue.Value != "__invoke" {
 			return 0, vm.runtimeError(instruction, "function has no method %s", nameValue.Value)
 		}
@@ -875,13 +891,14 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		if !ok {
 			return 0, vm.runtimeError(instruction, "unknown static method %s.%s", class.Name, nameValue.Value)
 		}
-		functionIndex, err := vm.selectRuntimeFunction(instruction, nameValue.Value, indices, args, 0)
+		functionIndex, err := vm.selectRuntimeFunctionWith(instruction, nameValue.Value, indices, args, 0, nil, callTypeArgs)
 		if err != nil {
 			return 0, err
 		}
 		if err := vm.ensureCallableDecorators(); err != nil {
 			return 0, vm.callPropagate(instruction, err)
 		}
+		vm.pendingTypeBindings = vm.explicitTypeArgBindings(&vm.curMod.Chunk.Functions[functionIndex], callTypeArgs)
 		if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
 			if vm.curMod.Chunk.Functions[functionIndex].Async && !vm.syncMode {
 				vm.push(vm.startAsyncCallable(decorated, args))
@@ -1108,7 +1125,8 @@ func (vm *VM) OrderNamedArgs(index int64, paramOffset int, args []runtime.Value,
 }
 
 // dispatchCrossModuleNamedFunction orders named args against a free function's home-module parameters, then dispatches through the module loader (the home VM fills declared defaults).
-func (vm *VM) dispatchCrossModuleNamedFunction(instruction Instruction, ip int, fn runtime.BytecodeFunction, args []runtime.Value, names []string) (int, error) {
+func (vm *VM) dispatchCrossModuleNamedFunction(instruction Instruction, ip int, fn runtime.BytecodeFunction, args []runtime.Value, names []string, typeArgs []string) (int, error) {
+	fn = vm.bindCallTypeArgs(fn, typeArgs)
 	ordered, err := vm.orderCrossModuleNamedArgs(fn.Module, fn.Index, 0, args, names)
 	if err != nil {
 		return 0, vm.runtimeError(instruction, "%s", err.Error())
@@ -1126,8 +1144,8 @@ func (vm *VM) dispatchCrossModuleNamedFunction(instruction Instruction, ip int, 
 }
 
 // dispatchCrossModuleNamedConstruct constructs a class exported from another module, selecting the constructor overload and ordering named args in the class's home chunk.
-func (vm *VM) dispatchCrossModuleNamedConstruct(instruction Instruction, ip int, class runtime.BytecodeClass, args []runtime.Value, names []string) (int, error) {
-	result, err := vm.moduleLoader.ConstructModuleClassNamed(class, vm.wrapStatefulNativeArgs("", "", args), names, nil, vm)
+func (vm *VM) dispatchCrossModuleNamedConstruct(instruction Instruction, ip int, class runtime.BytecodeClass, args []runtime.Value, names []string, typeArgs []string) (int, error) {
+	result, err := vm.moduleLoader.ConstructModuleClassNamed(class, vm.wrapStatefulNativeArgs("", "", args), names, typeArgs, vm)
 	if err != nil {
 		return vm.propagateModuleError(instruction, ip, err)
 	}
@@ -1137,6 +1155,12 @@ func (vm *VM) dispatchCrossModuleNamedConstruct(instruction Instruction, ip int,
 
 // dispatchNamedCall invokes a callable receiver with named/positional argument metadata. Shared by OpMethodCallNamed and the dict-spread path of OpMethodCallSpread.
 func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtime.Value, methodName string, args []runtime.Value, names []string) (int, error) {
+	callTypeArgs := vm.pendingCallTypeArgs
+	vm.pendingCallTypeArgs = nil
+	previousTypeArgs := vm.typeArgHandoff
+	vm.typeArgHandoff = callTypeArgs
+	defer func() { vm.typeArgHandoff = previousTypeArgs }()
+	receiver = vm.bindCallableTypeArgs(receiver, callTypeArgs)
 	if set, ok := receiver.(runtime.OverloadedFunction); ok && len(set.Callables) > 0 && methodName == "__invoke" {
 		selected, ordered, err := vm.selectBoundNamed(instruction, set, args, names)
 		if err != nil {
@@ -1183,11 +1207,12 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		return vm.dispatchNamedCall(instruction, ip, target.Callable, methodName, args, names)
 	}
 	if bytecodeFunction, ok := receiver.(runtime.BytecodeFunction); ok {
+		bytecodeFunction = vm.bindCallTypeArgs(bytecodeFunction, callTypeArgs)
 		if methodName != "__invoke" {
 			return 0, vm.runtimeError(instruction, "function has no method %s", methodName)
 		}
 		if bytecodeFunction.Module != vm.moduleName && vm.moduleLoader != nil {
-			return vm.dispatchCrossModuleNamedFunction(instruction, ip, bytecodeFunction, args, names)
+			return vm.dispatchCrossModuleNamedFunction(instruction, ip, bytecodeFunction, args, names, callTypeArgs)
 		}
 		if int(bytecodeFunction.Index) >= len(vm.curMod.Chunk.Functions) {
 			return 0, vm.runtimeError(instruction, "function index out of range")
@@ -1243,7 +1268,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			return vm.dispatchCrossModuleNamedFunction(instruction, ip, function, args, names)
+			return vm.dispatchCrossModuleNamedFunction(instruction, ip, function, args, names, callTypeArgs)
 		}
 		if overloaded, ok := value.(runtime.OverloadedFunction); ok {
 			if len(overloaded.Callables) > 0 {
@@ -1252,6 +1277,9 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
+			oldTypeArgs := vm.typeArgHandoff
+			vm.typeArgHandoff = callTypeArgs
+			defer func() { vm.typeArgHandoff = oldTypeArgs }()
 			result, err := vm.moduleLoader.CallModuleOverloadedNamed(overloaded.Module, overloaded.Indices, module.Name+"."+methodName, vm.wrapStatefulNativeArgs("", "", args), names, vm)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
@@ -1263,18 +1291,20 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			return vm.dispatchCrossModuleNamedConstruct(instruction, ip, class, args, names)
+			return vm.dispatchCrossModuleNamedConstruct(instruction, ip, class, args, names, callTypeArgs)
 		}
 		return 0, vm.runtimeError(instruction, "named method arguments are only supported for class instances")
 	}
 	if class, ok := receiver.(runtime.BytecodeClass); ok && methodName == "__invoke" && class.Module != vm.moduleName && vm.moduleLoader != nil {
-		return vm.dispatchCrossModuleNamedConstruct(instruction, ip, class, args, names)
+		return vm.dispatchCrossModuleNamedConstruct(instruction, ip, class, args, names, callTypeArgs)
 	}
 	if class, ok := receiver.(runtime.BytecodeClass); ok && methodName != "__invoke" {
 		var result runtime.Value
 		var err error
 		if class.Module != vm.moduleName && vm.moduleLoader != nil {
 			result, err = vm.moduleLoader.CallModuleStaticMethodNamed(class, methodName, vm.wrapStatefulNativeArgs("", "", args), names, vm)
+		} else if len(callTypeArgs) > 0 {
+			result, err = vm.CallStaticMethodTyped(class.Index, methodName, args, names, callTypeArgs)
 		} else {
 			result, err = vm.CallStaticMethodNamed(class.Index, methodName, args, names)
 		}
@@ -1332,12 +1362,15 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 	if !ok {
 		return vm.throwTyped(instruction, ip, "RuntimeError", fmt.Sprintf("unknown method %s.%s", instance.Class.Name, methodName))
 	}
-	functionIndex, ordered, err := vm.selectRuntimeNamedFunction(instruction, methodName, indices, args, names, 1)
+	functionIndex, ordered, err := vm.selectRuntimeNamedFunction(instruction, methodName, indices, args, names, 1, callTypeArgs)
 	if err != nil {
 		return 0, err
 	}
 	if err := vm.ensureCallableDecorators(); err != nil {
 		return 0, vm.callPropagate(instruction, err)
+	}
+	if b := vm.explicitTypeArgBindings(&vm.curMod.Chunk.Functions[functionIndex], callTypeArgs); len(b) > 0 {
+		vm.pendingTypeBindings = b
 	}
 	if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
 		if vm.curMod.Chunk.Functions[functionIndex].Async && !vm.syncMode {
@@ -1354,6 +1387,10 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 	callArgs := append([]runtime.Value{instance}, ordered...)
 	if task, ok := vm.startAsyncMethod(functionIndex, callArgs); ok {
 		vm.push(task)
+		return ip, nil
+	}
+	if vm.curMod.Chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
+		vm.push(vm.lazyGenerator(functionIndex, callArgs))
 		return ip, nil
 	}
 	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, nil)

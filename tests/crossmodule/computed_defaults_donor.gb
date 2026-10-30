@@ -1,0 +1,17 @@
+module computed_defaults_donor;
+
+int secret = 40;
+func make(): list<int> { return [secret]; }
+func explode(): int { throw ValueError("donor boom"); }
+
+export class Item { int v = secret + 2; }
+export class Base {
+    int computed = secret + 1;
+    list<int> called = make();
+    Item obj = Item();
+    func scaled(int factor = this.computed * 2): int { return factor; }
+}
+export class Mid extends Base { string tag = "m" + "id"; }
+export class Exploding { int bad = explode(); }
+export class Config { static let limit = secret * 10; }
+export func helper(int a, int b = a + secret, list<int> c = make()): string { return "${b} ${c}"; }

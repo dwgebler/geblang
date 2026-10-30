@@ -1,0 +1,92 @@
+/**
+ * @title Computed parameter defaults
+ * @summary Non-literal parameter defaults run on every call inside the callee:
+ * they see earlier parameters, captured variables and `this`, a later
+ * parameter's name resolves outside the list, and the result is type-checked
+ * like a supplied argument.
+ */
+import test;
+
+int base = 10;
+int b = 99;
+int calls = 0;
+
+func tick(): int { calls = calls + 1; return calls; }
+func anything(): any { return "x"; }
+func earlier(int a, int b = a + base): int { return b; }
+func later(int a = b, int b = 1): int { return a; }
+func perCall(int t = tick()): int { return t; }
+func typed(int a = anything()): any { return a; }
+func generic<T>(T a = anything()): any { return a; }
+func frozen(const list<int> xs = [1]): bool {
+    try { xs.push(2); } catch (Error e) { return true; }
+    return false;
+}
+func makeClosure(): callable { int local = 5; return func(int x = local * 2): int { return x; }; }
+func nestedStatement(): int { int local = 6; func inner(int x = local + 1): int { return x; } return inner(); }
+async func asyncDefault(int a = base + 1): int { return a; }
+func gen(int start = base * 2): any { yield start; yield start + 1; }
+func twice(callable fn): callable { return func(any ...args): any { return fn(...args) * 2; }; }
+@twice
+func decorated(int a = base + 3): int { return a; }
+func over(int a, int b = a + base): string { return "int ${b}"; }
+func over(string s, string t = s + "!"): string { return "str ${t}"; }
+func variadic(int a = base + 4, int ...rest): string { return "${a} ${rest}"; }
+
+class Counter {
+    int z = 4;
+    func Counter(int w = this.z * 3) { this.z = w; }
+    func next(int q = this.z + 1): int { return q; }
+    static func label(string v = "s" + "t"): string { return v; }
+}
+class SubCounter extends Counter { func SubCounter() {} }
+
+class ComputedParamDefaultsTest extends test.Test {
+    @test
+    func scopingFollowsTheParameterList(): void {
+        this.assertEquals(11, earlier(1));
+        this.assertEquals(2, earlier(1, 2));
+        this.assertEquals(99, later());
+    }
+    @test
+    func defaultsRunOnEveryCall(): void {
+        int first = perCall();
+        this.assertEquals(first + 1, perCall());
+        this.assertEquals(42, perCall(42));
+    }
+    @test
+    func defaultsAreTypeChecked(): void {
+        this.assertThrows(func(): void { typed(); });
+        this.assertEquals("x", generic());
+        this.assertTrue(frozen());
+    }
+    @test
+    func everyCallContext(): void {
+        this.assertEquals(10, makeClosure()());
+        this.assertEquals(7, nestedStatement());
+        this.assertEquals(11, await asyncDefault());
+        list<any> yielded = [];
+        for (v in gen()) { yielded.push(v); }
+        this.assertEquals([20, 21], yielded);
+        this.assertEquals(26, decorated());
+        this.assertEquals("int 11", over(1));
+        this.assertEquals("str x!", over("x"));
+        this.assertEquals("14 []", variadic());
+        this.assertEquals("1 [2, 3]", variadic(1, 2, 3));
+        let reference = earlier;
+        this.assertEquals(13, reference(3));
+        let args = [4];
+        this.assertEquals(14, earlier(...args));
+        this.assertEquals(5, earlier(a: 1, b: 5));
+        this.assertEquals([10, 20], [1, 2].map(func(int v, int w = v * 10): int { return w; }));
+    }
+    @test
+    func methodsConstructorsAndStatics(): void {
+        let counter = Counter();
+        this.assertEquals(12, counter.z);
+        this.assertEquals(13, counter.next());
+        this.assertEquals("st", Counter.label());
+        this.assertEquals(13, SubCounter().next());
+        this.assertEquals(1, Counter(2).next(1));
+    }
+}

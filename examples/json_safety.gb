@@ -1,0 +1,15 @@
+/* JSON encoding failures are catchable; shared children are valid. */
+import io;
+import json;
+
+list<any> cycle = [];
+cycle.push(cycle);
+try {
+    json.stringify(cycle);
+} catch (Error e) {
+    io.println("Cannot encode a cycle");
+}
+
+let child = {"name": "Ada"};
+io.println(json.stringify([child, child]));
+/* Expected: Cannot encode a cycle, then [{"name":"Ada"},{"name":"Ada"}]. */

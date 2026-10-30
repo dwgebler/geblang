@@ -109,7 +109,7 @@ func (vm *VM) selectBoundNamed(instruction Instruction, set runtime.OverloadedFu
 		if selected != nil {
 			return nil, nil, fmt.Errorf("ambiguous overload for %s", set.Name)
 		}
-		selected, ordered = runtime.OverloadedFunction{Name: set.Name, Module: set.Module, Indices: []int64{set.Indices[pos]}, Overloads: []runtime.Function{set.Overloads[pos]}, Callables: []runtime.Value{set.Callables[pos]}, Defaults: [][]runtime.Value{set.Defaults[pos]}}, candidate
+		selected, ordered = runtime.OverloadedFunction{Name: set.Name, Module: set.Module, Indices: []int64{set.Indices[pos]}, Overloads: []runtime.Function{set.Overloads[pos]}, Callables: []runtime.Value{set.Callables[pos]}, Defaults: [][]runtime.Value{set.Defaults[pos]}, TypeArguments: set.TypeArguments}, candidate
 	}
 	if selected == nil {
 		return nil, nil, fmt.Errorf("no matching overload for %s", set.Name)

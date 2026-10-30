@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -48,9 +49,41 @@ func parseJSONDirect(text string) (runtime.Value, *ParseError) {
 	return value, nil
 }
 
+// JSON syntax validation runs first, so escaped bytes can be skipped here.
+func jsonDepthWithinLimit(text string) bool {
+	if len(text) <= maxJSONDepth*2 {
+		return true
+	}
+	depth := 0
+	quoted := false
+	for i := 0; i < len(text); i++ {
+		if quoted {
+			if text[i] == '\\' {
+				i++
+			} else if text[i] == '"' {
+				quoted = false
+			}
+			continue
+		}
+		switch text[i] {
+		case '"':
+			quoted = true
+		case '[', '{':
+			depth++
+			if depth > maxJSONDepth {
+				return false
+			}
+		case ']', '}':
+			depth--
+		}
+	}
+	return true
+}
+
 type jsonParser struct {
-	src string
-	pos int
+	src   string
+	pos   int
+	depth int
 	// keyCache memoises the dict-key form of object keys so repeated
 	// keys (typical JSON: every record shares "id", "name", etc.)
 	// reuse a single concatenated string instead of paying for the
@@ -74,6 +107,13 @@ type jsonKeyEntry struct {
 const jsonKeyCacheLimit = 256
 
 func (p *jsonParser) parseValue() (runtime.Value, error) {
+	if p.pos < len(p.src) && (p.src[p.pos] == '{' || p.src[p.pos] == '[') {
+		if p.depth >= maxJSONDepth {
+			return nil, fmt.Errorf("json: maximum nesting depth exceeded")
+		}
+		p.depth++
+		defer func() { p.depth-- }()
+	}
 	if p.pos >= len(p.src) {
 		return nil, fmt.Errorf("unexpected end of input")
 	}
@@ -101,11 +141,26 @@ func (p *jsonParser) parseValue() (runtime.Value, error) {
 
 func (p *jsonParser) parseObject() (runtime.Value, error) {
 	p.pos++ // skip {
-	d := runtime.NewDictHint(8)
+	var pending [8]struct {
+		key   string
+		entry runtime.DictEntry
+	}
+	count := 0
+	d := runtime.Dict{}
+	finish := func() runtime.Dict {
+		if count <= len(pending) {
+			result := runtime.NewDictHint(count)
+			for _, item := range pending[:count] {
+				result.PutEntry(item.key, item.entry)
+			}
+			return result
+		}
+		return d
+	}
 	p.skipWhitespace()
 	if p.pos < len(p.src) && p.src[p.pos] == '}' {
 		p.pos++
-		return d, nil
+		return finish(), nil
 	}
 	for {
 		p.skipWhitespace()
@@ -136,7 +191,20 @@ func (p *jsonParser) parseObject() (runtime.Value, error) {
 				p.keyCache[key] = entry
 			}
 		}
-		d.PutEntry(entry.mapKey, runtime.DictEntry{Key: entry.keyVal, Value: value})
+		item := runtime.DictEntry{Key: entry.keyVal, Value: value}
+		if count < len(pending) {
+			pending[count].key = entry.mapKey
+			pending[count].entry = item
+		} else {
+			if count == len(pending) {
+				d = runtime.NewDictHint(16)
+				for _, prev := range pending {
+					d.PutEntry(prev.key, prev.entry)
+				}
+			}
+			d.PutEntry(entry.mapKey, item)
+		}
+		count++
 		p.skipWhitespace()
 		if p.pos >= len(p.src) {
 			return nil, fmt.Errorf("unexpected end of object")
@@ -147,7 +215,7 @@ func (p *jsonParser) parseObject() (runtime.Value, error) {
 			continue
 		case '}':
 			p.pos++
-			return d, nil
+			return finish(), nil
 		default:
 			return nil, fmt.Errorf("expected ',' or '}' in object")
 		}
@@ -199,6 +267,10 @@ func (p *jsonParser) parseString() (string, error) {
 		c := p.src[p.pos]
 		if c == '"' {
 			s := p.src[start:p.pos]
+			// Small extracted values should not pin a multi-megabyte document.
+			if len(p.src) > 1<<20 && len(s) < 4096 {
+				s = strings.Clone(s)
+			}
 			p.pos++
 			return s, nil
 		}
@@ -215,7 +287,7 @@ func (p *jsonParser) parseString() (string, error) {
 }
 
 func (p *jsonParser) parseStringWithEscapes(start int) (string, error) {
-	buf := make([]byte, 0, len(p.src)-start)
+	buf := make([]byte, 0, p.pos-start+16)
 	buf = append(buf, p.src[start:p.pos]...)
 	for p.pos < len(p.src) {
 		c := p.src[p.pos]
@@ -250,6 +322,7 @@ func (p *jsonParser) parseStringWithEscapes(start int) (string, error) {
 				}
 				if utf16.IsSurrogate(r) {
 					if p.pos+1 < len(p.src) && p.src[p.pos] == '\\' && p.src[p.pos+1] == 'u' {
+						escapeStart := p.pos
 						p.pos += 2
 						r2, err := p.parseUnicodeEscape()
 						if err != nil {
@@ -262,6 +335,7 @@ func (p *jsonParser) parseStringWithEscapes(start int) (string, error) {
 							buf = append(buf, tmp[:n]...)
 							continue
 						}
+						p.pos = escapeStart
 					}
 					var tmp [4]byte
 					n := utf8.EncodeRune(tmp[:], utf8.RuneError)

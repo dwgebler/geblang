@@ -218,7 +218,7 @@ func (s *cloneState) cloneValue(value Value) Value {
 		for i, callable := range value.Callables {
 			callables[i] = s.cloneValue(callable)
 		}
-		return OverloadedFunction{Name: value.Name, Overloads: overloads, Module: value.Module, Indices: append([]int64(nil), value.Indices...), Callables: callables, Defaults: value.Defaults}
+		return OverloadedFunction{Name: value.Name, Overloads: overloads, Module: value.Module, Indices: append([]int64(nil), value.Indices...), Callables: callables, Defaults: value.Defaults, TypeArguments: value.TypeArguments}
 	case *Module:
 		return s.cloneModule(value)
 	case BytecodeFunction:
@@ -295,6 +295,10 @@ func (s *cloneState) cloneClass(class *Class) *Class {
 		Name:                 class.Name,
 		Doc:                  class.Doc,
 		Module:               class.Module,
+		DefinitionModule:     class.DefinitionModule,
+		DefinitionLine:       class.DefinitionLine,
+		DefinitionColumn:     class.DefinitionColumn,
+		ParentArguments:      append([]string(nil), class.ParentArguments...),
 		TypeParameters:       append([]string(nil), class.TypeParameters...),
 		TypeParamConstraints: cloneTypeParamConstraints(class.TypeParamConstraints),
 		Fields:               append([]Field(nil), class.Fields...),
@@ -340,7 +344,7 @@ func (s *cloneState) cloneInterface(iface *Interface) *Interface {
 	if cloned, ok := s.ifaces[iface]; ok {
 		return cloned
 	}
-	cloned := &Interface{Name: iface.Name, Doc: iface.Doc, TypeParameters: append([]string(nil), iface.TypeParameters...), Methods: append([]*ast.FunctionSignature(nil), iface.Methods...)}
+	cloned := &Interface{Name: iface.Name, Doc: iface.Doc, Module: iface.Module, DefinitionPath: iface.DefinitionPath, TypeParameters: append([]string(nil), iface.TypeParameters...), Methods: append([]*ast.FunctionSignature(nil), iface.Methods...)}
 	s.ifaces[iface] = cloned
 	cloned.Parents = make([]*Interface, len(iface.Parents))
 	for i, parent := range iface.Parents {

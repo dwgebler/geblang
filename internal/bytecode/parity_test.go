@@ -473,7 +473,11 @@ import io;
 let m = streams.memory("hi");
 let s = m as streams.IOStream;
 io.println(typeof(s));
-`, "IOStream\n")
+let raw = io.memory("native");
+let direct = raw as streams.IOStream;
+io.println(typeof(direct));
+io.println(direct.readAll());
+`, "IOStream\nIOStream\nnative\n")
 }
 
 // TestParityBrowserGate pins the --allow-browser gate (PermissionError when absent) on both backends.
@@ -5115,4 +5119,507 @@ for (i in 0..<24) {
 }
 server.close(); io.println(received);
 `, "24\n")
+}
+
+func TestParityJSONSafety(t *testing.T) {
+	runParity(t, `import json; import io;
+ dict<any, any> bad = {"z":1, "a":2, 3:"bad"};
+ list<any> cyclic = []; cyclic.push(cyclic);
+ dict<string, any> self = {}; self["self"] = self;
+ for (value in [bad, cyclic, self]) {
+  try { json.stringify(value); } catch (Error e) { io.println("rejected"); }
+ }
+ try { json.parse("[".repeat(600)+"0"+"]".repeat(600)); } catch (Error e) { io.println("depth"); }
+ io.println(json.validate("[".repeat(600)+"0"+"]".repeat(600)));
+ let child = [1]; io.println(json.stringify([child, child]));
+ io.println(json.stringify({"z":1,"a":2}));
+ `, "rejected\nrejected\nrejected\ndepth\nfalse\n[[1],[1]]\n{\"a\":2,\"z\":1}\n")
+}
+
+func TestParityReleasedFramePreservesEscapedCaptures(t *testing.T) {
+	runParityModulesDir(t, t.TempDir(), `import io;
+ func counter(): callable { int n=0; return func(): int { n=n+1; return n; }; }
+ func discard(): void { let value="x".repeat(10000); throw ValueError("discard"); }
+ let next=counter();
+ io.println(next());
+ try { discard(); } catch (Error e) { io.println("caught"); }
+ io.println(next());
+ `, "1\ncaught\n2\n")
+}
+
+func TestParityIndexedRouterPreservesRegistrationOrderAndSnapshots(t *testing.T) {
+	runParityStateful(t, `import web; import io;
+ let first=web.new();
+ web.get(first,"/:category/:id",func(any r): any { return {"body":"dynamic"}; });
+ web.get(first,"/pages/new",func(any r): any { return {"body":"static"}; });
+ io.println(web.handle(first,{"method":"get","path":"/pages/new/"})["body"]);
+ let second=web.new();
+ web.get(second,"/pages/new",func(any r): any { return {"body":"static first"}; });
+ web.get(second,"/pages/:id",func(any r): any { return {"body":r["params"]["id"]}; });
+ web.get(second,"/pages/new",func(any r): any { return {"body":"duplicate"}; });
+ io.println(web.handle(second,{"method":"GET","path":"/pages/new"})["body"]);
+ io.println(web.handle(second,{"method":"GET","path":"/pages/7"})["body"]);
+ io.println(web.handle(second,{"method":"POST","path":"/pages/new"})["status"]);
+ let ordered=web.new();
+ web.get(ordered,"/:z/:a",func(any r): any { return {"body":r["params"].keys()}; });
+ io.println(web.handle(ordered,{"method":"GET","path":"/one/two"})["body"]);
+ let snapshot=web.new();
+ web.before(snapshot,func(any r): any {
+  r["path"]="/new";
+  web.use(snapshot,func(any req,any response): any { response["body"] = response["body"] + "-after"; return response; });
+  web.get(snapshot,"/new",func(any req): any { return {"body":"registered"}; });
+  return null;
+ });
+ io.println(web.handle(snapshot,{"method":"GET","path":"/old"})["status"]);
+ io.println(web.handle(snapshot,{"method":"GET","path":"/old"})["body"]);
+ `, "dynamic\nstatic first\n7\n404\n[\"a\", \"z\"]\n404\nregistered-after\n")
+}
+
+func TestParityCollectionValidationTracksMutableAliases(t *testing.T) {
+	runParityModulesDir(t, t.TempDir(), `import io;
+ func strings(dict<string,any> value): int { return value.length(); }
+ func ints(list<int> value): int { return value.length(); }
+ dict<any,any> data={"a":1}; any alias=data;
+ io.println(strings(data));
+ alias[2]="bad";
+ try { strings(data); } catch (TypeError e) { io.println("bad key"); }
+ alias.delete(2);
+ io.println(strings(data));
+ list<any> numbers=[1]; any listAlias=numbers;
+ io.println(ints(numbers)); listAlias.push("bad");
+ try { ints(numbers); } catch (TypeError e) { io.println("bad element"); }
+ `, "1\nbad key\n1\n1\nbad element\n")
+}
+
+func TestParityReleasedFrameDoesNotRetainLargeLocals(t *testing.T) {
+	runParityWithStdlib(t, `import io; import profile; import profiler;
+ func consume(string value): void {}
+ func allocate(bool fail): void {
+  let discarded="x".repeat(20000000);
+  defer consume(discarded);
+  if (fail) { throw ValueError("unwind"); }
+ }
+ for (fail in [false,true]) {
+  profile.gc(); let baseline=profiler.memory()["heap_alloc"];
+  try { allocate(fail); } catch (ValueError e) {}
+  profile.gc(); io.println(profiler.memory()["heap_alloc"]-baseline<5000000);
+ }
+ `, "true\ntrue\n")
+}
+
+func TestParityJSONUnicodeRecoveryAndCharacterIndexing(t *testing.T) {
+	runParity(t, `import json; import io;
+ io.println(json.parse('"\uD800\u0041"') == "\u{fffd}A");
+ for (text in ["A", "\u{e9}", "\u{1f600}", "\u{0}"]) {
+  io.println(text[0] == text);
+  io.println(text[-1].length());
+  io.println(text.substring(0,1) == text);
+ }
+ `, "true\ntrue\n1\ntrue\ntrue\n1\ntrue\ntrue\n1\ntrue\ntrue\n1\ntrue\n")
+}
+
+func TestParityRouterRegistrationDuringDispatch(t *testing.T) {
+	runParityWithStdlib(t, `import async; import web; import io;
+ let app=web.new();
+ let register=async.run(func(): int {
+  for (i in 0..<100) {
+   web.get(app,"/item-${i}",func(any request): any { return {"status":200,"body":"ok"}; });
+   web.get(app,"/group-${i}/:id",func(any request): any { return {"status":200,"body":"ok"}; });
+  }
+  return 100;
+ });
+ let dispatch=async.run(func(): int {
+  for (i in 0..<100) {
+   let response=web.handle(app,{"method":"GET","path":"/item-${i}"});
+   assert(response["status"]==200 || response["status"]==404);
+  }
+  return 100;
+ });
+ io.println(async.await(register)); io.println(async.await(dispatch));
+ io.println(web.handle(app,{"method":"GET","path":"/item-99"})["status"]);
+ io.println(web.handle(app,{"method":"GET","path":"/group-99/7"})["status"]);
+ `, "100\n100\n200\n200\n")
+}
+
+func TestParityRouterRegistrationAllocationIsBounded(t *testing.T) {
+	runParityWithStdlib(t, `import web; import io; import profile; import profiler;
+ let app=web.new(); profile.gc(); let before=profiler.snapshot();
+ for (i in 0..<1000) { web.get(app,"/item-${i}",func(any r): any { return {"status":200,"body":"ok"}; }); }
+ let stats=profiler.delta(before);
+ io.println(stats["allocs"]<32000000);
+ io.println(web.handle(app,{"method":"GET","path":"/item-999"})["status"]);
+ `, "true\n200\n")
+}
+
+func TestParityNullableDictionaryKeysAcrossBoundaries(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "keychecks.gb"), []byte(`module keychecks;
+ export func count(dict<?string,any> values): int { return values.length(); }
+ export class Base {
+  func Base() {}
+  func count(dict<?string,any> values): int { return values.length(); }
+ }
+ `), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, `import keychecks; import io;
+ class Child extends keychecks.Base { func Child() { parent(); } }
+ func count(dict<?string,any> values): int { return values.length(); }
+ func result(any values): dict<?string,any> { return values; }
+ dict<any,any> values={null:1,"a":2};
+ io.println(count(values)); io.println(keychecks.count(values));
+ let inherited=Child().count; io.println(inherited(values));
+ io.println(result(values)[null]);
+ let narrowed=values as dict<?string,any>; io.println(narrowed[null]);
+ values[3]="invalid";
+ for (mode in ["parameter","return","cast","imported","inherited"]) {
+  try {
+   if (mode=="parameter") { count(values); }
+   else if (mode=="return") { result(values); }
+   else if (mode=="cast") { let invalid=values as dict<?string,any>; }
+   else if (mode=="imported") { keychecks.count(values); }
+   else { inherited(values); }
+  } catch (Error e) { io.println("rejected"); }
+ }
+ values.delete(3); io.println(count(values));
+ `, "2\n2\n2\n1\n1\nrejected\nrejected\nrejected\nrejected\nrejected\n2\n")
+}
+
+func TestParityCheckedGenericCasts(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "casttypes.gb"), []byte(`module casttypes;
+ export type Numbers=list<int>;
+ export class Box<T> { T value; func Box(T value) { this.value=value; } }
+ export class Item {}
+ export class TextBox extends Box<string> { func TextBox() { parent("x"); } }
+ export interface Checker { func checked(any source): any { return source as list<int>; } }
+ export class Reader implements Checker {
+  func Reader() {}
+  func own(any source): any { return source as list<int>; }
+ }
+ `), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, `import casttypes; import io;
+ type Numbers=list<int>;
+ class Child extends casttypes.Reader { func Child() { parent(); } }
+ func convert<T>(T example,any source): any { return source as list<T>; }
+ any numbers=[1,2]; io.println((numbers as Numbers) is numbers);
+ io.println((numbers as casttypes.Numbers).length());
+ io.println(null as ?Numbers); io.println(null as ?int[]);
+ io.println(([1,1] as set<int>).length());
+ io.println(({1,2} as list<int>).length());
+ let own=Child().own; let fallback=Child().checked;
+ io.println(own([1])); io.println(fallback([1]));
+ io.println(convert(0,[1]));
+ any box=casttypes.Box<string>("x");
+ io.println((box as casttypes.Box<string>) is box);
+ any nested=casttypes.Box<list<int>>([1]);
+ io.println((nested as casttypes.Box<list<int>>) is nested);
+ any inherited=casttypes.TextBox();
+ io.println((inherited as casttypes.Box<string>) is inherited);
+ any qualified=casttypes.Box<list<casttypes.Item>>([casttypes.Item()]);
+ io.println((qualified as casttypes.Box<list<casttypes.Item>>) is qualified);
+ casttypes.Box<list<int>> annotated=casttypes.Box([1]);
+ io.println((annotated as casttypes.Box<list<int>>) is annotated);
+ any named=casttypes.Box<list<int>>(value:[1]);
+ io.println((named as casttypes.Box<list<int>>) is named);
+ any union=casttypes.Box<int|string>(1);
+ io.println((union as casttypes.Box<int|string>) is union);
+ any branch=casttypes.Box<list<int>|set<string>>([1]);
+ io.println((branch as casttypes.Box<list<int>|set<string>>) is branch);
+ any optional=casttypes.Box<?int>(null);
+ io.println((optional as casttypes.Box<?int>) is optional);
+ let deep=[{"a":[1]}] as list<dict<string,list<int>>>; io.println(deep[0]["a"][0]);
+ for (mode in ["list","convert","nested","box","nestedBox","ancestor","generic","own","default"]) {
+  try {
+   if (mode=="list") { let bad=["x"] as casttypes.Numbers; }
+   else if (mode=="convert") { let bad={"x"} as list<int>; }
+   else if (mode=="nested") { let bad=[{"a":["x"]}] as list<dict<string,list<int>>>; }
+   else if (mode=="box") { let bad=box as casttypes.Box<int>; }
+   else if (mode=="nestedBox") { let bad=nested as casttypes.Box<list<string>>; }
+   else if (mode=="ancestor") { let bad=inherited as casttypes.Box<int>; }
+   else if (mode=="generic") { convert(0,["x"]); }
+   else if (mode=="own") { own(["x"]); }
+   else { fallback(["x"]); }
+  } catch (TypeError e) { io.println("rejected "+mode); }
+ }
+ `, "true\n2\nnull\nnull\n1\n2\n[1]\n[1]\n[1]\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n1\nrejected list\nrejected convert\nrejected nested\nrejected box\nrejected nestedBox\nrejected ancestor\nrejected generic\nrejected own\nrejected default\n")
+}
+
+func TestParityGenericCastNominalIdentity(t *testing.T) {
+	dir := t.TempDir()
+	modules := map[string]string{
+		"first.gb": `module first;
+ export func count(Box<Item> value): int { return 1; }
+ export class Item {}
+ export class Box<T> { T value; func Box(T value) { this.value=value; } }
+ export class Child extends Box<Item> { func Child() { parent(Item()); } }
+ `,
+		"second.gb": `module second; export class Item {} export class Box<T> { T value;func Box(T value){this.value=value;} }`,
+		"facade.gb": `module facade; import first; export const Item=first.Item; export const Box=first.Box;`,
+	}
+	for name, source := range modules {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runParityModulesDir(t, dir, `import first as a; import first as same; import second as b; import facade as f; import io;
+ let item=a.Item(); any boxed=a.Box<a.Item>(item);
+ io.println((boxed as same.Box<f.Item>) is boxed);
+ io.println((boxed as f.Box<same.Item>) is boxed);
+ io.println(a.count(boxed));
+ any inherited=a.Child();io.println((inherited as a.Box<same.Item>) is inherited);
+ for (mode in ["plain","argument","outer","constructor"]) {
+  try {
+   if (mode=="plain") { let bad=item as b.Item; }
+   else if (mode=="argument") { let bad=boxed as a.Box<b.Item>; }
+   else if (mode=="outer") { let bad=boxed as b.Box<a.Item>; }
+   else { a.Box<a.Item>(b.Item()); }
+  } catch (TypeError e) { io.println("rejected "+mode); }
+ }
+ `, "true\ntrue\n1\ntrue\nrejected plain\nrejected argument\nrejected outer\nrejected constructor\n")
+}
+
+func TestParityImportedGenericCallsRetainInvocationBindings(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "convertlib.gb"), []byte(`module convertlib;
+ export func single<T>(any source): any { return source as T; }
+ export func convert<T>(any source): any { return source as T; }
+ export func convert<T>(any source,int ignored): any { return source as T; }
+ export async func later<T>(any source): any { return source as T; }
+ `), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, `import convertlib as lib; import async; import io;
+ io.println(lib.single<int>("7"));
+ io.println(lib.single<int>(source:"8"));
+ io.println(lib.single<int>(...["9"]));
+ io.println(lib.single<int>(...{"source":"10"}));
+ io.println(lib.convert<int>("11"));
+ io.println(lib.convert<int>(source:"12"));
+ io.println(lib.convert<int>("13",0));
+ io.println(typeof(lib.single<string>(14)));
+ io.println(typeof(lib.single<int>("15")));
+ try { lib.single(16); } catch (TypeError e) { io.println("unbound"); }
+ let first=lib.later<int>("17"); let second=lib.later<string>(18);
+ io.println(typeof(async.await(first))); io.println(typeof(async.await(second)));
+ try { lib.single<list<int>>(["bad"]); } catch (TypeError e) { io.println("rejected"); }
+ `, "7\n8\n9\n10\n11\n12\n13\nstring\nint\nunbound\nint\nstring\nrejected\n")
+}
+
+func TestParityGenericInvocationReferencesAndWorkers(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lib.gb"), []byte(`module lib;
+export func convert<T>(any source): any {return source as T;}
+export func convert<T>(any source,int ignored): any {return source as T;}
+export func single<T>(any source): any {return source as T;}
+export func echo<T>(T value): T {return value;}
+export func pick<T>(T source,int code): string {return "left";}
+export func pick<U>(string source,U code): string {return "right";}
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, `import lib; import io; import async;
+func convert<T>(any source): any {return source as T;}
+func choice<T>(any source): any {return source as T;}
+func choice<T>(any source,int ignored): any {return source as T;}
+async func later<T>(any source): any {return source as T;}
+func sequence<T>(any source): generator<any> {yield source as T;}
+class Converter {
+ func convert<T>(any source): any {return source as T;}
+ func choice<T>(any source): any {return source as T;}
+ func choice<T>(any source,int ignored): any {return source as T;}
+}
+let local=convert; let many=choice; let imported=lib.convert;
+let instance=Converter(); let bound=instance.convert; let overloaded=instance.choice;
+io.println(local<int>("7"));io.println(local<string>(8));
+io.println(many<int>("9"));io.println(imported<int>("10"));
+io.println(bound<int>("11"));io.println(overloaded<int>("12"));
+io.println(bound<int>(source:"13"));io.println(overloaded<int>(source:"14"));
+io.println(lib.pick<string>("x",1));io.println(lib.pick<int>("x",1));
+io.println(lib.pick<int>(code:1,source:"x"));
+let pick=lib.pick;io.println(pick<string>("x",1));io.println(pick<int>("x",1));
+any bad=1;try {lib.single<int>(...bad);} catch (Error e) {io.println("caught");}
+io.println(lib.echo("ok"));
+let first=later<int>("15");let second=later<string>(16);
+let integers=sequence<int>("17");let strings=sequence<string>(18);
+io.println(async.await(first));io.println(async.await(second));
+for (value in integers) {io.println(value);}for (value in strings) {io.println(value);}
+`, "7\n8\n9\n10\n11\n12\n13\n14\nleft\nright\nright\nleft\nright\ncaught\nok\n15\n16\n17\n18\n")
+}
+
+func TestParityGenericMethodWorkersAndDecorators(t *testing.T) {
+	dir := t.TempDir()
+	declaration := `func forward(callable next): callable {return func(any ...args): any {return next(...args);};}
+export class Worker {
+ @forward static func stat<T>(any source): any {return source as T;}
+ @forward async func decoratedLater<T>(any source): any {return source as T;}
+ func pick<T>(T source,int code): string {return "left";}
+ func pick<U>(string source,U code): string {return "right";}
+ async func later<T>(any source): any {return source as T;}
+ func sequence<T>(any source): generator<any> {yield source as T;}
+ @forward func convert<T>(any source): any {return source as T;}
+}`
+	if err := os.WriteFile(filepath.Join(dir, "workers.gb"), []byte("module workers;"+declaration), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, `import workers;import io;import async;`+declaration+`
+io.println(Worker.stat<int>(source:"3"));io.println(workers.Worker.stat<int>(source:"4"));
+	for (worker in [Worker(),workers.Worker()]) {
+ io.println(worker.pick<string>("x",1));io.println(worker.pick<int>("x",1));
+ io.println(worker.pick<int>(code:1,source:"x"));
+ io.println(async.await(worker.later<int>(source:"7")));
+ io.println(async.await(worker.decoratedLater<int>(source:"5")));
+ let decoratedLater=worker.decoratedLater;io.println(async.await(decoratedLater<int>(source:"6")));
+ let first=worker.sequence<int>(source:"8");let second=worker.sequence<string>(source:9);
+ for (value in first) {io.println(value);}for (value in second) {io.println(value);}
+ io.println(worker.convert<int>(source:"10"));let bound=worker.convert;
+ io.println(bound<int>(source:"11"));io.println(bound<string>(source:12));
+}`, "3\n4\n"+strings.Repeat("left\nright\nright\n7\n5\n6\n8\n9\n10\n11\n12\n", 2))
+}
+
+func TestParityQualifiedFactoryAndKeywordModuleTypes(t *testing.T) {
+	dir := t.TempDir()
+	for name, source := range map[string]string{
+		"entities.gb": `module entities;export class Item {func value(): int {return 7;}}`,
+		"factory.gb":  `module factory;import entities as real;export func Item(): real.Item {return real.Item();}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runParityModulesDir(t, dir, `import factory;import async.atomic as atomic;import io;
+class Holder {factory.Item item;}
+func accept(factory.Item item): factory.Item {return item;}
+let holder=Holder();holder.item=factory.Item();
+any item=accept(holder.item);io.println((item as factory.Item) is item);
+io.println(holder.item.value());
+any cell=atomic.AtomicInt(3);io.println((cell as atomic.AtomicInt).load());
+let cells=[cell] as list<atomic.AtomicInt>;io.println(cells[0].load());
+`, "true\n7\n3\n3\n")
+}
+
+func TestParityNominalIdentityIsStrictForNestedCasts(t *testing.T) {
+	dir := t.TempDir()
+	for name, source := range map[string]string{
+		"first.gb":  `module first;export class Item {}`,
+		"second.gb": `module second;export class Item {}`,
+		"facade.gb": `module facade;import first;export class Item extends first.Item {}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runParityModulesDir(t, dir, `import first;import second;import facade;import io;
+func legacyParameter(facade.Item item): int {return 1;}
+func strictParameter<T>(T item): void {}
+io.println(legacyParameter(first.Item()));
+any value=first.Item();io.println((value as first.Item) is value);
+for (mode in ["list","set","dict","union","intersection","facade","parameter","nestedParameter"]) {
+ try {
+  if(mode=="list") {let bad=[value] as list<second.Item>;}
+  else if(mode=="set") {let bad={value} as set<second.Item>;}
+  else if(mode=="dict") {let bad={"x":value} as dict<string,second.Item>;}
+  else if(mode=="union") {let bad=value as int|second.Item;}
+  else if(mode=="intersection") {let bad=value as first.Item&second.Item;}
+  else if(mode=="facade") {let bad=value as facade.Item;}
+  else if(mode=="parameter") {strictParameter<facade.Item>(value);}
+  else {strictParameter<list<facade.Item>>([value]);}
+ } catch(TypeError e) {io.println("rejected "+mode);}
+}
+`, "1\ntrue\nrejected list\nrejected set\nrejected dict\nrejected union\nrejected intersection\nrejected facade\nrejected parameter\nrejected nestedParameter\n")
+}
+
+func TestParityPatchAPIs(t *testing.T) {
+	runParityModulesDir(t, t.TempDir(), `import io;import money;import cli;import json;import bytes;import web.cache as cache;
+io.println("\u{20ac}".length());io.println("\u{20ac}".byteLength());
+io.println(money.sum([money.Money("0.10","GBP"),money.Money("0.20","GBP")]).minorUnits);
+io.println(money.sum([],"JPY").minorUnits);
+try {money.sum([]);}catch(ValueError e){io.println("empty rejected");}
+cli.withContext({"stdin":"bad\n0\n2.5\n\nQ\n","quiet":true},func():void {
+ io.println(cli.promptDecimal("?",{"min":1,"max":3}));
+ io.println(cli.promptDecimal("?",{"default":1.25}));
+ io.println(cli.promptDecimal("?",{"cancel":["q"]})==null);
+ io.println(cli.promptDecimal("?",{"default":8})==null);
+});
+class ShortWriter {
+ string text="";
+ func __writeBytes(bytes data):int {int count=data.length()<2?data.length():2;this.text=this.text+bytes.rawString(data.slice(0,count));return count;}
+}
+let writer=ShortWriter();let value={"a":["\u{20ac}"],"z":1.25};
+io.println(json.write(value,writer)==json.stringify(value).byteLength());io.println(writer.text==json.stringify(value));
+let handle=io.memory();io.println(json.write(null,handle));io.println(io.toString(handle));
+let bounded=cache.memoryCacheStore(3600,2);bounded.set("a",{"n":[1]});bounded.set("b",2);
+let snapshot=bounded.get("a");snapshot["n"].push(9);bounded.set("c",3);
+io.println(bounded.get("b")==null);io.println(bounded.get("a")["n"]);io.println(bounded.get("c"));
+`, "1\n3\n30\n0\nempty rejected\n2.5000000000\n1.2500000000\ntrue\ntrue\ntrue\ntrue\n4\nnull\ntrue\n[1]\n3\n")
+}
+
+func TestParityBoundedCacheAcrossRequestSnapshots(t *testing.T) {
+	runParityModulesDir(t, t.TempDir(), `import web.cache as cache;import http;import io;
+let memo=cache.memoryCacheStore(3600,2);
+func handle(dict<string,any> request):dict<string,any> {
+ int value=(memo.get("hits")??0) as int;memo.set("hits",value+1);
+ return {"status":200,"body":(value+1) as string};
+}
+let server=http.listen("127.0.0.1:0",handle);
+try {
+ let url="http://"+http.serverAddr(server)+"/";
+ io.println(http.get(url)["body"]);io.println(http.get(url)["body"]);
+} finally {http.shutdown(server,1000);http.close(server);}
+`, "1\n2\n")
+}
+
+func TestParityJSONWriteImportedAndInheritedProtocols(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sinks.gb"), []byte(`module sinks;import bytes;
+export class Sink {
+ list<bytes> chunks=[];
+ func __writeBytes(bytes data):int {this.chunks.push(data);return data.length();}
+ func text():string {string result="";for(chunk in this.chunks){result=result+bytes.rawString(chunk);}return result;}
+}
+export class Child extends Sink {}
+export class TextSink {
+ string text="";
+ func __write(string data):int {this.text=this.text+data;return data.byteLength();}
+}
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, `import sinks;import json;import io;import money;
+class LocalChild extends sinks.Sink {}
+list<any> data=[];for(i in 0..<3000){data.push("record-${i}");}
+for(sink in [sinks.Sink(),sinks.Child(),LocalChild()]) {
+ io.println(json.write(data,sink)==json.stringify(data).byteLength());io.println(sink.text()==json.stringify(data));
+}
+let output=sinks.TextSink();let amount=money.Money("1.25","GBP");
+io.println(json.write(amount,output)==json.stringify(amount).byteLength());io.println(output.text==json.stringify(amount));
+`, strings.Repeat("true\n", 8))
+}
+
+func TestParityImportedFieldDefaults(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "defaults.gb"), []byte(`module defaults;
+export class Base {
+ list<list<int>> items=[];dict<string,list<int>> mapping={};int count=7;any unset;string shared="base";
+}
+export class Middle extends Base {string shared="middle";}
+export class WithConstructor extends Base {func WithConstructor(){this.items.push([5]);}}
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, `import defaults;import io;
+class Child extends defaults.Middle {int own=9;string shared="local";}
+class Grandchild extends Child {}
+class ConstructorChild extends defaults.WithConstructor {func ConstructorChild(){parent();this.items.push([9]);}}
+func nested(list<list<int>> value=[]):list<list<int>> {return value;}
+for(first in [defaults.Base(),defaults.Middle(),Child(),Grandchild()]) {
+ io.println(first.count);io.println(first.unset==null);
+ first.items.push([8]);first.mapping["a"]=[9];
+}
+let fresh=Grandchild();io.println(fresh.own);io.println(fresh.shared);io.println(fresh.items);io.println(fresh.mapping.length());
+let parameter=nested();parameter.push([9]);io.println(nested());
+let constructed=ConstructorChild();constructed.items.push([10]);io.println(ConstructorChild().items);
+`, strings.Repeat("7\ntrue\n", 4)+"9\nlocal\n[]\n0\n[]\n[[5], [9]]\n")
 }

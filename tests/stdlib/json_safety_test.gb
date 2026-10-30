@@ -1,0 +1,56 @@
+import test;
+import json;
+
+class JsonSafetyTest extends test.Test {
+    @test
+    func rejectsMixedKeysAfterUnsortedKeys(): void {
+        dict<any, any> value = {"z": 1, "a": 2, 3: "bad"};
+        this.assertThrows(func(): void { json.stringify(value); });
+        this.assertEquals('{"a":2,"z":1}', json.stringify({"z": 1, "a": 2}));
+    }
+
+    @test
+    func rejectsCyclesAndAllowsRepeatedChildren(): void {
+        list<any> cyclic = [];
+        cyclic.push(cyclic);
+        this.assertThrows(func(): void { json.stringify(cyclic); });
+        dict<string, any> self = {};
+        self["self"] = self;
+        this.assertThrows(func(): void { json.stringify(self); });
+        let child = [1];
+        this.assertEquals('[[1],[1]]', json.stringify([child, child]));
+    }
+
+    @test
+    func unpairedSurrogateKeepsFollowingEscape(): void {
+        this.assertEquals("\u{fffd}A", json.parse('"\uD800\u0041"'));
+    }
+
+    @test
+    func rejectsExcessiveDepth(): void {
+        let source = "[".repeat(600) + "0" + "]".repeat(600);
+        this.assertFalse(json.validate(source));
+        this.assertFalse(json.validateDetailed(source)["valid"]);
+        this.assertThrows(func(): void { json.parse(source); });
+    }
+}
+
+class CapturedFrameTest extends test.Test {
+    @test
+    func captureSurvivesDiscardedAndUnwoundFrames(): void {
+        let next = makeCounter();
+        this.assertEquals(1, next());
+        this.assertThrows(func(): void { discardAndThrow(); });
+        this.assertEquals(2, next());
+    }
+}
+
+func makeCounter(): callable {
+    int count = 0;
+    return func(): int { count = count + 1; return count; };
+}
+
+func discardAndThrow(): void {
+    let discarded = "x".repeat(10000);
+    throw ValueError("discard");
+}

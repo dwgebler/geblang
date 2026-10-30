@@ -13,7 +13,7 @@ package native
 // are otherwise handled via PrimitiveConversionMethods.
 var PrimitiveMethods = map[string][]string{
 	"string": {
-		"chars", "codePointAt", "codePoints", "contains", "count", "endsWith", "format", "get",
+		"byteLength", "chars", "codePointAt", "codePoints", "contains", "count", "endsWith", "format", "get",
 		"graphemes", "graphemeLength", "truncateGraphemes",
 		"indexOf", "isEmpty", "lastIndexOf", "length", "lower", "matchesRegex",
 		"padEnd", "padStart", "repeat", "replace", "replaceRegex", "reverse",

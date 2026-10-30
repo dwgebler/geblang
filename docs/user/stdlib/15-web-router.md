@@ -343,10 +343,18 @@ implementations share the same interface:
 
 | Constructor | Description |
 |-------------|-------------|
-| `cache.memoryCacheStore(ttl)` | In-process store; fast, no dependency, cleared on restart |
+| `cache.memoryCacheStore(ttl, capacity = 0)` | Shared in-process store; optional LRU capacity, cleared on restart |
 | `cache.fileCacheStore(directory, ttl)` | File-backed store; `ttl` is in seconds |
 | `cache.redisCacheStore(client, prefix, ttl)` | Redis-backed; `client` from the `redis` module |
 | `cache.databaseCacheStore(conn, table, ttl)` | SQL-backed; call `.install()` once to create the table |
+
+`MemoryCacheStore(ttl, capacity = 0)` retains unlimited storage when capacity is
+omitted or zero. A positive capacity evicts the least recently used live entry;
+`get` and `has` refresh recency, and expired entries are reclaimed before live
+entries are evicted. Negative capacity raises `ValueError`. TTL remains in
+seconds, and JSON snapshots isolate both stored and returned mutable values.
+The native backing is shared across request snapshots and concurrent operations.
+No miss coalescing is performed.
 
 All stores expose `get(name)`, `set(name, value)`, `delete(name)`, and
 `has(name)`.

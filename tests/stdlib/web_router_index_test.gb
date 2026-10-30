@@ -1,0 +1,52 @@
+import test;
+import web;
+import async;
+import profile;
+import profiler;
+
+class IndexedRouterTest extends test.Test {
+    @test
+    func registrationDoesNotCopyTheWholeIndexOnEachInsert(): void {
+        let app = web.new();
+        profile.gc();
+        let before = profiler.snapshot();
+        for (i in 0..<1000) {
+            web.get(app, "/item-${i}", func(any request): any { return {"status": 200, "body": "ok"}; });
+        }
+        let stats = profiler.delta(before);
+        this.assertTrue(stats["allocs"] < 32000000);
+        this.assertEquals(200, web.handle(app, {"method": "GET", "path": "/item-999"})["status"]);
+    }
+
+    @test
+    func keepsFirstMatchAcrossStaticAndParameterRoutes(): void {
+        let app = web.new();
+        web.get(app, "/:section/:id", func(any request): any { return {"body": "first"}; });
+        web.get(app, "/pages/new", func(any request): any { return {"body": "second"}; });
+        this.assertEquals("first", web.handle(app, {"method": "get", "path": "/pages/new/"})["body"]);
+        let other = web.new();
+        web.get(other, "/pages/new", func(any request): any { return {"body": "fixed"}; });
+        web.get(other, "/pages/:id", func(any request): any { return {"body": request["params"]["id"]}; });
+        this.assertEquals("fixed", web.handle(other, {"method": "GET", "path": "/pages/new"})["body"]);
+        this.assertEquals("7", web.handle(other, {"method": "GET", "path": "/pages/7"})["body"]);
+    }
+}
+
+class ConcurrentRouterTest extends test.Test {
+    @test
+    func registrationAndDispatchShareImmutableSnapshots(): void {
+        let app = web.new();
+        let register = async.run(func(): int {
+            for (i in 0..<100) {
+                web.get(app, "/item-${i}", func(any request): any { return {"status": 200, "body": "ok"}; });
+            }
+            return 100;
+        });
+        for (i in 0..<100) {
+            let response = web.handle(app, {"method": "GET", "path": "/item-${i}"});
+            this.assertTrue(response["status"] == 200 || response["status"] == 404);
+        }
+        this.assertEquals(100, async.await(register));
+        this.assertEquals(200, web.handle(app, {"method": "GET", "path": "/item-99"})["status"]);
+    }
+}

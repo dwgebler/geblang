@@ -1150,9 +1150,42 @@
         ],
         "description": "messaging.topic AWS SNS topic (subscribe via paired SQS queue)"
     },
-  "Database query with deadline": {
-    "prefix": "dbquerytimeout",
-    "body": ["let ${1:rows} = ${2:conn}.queryWithTimeout(${3:1000}, \"${4:SELECT 1}\");", "defer ${1:rows}.close();"],
-    "description": "Query with a deadline covering pool wait and row consumption"
-  }
+    "Database query with deadline": {
+        "prefix": "dbquerytimeout",
+        "body": [
+            "let ${1:rows} = ${2:conn}.queryWithTimeout(${3:1000}, \"${4:SELECT 1}\");",
+            "defer ${1:rows}.close();"
+        ],
+        "description": "Query with a deadline covering pool wait and row consumption"
+    },
+    "Validated decimal prompt": {
+        "prefix": "clipromptdecimal",
+        "body": [
+            "let ${1:amount} = cli.promptDecimal(\"${2:Amount: }\", {\"min\": ${3:0}, \"cancel\": [\"q\"]});",
+            "if (${1:amount} == null) { ${4:return;} }"
+        ],
+        "description": "Exact nullable decimal prompt with shared validation"
+    },
+    "Money total": {
+        "prefix": "moneysum",
+        "body": [
+            "let ${1:total} = money.sum(${2:values});"
+        ],
+        "description": "Total same-currency Money values in integer minor units"
+    },
+    "Streaming JSON": {
+        "prefix": "jsonwrite",
+        "body": [
+            "json.write(${1:value}, ${2:stream});"
+        ],
+        "description": "Write JSON without flushing or closing the borrowed stream"
+    },
+    "Bounded memory cache": {
+        "prefix": "boundedcache",
+        "body": [
+            "import web.cache as cache;",
+            "let ${1:store} = cache.memoryCacheStore(${2:3600}, ${3:1000});"
+        ],
+        "description": "Shared memory cache with TTL, LRU eviction and snapshot isolation"
+    }
 }

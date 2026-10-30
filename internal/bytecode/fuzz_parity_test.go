@@ -283,9 +283,13 @@ func (g *fuzzGen) classBlock() (decls string, calls []string) {
 // binding across dispatch contexts is a proven divergence source
 // (the default+variadic cluster fixed in 1.17.0).
 func (g *fuzzGen) signatureBlock() (decls string, calls []string) {
-	// Non-negative: a negative default is a prefix expression, which the
-	// bytecode compiler rejects (literal defaults only).
-	defB := strconv.Itoa(g.rng.Intn(99))
+	// Computed defaults run in the callee and may read earlier parameters, globals and calls.
+	defB := []string{
+		strconv.Itoa(g.rng.Intn(99)),
+		"a + " + strconv.Itoa(g.rng.Intn(9)),
+		"sigBase * a - " + strconv.Itoa(g.rng.Intn(9)),
+		"sigTick() + a",
+	}[g.rng.Intn(4)]
 	hasVariadic := g.rng.Intn(2) == 0
 	sig := "int a, int b = " + defB
 	body := "\"${a}|${b}\""
@@ -294,9 +298,11 @@ func (g *fuzzGen) signatureBlock() (decls string, calls []string) {
 		body = "\"${a}|${b}|${rest}\""
 	}
 	var d strings.Builder
+	d.WriteString("int sigBase = " + strconv.Itoa(1+g.rng.Intn(5)) + ";\nint sigTicks = 0;\nfunc sigTick(): int { sigTicks = sigTicks + 1; return sigTicks; }\n")
 	d.WriteString("func sigf(" + sig + "): string { return " + body + "; }\n")
 	d.WriteString("class Sig {\n")
 	d.WriteString("  string s;\n")
+	d.WriteString("  int seeded = sigBase + sigTick();\n")
 	d.WriteString("  func Sig(" + sig + ") { this.s = " + body + "; }\n")
 	d.WriteString("  func m(" + sig + "): string { return " + body + "; }\n")
 	d.WriteString("  static func sm(" + sig + "): string { return " + body + "; }\n")
@@ -324,6 +330,7 @@ func (g *fuzzGen) signatureBlock() (decls string, calls []string) {
 	calls = append(calls,
 		"io.println(sigf"+shape()+");",
 		"io.println(Sig"+shape()+".s);",
+		"io.println(Sig(0).seeded);",
 		"io.println(Sig(0).m"+shape()+");",
 		"io.println(Sig.sm"+shape()+");",
 		"io.println(sigl"+shape()+");",

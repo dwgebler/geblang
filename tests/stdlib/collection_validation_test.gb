@@ -1,0 +1,46 @@
+import test;
+
+func stringKeyCount(dict<string, any> values): int { return values.length(); }
+func integerCount(list<int> values): int { return values.length(); }
+
+class CollectionValidationTest extends test.Test {
+    @test
+    func rechecksSharedDictionaryKeysAfterMutation(): void {
+        dict<any, any> values = {"a": 1};
+        any alias = values;
+        this.assertEquals(1, stringKeyCount(values));
+        alias[2] = "invalid";
+        this.assertThrows(func(): void { stringKeyCount(values); });
+        alias.delete(2);
+        this.assertEquals(1, stringKeyCount(values));
+    }
+
+    @test
+    func stillChecksConcreteElementTypes(): void {
+        list<any> values = [1];
+        any alias = values;
+        this.assertEquals(1, integerCount(values));
+        alias.push("invalid");
+        this.assertThrows(func(): void { integerCount(values); });
+    }
+}
+
+func nullableKeyCount(dict<?string, any> values): int { return values.length(); }
+func nullableKeyResult(any values): dict<?string, any> { return values as dict<?string, any>; }
+
+class NullableDictionaryKeyTest extends test.Test {
+    @test
+    func permitsNullKeysAtParameterReturnAndCastBoundaries(): void {
+        dict<any, any> values = {null: 1, "a": 2};
+        this.assertEquals(2, nullableKeyCount(values));
+        this.assertEquals(1, nullableKeyResult(values)[null]);
+        let narrowed = values as dict<?string, any>;
+        this.assertEquals(1, narrowed[null]);
+        values[3] = "invalid";
+        this.assertThrows(func(): void { nullableKeyCount(values); });
+        this.assertThrows(func(): void { nullableKeyResult(values); });
+        this.assertThrows(func(): void { let invalid = values as dict<?string, any>; });
+        values.delete(3);
+        this.assertEquals(2, nullableKeyCount(values));
+    }
+}

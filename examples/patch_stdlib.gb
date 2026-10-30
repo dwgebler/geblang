@@ -1,0 +1,30 @@
+import cli;
+import io;
+import json;
+import money;
+import web.cache as cache;
+
+/* Fixed input keeps this example runnable without an interactive terminal. */
+let values = cli.withContext({"stdin": "0.10\n0.20\n", "quiet": true}, func(): list<money.Money> {
+    list<money.Money> result = [];
+    for (i in 0..<2) {
+        let amount = cli.promptDecimal("Amount: ", {"min": 0});
+        if (amount != null) { result.push(money.Money(amount, "GBP")); }
+    }
+    return result;
+});
+let total = money.sum(values, "GBP");
+let output = io.memory();
+try {
+    int written = json.write(total, output);
+    string encoded = io.toString(output);
+    io.println(encoded); /* {"amount":"0.30","currency":"GBP"} */
+    io.println(written == encoded.byteLength()); /* true */
+} finally { io.close(output); }
+
+let recent = cache.memoryCacheStore(60, 2);
+recent.set("a", "first");
+recent.set("b", "second");
+recent.get("a");
+recent.set("c", "third");
+io.println(recent.get("b") == null); /* true: b was least recent */

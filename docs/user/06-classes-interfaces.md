@@ -50,6 +50,25 @@ field), `geblang check` and the compiler report the error up front; values typed
 Keep constructors focused on valid initialization. Use named static factories
 or module functions when construction needs parsing, I/O, or fallback behavior.
 
+A field default can be any expression. It runs again for every new instance,
+before the constructor body, with parent-class fields initialized first. It is
+evaluated in the scope where the class is declared, so it can call functions
+and read module variables but cannot use `this`. An error raised by a default
+is reported under the class name, followed by the line that created the
+instance:
+
+```gb
+int nextId = 0;
+func allocate(): int { nextId = nextId + 1; return nextId; }
+
+class Ticket {
+    int id = allocate();
+    list<string> notes = ["opened"];
+}
+io.println(Ticket().id);     # 1
+io.println(Ticket().id);     # 2
+```
+
 ## Method Overloading
 
 A class may define multiple methods (or constructors) with the same name, as
@@ -282,6 +301,9 @@ io.println(Counter.errors);          # 5
 
 Reading static members from inside the class uses the same `ClassName.member`
 syntax; there is no implicit `self` for static methods.
+
+A static initializer can be any expression. It runs once, when the class
+declaration is reached, and is checked against a declared static type.
 
 ## Immutable Classes
 

@@ -167,6 +167,10 @@ func lookupClassMethod(source, varName, method string) (functionDoc, bool) {
 	if !ok {
 		return functionDoc{}, false
 	}
+	if methods, primitive := primitiveMethods[typ]; primitive {
+		fn, found := methods[method]
+		return fn, found
+	}
 	methods := lookupClassMethods(typ)
 	if methods == nil {
 		return functionDoc{}, false

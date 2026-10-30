@@ -1,0 +1,42 @@
+import test;
+import profile;
+import profiler;
+import json;
+
+func consumeDiscarded(string value): void {}
+
+func discardLargeLocal(bool fail): void {
+    let discarded = "x".repeat(20000000);
+    defer consumeDiscarded(discarded);
+    if (fail) { throw ValueError("unwind"); }
+}
+
+func keepSmallJSONValue(): string {
+    let value = json.parse('{"keep":"keep","payload":"' + "x".repeat(10000000) + '"}');
+    return value["keep"] as string;
+}
+
+class FrameMemoryTest extends test.Test {
+    @test
+    func smallJSONValueDoesNotRetainLargeDocument(): void {
+        profile.gc();
+        let before = profiler.memory()["heap_alloc"];
+        let kept = keepSmallJSONValue();
+        profile.gc();
+        let retained = profiler.memory()["heap_alloc"] - before;
+        this.assertEquals("keep", kept);
+        this.assertTrue(retained < 5000000);
+    }
+
+    @test
+    func returnedAndUnwoundFramesReleaseLargeLocals(): void {
+        for (fail in [false, true]) {
+            profile.gc();
+            let before = profiler.memory()["heap_alloc"];
+            try { discardLargeLocal(fail); } catch (ValueError e) {}
+            profile.gc();
+            let retained = profiler.memory()["heap_alloc"] - before;
+            this.assertTrue(retained < 5000000);
+        }
+    }
+}

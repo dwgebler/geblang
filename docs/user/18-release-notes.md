@@ -1,5 +1,74 @@
 # Release Notes
 
+## 1.40.1
+
+### Added
+
+- `string.byteLength()` counts stored UTF-8 bytes without a bytes conversion.
+- `cli.promptDecimal` shares nullable typed-prompt validation, defaults and
+  cancellation with `promptInt`, using exact decimal parsing.
+- `money.sum` totals same-currency values in integer minor units; empty input
+  requires an explicit currency.
+- `json.write(value, stream)` writes incrementally, retries short writes and
+  leaves the borrowed stream open and unflushed. Formatting matches stringify.
+- Optional `MemoryCacheStore(ttl, capacity)` capacity enables LRU eviction and
+  expiry reclamation while preserving shared state and JSON snapshot isolation.
+- LSP completion/signature help and VS Code snippets cover the added APIs;
+  primitive method signature help now uses the shared method catalog.
+- The bytecode VM runs non-literal parameter defaults, instance field defaults
+  and static initializers, which previously required the evaluator. Defaults
+  run on every call or new instance and see earlier parameters, captured
+  variables and `this` (parameters) or the declaring module (fields).
+
+### Fixes
+
+- Imported ancestor fields retain literal defaults even without constructors.
+  Mutable collection defaults remain independent between instances.
+- Computed parameter defaults are type-checked like supplied arguments; the
+  evaluator previously accepted a value of the wrong type.
+- Errors inside a parameter default are reported from the called function;
+  errors inside a field default are reported under the class name followed by
+  the line that created the instance.
+- Traces after a call returns report the caller's line instead of the last
+  line run inside the callee.
+- Reading a global before its declaration runs reports `"name" is not declared`
+  on the VM, matching the evaluator.
+- `geblang check` type-checks a parameter default against the names in scope
+  at that point, not against the parameter itself.
+- Release dead VM operand/local references after returns and exception unwinding,
+  preserving escaped closure cells. Evaluator call/defer frames also release
+  completed environments and arguments. Trim unusually large idle worker stacks.
+- JSON encoding rejects mixed-key dictionaries and cyclic values with catchable
+  errors. Parsing and encoding limit container nesting to 512 levels.
+- Native router state is locked on the shared app rather than a callback
+  evaluator, fixing races between async registration and dispatch.
+- Unpaired JSON Unicode surrogates no longer swallow the next escape.
+- Checked casts retain nested collection and reified class arguments, including
+  nullable list shorthand, aliases, inherited generic bases and module identity.
+  A same-named class from a different module no longer satisfies a checked cast.
+- Explicit generic arguments survive imported and stored function calls, named
+  and spread calls, async/generator workers and executable decorator forwarding.
+  Overload selection uses each candidate's declared type parameters. Failed
+  spread expansion cannot bind the next call accidentally.
+- Isolated request snapshots preserve class/interface declaring-module identity
+  and generic parent arguments. Raw native stream handles retain qualified
+  casts consistently across both runtimes.
+
+### Performance
+
+- Escaped JSON tokens grow their own buffers instead of reserving the remainder
+  of the document. Encoder pools clear references and discard oversized buffers.
+- Compact dictionaries allocate storage for their actual small-object size;
+  spilled dictionaries release their compact storage. JSON builds small objects
+  at their final size.
+- Dictionary key checks use mutation-aware shared metadata; `any` collection
+  elements need no repeated structural walks. Concrete element checks remain.
+- Native route dispatch captures append-only index/middleware prefixes under an
+  app lock and uses precompiled path segments, preserving first-match order and
+  the parameter dictionary's existing key order.
+- Character indexing reuses immutable ASCII values and single-character Unicode
+  metadata. Small JSON strings from large documents own their storage.
+
 ## 1.40.0
 
 ### Added

@@ -1,0 +1,12 @@
+module api_field_defaults;
+export class BaseDefaults {
+    list<list<int>> items = [];
+    dict<string, list<int>> mapping = {};
+    int count = 7;
+    any unset;
+    string shared = "base";
+}
+export class MiddleDefaults extends BaseDefaults { string shared = "middle"; }
+export class ConstructorDefaults extends BaseDefaults {
+    func ConstructorDefaults() { this.items.push([5]); }
+}

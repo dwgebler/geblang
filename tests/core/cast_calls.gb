@@ -1,0 +1,23 @@
+module cast_calls;
+export func single<T>(any source): any { return source as T; }
+export func convert<T>(any source): any { return source as T; }
+export func convert<T>(any source, int ignored): any { return source as T; }
+export async func later<T>(any source): any { return source as T; }
+export func echo<T>(T value): T { return value; }
+export func pick<T>(T source, int code): string { return "left"; }
+export func pick<U>(string source, U code): string { return "right"; }
+func forward(callable next): callable {
+    return func(any ...args): any { return next(...args); };
+}
+export class InvocationWorker {
+    @forward
+    static func stat<T>(any source): any { return source as T; }
+    @forward
+    async func decoratedLater<T>(any source): any { return source as T; }
+    func pick<T>(T source, int code): string { return "left"; }
+    func pick<U>(string source, U code): string { return "right"; }
+    async func later<T>(any source): any { return source as T; }
+    func sequence<T>(any source): generator<any> { yield source as T; }
+    @forward
+    func convert<T>(any source): any { return source as T; }
+}

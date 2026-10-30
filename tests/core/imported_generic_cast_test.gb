@@ -1,0 +1,28 @@
+import test;
+import cast_calls as calls;
+import async;
+
+class ImportedGenericCastTest extends test.Test {
+    @test
+    func preservesBindingsAcrossNamedSpreadAndOverloadedCalls(): void {
+        this.assertEquals(7, calls.single<int>("7"));
+        this.assertEquals(8, calls.single<int>(source: "8"));
+        this.assertEquals(9, calls.single<int>(...["9"]));
+        this.assertEquals(10, calls.single<int>(...{"source": "10"}));
+        this.assertEquals(11, calls.convert<int>("11"));
+        this.assertEquals(12, calls.convert<int>(source: "12"));
+        this.assertEquals(13, calls.convert<int>("13", 0));
+        this.assertEquals("14", calls.single<string>(14));
+        this.assertEquals(15, calls.single<int>("15"));
+        this.assertThrows(func(): void { calls.single(16); });
+        this.assertThrows(func(): void { calls.single<list<int>>(["bad"]); });
+    }
+
+    @test
+    func asyncCallsKeepTheirOwnBindingMaps(): void {
+        let first = calls.later<int>("17");
+        let second = calls.later<string>(18);
+        this.assertEquals(17, async.await(first));
+        this.assertEquals("18", async.await(second));
+    }
+}

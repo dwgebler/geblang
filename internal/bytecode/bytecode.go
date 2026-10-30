@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(91)
+	Version = uint16(92)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -341,6 +341,12 @@ const (
 	OpForRangeIter
 	// OpBindFunction {slot,index} binds a lexical named closure and its public signature.
 	OpBindFunction
+	// OpJumpIfArgPresent {target, slot} skips a computed default unless the slot holds a pending default.
+	OpJumpIfArgPresent
+	// OpStoreDefaultArg {slot, funcIndex, paramIndex} type-checks the computed default on the stack and stores it.
+	OpStoreDefaultArg
+	// OpCheckFieldDefault {classIndex, fieldIndex} type-checks a computed field default against local 0's instance.
+	OpCheckFieldDefault
 )
 
 type Instruction struct {
@@ -386,6 +392,8 @@ type Chunk struct {
 	// compiled chunk. The VM pre-sizes vm.globals accordingly so the hot
 	// OpGetGlobal / OpSetGlobal handlers can skip bounds checks.
 	GlobalCount int64
+	// GlobalNames maps global slots to source names for runtime diagnostics.
+	GlobalNames []string
 	// Embeds pins every embed(...) file folded into a constant, so a cached chunk can revalidate against disk.
 	Embeds []EmbedRecord
 	// ModuleAliases and FromImports let the runtime resolve imported type aliases written in this chunk.
@@ -502,8 +510,10 @@ type ClassInfo struct {
 	// `@Assert.email`). Empty per field by default. Populated at
 	// compile time; consumed by `reflect.fields` so frameworks can
 	// drive validation / serialization off the field annotations.
-	FieldDecorators    [][]runtime.DecoratorMetadata
-	FieldDefaults      []int64
+	FieldDecorators [][]runtime.DecoratorMetadata
+	FieldDefaults   []int64
+	// FieldDefaultFuncs holds the function computing a non-literal field default, or -1.
+	FieldDefaultFuncs  []int64
 	ConstructorIndices []int64
 	// DestructorIndex is the function index of `func ~ClassName()`,
 	// or -1 when the class has no destructor.
@@ -561,6 +571,10 @@ func Encode(chunk Chunk) ([]byte, error) {
 	out = append(out, []byte(chunk.Compiler)...)
 	out = binary.BigEndian.AppendUint64(out, uint64(chunk.TopLevelLocalCount))
 	out = binary.BigEndian.AppendUint64(out, uint64(chunk.GlobalCount))
+	out = binary.BigEndian.AppendUint32(out, uint32(len(chunk.GlobalNames)))
+	for _, name := range chunk.GlobalNames {
+		out = appendString(out, name)
+	}
 	out = binary.BigEndian.AppendUint32(out, uint32(len(chunk.Constants)))
 	for _, constant := range chunk.Constants {
 		var err error
@@ -693,6 +707,11 @@ func Encode(chunk Chunk) ([]byte, error) {
 			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
 			out = append(out, []byte(name)...)
 			out = binary.BigEndian.AppendUint64(out, uint64(class.FieldDefaults[i]))
+			defaultFunc := int64(-1)
+			if i < len(class.FieldDefaultFuncs) {
+				defaultFunc = class.FieldDefaultFuncs[i]
+			}
+			out = binary.BigEndian.AppendUint64(out, uint64(defaultFunc))
 			fieldType := ""
 			if i < len(class.FieldTypes) {
 				fieldType = class.FieldTypes[i]
@@ -874,6 +893,11 @@ func Decode(data []byte) (Chunk, error) {
 	chunk.Compiler = string(reader.read(compilerLen))
 	chunk.TopLevelLocalCount = int64(reader.u64())
 	chunk.GlobalCount = int64(reader.u64())
+	globalNameCount := int(reader.u32())
+	chunk.GlobalNames = make([]string, 0, globalNameCount)
+	for i := 0; i < globalNameCount; i++ {
+		chunk.GlobalNames = append(chunk.GlobalNames, reader.string())
+	}
 	constantCount := int(reader.u32())
 	chunk.Constants = make([]runtime.Value, 0, constantCount)
 	for i := 0; i < constantCount; i++ {
@@ -994,12 +1018,14 @@ func Decode(data []byte) (Chunk, error) {
 		fieldCount := int(reader.u16())
 		class.FieldNames = make([]string, 0, fieldCount)
 		class.FieldDefaults = make([]int64, 0, fieldCount)
+		class.FieldDefaultFuncs = make([]int64, 0, fieldCount)
 		class.FieldTypes = make([]string, 0, fieldCount)
 		class.FieldCheckTypes = make([]string, 0, fieldCount)
 		class.FieldDocs = make([]string, 0, fieldCount)
 		for j := 0; j < fieldCount; j++ {
 			class.FieldNames = append(class.FieldNames, string(reader.read(int(reader.u16()))))
 			class.FieldDefaults = append(class.FieldDefaults, int64(reader.u64()))
+			class.FieldDefaultFuncs = append(class.FieldDefaultFuncs, int64(reader.u64()))
 			class.FieldTypes = append(class.FieldTypes, string(reader.read(int(reader.u16()))))
 			class.FieldCheckTypes = append(class.FieldCheckTypes, string(reader.read(int(reader.u16()))))
 			class.FieldDocs = append(class.FieldDocs, string(reader.read(int(reader.u16()))))
@@ -1292,6 +1318,8 @@ func appendConstant(out []byte, value runtime.Value) ([]byte, error) {
 		out = append(out, 13)
 		out = binary.BigEndian.AppendUint32(out, uint32(len(value.Value)))
 		return append(out, value.Value...), nil
+	case runtime.PendingDefault:
+		return append(out, 14), nil
 	default:
 		return nil, fmt.Errorf("unsupported bytecode constant %s", value.TypeName())
 	}
@@ -1647,6 +1675,8 @@ func (r *byteReader) constant() runtime.Value {
 		value := make([]byte, len(data))
 		copy(value, data)
 		return runtime.Bytes{Value: value}
+	case 14:
+		return runtime.PendingDefault{}
 	default:
 		if r.err == nil {
 			r.err = fmt.Errorf("unknown constant tag %d", tag)

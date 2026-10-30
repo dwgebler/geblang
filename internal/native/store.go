@@ -44,6 +44,7 @@ func (e storeEntry) read() runtime.Value {
 }
 
 func registerStore(r *Registry) {
+	registerCacheStore(r)
 	r.Register("store", "new", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("store.new expects ()")

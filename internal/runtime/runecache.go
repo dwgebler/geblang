@@ -12,11 +12,15 @@ import (
 // RuneInfo holds a string's rune<->byte mapping; ascii strings share asciiRuneInfo.
 type RuneInfo struct {
 	ascii   bool
+	single  bool
 	offsets []int32
 	runes   []rune // fallback for invalid UTF-8 or strings too large for int32 offsets
 }
 
 func (ri *RuneInfo) RuneCount(s string) int {
+	if ri.single {
+		return 1
+	}
 	if ri.runes != nil {
 		return len(ri.runes)
 	}
@@ -28,17 +32,26 @@ func (ri *RuneInfo) RuneCount(s string) int {
 
 // RuneAt returns rune i as a string. Caller guarantees 0 <= i < RuneCount.
 func (ri *RuneInfo) RuneAt(s string, i int) string {
+	if ri.single {
+		return strings.Clone(s)
+	}
 	if ri.runes != nil {
 		return string(ri.runes[i])
 	}
 	if ri.ascii {
-		return strings.Clone(s[i : i+1])
+		return asciiRuneValues[s[i]].(String).Value
 	}
 	return strings.Clone(s[ri.offsets[i]:ri.offsets[i+1]])
 }
 
 // RuneIndexOfByte maps a byte offset on a rune boundary to its rune index.
 func (ri *RuneInfo) RuneIndexOfByte(s string, b int) int {
+	if ri.single {
+		if b == 0 {
+			return 0
+		}
+		return 1
+	}
 	if ri.offsets != nil {
 		return sort.Search(len(ri.offsets), func(i int) bool { return int(ri.offsets[i]) >= b })
 	}
@@ -51,6 +64,12 @@ func (ri *RuneInfo) RuneIndexOfByte(s string, b int) int {
 
 // Substring returns runes [i,j). Caller guarantees 0 <= i <= j <= RuneCount.
 func (ri *RuneInfo) Substring(s string, i, j int) string {
+	if ri.single {
+		if i == j {
+			return ""
+		}
+		return strings.Clone(s)
+	}
 	if ri.runes != nil {
 		return string(ri.runes[i:j])
 	}
@@ -58,6 +77,25 @@ func (ri *RuneInfo) Substring(s string, i, j int) string {
 		return strings.Clone(s[i:j])
 	}
 	return strings.Clone(s[ri.offsets[i]:ri.offsets[j]])
+}
+
+var asciiRuneValues = func() [128]Value {
+	var values [128]Value
+	for i := range values {
+		values[i] = String{Value: string(rune(i))}
+	}
+	return values
+}()
+
+// RuneValueAt reuses immutable ASCII values without retaining the source buffer.
+func (ri *RuneInfo) RuneValueAt(s string, i int) Value {
+	if ri.ascii {
+		return asciiRuneValues[s[i]]
+	}
+	if ri.offsets != nil && s[ri.offsets[i]] < utf8.RuneSelf {
+		return asciiRuneValues[s[ri.offsets[i]]]
+	}
+	return String{Value: ri.RuneAt(s, i)}
 }
 
 type runeCacheKey struct {
@@ -86,6 +124,7 @@ var (
 	runeCacheBytes int
 	runeCacheCount int
 	asciiRuneInfo  = &RuneInfo{ascii: true}
+	singleRuneInfo = &RuneInfo{single: true}
 )
 
 // StringRuneInfo returns cached rune<->byte mapping for s, building it on a miss.
@@ -95,6 +134,11 @@ func StringRuneInfo(s string) *RuneInfo {
 	}
 	// Short strings: O(n) scan is cheaper than lock+map per call.
 	if len(s) <= shortStringThreshold {
+		if s[0] >= utf8.RuneSelf {
+			if r, n := utf8.DecodeRuneInString(s); n == len(s) && (r != utf8.RuneError || n > 1) {
+				return singleRuneInfo
+			}
+		}
 		info, _ := buildRuneInfo(s)
 		return info
 	}

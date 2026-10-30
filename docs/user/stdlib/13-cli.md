@@ -70,7 +70,19 @@ a default takes precedence over a blank cancel token. Add `""` to `cancel`
 to let blank input cancel when there is no default. Integer parsing matches
 `string.toInt()`, including literal prefixes and digit separators.
 
-Shared rules work in `promptInt` options and each `cli.parseArgs` option:
+`cli.promptDecimal(label, options = {}) -> ?decimal` shares the same retry,
+blank/default, cancellation, EOF and validation rules. It parses exact decimal
+text; defaults accept decimals or integers (returned as decimals). Floats and
+numeric strings are not accepted as defaults.
+
+```gb
+let amount = cli.promptDecimal("Amount (q to stop): ", {
+    "min": 0, "max": 1000.00, "cancel": ["q"]
+});
+if (amount != null) { io.println(amount.format(2)); }
+```
+
+Shared rules work in both typed prompts and each `cli.parseArgs` option:
 
 | Rule | Meaning |
 |------|---------|

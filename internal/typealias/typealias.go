@@ -150,7 +150,9 @@ func (s *programScope) canonicalize(ref *ast.TypeRef, depth int) *ast.TypeRef {
 		}
 		return &resolved
 	} else if s.declared[ref.Name] {
-		out.Name = s.canonical + "." + ref.Name
+		if s.canonical != "" {
+			out.Name = s.canonical + "." + ref.Name
+		}
 	} else if target, ok := s.fromImports[ref.Name]; ok {
 		out.Name = target
 	}
@@ -233,4 +235,32 @@ func ScopedLookup(program *ast.Program, canonical string, targets Lookup) Lookup
 		}
 		return "", false
 	}
+}
+
+// Canonicalizer captures a module's declarations and import aliases, including forward types.
+func Canonicalizer(program *ast.Program, module string) func(*ast.TypeRef) *ast.TypeRef {
+	scope := newProgramScope(program, module)
+	return func(ref *ast.TypeRef) *ast.TypeRef { return scope.canonicalize(ref, 0) }
+}
+
+// Qualified uses resolved nominal identity without changing the diagnostic spelling.
+func Qualified(ref *ast.TypeRef) *ast.TypeRef {
+	if ref == nil {
+		return nil
+	}
+	out := *ref
+	if out.CanonicalName != "" {
+		out.Name = out.CanonicalName
+	} else if out.ResolvedModule != "" {
+		out.Name = out.ResolvedModule + "." + leafTypeName(out.Name)
+	}
+	out.Left = Qualified(ref.Left)
+	out.Right = Qualified(ref.Right)
+	if len(ref.Arguments) > 0 {
+		out.Arguments = make([]*ast.TypeRef, len(ref.Arguments))
+		for i, arg := range ref.Arguments {
+			out.Arguments[i] = Qualified(arg)
+		}
+	}
+	return &out
 }

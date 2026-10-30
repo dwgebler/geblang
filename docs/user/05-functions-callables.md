@@ -106,6 +106,22 @@ io.println(collect());   # [1]
 io.println(collect());   # [1]   (a fresh list, not [1, 1])
 ```
 
+A default can be any expression. It runs inside the called function, so it can
+use parameters declared before it, variables a closure captured, and `this` in
+a method. A parameter declared later is not in scope yet; its name resolves
+outside the parameter list. The value is checked against the parameter type
+like a supplied argument, and an error raised by the default is reported from
+the called function:
+
+```gb
+int base = 10;
+func window(int start, int end = start + base): string {
+    return "${start}..${end}";
+}
+io.println(window(5));       # 5..15
+io.println(window(5, 7));    # 5..7
+```
+
 Named arguments also feed overload resolution. When overloads share
 an arity, naming an argument can pick the intended one:
 

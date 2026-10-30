@@ -98,22 +98,18 @@ func TestEncodeDecodeChunk(t *testing.T) {
 }
 
 func TestCompileUnsupportedFeatureReportsStatementLocation(t *testing.T) {
-	/* Non-literal class field defaults are one of the parity
-	 * fallbacks the bytecode pipeline still routes through the
-	 * evaluator. This test guards that the rejection carries an
-	 * accurate source line+column so the fallback reporter can
-	 * blame the right statement. */
-	source := []byte(`func compute(): int { return 42; }
-class Foo {
-    int x = compute();
-}
+	// The fallback reporter blames a capability gap's statement by its line and column.
+	source := []byte(`func describe(int x): string { return "i"; }
+func describe(string x): string { return "s"; }
+any v = 1;
+describe(x: v);
 `)
 	program := parseProgram(t, string(source))
 	_, err := bytecode.Compile(program, source, "test")
 	if err == nil {
 		t.Fatal("expected compile error")
 	}
-	if !strings.Contains(err.Error(), "literal class field defaults") {
+	if !bytecode.IsParityError(err) || !strings.Contains(err.Error(), "line 4:1: ambiguous overload for describe") {
 		t.Fatalf("error: got %v", err)
 	}
 }

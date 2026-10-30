@@ -596,3 +596,15 @@ func TestParserParsesAsyncEnumMethods(t *testing.T) {
 		t.Fatalf("expected one async and one sync method, got %+v", enum.Methods)
 	}
 }
+
+func TestParseTypeRefAcceptsQualifiedKeywordModuleNames(t *testing.T) {
+	for _, source := range []string{"async.atomic.AtomicInt", "list<async.atomic.AtomicInt>", "module.type.Item"} {
+		ref, err := parser.ParseTypeRef(source)
+		if err != nil {
+			t.Fatalf("%s: %v", source, err)
+		}
+		if ref.String() != source {
+			t.Fatalf("got %q, want %q", ref.String(), source)
+		}
+	}
+}

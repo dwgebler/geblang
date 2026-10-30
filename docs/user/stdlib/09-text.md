@@ -610,3 +610,10 @@ A directory-backed engine keeps templates on disk:
 let engine = template.Engine("templates");
 io.println(engine.render("welcome.html", {"name": "Ada"}));
 ```
+
+## Character and byte lengths
+
+`text.length()` counts Unicode characters. `text.byteLength()` counts stored
+UTF-8 bytes without allocating a bytes copy; for example, `"\u{20ac}"` has
+length 1 and byte length 3. Use byte length for byte limits and encoded payload
+sizes. It counts stored bytes even when a string was built from invalid UTF-8.

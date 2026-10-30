@@ -4,6 +4,12 @@ Visual Studio Code extension for [Geblang](https://github.com/dgebler/geblang).
 
 ## Features
 
+Completion, hover and signature help use the selected Geblang binary's LSP
+catalog. Use Geblang 1.40.1 for `string.byteLength`, `cli.promptDecimal`,
+`money.sum`, `json.write` and bounded `web.cache.memoryCacheStore` signatures.
+The `clipromptdecimal`, `moneysum`, `jsonwrite` and `boundedcache` snippets cover
+these APIs.
+
 - Syntax highlighting for `.gb` files
 - Real-time diagnostics via LSP, debounced at 200 ms:
   parse and semantic errors, bytecode type errors, unresolved imports,

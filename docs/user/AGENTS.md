@@ -7,8 +7,8 @@ at the start of a session.
 
 A statically-typed scripting language for backend services,
 implemented in Go. Files end in `.gb`. Two backends share the
-language: an evaluator (`geblang test`) and a bytecode VM
-(`geblang run`, `geblang build`). They must produce identical
+language: an evaluator (`geblang test --runtime evaluator`) and a bytecode VM
+(`geblang run`, `geblang build`, and the default `geblang test`). They must produce identical
 output; report a divergence as a bug rather than working around
 it.
 
@@ -124,7 +124,8 @@ set<int>           s  = {1, 2, 3};      # brace literal w/o ':' is a set
   `prepend`, `insert`, `removeAt`, `remove`, `reverse`, `sort`,
   `sortBy` mutate the receiver AND return it (chainable).
   `sorted()`, `reversed()`, `copy()`, `deepCopy()` are the copy
-  variants.
+  variants. Prefer `xs.push(value);` to reassigning the result to `xs`: it
+  avoids redundant structural validation of the growing list.
 - **Dicts iterate in insertion order**, including `.keys()`,
   `.values()`, `.items()`, and `for (k, v in d)`.
 - A bare `{}` is a dict; `set<int> s = {};` (a set-typed variable, parameter
@@ -600,3 +601,15 @@ module and sees private functions, classes, consts, and state.
 Write a five-line script and run it with `geblang run` or
 `geblang check`. Both backends are fast on tiny programs and the
 error messages name the line and the missing piece.
+
+## Additive APIs in 1.40.1
+
+- Use `text.byteLength()` for encoded byte limits; `length()` counts characters.
+- `cli.promptDecimal` shares promptInt defaults/cancellation/validation and
+  returns an exact decimal or null. Use `money.sum` for same-currency totals;
+  supply the currency explicitly for empty input.
+- `json.write(value, stream)` returns a byte count without flushing/closing the
+  borrowed stream. Handle partial output on failure before publishing files.
+- `web.cache.memoryCacheStore(ttl, capacity)` adds bounded LRU storage; zero
+  remains unlimited. Values are JSON snapshots and state stays shared across
+  request snapshots. Capacity does not coalesce concurrent cache misses.

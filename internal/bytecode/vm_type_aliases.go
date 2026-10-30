@@ -5,6 +5,7 @@ import (
 
 	"geblang/internal/ast"
 	"geblang/internal/parser"
+	"geblang/internal/runtime"
 	"geblang/internal/typealias"
 )
 
@@ -201,4 +202,91 @@ func (c *Compiler) resolvedDeclarationType(typ *ast.TypeRef) *ast.TypeRef {
 		}
 	}
 	return resolved
+}
+
+// canonicalTypeName resolves each nominal leaf in the current import scope.
+func (vm *VM) canonicalTypeName(name string) string {
+	key := typeAliasKey{mod: vm.curMod, name: name}
+	if value, ok := vm.canonicalTypeCache[key]; ok {
+		return value
+	}
+	result := name
+	if ref, err := parser.ParseTypeRef(name); err == nil {
+		result = typealias.Expand(ref, func(leaf string) (string, bool) {
+			qualified := vm.canonicalNominalName(leaf)
+			return qualified, qualified != leaf
+		}).String()
+	}
+	if vm.canonicalTypeCache == nil {
+		vm.canonicalTypeCache = map[typeAliasKey]string{}
+	}
+	vm.canonicalTypeCache[key] = result
+	return result
+}
+
+func (vm *VM) canonicalNominalName(name string) string {
+	return vm.canonicalNominalNameAt(name, 0)
+}
+
+func (vm *VM) canonicalNominalNameAt(name string, depth int) string {
+	if depth > 16 {
+		return name
+	}
+	scope := vm.importScopeChunk()
+	if imported, ok := scope.FromImports[name]; ok {
+		name = imported
+	}
+	if dot := strings.LastIndexByte(name, '.'); dot > 0 {
+		module, member := name[:dot], name[dot+1:]
+		if canonical, ok := scope.ModuleAliases[module]; ok {
+			module = canonical
+		}
+		if module != vm.moduleName && vm.moduleLoader != nil {
+			if loaded, err := vm.moduleLoader.LoadModule(module, module); err == nil {
+				if value, ok := loaded.Exports[member]; ok {
+					switch v := value.(type) {
+					case runtime.BytecodeClass:
+						return runtime.QualifiedTypeName(v.Module, v.Name)
+					case *runtime.Class:
+						return runtime.QualifiedTypeName(v.DeclaringModule(), v.Name)
+					case *runtime.Interface:
+						return runtime.QualifiedTypeName(v.Module, v.Name)
+					case *runtime.EnumDef:
+						return runtime.QualifiedTypeName(v.Module, v.Name)
+					case runtime.BytecodeFunction:
+						if info, err := vm.moduleLoader.ModuleFunctionInfo(v.Module, v.Index); err == nil {
+							result := vm.canonicalTypeQualifiers(info.ReturnType, v.Module)
+							if result != "" && !runtime.IsBuiltinTypeName(result) && !strings.ContainsAny(result, "<>|&?[") {
+								if !strings.Contains(result, ".") {
+									result = runtime.QualifiedTypeName(v.Module, result)
+								}
+								if result != name && result != module+"."+member {
+									return vm.canonicalNominalNameAt(result, depth+1)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		return runtime.QualifiedTypeName(module, member)
+	}
+	classIndex := vm.classIndex
+	if vm.curMod != nil {
+		classIndex = vm.curMod.classIndex
+	}
+	if _, ok := classIndex[strings.ToLower(name)]; ok {
+		return runtime.QualifiedTypeName(vm.moduleName, name)
+	}
+	for _, iface := range scope.Interfaces {
+		if strings.EqualFold(iface.Name, name) {
+			return runtime.QualifiedTypeName(vm.moduleName, name)
+		}
+	}
+	for _, value := range scope.Constants {
+		if enum, ok := value.(*runtime.EnumDef); ok && strings.EqualFold(enum.Name, name) {
+			return runtime.QualifiedTypeName(vm.moduleName, name)
+		}
+	}
+	return name
 }

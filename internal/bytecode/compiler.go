@@ -292,6 +292,12 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 	c.emit(OpReturn)
 	c.chunk.TopLevelLocalCount = c.locals
 	c.chunk.GlobalCount = int64(len(c.globals))
+	c.chunk.GlobalNames = make([]string, len(c.globals))
+	for name, slot := range c.globals {
+		if slot >= 0 && int(slot) < len(c.chunk.GlobalNames) {
+			c.chunk.GlobalNames[slot] = name
+		}
+	}
 	embedPaths := make([]string, 0, len(c.embeds))
 	for p := range c.embeds {
 		embedPaths = append(embedPaths, p)
@@ -532,12 +538,8 @@ func (c *Compiler) signatureDefaultConstant(def ast.Expression) int64 {
 	if def == nil {
 		return -1
 	}
-	value, err := c.constantValueFromExpression(def)
-	if err != nil {
-		return -1
-	}
-	c.chunk.Constants = append(c.chunk.Constants, value)
-	return int64(len(c.chunk.Constants) - 1)
+	index, _ := c.parameterDefaultConstant(def)
+	return index
 }
 
 func (c *Compiler) populateFunctionSignature(index int64, fn *ast.FunctionStatement) {
@@ -743,6 +745,10 @@ func (c *Compiler) bytecodeTypeName(typ *ast.TypeRef) string {
 // Concrete collection types (e.g. list<int>, int[]) retain their element type for runtime enforcement.
 // Generic type parameters (e.g. list<T>) are also preserved for type-binding inference.
 func (c *Compiler) bytecodeTypeNameForParam(typ *ast.TypeRef, typeParams []string) string {
+	typ = c.resolveTypeRef(typ)
+	if typ != nil && (typ.Operator == "|" || typ.Operator == "&") {
+		return c.bytecodeTypeNameForParam(typ.Left, typeParams) + " " + typ.Operator + " " + c.bytecodeTypeNameForParam(typ.Right, typeParams)
+	}
 	base := c.bytecodeTypeName(typ)
 	if typ == nil {
 		return base
@@ -752,17 +758,17 @@ func (c *Compiler) bytecodeTypeNameForParam(typ *ast.TypeRef, typeParams []strin
 	}
 	// T[] syntax: ListAlias=true, Arguments is empty, Name holds the element type.
 	if typ.ListAlias && len(typ.Arguments) == 0 && typ.Name != "" && !strings.EqualFold(typ.Name, "list") {
-		return "list<" + typ.Name + ">"
+		prefix := ""
+		if typ.Nullable {
+			prefix = "?"
+		}
+		return prefix + "list<" + typ.Name + ">"
 	}
 	if len(typ.Arguments) == 0 {
 		return base
 	}
 	parts := make([]string, 0, len(typ.Arguments))
 	for _, arg := range typ.Arguments {
-		if arg == nil || arg.Operator != "" || arg.Name == "" {
-			parts = append(parts, c.bytecodeTypeName(arg))
-			continue
-		}
 		parts = append(parts, c.bytecodeTypeNameForParam(arg, typeParams))
 	}
 	return base + "<" + strings.Join(parts, ",") + ">"

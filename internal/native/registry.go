@@ -193,7 +193,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"tmpdir": {}, "homedir": {}, "username": {}, "environ": {}, "osVersion": {},
 	},
 	"json": {
-		"parse": {}, "stringify": {}, "validate": {}, "tryParse": {},
+		"parse": {}, "stringify": {}, "write": {}, "validate": {}, "tryParse": {},
 		"validateDetailed": {}, "parseAs": {},
 	},
 	"xml": {

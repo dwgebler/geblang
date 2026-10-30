@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"geblang/internal/ast"
 	"geblang/internal/native"
 	"geblang/internal/profiling"
 	"geblang/internal/runtime"
@@ -104,6 +105,8 @@ type VM struct {
 	generatorYield       chan vmGeneratorItem
 	generatorDone        <-chan struct{}
 	typeSpecCache        map[string]vmTypeSpec
+	canonicalTypeCache   map[typeAliasKey]string
+	castTypeRefs         map[string]*ast.TypeRef
 	typeAliasCache       map[typeAliasKey]typeAliasEntry
 	typeAssertSpecs      map[int64]vmTypeSpec
 	callArgsFree         [][]runtime.Value
@@ -118,6 +121,7 @@ type VM struct {
 	// which consumes (or drops) them at entry.
 	pendingCallTypeArgs []string
 	pendingLiteralArgs  []bool
+	typeArgHandoff      []string
 	// literalHandoff carries a cross-module call's int-literal mask to the callee's home VM (see AdoptLiteralArgs).
 	literalHandoff   []bool
 	fieldTypes       map[fieldTypeKey]*fieldTypeList
@@ -866,7 +870,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				if l, lok := leftVM.Boxed.(runtime.String); lok {
 					if r, rok := rightVM.Boxed.(runtime.String); rok {
 						vm.stack[n-2] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: l.Value + r.Value}}
-						vm.stack = vm.stack[:n-1]
+						vm.truncateStack(n - 1)
 						continue
 					}
 				}
@@ -927,14 +931,14 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					result = runtime.VMValueSmallInt(v)
 				}
 				vm.stack[n-2] = result
-				vm.stack = vm.stack[:n-1]
+				vm.truncateStack(n - 1)
 				continue
 			}
 			// Fallback: materialise both operands as runtime.Value, drop
 			// them from the stack, and route through generic arithmetic.
 			left := leftVM.ToValue()
 			right := rightVM.ToValue()
-			vm.stack = vm.stack[:n-2]
+			vm.truncateStack(n - 2)
 			genericOp := *instruction
 			switch instruction.Op {
 			case OpAddInt:
@@ -979,7 +983,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					result = li == ri
 				}
 				vm.stack[n-2] = runtime.VMValueBool(result)
-				vm.stack = vm.stack[:n-1]
+				vm.truncateStack(n - 1)
 				continue
 			}
 			// Fallback for non-SmallInt int values (runtime.Int after overflow):
@@ -1077,7 +1081,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if lvm.Kind == runtime.VMKindSmallInt && rvm.Kind == runtime.VMKindSmallInt {
 				li := lvm.I64
 				ri := rvm.I64
-				vm.stack = vm.stack[:n-2]
+				vm.truncateStack(n - 2)
 				var jump bool
 				switch instruction.Op {
 				case OpJumpIfNotLessInt:
@@ -1774,6 +1778,33 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return vm.runtimeError(*instruction, "%s.%s is not a native function", canonical, name)
 			}
 			vm.push(v)
+		case OpJumpIfArgPresent:
+			pending, err := vm.argSlotPending(instruction.Operands[1])
+			if err != nil {
+				return vm.runtimeError(*instruction, "%s", err.Error())
+			}
+			if !pending {
+				ip = int(instruction.Operands[0]) - 1
+			}
+		case OpStoreDefaultArg, OpCheckFieldDefault:
+			var err error
+			if instruction.Op == OpStoreDefaultArg {
+				err = vm.storeDefaultArg(*instruction)
+			} else {
+				err = vm.checkFieldDefault(*instruction)
+			}
+			if err != nil {
+				var typed vmTypedError
+				if errors.As(err, &typed) {
+					nextIP, throwErr := vm.throwTyped(*instruction, ip, typed.class, typed.message)
+					if throwErr != nil {
+						return throwErr
+					}
+					ip = nextIP
+					continue
+				}
+				return vm.runtimeError(*instruction, "%s", err.Error())
+			}
 		case OpFreezeLocal:
 			slot := instruction.Operands[0]
 			cur, err := vm.getLocalVM(slot)
@@ -2299,13 +2330,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			isDestructibleConstructor := slot.isDestructibleConstructor
 			negateReturn := slot.negateReturn
 			vm.popLocalsStackFrame(slot)
-			slot.returnOverride = nil
-			slot.generator = nil
-			slot.generatorDone = nil
-			slot.typeBindings = nil
-			slot.immutableFieldsToLock = nil
-			slot.lockInstance = nil
-			slot.constraintInstance = nil
+			*slot = callFrame{}
 			vm.frames = vm.frames[:frameIdx]
 			if constraintInstance != nil {
 				if err := vm.checkInstanceClassConstraints(*instruction, constraintInstance); err != nil {
@@ -2636,7 +2661,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				if !ok {
 					return vm.runtimeError(*instruction, "OpPlantCallTypeArgs: constants must be strings")
 				}
-				names = append(names, typeName.Value)
+				names = append(names, vm.resolveFrameTypeName(typeName.Value))
 			}
 			vm.pendingCallTypeArgs = names
 		default:
@@ -3346,16 +3371,17 @@ func (vm *VM) jumpToExceptionHandler(instruction Instruction, ip int) (int, erro
 		if err := vm.runDefers(instruction); err != nil {
 			return 0, err
 		}
-		frame := vm.frames[len(vm.frames)-1]
-		vm.frames = vm.frames[:len(vm.frames)-1]
-		if !frame.shared && frame.basePointer < len(vm.localsStack) {
-			vm.localsStack = vm.localsStack[:frame.basePointer]
-		}
+		idx := len(vm.frames) - 1
+		slot := &vm.frames[idx]
+		vm.popLocalsStackFrame(slot)
+		*slot = callFrame{}
+		vm.frames = vm.frames[:idx]
 	}
 	if len(vm.stack) > handler.stackDepth {
-		vm.stack = vm.stack[:handler.stackDepth]
+		vm.truncateStack(handler.stackDepth)
 	}
 	if len(vm.localsStack) > handler.localsStackDepth {
+		clear(vm.localsStack[handler.localsStackDepth:])
 		vm.localsStack = vm.localsStack[:handler.localsStackDepth]
 	}
 	if len(vm.frames) > 0 {
@@ -4246,7 +4272,7 @@ func (vm *VM) index(instruction Instruction) error {
 		if i < 0 || i >= n {
 			return vm.typedFault(instruction, "ValueError", "string index out of range")
 		}
-		vm.push(runtime.String{Value: ri.RuneAt(value.Value, i)})
+		vm.push(ri.RuneValueAt(value.Value, i))
 	case runtime.Bytes:
 		i, err := indexInt(index)
 		if err != nil {
@@ -5139,7 +5165,7 @@ func (vm *VM) forRangeIter(instruction Instruction) error {
 		end, endOK := vm.stack[n-2].ToValue().(runtime.SmallInt)
 		step, stepOK := smallRangeBound(vm.stack[n-1].ToValue())
 		if startOK && endOK && stepOK && step != 0 {
-			vm.stack = vm.stack[:n-3]
+			vm.truncateStack(n - 3)
 			// One allocation: the iterator and its range state together.
 			holder := &struct {
 				iter  iteratorValue
@@ -5428,6 +5454,7 @@ func (vm *VM) runDefers(instruction Instruction) error {
 	}
 	current := len(vm.defers) - 1
 	actions := vm.defers[current]
+	defer clear(actions)
 	vm.defers = vm.defers[:current]
 	for i := len(actions) - 1; i >= 0; i-- {
 		action := actions[i]
@@ -5872,12 +5899,17 @@ func (vm *VM) pushVM(value runtime.VMValue) {
 	vm.stack = append(vm.stack, value)
 }
 
+func (vm *VM) truncateStack(n int) {
+	clear(vm.stack[n:])
+	vm.stack = vm.stack[:n]
+}
+
 func (vm *VM) pop() (runtime.Value, error) {
 	if len(vm.stack) == 0 {
 		return nil, fmt.Errorf("stack underflow")
 	}
 	value := vm.stack[len(vm.stack)-1]
-	vm.stack = vm.stack[:len(vm.stack)-1]
+	vm.truncateStack(len(vm.stack) - 1)
 	return value.ToValue(), nil
 }
 
@@ -5887,7 +5919,7 @@ func (vm *VM) popVM() (runtime.VMValue, error) {
 		return runtime.VMValueNull, fmt.Errorf("stack underflow")
 	}
 	value := vm.stack[len(vm.stack)-1]
-	vm.stack = vm.stack[:len(vm.stack)-1]
+	vm.truncateStack(len(vm.stack) - 1)
 	return value, nil
 }
 
@@ -6099,7 +6131,7 @@ func (vm *VM) getGlobal(slot int64) (runtime.Value, error) {
 	}
 	value := vm.curGlobals[slot]
 	if value.Kind == runtime.VMKindUnset {
-		return nil, fmt.Errorf("global is undefined")
+		return nil, vm.undefinedGlobalError(slot)
 	}
 	if value.Kind == runtime.VMKindBoxed {
 		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
@@ -6120,7 +6152,7 @@ func (vm *VM) getGlobalVM(slot int64) (runtime.VMValue, error) {
 	}
 	value := vm.curGlobals[slot]
 	if value.Kind == runtime.VMKindUnset {
-		return runtime.VMValueNull, fmt.Errorf("global is undefined")
+		return runtime.VMValueNull, vm.undefinedGlobalError(slot)
 	}
 	if value.Kind == runtime.VMKindBoxed {
 		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {

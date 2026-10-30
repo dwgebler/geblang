@@ -7,6 +7,7 @@ import (
 )
 
 func registerJSON(r *Registry) {
+	r.Register("json", "write", func(args []runtime.Value) (runtime.Value, error) { return jsonWriteCtx(ConversionContext{}, args) })
 	r.Register("json", "parse", func(args []runtime.Value) (runtime.Value, error) {
 		text, err := singleString(args, "json.parse")
 		if err != nil {
@@ -26,7 +27,7 @@ func registerJSON(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		return runtime.Bool{Value: json.Valid([]byte(text))}, nil
+		return runtime.Bool{Value: json.Valid([]byte(text)) && jsonDepthWithinLimit(text)}, nil
 	})
 	r.Register("json", "tryParse", func(args []runtime.Value) (runtime.Value, error) {
 		text, err := singleString(args, "json.tryParse")

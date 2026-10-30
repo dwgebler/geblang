@@ -163,6 +163,7 @@ var TestBaseMethods = map[string]FunctionDoc{
 var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 	"string": {
 		"length":             Fn([]string{}, "int", "Number of Unicode characters."),
+		"byteLength":         Fn([]string{}, "int", "UTF-8 byte length without allocating a bytes copy."),
 		"isEmpty":            Fn([]string{}, "bool", "True when the string is the empty string."),
 		"contains":           Fn([]string{"string needle"}, "bool", "Substring check."),
 		"indexOf":            Fn([]string{"string needle"}, "int", "Index of the first match, or -1."),
@@ -506,6 +507,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 	}},
 	"cli": {Functions: map[string]FunctionDoc{
 		"readLine":       Fn([]string{"string label = \"\""}, "?string", "Reads a prompted line, preserving blank input and returning null at EOF."),
+		"promptDecimal":  Fn([]string{"string label", "dict<string, any> options = {}"}, "?decimal", "Prompts for an exact decimal with shared validation; EOF or cancellation returns null."),
 		"promptInt":      Fn([]string{"string label", "dict<string, any> options = {}"}, "?int", "Prompts until an integer passes min/max/choices/validate rules; returns null on EOF or a configured cancel token."),
 		"withContext":    Fn([]string{"dict<string, any> options", "callable body"}, "any", "Runs a body with scoped stdin/stdout/stderr, terminal and quiet options; restores the previous context even on failure."),
 		"isTerminal":     Fn([]string{}, "bool", "Reports whether CLI stderr is a terminal, honoring the active context override."),
@@ -879,6 +881,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"writeCSV":        Fn([]string{"string path", "list<list<string>> rows"}, "void", "Writes rows to a CSV file."),
 	}},
 	"json": {Functions: map[string]FunctionDoc{
+		"write":            Fn([]string{"any value", "any stream"}, "int", "Streams JSON to a borrowed writable stream; retries short writes and never flushes or closes it. Errors can leave partial output."),
 		"parse":            Fn([]string{"string text"}, "any", "Parses JSON text."),
 		"parseAs":          Fn([]string{"string text", "class target"}, "any", "Parses JSON text into an instance of the target class (uses a static __deserialize factory when defined, else matches dict keys to constructor parameters)."),
 		"stringify":        Fn([]string{"any value"}, "string", "Encodes a value as JSON."),
@@ -1994,6 +1997,10 @@ var StdlibCatalog = map[string]ModuleDoc{
 		},
 	}},
 	"store": {Functions: map[string]FunctionDoc{
+		"_cacheNew":     Fn([]string{"int capacity"}, "any", "Internal shared backing for MemoryCacheStore."),
+		"_cacheGet":     Fn([]string{"any handle", "string key"}, "?string", "Internal cache payload lookup."),
+		"_cacheSet":     Fn([]string{"any handle", "string key", "string payload", "int expiresAt"}, "void", "Internal cache payload publication."),
+		"_cacheDelete":  Fn([]string{"any handle", "string key"}, "bool", "Internal cache payload deletion."),
 		"new":           Fn([]string{}, "Store", "Internal: returns a new thread-safe Store handle. Prefer the `store.Store` class wrapper (1.8.0)."),
 		"get":           Fn([]string{"Store h", "any key"}, "any", "Internal."),
 		"set":           Fn([]string{"Store h", "any key", "any value"}, "void", "Internal."),
@@ -2660,6 +2667,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		},
 	}},
 	"money": {Functions: map[string]FunctionDoc{
+		"sum":       Fn([]string{"list<Money> values", "?string currency = null"}, "Money", "Totals minor units; mixed currencies fail and empty input requires a currency."),
 		"fromMinor": Fn([]string{"int units", "string currency"}, "Money", "Creates an immutable currency amount from exact integer minor units."),
 	}, Classes: map[string]string{
 		"Money": "Immutable currency amount backed by arbitrary-size integer minorUnits. Construct Money(int|decimal|string amount, string currency, string rounding = \"unnecessary\"); floats are rejected.",
@@ -3111,12 +3119,12 @@ var StdlibCatalog = map[string]ModuleDoc{
 	"web.cache": {Functions: map[string]FunctionDoc{
 		"databaseCacheStore": Fn([]string{"any conn", "string table", "int ttl"}, "DatabaseCacheStore", "Creates a database-backed cache store; call install() to create its table."),
 		"fileCacheStore":     Fn([]string{"string directory", "int ttl"}, "FileCacheStore", "Creates a file-backed cache store."),
-		"memoryCacheStore":   Fn([]string{"int ttl"}, "MemoryCacheStore", "Creates an in-process (in-memory) cache store."),
+		"memoryCacheStore":   Fn([]string{"int ttl", "int capacity = 0"}, "MemoryCacheStore", "Creates an in-process (in-memory) cache store."),
 		"redisCacheStore":    Fn([]string{"any client", "string prefix", "int ttl"}, "RedisCacheStore", "Creates a Redis-backed cache store."),
 	}, Classes: map[string]string{
 		"DatabaseCacheStore": "Cache store backed by a database table with cache_key, data, and expiry columns.",
 		"FileCacheStore":     "Cache store backed by JSON files in a directory.",
-		"MemoryCacheStore":   "Cache store backed by an in-process thread-safe map; cleared on restart.",
+		"MemoryCacheStore":   "Shared memory cache. Constructor: MemoryCacheStore(ttl, capacity = 0); positive capacity enables LRU eviction and expiry reclamation. Values are isolated JSON snapshots.",
 		"RedisCacheStore":    "Cache store backed by Redis keys with JSON payloads and TTL expiry.",
 	}, ClassMethods: map[string]map[string]FunctionDoc{
 		"DatabaseCacheStore": {

@@ -119,3 +119,11 @@ func registerStringBuilder(r *Registry) {
 		return runtime.Null{}, nil
 	})
 }
+
+// StringByteLength counts stored UTF-8 bytes without constructing a bytes value.
+func StringByteLength(value runtime.String, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("string.byteLength expects no arguments")
+	}
+	return runtime.SmallInt{Value: int64(len(value.Value))}, nil
+}

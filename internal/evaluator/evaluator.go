@@ -58,9 +58,11 @@ type Result struct {
 const DefaultMaxCallDepth = 10000
 
 type Evaluator struct {
-	stdout io.Writer
-	stderr io.Writer
-	input  *consoleInput
+	typeNameScopes        map[string]func(*ast.TypeRef) *ast.TypeRef
+	decoratorTypeBindings map[string]string
+	stdout                io.Writer
+	stderr                io.Writer
+	input                 *consoleInput
 	// declAnnotation distinguishes a declaration annotation from other
 	// expected-type contexts (return position, arg hints) by pointer identity.
 	declAnnotation *ast.TypeRef
@@ -454,12 +456,19 @@ type traceEvent struct {
 }
 
 type webApp struct {
+	mu                sync.Mutex
 	routes            []webRoute
+	staticRoutes      map[webRouteKey]webRoute
+	dynamicRoutes     map[webRouteKey][]webRoute
 	beforeMiddlewares []runtime.Value
 	middlewares       []runtime.Value
 }
 
+type webRouteKey struct{ method, path string }
+
 type webRoute struct {
+	parts   []string
+	ordinal int
 	method  string
 	path    string
 	handler runtime.Value
@@ -571,7 +580,7 @@ func newEvaluatorCore(stdout io.Writer, args []string, modulePaths []string) *Ev
 		stdout = io.Discard
 	}
 	e := &Evaluator{stdout: stdout, stderr: os.Stderr, input: newConsoleInput(os.Stdin), imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
-	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer})
+	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer, StreamWriter: e.writeJSONBytes})
 	return e
 }
 
@@ -863,6 +872,8 @@ func (e *Evaluator) childForCallback() *Evaluator {
 	e.httpCookieJarMu.Lock()
 	child.nextCookieJarID = e.nextCookieJarID
 	e.httpCookieJarMu.Unlock()
+	child.typeNameScopes = maps.Clone(e.typeNameScopes)
+	child.decoratorTypeBindings = e.decoratorTypeBindings
 	child.debug = e.debug
 	child.debugPath = e.debugPath
 	child.threadID = e.threadID // goroutine spawns override this with a fresh id
@@ -877,8 +888,11 @@ func (e *Evaluator) childForCallback() *Evaluator {
 // handles created in the child shadow the parent (checked first).
 func (e *Evaluator) lookupWebApp(id int64) (*webApp, bool) {
 	for ev := e; ev != nil; ev = ev.parent {
-		if v, ok := ev.webApps[id]; ok {
-			return v, true
+		ev.webMu.Lock()
+		app, ok := ev.webApps[id]
+		ev.webMu.Unlock()
+		if ok {
+			return app, true
 		}
 	}
 	return nil, false
@@ -1219,6 +1233,10 @@ func (e *Evaluator) evalStatementInList(stmt ast.Statement, env *runtime.Environ
 // statements so top-level code can call a function declared later, matching the
 // VM's compile-time hoisting.
 func (e *Evaluator) evalTopLevelStatements(stmts []ast.Statement, env *runtime.Environment) (signal, error) {
+	if e.typeNameScopes == nil {
+		e.typeNameScopes = map[string]func(*ast.TypeRef) *ast.TypeRef{}
+	}
+	e.typeNameScopes[e.currentModule] = typealias.Canonicalizer(&ast.Program{Statements: stmts}, e.currentModule)
 	for _, stmt := range stmts {
 		if !isHoistedDeclaration(stmt) {
 			continue
@@ -1729,6 +1747,13 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 						resolvedAny = true
 					}
 				}
+				for i, arg := range args {
+					if ref, ok := parsedBoundTypeRef(arg); ok {
+						qualified := typealias.Qualified(e.resolveTypeRef(ref, env)).String()
+						resolvedAny = resolvedAny || qualified != arg
+						args[i] = qualified
+					}
+				}
 				if resolvedAny {
 					typeName = base + "<" + strings.Join(args, ",") + ">"
 				}
@@ -1853,7 +1878,20 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		if err != nil {
 			return nil, err
 		}
-		target := e.resolveTypeRef(expr.Type, env)
+		target := typealias.Qualified(typealias.Expand(e.resolveTypeRef(expr.Type, env), env.GetTypeBinding))
+		finish := func(converted runtime.Value) (runtime.Value, error) {
+			if !runtime.MatchesCheckedCast(converted, target, func(value runtime.Value, typ *ast.TypeRef) bool { return matchValueToTypeRef(nil, value, typ) }) {
+				return nil, thrownError{value: e.withTrace(runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot cast %s to %s", converted.TypeName(), target.String())})}
+			}
+			return converted, nil
+		}
+		baseTarget := target.Name
+		if target.ListAlias {
+			baseTarget = "list"
+		}
+		if target.Operator != "" {
+			return finish(value)
+		}
 		// Nullable cast: `null as ?T` is null; `value as ?T` for
 		// non-null falls through to the underlying type's cast logic.
 		// Must check before the class-chain match below, otherwise
@@ -1869,8 +1907,8 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		// stripped) is already an instance of the target, so cast
 		// is a no-op. Falls through to castValue for primitive
 		// conversions when the chain doesn't match.
-		if e.valueMatchesType(value, target.Name) {
-			return value, nil
+		if e.valueMatchesType(value, baseTarget) {
+			return finish(value)
 		}
 		if instance, ok := value.(*runtime.Instance); ok {
 			if dunder := castDunderName(target.Name); dunder != "" {
@@ -1880,18 +1918,22 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 					if err := checkCastDunderReturn(target.Name, result); err != nil {
 						return nil, thrownError{value: e.withTrace(runtime.Error{Class: "TypeError", Message: err.Error()})}
 					}
-					return result, nil
+					return finish(result)
 				}
 			}
 		}
-		return castValue(value, target.Name)
+		converted, err := castValue(value, baseTarget)
+		if err != nil {
+			return nil, err
+		}
+		return finish(converted)
 	case *ast.FunctionLiteral:
 		// Capture the enclosing scope's type bindings so an inner `T x`
 		// parameter or `instanceof T` check can resolve against the
 		// outer generic frame's concrete bindings. snapshotTypeBindings
 		// walks the env chain so all reachable bindings come along.
 		captured := snapshotEnvTypeBindings(env)
-		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: expr.Parameters, ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env, Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured, DefinitionPath: e.currentDebugPath()}, nil
+		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: e.resolveParameters(expr.Parameters, env), ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env, Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured, DefinitionPath: e.currentDebugPath()}, nil
 	case *ast.AwaitExpression:
 		value, err := e.evalExpression(expr.Value, env)
 		if err != nil {
@@ -3173,6 +3215,14 @@ func (e *Evaluator) stampDecoratedClassResult(callee ast.Expression, result runt
 }
 
 func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runtime.Environment, expected *ast.TypeRef) (runtime.Value, error) {
+	if len(call.TypeArguments) > 0 {
+		copied := *call
+		copied.TypeArguments = make([]*ast.TypeRef, len(call.TypeArguments))
+		for i, arg := range call.TypeArguments {
+			copied.TypeArguments[i] = typealias.Qualified(typealias.Expand(e.resolveTypeRef(arg, env), env.GetTypeBinding))
+		}
+		call = &copied
+	}
 	if call.Token.Line > 0 {
 		e.currentLine = call.Token.Line
 	}
@@ -3522,7 +3572,7 @@ func (e *Evaluator) callModuleExport(module, name string, call *ast.CallExpressi
 		if call.Token.Line > 0 {
 			e.currentLine = call.Token.Line
 		}
-		return e.applyFunction(fn, args)
+		return e.applyFunctionWithTypeArgs(fn, args, call.TypeArguments)
 	}
 	if overloaded, ok := value.(runtime.OverloadedFunction); ok {
 		return e.applyOverloadedFunction(module+"."+name, overloaded.Overloads, call, env, nil, expected)
@@ -5298,10 +5348,10 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 			if i >= len(chosen.TypeParameters) {
 				break
 			}
-			if t == nil || t.Operator != "" || t.Name == "" {
+			if t == nil {
 				continue
 			}
-			merged[chosen.TypeParameters[i]] = t.Name
+			merged[chosen.TypeParameters[i]] = t.String()
 		}
 		chosen.TypeBindings = merged
 	}
@@ -5541,10 +5591,10 @@ func functionArgumentsMatchWithCallTypeArgs(fn runtime.Function, args []runtime.
 		if i >= len(fn.TypeParameters) {
 			break
 		}
-		if t == nil || t.Operator != "" || t.Name == "" {
+		if t == nil {
 			continue
 		}
-		inherited[fn.TypeParameters[i]] = t.Name
+		inherited[fn.TypeParameters[i]] = t.String()
 	}
 	typeParams := functionTypeParameterSetOrNil(fn)
 	isVariadic := len(fn.Parameters) > 0 && fn.Parameters[len(fn.Parameters)-1].Variadic
@@ -5607,29 +5657,35 @@ func functionArgumentsMatchError(fn runtime.Function, args []runtime.Value, rece
 		} else if i >= len(fn.Parameters) {
 			return fmt.Errorf("too many arguments for %s", fn.Name)
 		}
-		param := fn.Parameters[paramIdx]
-		if !matchValueToTypeRefWith(typeParams, inherited, arg, param.Type) {
-			paramTypeName := ""
-			if param.Type != nil {
-				paramTypeName = param.Type.String()
-			}
-			name := fn.Name
-			if name == "" {
-				name = "<closure>"
-			}
-			// Methods report as Class.method, matching VM compiled names.
-			if fn.OwnerClass != nil && fn.OwnerClass.Name != fn.Name {
-				name = fn.OwnerClass.Name + "." + fn.Name
-			}
-			suffix := collectionMismatchSuffix(arg, param.Type)
-			gotName := descriptiveTypeName(arg)
-			if suffix != "" {
-				gotName = arg.TypeName()
-			}
-			return runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", name, paramTypeName, param.Name.Value, gotName, suffix)}
+		if err := parameterMismatchError(fn, fn.Parameters[paramIdx], arg, typeParams, inherited); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func parameterMismatchError(fn runtime.Function, param ast.Parameter, arg runtime.Value, typeParams map[string]bool, inherited map[string]string) error {
+	if matchValueToTypeRefWith(typeParams, inherited, arg, param.Type) {
+		return nil
+	}
+	paramTypeName := ""
+	if param.Type != nil {
+		paramTypeName = param.Type.String()
+	}
+	name := fn.Name
+	if name == "" {
+		name = "<closure>"
+	}
+	// Methods report as Class.method, matching VM compiled names.
+	if fn.OwnerClass != nil && fn.OwnerClass.Name != fn.Name {
+		name = fn.OwnerClass.Name + "." + fn.Name
+	}
+	suffix := collectionMismatchSuffix(arg, param.Type)
+	gotName := descriptiveTypeName(arg)
+	if suffix != "" {
+		gotName = arg.TypeName()
+	}
+	return runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", name, paramTypeName, param.Name.Value, gotName, suffix)}
 }
 
 func (e *Evaluator) evalFunctionCallArguments(fn runtime.Function, call *ast.CallExpression, env *runtime.Environment) ([]runtime.Value, error) {
@@ -5742,7 +5798,7 @@ func (e *Evaluator) inferGenericBindingsFromTypeRef(spec *ast.TypeRef, value run
 		if !typeParamSet[strings.ToLower(spec.Name)] {
 			return
 		}
-		e.recordInferredBinding(spec.Name, value.TypeName(), callEnv, this)
+		e.recordInferredBinding(spec.Name, runtime.ReifiedTypeName(value), callEnv, this)
 		return
 	}
 	switch strings.ToLower(spec.Name) {
@@ -5818,10 +5874,10 @@ func (e *Evaluator) applyFunctionWithTypeArgs(fn runtime.Function, args []runtim
 		if i >= len(fn.TypeParameters) {
 			break
 		}
-		if t == nil || t.Operator != "" || t.Name == "" {
+		if t == nil {
 			continue
 		}
-		merged[fn.TypeParameters[i]] = t.Name
+		merged[fn.TypeParameters[i]] = t.String()
 	}
 	clone := fn
 	clone.TypeBindings = merged
@@ -5829,6 +5885,16 @@ func (e *Evaluator) applyFunctionWithTypeArgs(fn runtime.Function, args []runtim
 }
 
 func (e *Evaluator) applyFunctionWithThis(fn runtime.Function, args []runtime.Value, this *runtime.Instance) (runtime.Value, error) {
+	if fn.DecoratorOriginal && len(e.decoratorTypeBindings) > 0 {
+		bindings := maps.Clone(e.decoratorTypeBindings)
+		maps.Copy(bindings, fn.TypeBindings)
+		fn.TypeBindings = bindings
+	}
+	if fn.OriginalEnv != nil && len(fn.TypeBindings) > 0 {
+		previous := e.decoratorTypeBindings
+		e.decoratorTypeBindings = fn.TypeBindings
+		defer func() { e.decoratorTypeBindings = previous }()
+	}
 	if fn.IsGenerator {
 		return e.lazyGenerator(fn, args, this), nil
 	}
@@ -5968,6 +6034,8 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	if err := e.checkTypeParamConstraints(fn, callEnv); err != nil {
 		return nil, err
 	}
+	e.pushFunction(&fn, callEnv)
+	defer e.popFunction()
 	for i, param := range fn.Parameters {
 		var value runtime.Value
 		if param.Variadic {
@@ -5984,9 +6052,13 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 		} else if i < len(args) && args[i] != nil {
 			value = args[i]
 		} else if param.Default != nil {
+			e.currentLine = param.Name.Token.Line
 			evaluated, err := e.evalExpression(param.Default, callEnv)
 			if err != nil {
 				return nil, err
+			}
+			if err := parameterMismatchError(fn, param, evaluated, functionTypeParameterSetOrNil(fn), functionCheckBindings(fn, this)); err != nil {
+				return nil, thrownError{value: e.withTrace(runtime.Error{Class: "TypeError", Message: err.(runtime.ClassifiedError).Message})}
 			}
 			value = evaluated
 		} else {
@@ -6000,8 +6072,6 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 		}
 	}
 	e.pushDeferFrame()
-	e.pushFunction(&fn, callEnv)
-	defer e.popFunction()
 	sig, err := e.evalBlock(fn.Body, callEnv)
 	if err != nil {
 		return nil, err
@@ -6172,6 +6242,8 @@ func (e *Evaluator) pushFunction(fn *runtime.Function, env *runtime.Environment)
 
 func (e *Evaluator) popFunction() {
 	if len(e.callStack) > 0 {
+		e.currentLine = e.callStack[len(e.callStack)-1].callLine
+		e.callStack[len(e.callStack)-1] = evalFrame{}
 		e.callStack = e.callStack[:len(e.callStack)-1]
 	}
 }
@@ -6345,7 +6417,9 @@ func (e *Evaluator) runAndPopDefers(sig signal) (signal, error) {
 		return sig, nil
 	}
 	frame := e.deferFrames[len(e.deferFrames)-1]
+	e.deferFrames[len(e.deferFrames)-1] = nil
 	e.deferFrames = e.deferFrames[:len(e.deferFrames)-1]
+	defer clear(frame.calls)
 	for i := len(frame.calls) - 1; i >= 0; i-- {
 		value, err := e.evalExpression(frame.calls[i].expr, frame.calls[i].env)
 		if err != nil {
@@ -7406,7 +7480,7 @@ func stringElement(value runtime.String, i int) (runtime.Value, error) {
 	if i < 0 || i >= n {
 		return nil, runtime.ClassifiedError{Class: "ValueError", Message: "string index out of range"}
 	}
-	return runtime.String{Value: ri.RuneAt(value.Value, i)}, nil
+	return ri.RuneValueAt(value.Value, i), nil
 }
 
 func bytesElement(value runtime.Bytes, i int) (runtime.Value, error) {

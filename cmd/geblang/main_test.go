@@ -1524,14 +1524,11 @@ func TestRunScriptVMStrictRejectsUnsupportedBytecode(t *testing.T) {
 		}
 	}()
 	sourcePath := filepath.Join(dir, "strict.gb")
-	/* Non-literal class field defaults are still routed through the
-	 * evaluator, so `--vm-strict` must reject this rather than fall
-	 * back. (`static func` used to be in this slot but the compiler
-	 * now lowers it directly.) */
-	source := []byte(`func compute(): int { return 42; }
-class Foo {
-    int x = compute();
-}
+	// A named-argument ambiguous overload is a VM capability gap, so `--vm-strict` must reject it rather than fall back.
+	source := []byte(`func describe(int x): string { return "i"; }
+func describe(string x): string { return "s"; }
+any v = 1;
+describe(x: v);
 `)
 	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
@@ -1546,7 +1543,7 @@ class Foo {
 	if code != 1 {
 		t.Fatalf("exit code: got %d", code)
 	}
-	if !strings.Contains(err.Error(), "line 3:5: bytecode compiler only supports literal class field defaults") {
+	if !strings.Contains(err.Error(), "line 4:1: ambiguous overload for describe") {
 		t.Fatalf("error: got %v", err)
 	}
 }

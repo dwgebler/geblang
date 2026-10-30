@@ -40,7 +40,7 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 		vm.curGlobals = vm.globals
 		vm.instanceInvokerFn = vm.invokeInstanceMethod
 		vm.classDeserializerFn = vm.deserializeIntoClass
-		vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn})
+		vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn, StreamWriter: vm.writeJSONBytes})
 		return vm
 	}
 	// Detach Functions so per-VM metadata mutations don't race concurrent VMs sharing the chunk.
@@ -51,7 +51,7 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 	vm.prepareFunctionTypeMetadata()
 	vm.instanceInvokerFn = vm.invokeInstanceMethod
 	vm.classDeserializerFn = vm.deserializeIntoClass
-	vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn})
+	vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn, StreamWriter: vm.writeJSONBytes})
 	return vm
 }
 
@@ -225,7 +225,7 @@ func NewVMWithModuleLoader(chunk Chunk, stdout io.Writer, loader ModuleLoader) *
 	// Conversion context set on this VM's own registry after moduleLoader is assigned; serialize/deserialize routes through the loader (a fresh exclusive worker per call) with no process-global, so no partially built VM is ever published.
 	vm.instanceInvokerFn = loaderInstanceInvoker(loader)
 	vm.classDeserializerFn = loaderClassDeserializer(loader)
-	vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn})
+	vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn, StreamWriter: vm.writeJSONBytes})
 	return vm
 }
 
@@ -540,6 +540,19 @@ func (vm *VM) resetForReuse() {
 	vm.stack = vm.stack[:0]
 	vm.localsStack = vm.localsStack[:0]
 	vm.frames = vm.frames[:0]
+	if cap(vm.stack) > 4096 {
+		vm.stack = make([]runtime.VMValue, 0, 256)
+	}
+	localLimit := max(4096, int(vm.chunk.TopLevelLocalCount)*4)
+	if cap(vm.localsStack) > localLimit {
+		vm.localsStack = make([]runtime.VMValue, 0, max(256, int(vm.chunk.TopLevelLocalCount)))
+	}
+	if cap(vm.frames) > 1024 {
+		vm.frames = make([]callFrame, 0, 256)
+	}
+	if cap(vm.defers) > 1024 {
+		vm.defers = make([][]deferredAction, 1, 64)
+	}
 	if cap(vm.defers) > 0 {
 		vm.defers = vm.defers[:1]
 		vm.defers[0] = vm.defers[0][:0]
@@ -562,7 +575,9 @@ func (vm *VM) resetForReuse() {
 	vm.traceFrameBaseline = 0
 	vm.inDispatchLoop = false
 	vm.destructibleInstances = nil
+	vm.typeArgHandoff = nil
 	vm.pendingTypeBindings = nil
+	vm.pendingCallTypeArgs = nil
 	vm.forwardThis = nil
 	vm.generatorExecution = false
 	vm.generatorYield = nil
@@ -700,6 +715,7 @@ func (vm *VM) ensureLocalsStackFrom(end, clearFrom int) {
 
 func (vm *VM) popLocalsStackFrame(frame *callFrame) {
 	if !frame.shared && frame.basePointer < len(vm.localsStack) {
+		clear(vm.localsStack[frame.basePointer:])
 		vm.localsStack = vm.localsStack[:frame.basePointer]
 	}
 	if len(vm.frames) > 1 {

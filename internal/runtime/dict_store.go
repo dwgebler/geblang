@@ -1,30 +1,25 @@
 package runtime
 
-// dictData is the shared backing store for dicts built through
-// NewDict / NewDictHint. Small dicts keep their entries in inline
-// arrays (no map, no separate order slice - one allocation), and spill
-// to a map plus an order slice once they exceed dictInlineMax. Because
-// a Dict value holds *dictData (a pointer), value copies share the
-// store, so PutEntry and the inline->map spill are visible across
-// copies - the same value-copy-shares-storage contract the Entries
-// map and Order pointer provided. Dicts built from Dict{Entries: ...}
-// literals have a nil data pointer and use the legacy map/order
-// fields directly.
+// Copies share this backing store through growth and map promotion.
 const dictInlineMax = 8
 
+type dictItem struct {
+	key   string
+	entry DictEntry
+}
+
 type dictData struct {
-	n     uint8
-	keys  [dictInlineMax]string
-	vals  [dictInlineMax]DictEntry
-	m     map[string]DictEntry // nil until spill
-	order []string             // insertion order, set on spill
+	items         []dictItem
+	m             map[string]DictEntry
+	order         []string
+	nonStringKeys int
 }
 
 func (d *dictData) length() int {
 	if d.m != nil {
 		return len(d.m)
 	}
-	return int(d.n)
+	return len(d.items)
 }
 
 func (d *dictData) get(key string) (DictEntry, bool) {
@@ -32,86 +27,98 @@ func (d *dictData) get(key string) (DictEntry, bool) {
 		e, ok := d.m[key]
 		return e, ok
 	}
-	for i := uint8(0); i < d.n; i++ {
-		if d.keys[i] == key {
-			return d.vals[i], true
+	for _, item := range d.items {
+		if item.key == key {
+			return item.entry, true
 		}
 	}
 	return DictEntry{}, false
 }
 
+func (d *dictData) replaceKeyType(old, next Value) {
+	if old != nil {
+		if _, ok := old.(String); !ok {
+			d.nonStringKeys--
+		}
+	}
+	if next != nil {
+		if _, ok := next.(String); !ok {
+			d.nonStringKeys++
+		}
+	}
+}
+
 func (d *dictData) set(key string, entry DictEntry) {
 	if d.m != nil {
-		if _, hit := d.m[key]; !hit {
+		old, hit := d.m[key]
+		if !hit {
 			d.order = append(d.order, key)
 		}
+		d.replaceKeyType(old.Key, entry.Key)
 		d.m[key] = entry
 		return
 	}
-	for i := uint8(0); i < d.n; i++ {
-		if d.keys[i] == key {
-			d.vals[i] = entry
+	for i := range d.items {
+		if d.items[i].key == key {
+			d.replaceKeyType(d.items[i].entry.Key, entry.Key)
+			d.items[i].entry = entry
 			return
 		}
 	}
-	if int(d.n) < dictInlineMax {
-		d.keys[d.n] = key
-		d.vals[d.n] = entry
-		d.n++
+	d.replaceKeyType(nil, entry.Key)
+	if len(d.items) < dictInlineMax {
+		d.items = append(d.items, dictItem{key, entry})
 		return
 	}
-	// Spill the inline arrays into a map keyed store, preserving order.
 	d.m = make(map[string]DictEntry, dictInlineMax*2)
 	d.order = make([]string, 0, dictInlineMax*2)
-	for i := uint8(0); i < d.n; i++ {
-		d.m[d.keys[i]] = d.vals[i]
-		d.order = append(d.order, d.keys[i])
+	for _, item := range d.items {
+		d.m[item.key] = item.entry
+		d.order = append(d.order, item.key)
 	}
-	d.n = 0
-	d.order = append(d.order, key)
+	d.items = nil
 	d.m[key] = entry
+	d.order = append(d.order, key)
 }
 
 func (d *dictData) del(key string) {
 	if d.m != nil {
-		if _, hit := d.m[key]; !hit {
+		old, hit := d.m[key]
+		if !hit {
 			return
 		}
+		d.replaceKeyType(old.Key, nil)
 		delete(d.m, key)
 		for i, k := range d.order {
 			if k == key {
-				d.order = append(d.order[:i], d.order[i+1:]...)
+				copy(d.order[i:], d.order[i+1:])
+				d.order[len(d.order)-1] = ""
+				d.order = d.order[:len(d.order)-1]
 				break
 			}
 		}
 		return
 	}
-	for i := uint8(0); i < d.n; i++ {
-		if d.keys[i] == key {
-			copy(d.keys[i:], d.keys[i+1:d.n])
-			copy(d.vals[i:], d.vals[i+1:d.n])
-			d.n--
-			d.keys[d.n] = ""
-			d.vals[d.n] = DictEntry{}
+	for i, item := range d.items {
+		if item.key == key {
+			d.replaceKeyType(item.entry.Key, nil)
+			copy(d.items[i:], d.items[i+1:])
+			d.items[len(d.items)-1] = dictItem{}
+			d.items = d.items[:len(d.items)-1]
 			return
 		}
 	}
 }
 
 func (d *dictData) clear() {
-	if d.m != nil {
-		d.m = nil
-		d.order = nil
-	}
-	for i := uint8(0); i < d.n; i++ {
-		d.keys[i] = ""
-		d.vals[i] = DictEntry{}
-	}
-	d.n = 0
+	d.nonStringKeys = 0
+	d.m = nil
+	d.order = nil
+	clear(d.items)
+	d.items = d.items[:0]
 }
 
-// forEach visits entries in insertion order; stops when fn returns false.
-func (d *dictData) forEach(fn func(key string, entry DictEntry) bool) {
+func (d *dictData) forEach(fn func(string, DictEntry) bool) {
 	if d.m != nil {
 		for _, k := range d.order {
 			if e, ok := d.m[k]; ok {
@@ -122,22 +129,21 @@ func (d *dictData) forEach(fn func(key string, entry DictEntry) bool) {
 		}
 		return
 	}
-	for i := uint8(0); i < d.n; i++ {
-		if !fn(d.keys[i], d.vals[i]) {
+	for i := 0; i < len(d.items); i++ {
+		item := d.items[i]
+		if !fn(item.key, item.entry) {
 			return
 		}
 	}
 }
 
-// orderedKeys returns a fresh slice of keys in insertion order.
 func (d *dictData) orderedKeys() []string {
 	out := make([]string, 0, d.length())
 	if d.m != nil {
-		out = append(out, d.order...)
-		return out
+		return append(out, d.order...)
 	}
-	for i := uint8(0); i < d.n; i++ {
-		out = append(out, d.keys[i])
+	for _, item := range d.items {
+		out = append(out, item.key)
 	}
 	return out
 }

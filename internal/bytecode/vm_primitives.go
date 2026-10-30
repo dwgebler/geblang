@@ -93,6 +93,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			return nil, fmt.Errorf("%s.%s expects no arguments", receiver.TypeName(), name)
 		}
 		return castValue(receiver, target)
+	case "byteLength":
+		if text, ok := receiver.(runtime.String); ok {
+			return native.StringByteLength(text, args)
+		}
+		return nil, native.UnknownMethodError(receiver.TypeName(), name)
 	case "length":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("length expects no arguments")

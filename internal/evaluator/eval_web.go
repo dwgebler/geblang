@@ -34,8 +34,8 @@ func (e *Evaluator) webUse(call *ast.CallExpression, args []runtime.Value) (runt
 	if !runtime.IsCallableValue(args[1]) {
 		return nil, fmt.Errorf("%s middleware must be function", call.Callee.String())
 	}
-	e.webMu.Lock()
-	defer e.webMu.Unlock()
+	app.mu.Lock()
+	defer app.mu.Unlock()
 	app.middlewares = append(app.middlewares, args[1])
 	return runtime.Null{}, nil
 }
@@ -51,8 +51,8 @@ func (e *Evaluator) webBefore(call *ast.CallExpression, args []runtime.Value) (r
 	if !runtime.IsCallableValue(args[1]) {
 		return nil, fmt.Errorf("%s middleware must be function", call.Callee.String())
 	}
-	e.webMu.Lock()
-	defer e.webMu.Unlock()
+	app.mu.Lock()
+	defer app.mu.Unlock()
 	app.beforeMiddlewares = append(app.beforeMiddlewares, args[1])
 	return runtime.Null{}, nil
 }
@@ -95,9 +95,37 @@ func (e *Evaluator) registerWebRoute(call *ast.CallExpression, appValue runtime.
 	if !runtime.IsCallableValue(handlerValue) {
 		return nil, fmt.Errorf("%s handler must be function", call.Callee.String())
 	}
-	e.webMu.Lock()
-	defer e.webMu.Unlock()
-	app.routes = append(app.routes, webRoute{method: strings.ToUpper(method), path: path.Value, handler: handlerValue})
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	route := webRoute{method: strings.ToUpper(method), path: path.Value, handler: handlerValue, parts: splitWebPath(path.Value), ordinal: len(app.routes)}
+	app.routes = append(app.routes, route)
+	dynamic := false
+	for _, part := range route.parts {
+		if strings.HasPrefix(part, ":") && len(part) > 1 {
+			dynamic = true
+			break
+		}
+	}
+	if dynamic {
+		if app.dynamicRoutes == nil {
+			app.dynamicRoutes = make(map[webRouteKey][]webRoute)
+
+		}
+		prefix := webRouteKey{method: route.method}
+		if len(route.parts) > 0 && !strings.HasPrefix(route.parts[0], ":") {
+			prefix.path = route.parts[0]
+		}
+		app.dynamicRoutes[prefix] = append(app.dynamicRoutes[prefix], route)
+	} else {
+		if app.staticRoutes == nil {
+			app.staticRoutes = make(map[webRouteKey]webRoute)
+
+		}
+		key := webRouteKey{route.method, strings.Trim(route.path, "/")}
+		if _, exists := app.staticRoutes[key]; !exists {
+			app.staticRoutes[key] = route
+		}
+	}
 	return runtime.Null{}, nil
 }
 
@@ -195,11 +223,12 @@ func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (r
 	if !ok {
 		return nil, fmt.Errorf("%s request must be dict", call.Callee.String())
 	}
-	e.webMu.Lock()
-	routes := append([]webRoute(nil), app.routes...)
-	beforeMiddlewares := append([]runtime.Value(nil), app.beforeMiddlewares...)
-	middlewares := append([]runtime.Value(nil), app.middlewares...)
-	e.webMu.Unlock()
+	app.mu.Lock()
+	// Entries are append-only; the ordinal bound excludes callback registrations.
+	routeLimit := len(app.routes)
+	beforeMiddlewares := app.beforeMiddlewares
+	middlewares := app.middlewares
+	app.mu.Unlock()
 	for _, middleware := range beforeMiddlewares {
 		result, err := e.callValue(middleware, []runtime.Value{e.webRequestArg(middleware, request)})
 		if err != nil {
@@ -212,11 +241,48 @@ func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (r
 	}
 	method, _ := dictStringField(request, "method")
 	path, _ := dictStringField(request, "path")
-	for _, route := range routes {
-		params, ok := matchWebRoute(route, method, path)
+	method = strings.ToUpper(method)
+	pathParts := splitWebPath(path)
+	app.mu.Lock()
+	staticRoute, staticHit := app.staticRoutes[webRouteKey{method, strings.Trim(path, "/")}]
+	staticHit = staticHit && staticRoute.ordinal < routeLimit
+	routes := app.dynamicRoutes[webRouteKey{method: method}]
+	var prefixed []webRoute
+	if len(pathParts) > 0 {
+		prefixed = app.dynamicRoutes[webRouteKey{method, pathParts[0]}]
+	}
+	app.mu.Unlock()
+	var matched webRoute
+	params := runtime.Dict{}
+	found := false
+	for i, j := 0, 0; i < len(routes) || j < len(prefixed); {
+		var route webRoute
+		if j >= len(prefixed) || (i < len(routes) && routes[i].ordinal < prefixed[j].ordinal) {
+			route = routes[i]
+			i++
+		} else {
+			route = prefixed[j]
+			j++
+		}
+		if route.ordinal >= routeLimit || (staticHit && route.ordinal > staticRoute.ordinal) {
+			break
+		}
+		var ok bool
+		params, ok = matchWebRouteParts(route, method, pathParts)
 		if !ok {
 			continue
 		}
+		matched = route
+		found = true
+		break
+	}
+	if !found && staticHit {
+		matched = staticRoute
+		params = runtime.NewDict()
+		found = true
+	}
+	if found {
+		route := matched
 		requestWithParams := copyDict(request)
 		putDictV(requestWithParams, "params", params)
 		response, err := e.callValue(route.handler, []runtime.Value{e.webRequestArg(route.handler, requestWithParams)})
@@ -420,8 +486,6 @@ func (e *Evaluator) webApp(value runtime.Value) (*webApp, error) {
 	if !ok {
 		return nil, fmt.Errorf("web app handle must be int")
 	}
-	e.webMu.Lock()
-	defer e.webMu.Unlock()
 	app, ok := e.lookupWebApp(id)
 	if !ok {
 		return nil, fmt.Errorf("unknown web app handle %d", id)
@@ -430,13 +494,27 @@ func (e *Evaluator) webApp(value runtime.Value) (*webApp, error) {
 }
 
 func matchWebRoute(route webRoute, method string, path string) (runtime.Dict, bool) {
-	if route.method != strings.ToUpper(method) {
+	return matchWebRouteParts(route, strings.ToUpper(method), splitWebPath(path))
+}
+
+func matchWebRouteParts(route webRoute, method string, pathParts []string) (runtime.Dict, bool) {
+	if route.method != method {
 		return runtime.Dict{}, false
 	}
-	routeParts := splitWebPath(route.path)
-	pathParts := splitWebPath(path)
+	routeParts := route.parts
+	if routeParts == nil {
+		routeParts = splitWebPath(route.path)
+	}
 	if len(routeParts) != len(pathParts) {
 		return runtime.Dict{}, false
+	}
+	for i, routePart := range routeParts {
+		if strings.HasPrefix(routePart, ":") && len(routePart) > 1 {
+			continue
+		}
+		if routePart != pathParts[i] {
+			return runtime.Dict{}, false
+		}
 	}
 	params := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
 	for i, routePart := range routeParts {

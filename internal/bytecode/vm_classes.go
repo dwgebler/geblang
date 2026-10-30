@@ -3,7 +3,9 @@ package bytecode
 import (
 	"errors"
 	"fmt"
+	"geblang/internal/parser"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 	"math/big"
 	"strconv"
 	"strings"
@@ -95,7 +97,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 	}
 	runtime.ResolveInheritedTypeBindings(instance)
 	if err := vm.initializeFields(instruction, instance, classIndex); err != nil {
-		return 0, err
+		return 0, vm.callPropagate(instruction, err)
 	}
 	if len(classInfo.ConstructorIndices) == 0 {
 		if len(args) != 0 {
@@ -143,7 +145,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 			if fn.Variadic && pi >= len(fn.ParamTypes)-1 {
 				pi = len(fn.ParamTypes) - 1
 			}
-			if arg == nil || pi >= len(fn.ParamTypes) || fn.ParamTypes[pi] == "" {
+			if arg == nil || isPendingDefault(arg) || pi >= len(fn.ParamTypes) || fn.ParamTypes[pi] == "" {
 				continue
 			}
 			if !vm.matchValueToTypeSpecWith(fn.typeParamSet, explicitBindings, arg, vm.typeSpec(fn.ParamTypes[pi])) {
@@ -220,6 +222,12 @@ func (vm *VM) runtimeFieldsForClass(classInfo ClassInfo) []runtime.Field {
 	fields := make([]runtime.Field, 0, len(classInfo.FieldNames))
 	for i, name := range classInfo.FieldNames {
 		field := runtime.Field{Name: name}
+		if i < len(classInfo.FieldDefaults) && classInfo.FieldDefaults[i] >= 0 && classInfo.FieldDefaults[i] < int64(vm.constantsLen()) {
+			field.DefaultValue = vm.constantValue(classInfo.FieldDefaults[i])
+		}
+		if i < len(classInfo.FieldDefaultFuncs) && classInfo.FieldDefaultFuncs[i] >= 0 {
+			field.DefaultFunc = vm.foreignFieldDefault(classInfo.FieldDefaultFuncs[i])
+		}
 		if i < len(classInfo.FieldCheckTypes) && classInfo.FieldCheckTypes[i] != "" {
 			field.TypeName = classInfo.FieldCheckTypes[i]
 		} else if i < len(classInfo.FieldTypes) {
@@ -308,10 +316,20 @@ func (vm *VM) initializeFields(instruction Instruction, instance *runtime.Instan
 		if err := vm.initializeFields(instruction, instance, classInfo.ParentIndex); err != nil {
 			return err
 		}
+	} else if parent := vm.runtimeClassForParent(classInfo); parent != nil {
+		if err := vm.initializeForeignFieldDefaults(instance, parent, instruction.Line); err != nil {
+			return err
+		}
 	}
 	for i, field := range classInfo.FieldNames {
 		value := runtime.Value(runtime.Null{})
-		if i < len(classInfo.FieldDefaults) && classInfo.FieldDefaults[i] >= 0 {
+		if i < len(classInfo.FieldDefaultFuncs) && classInfo.FieldDefaultFuncs[i] >= 0 {
+			computed, err := vm.fieldDefaultValue(classInfo.FieldDefaultFuncs[i], instance, instruction.Line)
+			if err != nil {
+				return err
+			}
+			value = computed
+		} else if i < len(classInfo.FieldDefaults) && classInfo.FieldDefaults[i] >= 0 {
 			defaultIndex := classInfo.FieldDefaults[i]
 			if defaultIndex < 0 || int(defaultIndex) >= vm.constantsLen() {
 				return vm.runtimeError(instruction, "field default constant out of range")
@@ -925,8 +943,9 @@ func (vm *VM) decoratedStaticValue(funcIndex int64, name string) runtime.Value {
 	if loader == nil {
 		vm.noteEscape()
 		return runtime.Function{
-			Identity: identity,
-			Name:     name,
+			NativeTyped: vm.typedMethodValue(module, funcIndex, nil),
+			Identity:    identity,
+			Name:        name,
 			NativeNamed: func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
 				return vm.CallBoundMethodValue(nil, funcIndex, args, names)
 			},
@@ -937,8 +956,9 @@ func (vm *VM) decoratedStaticValue(funcIndex int64, name string) runtime.Value {
 		}
 	}
 	return runtime.Function{
-		Identity: identity,
-		Name:     name,
+		NativeTyped: vm.typedMethodValue(module, funcIndex, nil),
+		Identity:    identity,
+		Name:        name,
 		NativeNamed: func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
 			return loader.CallModuleMethodValue(module, funcIndex, nil, args, names, nil)
 		},
@@ -995,8 +1015,9 @@ func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcInd
 	if loader == nil {
 		vm.noteEscape()
 		return runtime.Function{
-			Identity: runtime.NewFunctionIdentity(),
-			Name:     name,
+			NativeTyped: vm.typedMethodValue(module, funcIndex, instance),
+			Identity:    runtime.NewFunctionIdentity(),
+			Name:        name,
 			NativeNamed: func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
 				return vm.CallBoundMethodValue(instance, funcIndex, args, names)
 			},
@@ -1013,8 +1034,9 @@ func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcInd
 		}
 	}
 	return runtime.Function{
-		Identity: runtime.NewFunctionIdentity(),
-		Name:     name,
+		NativeTyped: vm.typedMethodValue(module, funcIndex, instance),
+		Identity:    runtime.NewFunctionIdentity(),
+		Name:        name,
 		NativeNamed: func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
 			return loader.CallModuleMethodValue(module, funcIndex, instance, args, names, nil)
 		},
@@ -1024,6 +1046,20 @@ func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcInd
 		BridgeInvoke: func(host any, args []runtime.Value) (runtime.Value, error) {
 			return loader.CallModuleMethodValue(module, funcIndex, instance, args, nil, host.(*VM))
 		},
+	}
+}
+
+func (vm *VM) typedMethodValue(module string, index int64, instance *runtime.Instance) func(any, []runtime.Value, []string, []string) (runtime.Value, error) {
+	loader := vm.moduleLoader
+	return func(host any, args []runtime.Value, names []string, types []string) (runtime.Value, error) {
+		caller := host.(*VM)
+		if loader == nil {
+			return caller.CallBoundMethodValue(instance, index, args, names, types)
+		}
+		previous := caller.typeArgHandoff
+		caller.typeArgHandoff = types
+		defer func() { caller.typeArgHandoff = previous }()
+		return loader.CallModuleMethodValue(module, index, instance, args, names, caller)
 	}
 }
 
@@ -1098,6 +1134,7 @@ func (vm *VM) callStaticMethod(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) callStaticMethodSpread(instruction Instruction, ip int) (int, error) {
+	defer func() { vm.pendingCallTypeArgs = nil }()
 	if len(instruction.Operands) < 3 {
 		return 0, vm.fatalError(instruction, "static method spread instruction has invalid operands")
 	}
@@ -1134,6 +1171,8 @@ func (vm *VM) callStaticMethodSpread(instruction Instruction, ip int) (int, erro
 }
 
 func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classIndex int64, name string, args []runtime.Value) (int, error) {
+	types := vm.pendingCallTypeArgs
+	vm.pendingCallTypeArgs = nil
 	indices, ok := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], name)
 	if !ok {
 		// Same-chunk walk exhausted: the static method may live on a cross-module ancestor.
@@ -1155,10 +1194,11 @@ func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classInd
 		}
 		return 0, vm.runtimeError(instruction, "unknown static method %s.%s", vm.curMod.Chunk.Classes[classIndex].Name, name)
 	}
-	functionIndex, err := vm.selectRuntimeFunction(instruction, name, indices, args, 0)
+	functionIndex, err := vm.selectRuntimeFunctionWith(instruction, name, indices, args, 0, nil, types)
 	if err != nil {
 		return 0, err
 	}
+	vm.pendingTypeBindings = vm.explicitTypeArgBindings(&vm.curMod.Chunk.Functions[functionIndex], types)
 	if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
 		if vm.curMod.Chunk.Functions[functionIndex].Async && !vm.syncMode {
 			vm.push(vm.startAsyncCallable(decorated, args))
@@ -1173,6 +1213,10 @@ func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classInd
 	}
 	if task, ok := vm.startAsyncMethod(functionIndex, args); ok {
 		vm.push(task)
+		return ip, nil
+	}
+	if vm.curMod.Chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
+		vm.push(vm.lazyGenerator(functionIndex, args))
 		return ip, nil
 	}
 	return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], args, nil)
@@ -1213,27 +1257,33 @@ func (vm *VM) explicitTypeArgBindings(fn *FunctionInfo, typeArgs []string) map[s
 // resolveFrameTypeName maps an explicit type argument that names an enclosing generic scope's type parameter to its concrete binding (e.g. `Box<T>` inside `wrap<T>` where T is bound to string); a concrete type name passes through unchanged.
 func (vm *VM) resolveFrameTypeName(name string) string {
 	if len(vm.frames) == 0 {
-		return name
+		return vm.canonicalTypeName(name)
 	}
 	if bound, ok := vm.frames[len(vm.frames)-1].typeBindings[name]; ok {
 		return bound
 	}
-	return name
+	bindings := vm.frames[len(vm.frames)-1].typeBindings
+	if len(bindings) > 0 && strings.ContainsAny(name, "<|&?[") {
+		if ref, err := parser.ParseTypeRef(name); err == nil {
+			return vm.canonicalTypeName(typealias.Expand(ref, func(key string) (string, bool) { value, ok := bindings[key]; return value, ok }).String())
+		}
+	}
+	return vm.canonicalTypeName(name)
 }
 
 // resolveBoundFrameTypeName reports false for an in-scope type parameter that has no binding.
 func (vm *VM) resolveBoundFrameTypeName(name string) (string, bool) {
 	if len(vm.frames) == 0 {
-		return name, true
+		return vm.canonicalTypeName(name), true
 	}
 	frame := &vm.frames[len(vm.frames)-1]
 	if bound, ok := frame.typeBindings[name]; ok {
 		return bound, true
 	}
 	if frame.meta == nil {
-		return name, true
+		return vm.canonicalTypeName(name), true
 	}
-	return name, !frame.meta.typeParams[strings.ToLower(name)]
+	return vm.resolveFrameTypeName(name), !frame.meta.typeParams[strings.ToLower(name)]
 }
 
 func (vm *VM) classInfo(name string) (ClassInfo, bool) {
@@ -1638,6 +1688,23 @@ func (vm *VM) RuntimeClassValue(classIndex int64) *runtime.Class {
 
 func (vm *VM) buildRuntimeClassValue(classIndex int64) *runtime.Class {
 	classInfo := vm.curMod.Chunk.Classes[classIndex]
+	parentArgs := make([]string, len(classInfo.ParentArguments))
+	for i, arg := range classInfo.ParentArguments {
+		arg = vm.expandTypeAliases(arg)
+		if ref, err := parser.ParseTypeRef(arg); err == nil {
+			ref = typealias.Expand(ref, func(name string) (string, bool) {
+				for _, param := range classInfo.TypeParameters {
+					if strings.EqualFold(param, name) {
+						return "", false
+					}
+				}
+				resolved := vm.canonicalNominalName(name)
+				return resolved, resolved != name
+			})
+			arg = ref.String()
+		}
+		parentArgs[i] = arg
+	}
 	return &runtime.Class{
 		Name:            classInfo.Name,
 		Module:          vm.moduleName,
@@ -1646,7 +1713,7 @@ func (vm *VM) buildRuntimeClassValue(classIndex int64) *runtime.Class {
 		MethodMetadata:  vm.classFunctionMetadata(classInfo.Methods, "method", 1),
 		StaticMetadata:  vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0),
 		Parent:          vm.runtimeClassForParent(classInfo),
-		ParentArguments: append([]string(nil), classInfo.ParentArguments...),
+		ParentArguments: parentArgs,
 		Implements:      vm.runtimeInterfacesForClass(classInfo),
 		Fields:          vm.runtimeFieldsForClass(classInfo),
 	}

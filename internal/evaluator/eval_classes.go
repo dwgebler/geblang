@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 	"strings"
 	"sync"
 )
@@ -17,6 +18,7 @@ func (e *Evaluator) applyCallableFunctionDecorators(fn runtime.Function, decorat
 		}
 	}()
 	current := fn
+	current.DecoratorOriginal = true
 	wrapped := false
 	for i := len(decorators) - 1; i >= 0; i-- {
 		decorator := decorators[i]
@@ -782,7 +784,16 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 			if len(stmt.Extends.Arguments) > 0 {
 				args := make([]string, 0, len(stmt.Extends.Arguments))
 				for _, arg := range stmt.Extends.Arguments {
-					args = append(args, arg.String())
+					resolved := typealias.Expand(arg, func(name string) (string, bool) {
+						for _, param := range class.TypeParameters {
+							if strings.EqualFold(param, name) {
+								return "", false
+							}
+						}
+						ref := typealias.Qualified(e.resolveTypeRef(&ast.TypeRef{Name: name}, env))
+						return ref.String(), ref.String() != name
+					})
+					args = append(args, resolved.String())
 				}
 				class.ParentArguments = args
 			}
@@ -832,6 +843,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 				}
 				value := runtime.Value(runtime.Null{})
 				if member.Value != nil {
+					e.currentLine = member.Token.Line
 					evaluated, err := e.evalExpressionWithExpectedType(member.Value, env, staticType)
 					if err != nil {
 						return nil, err
@@ -855,7 +867,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 				class.ImmutableFields = append(class.ImmutableFields, member.Name.Value)
 				fieldDecs = withoutImmutableDecoratorEval(member.Decorators)
 			}
-			class.Fields = append(class.Fields, runtime.Field{Name: member.Name.Value, Type: member.Type, CheckType: e.resolveTypeRef(member.Type, env), Default: member.Value, Doc: member.Doc, Decorators: fieldDecs})
+			class.Fields = append(class.Fields, runtime.Field{Name: member.Name.Value, Type: member.Type, CheckType: e.resolveTypeRef(member.Type, env), Default: member.Value, DefaultLine: member.Token.Line, Doc: member.Doc, Decorators: fieldDecs})
 		case *ast.FunctionStatement:
 			target := "method"
 			if member.Static {
@@ -1162,11 +1174,13 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 	// remaining bindings further down.
 	// A type-arg name that is itself a bound generic param (an enclosing
 	// generic function's T) resolves to the call site's concrete binding.
-	resolveArgName := func(name string) (string, bool) {
-		if bound, ok := env.GetTypeBinding(name); ok && bound != "" {
+	resolveArgName := func(arg *ast.TypeRef) (string, bool) {
+		name := arg.Name
+		if bound, ok := env.GetTypeBinding(name); ok && bound != "" && !arg.Nullable && !arg.ListAlias && len(arg.Arguments) == 0 {
 			return bound, true
 		}
-		return name, !e.typeParamInScope(name)
+		resolved := typealias.Qualified(typealias.Expand(e.resolveTypeRef(arg, env), env.GetTypeBinding))
+		return resolved.String(), len(arg.Arguments) > 0 || arg.ListAlias || !e.typeParamInScope(name)
 	}
 	if len(call.TypeArguments) > 0 && len(class.TypeParameters) > 0 {
 		if instance.TypeBindings == nil {
@@ -1176,8 +1190,8 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 			if i >= len(class.TypeParameters) {
 				break
 			}
-			if arg != nil && arg.Operator == "" && arg.Name != "" {
-				if resolved, bound := resolveArgName(arg.Name); bound {
+			if arg != nil {
+				if resolved, bound := resolveArgName(arg); bound {
 					instance.TypeBindings[class.TypeParameters[i]] = resolved
 				}
 			}
@@ -1192,8 +1206,8 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 				if i >= len(class.TypeParameters) {
 					break
 				}
-				if arg != nil && arg.Operator == "" && arg.Name != "" {
-					if resolved, bound := resolveArgName(arg.Name); bound {
+				if arg != nil {
+					if resolved, bound := resolveArgName(arg); bound {
 						instance.TypeBindings[class.TypeParameters[i]] = resolved
 					}
 				}
@@ -1531,11 +1545,8 @@ func (e *Evaluator) initializeFields(instance *runtime.Instance, class *runtime.
 	for _, field := range class.Fields {
 		value := runtime.Value(runtime.Null{})
 		if field.Default != nil {
-			evaluated, err := e.evalExpressionWithExpectedType(field.Default, fieldEnv, field.CheckType)
+			evaluated, err := e.evalFieldDefault(instance, class, field, fieldEnv)
 			if err != nil {
-				return err
-			}
-			if err := checkFieldWrite(instance, field.Name, evaluated); err != nil {
 				return err
 			}
 			value = evaluated
@@ -1543,6 +1554,32 @@ func (e *Evaluator) initializeFields(instance *runtime.Instance, class *runtime.
 		instance.Fields[field.Name] = value
 	}
 	return nil
+}
+
+// evalFieldDefault runs a computed default in a frame named after its class so traces show the field line and the instantiation site.
+func (e *Evaluator) evalFieldDefault(instance *runtime.Instance, class *runtime.Class, field runtime.Field, env *runtime.Environment) (runtime.Value, error) {
+	if ast.IsConstantDefault(field.Default) {
+		evaluated, err := e.evalExpressionWithExpectedType(field.Default, env, field.CheckType)
+		if err != nil {
+			return nil, err
+		}
+		return evaluated, checkFieldWrite(instance, field.Name, evaluated)
+	}
+	e.callStack = append(e.callStack, evalFrame{name: class.Name, callLine: e.currentLine, env: env, path: e.currentDebugPath()})
+	defer e.popFunction()
+	e.currentLine = field.DefaultLine
+	evaluated, err := e.evalExpressionWithExpectedType(field.Default, env, field.CheckType)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkFieldWrite(instance, field.Name, evaluated); err != nil {
+		var classified runtime.ClassifiedError
+		if errors.As(err, &classified) {
+			return nil, thrownError{value: e.withTrace(runtime.Error{Class: classified.Class, Message: classified.Message})}
+		}
+		return nil, err
+	}
+	return evaluated, nil
 }
 
 func lookupMethod(class *runtime.Class, name string) (runtime.Function, bool) {
@@ -1694,6 +1731,43 @@ func (e *Evaluator) resolveTypeRef(ref *ast.TypeRef, env *runtime.Environment) *
 	if dot := strings.LastIndexByte(out.Name, '.'); dot > 0 {
 		if canonical, imported := e.importNames[out.Name[:dot]]; imported {
 			out.ResolvedModule = canonical
+		}
+	}
+	var nominalValue runtime.Value
+	if prefix, member, qualified := cutLastDot(out.Name); qualified {
+		if value, ok := env.Get(prefix); ok {
+			if module, ok := value.(*runtime.Module); ok {
+				nominalValue = module.Exports[member]
+			}
+		}
+		if nominalValue == nil {
+			if module := e.moduleForPrefix(prefix); module != nil {
+				nominalValue = module.Exports[member]
+			}
+		}
+	} else {
+		nominalValue, _ = env.Get(out.Name)
+	}
+	if value := nominalValue; value != nil {
+		switch nominal := value.(type) {
+		case *runtime.Class:
+			out.CanonicalName = runtime.QualifiedTypeName(nominal.DeclaringModule(), nominal.Name)
+		case *runtime.Interface:
+			out.CanonicalName = runtime.QualifiedTypeName(nominal.Module, nominal.Name)
+		case *runtime.EnumDef:
+			out.CanonicalName = runtime.QualifiedTypeName(nominal.Module, nominal.Name)
+		case runtime.Function:
+			if result := typealias.Qualified(nominal.ReturnType); result != nil && result.Operator == "" && !runtime.IsBuiltinTypeName(result.Name) {
+				out.CanonicalName = result.Name
+			}
+		}
+	}
+	if out.CanonicalName == "" {
+		if scope := e.typeNameScopes[e.currentModule]; scope != nil {
+			canonical := scope(out)
+			if canonical.Name != out.Name {
+				out.CanonicalName = canonical.Name
+			}
 		}
 	}
 	return out

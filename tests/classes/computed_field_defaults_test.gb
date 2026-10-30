@@ -1,0 +1,73 @@
+/**
+ * @title Computed field and static defaults
+ * @summary Non-literal instance field defaults run for every new instance,
+ * parent class first, in the class's module scope. Static initializers run
+ * once when the class is defined. Both are type-checked against the
+ * declared type.
+ */
+import test;
+
+int seed = 5;
+int created = 0;
+
+func track(): int { created = created + 1; return created; }
+func makeList(): list<int> { return [seed]; }
+func anything(): any { return "x"; }
+func explode(): int { throw ValueError("boom"); }
+
+class Shape {
+    int area = seed * 3;
+    list<int> seeds = makeList();
+    list<int> fixed = [1, 2];
+    dict<string, list<int>> named = {"k": [1]};
+    float ratio = 1.5f + 1.0f;
+    int serial = track();
+    string label = "a" + "b";
+}
+class Square extends Shape { int side = seed + 1; }
+class Mismatch { int n = anything(); }
+class Exploding { int n = explode(); }
+class Settings {
+    static let limit = seed * 2;
+    static int retries = seed + 1;
+    static const DEFAULTS = makeList();
+    static func bump(): int { Settings.limit = Settings.limit + 1; return Settings.limit; }
+}
+class LocalSettings extends Settings { static let derived = Settings.limit + 100; }
+
+class ComputedFieldDefaultsTest extends test.Test {
+    @test
+    func instanceDefaultsAreFreshAndInherited(): void {
+        let first = Square();
+        let second = Square();
+        first.seeds.push(9);
+        first.fixed.push(9);
+        first.named["k"].push(9);
+        this.assertEquals(15, second.area);
+        this.assertEquals([5], second.seeds);
+        this.assertEquals([1, 2], second.fixed);
+        this.assertEquals({"k": [1]}, second.named);
+        this.assertEquals(2.5f, second.ratio);
+        this.assertEquals("ab", second.label);
+        this.assertEquals(6, second.side);
+        this.assertTrue(first.serial < second.serial);
+    }
+    @test
+    func defaultsAreTypeCheckedAndPropagateErrors(): void {
+        this.assertThrows(func(): void { Mismatch(); });
+        try {
+            Exploding();
+            this.fail("expected ValueError");
+        } catch (ValueError e) {
+            this.assertEquals("boom", e.message);
+        }
+    }
+    @test
+    func staticInitializersRunAtDefinition(): void {
+        this.assertEquals(6, Settings.retries);
+        this.assertEquals([5], Settings.DEFAULTS);
+        this.assertEquals(110, LocalSettings.derived);
+        int before = Settings.limit;
+        this.assertEquals(before + 1, Settings.bump());
+    }
+}

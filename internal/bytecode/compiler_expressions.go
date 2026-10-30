@@ -8,6 +8,7 @@ import (
 	"geblang/internal/runtime"
 	"geblang/internal/token"
 	"geblang/internal/typealias"
+	"maps"
 	"math"
 	"math/big"
 	"strconv"
@@ -686,6 +687,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						return err
 					}
 					operands := append([]int64{classIndex, int64(len(expr.Arguments))}, meta...)
+					c.emitPlantCallTypeBindings(expr, classInfo.TypeParameters)
 					c.emitAt(OpConstructClassSpread, expr.Token.Line, expr.Token.Column, operands...)
 					return nil
 				}
@@ -700,8 +702,8 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 							if i >= len(classInfo.TypeParameters) {
 								break
 							}
-							if arg != nil && arg.Operator == "" && arg.Name != "" {
-								bindings[classInfo.TypeParameters[i]] = arg.Name
+							if arg != nil {
+								bindings[classInfo.TypeParameters[i]] = c.bytecodeTypeNameForParam(arg, nil)
 							}
 						}
 					}
@@ -749,13 +751,13 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						if i >= len(classInfo.TypeParameters) {
 							break
 						}
-						if arg == nil || arg.Operator != "" || arg.Name == "" {
+						if arg == nil {
 							continue
 						}
 						paramNameIdx := int64(len(c.chunk.Constants))
 						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: classInfo.TypeParameters[i]})
 						typeNameIdx := int64(len(c.chunk.Constants))
-						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: arg.Name})
+						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: c.bytecodeTypeNameForParam(arg, nil)})
 						operands = append(operands, paramNameIdx, typeNameIdx)
 						count++
 					}
@@ -780,6 +782,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					nameIndex := int64(len(c.chunk.Constants))
 					c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
 					operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+					c.emitPlantCallTypeArgs(expr)
 					c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
 					return nil
 				}
@@ -802,9 +805,11 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						}
 						operands = append(operands, argNameIndex)
 					}
+					c.emitPlantCallTypeArgs(expr)
 					c.emitAt(OpMethodCallNamed, expr.Token.Line, expr.Token.Column, operands...)
 					return nil
 				}
+				c.emitPlantCallTypeArgs(expr)
 				c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 				return nil
 			}
@@ -851,6 +856,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				nameIndex := int64(len(c.chunk.Constants))
 				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
 				operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+				c.emitPlantCallTypeArgs(expr)
 				c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
 				return nil
 			}
@@ -876,9 +882,11 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					}
 					operands = append(operands, argNameIndex)
 				}
+				c.emitPlantCallTypeArgs(expr)
 				c.emitAt(OpMethodCallNamed, expr.Token.Line, expr.Token.Column, operands...)
 				return nil
 			}
+			c.emitPlantCallTypeArgs(expr)
 			c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 			return nil
 		}
@@ -962,6 +970,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 							nameIndex := int64(len(c.chunk.Constants))
 							c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: selector.Name.Value})
 							operands := append([]int64{classIndex, nameIndex, int64(len(expr.Arguments))}, meta...)
+							c.emitPlantCallTypeArgs(expr)
 							c.emitAt(OpCallStaticMethodSpread, expr.Token.Line, expr.Token.Column, operands...)
 							return nil
 						}
@@ -997,6 +1006,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						}
 						nameIndex := int64(len(c.chunk.Constants))
 						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: selector.Name.Value})
+						c.emitPlantCallTypeArgs(expr)
 						c.emitAt(OpCallStaticMethod, expr.Token.Line, expr.Token.Column, classIndex, nameIndex, int64(len(orderedArgs)))
 						return nil
 					}
@@ -1009,6 +1019,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						}
 						nameIndex := int64(len(c.chunk.Constants))
 						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: selector.Name.Value})
+						c.emitPlantCallTypeArgs(expr)
 						c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 						return nil
 					}
@@ -1061,6 +1072,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				nameIndex := int64(len(c.chunk.Constants))
 				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: selector.Name.Value})
 				operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+				c.emitPlantCallTypeArgs(expr)
 				c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
 				if selector.Optional {
 					c.patchJump(optionalJump)
@@ -1086,14 +1098,15 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					operands = append(operands, argNameIndex)
 				}
 				c.emitPlantIntLiteralArgs(expr, true)
+				c.emitPlantCallTypeArgs(expr)
 				c.emitAt(OpMethodCallNamed, expr.Token.Line, expr.Token.Column, operands...)
 				if selector.Optional {
 					c.patchJump(optionalJump)
 				}
 				return nil
 			}
-			c.emitPlantCallTypeArgs(expr)
 			c.emitPlantIntLiteralArgs(expr, false)
+			c.emitPlantCallTypeArgs(expr)
 			c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 			if selector.Optional {
 				c.patchJump(optionalJump)
@@ -1111,6 +1124,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			nameIndex := int64(len(c.chunk.Constants))
 			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
 			operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+			c.emitPlantCallTypeArgs(expr)
 			c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
 			return nil
 		}
@@ -1136,9 +1150,11 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				}
 				operands = append(operands, argNameIndex)
 			}
+			c.emitPlantCallTypeArgs(expr)
 			c.emitAt(OpMethodCallNamed, expr.Token.Line, expr.Token.Column, operands...)
 			return nil
 		}
+		c.emitPlantCallTypeArgs(expr)
 		c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 		return nil
 	case *ast.SelectorExpression:
@@ -1206,7 +1222,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		if err := c.compileExpression(expr.Value); err != nil {
 			return err
 		}
-		c.emitConstant(runtime.String{Value: c.bytecodeTypeName(expr.Type)}, expr.Token.Line, expr.Token.Column)
+		c.emitConstant(runtime.String{Value: c.bytecodeTypeNameForParam(expr.Type, nil)}, expr.Token.Line, expr.Token.Column)
 		c.emitAt(OpCast, expr.Token.Line, expr.Token.Column)
 		return nil
 	case *ast.MatchExpression:
@@ -1267,6 +1283,25 @@ func newFreeVarSet(params []ast.Parameter) *freeVarSet {
 		}
 	}
 	return s
+}
+
+// scanFunction scans a body and parameter defaults; each default sees only earlier parameters.
+func (s *freeVarSet) scanFunction(params []ast.Parameter, body *ast.BlockStatement) {
+	s.scanBlock(body)
+	all := s.defined
+	for k, param := range params {
+		if param.Default == nil {
+			continue
+		}
+		s.defined = map[string]bool{}
+		for _, earlier := range params[:k] {
+			if earlier.Name != nil {
+				s.defined[earlier.Name.Value] = true
+			}
+		}
+		s.scanExpr(param.Default)
+	}
+	s.defined = all
 }
 
 func (s *freeVarSet) scanBlock(block *ast.BlockStatement) {
@@ -1374,7 +1409,7 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 			s.defined[stmt.Name.Value] = true
 		}
 		inner := newFreeVarSet(stmt.Parameters)
-		inner.scanBlock(stmt.Body)
+		inner.scanFunction(stmt.Parameters, stmt.Body)
 		for name := range inner.free {
 			if !s.defined[name] {
 				s.free[name] = true
@@ -1445,7 +1480,7 @@ func (s *freeVarSet) scanExpr(expr ast.Expression) {
 		}
 	case *ast.FunctionLiteral:
 		inner := newFreeVarSet(expr.Parameters)
-		inner.scanBlock(expr.Body)
+		inner.scanFunction(expr.Parameters, expr.Body)
 		for name := range inner.free {
 			if !s.defined[name] {
 				s.free[name] = true
@@ -1548,7 +1583,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 
 	// Collect free variables: identifiers used in body not declared as params.
 	scanner := newFreeVarSet(expr.Parameters)
-	scanner.scanBlock(expr.Body)
+	scanner.scanFunction(expr.Parameters, expr.Body)
 
 	// Resolve which free variables are local upvalues vs. globals.
 	type upvalueCapture struct {
@@ -1596,6 +1631,8 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	}
 
 	// Allocate parameter slots.
+	preParams := maps.Clone(c.scopes[len(c.scopes)-1])
+	var computed []computedDefault
 	for _, param := range expr.Parameters {
 		if param.Name == nil {
 			c.popFunctionLocals()
@@ -1613,14 +1650,11 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 			defaultConstants = append(defaultConstants, -1)
 			continue
 		}
-		value, err := c.constantValueFromExpression(param.Default)
-		if err != nil {
-			c.popFunctionLocals()
-			c.popScope()
-			return err
+		defaultIndex, isComputed := c.parameterDefaultConstant(param.Default)
+		if isComputed {
+			computed = append(computed, computedDefault{paramIndex: len(paramSlots) - 1, slot: slot, expr: param.Default})
 		}
-		defaultConstants = append(defaultConstants, int64(len(c.chunk.Constants)))
-		c.chunk.Constants = append(c.chunk.Constants, value)
+		defaultConstants = append(defaultConstants, defaultIndex)
 	}
 
 	fn := &c.chunk.Functions[index]
@@ -1644,6 +1678,13 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	savedLoops, savedFinalizers := c.loops, c.finalizers
 	c.loops, c.finalizers = nil, nil
 	defer func() { c.loops, c.finalizers = savedLoops, savedFinalizers }()
+	if err := c.compileComputedDefaults(index, expr.Parameters, computed, preParams); err != nil {
+		c.inFunc--
+		c.returnTypes = c.returnTypes[:len(c.returnTypes)-1]
+		c.popFunctionLocals()
+		c.popScope()
+		return err
+	}
 	if err := c.compileBlock(expr.Body); err != nil {
 		c.inFunc--
 		c.returnTypes = c.returnTypes[:len(c.returnTypes)-1]
@@ -2306,13 +2347,13 @@ func (c *Compiler) emitPlantCallTypeBindings(expr *ast.CallExpression, typeParam
 		if i >= len(typeParameters) {
 			break
 		}
-		if arg == nil || arg.Operator != "" || arg.Name == "" {
+		if arg == nil {
 			continue
 		}
 		paramNameIdx := int64(len(c.chunk.Constants))
 		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: typeParameters[i]})
 		typeNameIdx := int64(len(c.chunk.Constants))
-		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: arg.Name})
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: c.bytecodeTypeNameForParam(arg, nil)})
 		operands = append(operands, paramNameIdx, typeNameIdx)
 		count++
 	}
@@ -2360,11 +2401,11 @@ func (c *Compiler) emitPlantCallTypeArgs(expr *ast.CallExpression) {
 	operands := []int64{0}
 	count := int64(0)
 	for _, arg := range expr.TypeArguments {
-		if arg == nil || arg.Operator != "" || arg.Name == "" {
+		if arg == nil {
 			continue
 		}
 		typeNameIdx := int64(len(c.chunk.Constants))
-		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: arg.Name})
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: c.bytecodeTypeNameForParam(arg, nil)})
 		operands = append(operands, typeNameIdx)
 		count++
 	}
@@ -3041,22 +3082,26 @@ func (c *Compiler) staticTypeAssignable(target string, actual string) bool {
 }
 
 func (c *Compiler) staticFunctionParamAssignable(function FunctionInfo, target string, actual string) bool {
-	// Strip generic type arg ("list<T>" → "list") from both sides before
-	// the type-name comparison. The element type comparison is handled by
-	// the semantic analyzer for declarations and by reified-generics at
-	// runtime.
-	baseTarget := target
-	if ltIdx := strings.Index(target, "<"); ltIdx >= 0 {
-		baseTarget = target[:ltIdx]
+	if branches, ok := splitTopLevelTypeOp(target, '|'); ok {
+		for _, branch := range branches {
+			if c.staticFunctionParamAssignable(function, branch, actual) {
+				return true
+			}
+		}
+		return false
 	}
-	baseActual := actual
-	if ltIdx := strings.Index(actual, "<"); ltIdx >= 0 {
-		baseActual = actual[:ltIdx]
-	}
-	if functionTypeParameterSetOrNil(function)[strings.ToLower(strings.TrimPrefix(baseTarget, "?"))] {
+	if branches, ok := splitTopLevelTypeOp(target, '&'); ok {
+		for _, branch := range branches {
+			if !c.staticFunctionParamAssignable(function, branch, actual) {
+				return false
+			}
+		}
 		return true
 	}
-	return c.staticTypeAssignable(baseTarget, baseActual)
+	if functionTypeParameterSetOrNil(function)[strings.ToLower(strings.TrimPrefix(target, "?"))] {
+		return true
+	}
+	return c.staticTypeAssignable(target, actual)
 }
 
 func (c *Compiler) staticFunctionReturnAssignable(function FunctionInfo, expected string) bool {

@@ -37,6 +37,12 @@ func IsNull(v Value) bool {
 }
 func (Null) Inspect() string { return "null" }
 
+// PendingDefault fills a computed-default argument slot until the callee's prologue evaluates it.
+type PendingDefault struct{}
+
+func (PendingDefault) TypeName() string { return "pending default" }
+func (PendingDefault) Inspect() string  { return "<pending default>" }
+
 type Bool struct {
 	Value bool
 }
@@ -229,7 +235,7 @@ func (v List) Inspect() string {
 }
 
 type Dict struct {
-	// data is the inline-capable shared store for dicts built through
+	// data is the adaptive shared store for dicts built through
 	// NewDict / NewDictHint. When nil, the dict is a literal-built
 	// map-state dict using Entries / Order directly. Accessors check
 	// data first; see dict_store.go.
@@ -247,16 +253,31 @@ func NewDict() Dict {
 	return Dict{data: &dictData{}}
 }
 
-// NewDictHint sizes the store for n entries: dicts that stay at or
-// below dictInlineMax keep their entries inline (one allocation, no
-// map); larger ones start in the spilled map form.
+// NewDictHint sizes ordered compact storage for small dicts and starts
+// larger dictionaries directly in map form.
 func NewDictHint(n int) Dict {
 	d := &dictData{}
+	if n > 0 && n <= dictInlineMax {
+		d.items = make([]dictItem, 0, n)
+	}
 	if n > dictInlineMax {
 		d.m = make(map[string]DictEntry, n)
 		d.order = make([]string, 0, n)
 	}
 	return Dict{data: d}
+}
+
+// HasOnlyStringKeys uses live store metadata; aliases and mutations share it.
+func (v Dict) HasOnlyStringKeys() bool {
+	if v.data != nil {
+		return v.data.nonStringKeys == 0
+	}
+	for _, entry := range v.Entries {
+		if _, ok := entry.Key.(String); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (v Dict) PutEntry(key string, entry DictEntry) {
@@ -337,10 +358,10 @@ func (v Dict) GetStringEntry(key string) (DictEntry, bool) {
 			entry, ok := v.data.m[DictStringKeyPrefix+key]
 			return entry, ok
 		}
-		for i := uint8(0); i < v.data.n; i++ {
-			encoded := v.data.keys[i]
+		for _, item := range v.data.items {
+			encoded := item.key
 			if len(encoded) == len(key)+1 && encoded[0] == DictStringKeyPrefix[0] && encoded[1:] == key {
-				return v.data.vals[i], true
+				return item.entry, true
 			}
 		}
 		return DictEntry{}, false
@@ -734,6 +755,8 @@ type BoundMethod struct {
 }
 
 type Function struct {
+	// DecoratorOriginal identifies the body behind executable decorator wrappers.
+	DecoratorOriginal bool
 	// Bound, when set, is the reflected method this function invokes on the calling evaluator.
 	Bound *BoundMethod
 	// Identity distinguishes separately created closures and method values for `is`.
@@ -782,6 +805,8 @@ type Function struct {
 	Metadata *FunctionMetadata
 	// NativeNamed invokes a bridge wrapper with named-argument metadata so the home function's declared defaults engage; nil for genuine natives.
 	NativeNamed func(this *Instance, args []Value, names []string) (Value, error)
+	// NativeTyped preserves explicit invocation types across a bytecode bridge.
+	NativeTyped func(host any, args []Value, names []string, types []string) (Value, error)
 	// NativeFrom is Native naming the invoking worker (host typed any to avoid an import cycle), set on cross-module method wrappers so the profiler can link a sampled stack through the call; it dispatches exactly as Native does.
 	NativeFrom func(caller any, this *Instance, args []Value) (Value, error)
 }
@@ -802,10 +827,11 @@ func (v Function) CallParameters() []ast.Parameter {
 }
 
 type OverloadedFunction struct {
-	Name      string
-	Overloads []Function
-	Callables []Value
-	Defaults  [][]Value
+	TypeArguments []string
+	Name          string
+	Overloads     []Function
+	Callables     []Value
+	Defaults      [][]Value
 	// Set for an exported bytecode overload set; a cross-module member call selects a home-chunk overload by Indices.
 	Module  string
 	Indices []int64
@@ -895,6 +921,7 @@ func (v *Module) TypeName() string { return "module" }
 func (v *Module) Inspect() string  { return "<module " + v.Name + ">" }
 
 type BytecodeFunction struct {
+	TypeBindings   map[string]string
 	Module         string
 	Name           string
 	Doc            string
@@ -1357,7 +1384,12 @@ type Field struct {
 	// CheckType is Type with aliases resolved, used for runtime write checks.
 	CheckType *ast.TypeRef
 	Default   ast.Expression
-	Doc       string // docblock (## or /** */) immediately before the field, surfaced via reflect.fields.
+	// DefaultValue preserves VM literal defaults across module boundaries.
+	DefaultValue Value
+	// DefaultFunc computes a VM non-literal default in the declaring module.
+	DefaultFunc func(caller any, instance *Instance) (Value, error)
+	DefaultLine int
+	Doc         string // docblock (## or /** */) immediately before the field, surfaced via reflect.fields.
 	// Decorators is the list of @-prefixed annotations applied to
 	// the field declaration inside a class body. They are pure
 	// metadata - the runtime never executes them automatically;

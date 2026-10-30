@@ -1925,6 +1925,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 		}
 	case runtime.String:
 		switch name {
+		case "byteLength":
+			return native.StringByteLength(value, args)
 		case "length":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.length expects no arguments")

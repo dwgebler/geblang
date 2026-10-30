@@ -55,6 +55,8 @@ type TypeRef struct {
 	Right     *TypeRef
 	// ResolvedModule is the canonical module a qualified name's prefix imports, set by the evaluator.
 	ResolvedModule string
+	// CanonicalName keeps nominal identity separate from the source spelling used in diagnostics.
+	CanonicalName string
 }
 
 func (t *TypeRef) String() string {
@@ -1392,6 +1394,34 @@ func HasIntegerLiteralBranch(expr Expression) bool {
 }
 
 // IsIntegerLiteral reports whether expr is an integer literal, optionally negated, or a conditional of two.
+// IsConstantDefault reports a default the bytecode compiler stores as a constant rather than evaluating per use.
+func IsConstantDefault(expr Expression) bool {
+	switch e := expr.(type) {
+	case *PrefixExpression:
+		if e.Operator != "-" {
+			return false
+		}
+		switch e.Right.(type) {
+		case *IntegerLiteral, *DecimalLiteral, *FloatLiteral:
+			return true
+		}
+	case *IntegerLiteral, *DecimalLiteral, *FloatLiteral, *StringLiteral, *EmbeddedLiteral:
+		return true
+	case *Literal:
+		switch e.Value.(type) {
+		case bool, nil:
+			return true
+		}
+	case *ListLiteral:
+		return len(e.Elements) == 0
+	case *SetLiteral:
+		return len(e.Elements) == 0
+	case *DictLiteral:
+		return len(e.Entries) == 0
+	}
+	return false
+}
+
 func IsIntegerLiteral(expr Expression) bool {
 	switch e := expr.(type) {
 	case *PrefixExpression:

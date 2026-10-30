@@ -16,6 +16,7 @@ Import `json`:
 - `stringify(value)` - serialize to JSON string (accepts dicts, lists,
   scalars, and user-defined class instances; classes can override with
   `__serialize()`)
+- `write(value, stream)` - write JSON to an open writable stream, returning the byte count
 - `validate(text)` - returns `bool` (`true` when valid)
 - `validateDetailed(text)` - returns `{"valid": bool, "error": string|null}` with detail
 - `reader(source)` - streaming reader (see below)
@@ -41,6 +42,42 @@ if (!(result["ok"] as bool)) {
 `result["ok"]` before reading `result["value"]`. A `== null` guard
 would never fire (the dict itself is never `null`), so failures would
 pass silently.
+
+Whole-value JSON parsing, validation and encoding are limited to 512 nesting
+levels. Cyclic values and dictionary
+keys other than strings raise a catchable error when serialized; a shared child
+used in two sibling positions is valid. A failed encode does not affect later
+calls. Decimal output retains ten fractional places. When exact decimal wire
+precision matters, serialize a decimal as a string explicitly.
+
+Small unescaped strings extracted from documents larger than 1 MiB own their
+storage when shorter than 4 KiB, so retaining them does not retain the document.
+Other string storage choices are an implementation detail.
+
+### Writing to a borrowed stream
+
+`json.write(value, stream)` matches `json.stringify` formatting, including its
+existing ten-fractional-place decimal policy and class serialization hooks. It
+emits output incrementally through a reusable 16 KiB buffer rather than building
+the complete document string. Large individual strings, bytes values and class
+serialization results can still require larger temporary storage.
+
+```gb
+import json;
+import streams;
+
+let output = streams.open("report.json", "w");
+try {
+    let written = json.write({"ok": true, "amount": 1.25}, output);
+} finally { output.close(); }
+```
+
+The destination remains borrowed: the helper never calls its flush or close
+methods. It supports raw IO handles and the `__writeBytes(bytes)` or
+`__write(string)` protocol, preferring bytes. Writers return a byte count; short
+writes are retried, while zero progress and invalid counts raise errors. A path
+string is not a stream. Encoding or IO errors may leave partial output; callers
+that need atomic publication should write to a temporary file first.
 
 ## JSON Lines
 

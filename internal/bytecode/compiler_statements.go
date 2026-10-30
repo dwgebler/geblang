@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/runtime"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,6 +48,10 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		// handles unaliased calls. The unaliased form maps a name to
 		// itself, which is a harmless no-op in canonicalModule().
 		c.moduleAliases[stmt.ModuleName()] = strings.Join(stmt.Path, ".")
+		if c.chunk.ModuleAliases == nil {
+			c.chunk.ModuleAliases = map[string]string{}
+		}
+		c.chunk.ModuleAliases[stmt.ModuleName()] = strings.Join(stmt.Path, ".")
 		return nil
 	case *ast.FromImportStatement:
 		if isEvaluatorOnlyBuiltinImport(stmt.Path) {
@@ -157,13 +162,13 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 						if i >= len(classInfo.TypeParameters) {
 							break
 						}
-						if arg == nil || arg.Operator != "" || arg.Name == "" {
+						if arg == nil {
 							continue
 						}
 						paramNameIdx := int64(len(c.chunk.Constants))
 						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: classInfo.TypeParameters[i]})
 						typeNameIdx := int64(len(c.chunk.Constants))
-						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: arg.Name})
+						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: c.bytecodeTypeNameForParam(arg, nil)})
 						operands = append(operands, paramNameIdx, typeNameIdx)
 						count++
 					}
@@ -650,7 +655,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 			callableSlot = b.slot
 		}
 		scanner := newFreeVarSet(stmt.Parameters)
-		scanner.scanBlock(stmt.Body)
+		scanner.scanFunction(stmt.Parameters, stmt.Body)
 		scanner.free[name] = true
 		for free := range scanner.free {
 			if b, ok := c.resolveName(free); ok && b.kind == "local" {
@@ -695,6 +700,8 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	}
 	allTypeParams := append(typeParameterNames(stmt.Generics), c.currentClassTypeParams()...)
 	allTypeParamConstraintExprs := append(typeParamConstraintExprs(stmt.Generics), c.currentClassTypeParamConstraintExprs()...)
+	preParams := maps.Clone(c.scopes[len(c.scopes)-1])
+	var computed []computedDefault
 	for _, param := range stmt.Parameters {
 		if param.Name == nil {
 			c.popFunctionLocals()
@@ -722,14 +729,11 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 			defaultConstants = append(defaultConstants, -1)
 			continue
 		}
-		value, err := c.constantValueFromExpression(param.Default)
-		if err != nil {
-			c.popFunctionLocals()
-			c.popScope()
-			return err
+		defaultIndex, isComputed := c.parameterDefaultConstant(param.Default)
+		if isComputed {
+			computed = append(computed, computedDefault{paramIndex: len(paramSlots) - 1, slot: paramSlot, expr: param.Default})
 		}
-		defaultConstants = append(defaultConstants, int64(len(c.chunk.Constants)))
-		c.chunk.Constants = append(c.chunk.Constants, value)
+		defaultConstants = append(defaultConstants, defaultIndex)
 	}
 	c.chunk.Functions[index].TypeParameters = allTypeParams
 	c.chunk.Functions[index].TypeParamConstraintExprs = allTypeParamConstraintExprs
@@ -782,6 +786,13 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 			c.popScope()
 			return err
 		}
+	}
+	if err := c.compileComputedDefaults(index, stmt.Parameters, computed, preParams); err != nil {
+		c.inFunc--
+		c.returnTypes = c.returnTypes[:len(c.returnTypes)-1]
+		c.popFunctionLocals()
+		c.popScope()
+		return err
 	}
 	for _, slot := range constSlots {
 		c.emitAt(OpFreezeLocal, stmt.Token.Line, stmt.Token.Column, slot)

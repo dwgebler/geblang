@@ -2,8 +2,11 @@ package bytecode
 
 import (
 	"fmt"
+	"geblang/internal/ast"
 	"geblang/internal/native"
+	"geblang/internal/parser"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 	"math"
 	"math/big"
 	"slices"
@@ -182,7 +185,7 @@ func (vm *VM) instanceMatchesParameterizedClass(instance *runtime.Instance, base
 	}
 	for i, arg := range args {
 		bound, ok := instance.TypeBindings[declared[i]]
-		if !ok || !typeArgNamesEqual(bound, arg) {
+		if !ok || !typeArgNamesEqual(bound, vm.canonicalTypeName(arg)) {
 			return false
 		}
 	}
@@ -191,7 +194,7 @@ func (vm *VM) instanceMatchesParameterizedClass(instance *runtime.Instance, base
 
 // typeArgNamesEqual compares two type-argument names, ignoring the module qualifier one side may carry (an alias in one module, a canonical name in another).
 func typeArgNamesEqual(a, b string) bool {
-	return strings.EqualFold(a, b) || strings.EqualFold(stripModulePrefix(a), stripModulePrefix(b))
+	return typealias.EquivalentNames(a, b)
 }
 
 func vmSplitGenericTypeName(typeName string) (string, []string, bool) {
@@ -435,31 +438,61 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 		return 0, err
 	}
 	target = vm.expandTypeAliases(target)
+	if len(vm.frames) > 0 {
+		bindings := vm.frames[len(vm.frames)-1].typeBindings
+		if len(bindings) > 0 {
+			if ref, err := parser.ParseTypeRef(target); err == nil {
+				target = typealias.Expand(ref, func(name string) (string, bool) { bound, ok := bindings[name]; return bound, ok }).String()
+			}
+		}
+	}
+	target = vm.canonicalTypeName(target)
+	declared := target
+	spec := vm.typeSpec(target)
+	castRef := vm.castTypeRef(declared)
+	if len(spec.args) > 0 && spec.kind != vmTypeUnion && spec.kind != vmTypeIntersection {
+		target = spec.base
+		if spec.nullable {
+			target = "?" + target
+		}
+	}
 	value, err := vm.pop()
 	if err != nil {
 		return 0, vm.callPropagate(instruction, err)
+	}
+	finish := func(converted runtime.Value) (int, error) {
+		if !runtime.MatchesCheckedCast(converted, castRef, func(value runtime.Value, typ *ast.TypeRef) bool {
+			return vm.matchValueToTypeSpec(nil, value, vm.typeSpec(typ.String()))
+		}) {
+			return vm.throwTyped(instruction, ip, "TypeError", fmt.Sprintf("cannot cast %s to %s", converted.TypeName(), declared))
+		}
+		vm.push(converted)
+		return ip, nil
+	}
+	if spec.kind == vmTypeUnion || spec.kind == vmTypeIntersection {
+		return finish(value)
 	}
 	// Class / interface / parent-chain widening cast: an Error or
 	// Instance is assignable to any ancestor in its chain, with the
 	// module prefix on the target name stripped (so `e as errors.X`
 	// matches `e` whose class extends X declared in any module).
-	stripped := stripModulePrefix(target)
+	if _, null := value.(runtime.Null); null && spec.nullable {
+		return finish(value)
+	}
+	stripped := stripModulePrefix(strings.TrimPrefix(target, "?"))
 	if errValue, ok := value.(runtime.Error); ok {
 		if vm.errorValueMatches(errValue, stripped) {
-			vm.push(value)
-			return ip, nil
+			return finish(value)
 		}
 	}
 	if instance, ok := value.(*runtime.Instance); ok {
 		if classInfo, ok := vm.classInfo(instance.Class.Name); ok {
 			if vm.classMatches(classInfo, stripped) || vm.classImplements(classInfo, stripped) {
-				vm.push(value)
-				return ip, nil
+				return finish(value)
 			}
 		}
 		if runtimeClassMatches(instance.Class, stripped) {
-			vm.push(value)
-			return ip, nil
+			return finish(value)
 		}
 		if dunder := castDunderName(target); dunder != "" {
 			if result, handled, err := vm.invokeInstanceMethod(instance, dunder, nil); err != nil {
@@ -468,22 +501,19 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 				if err := checkCastDunderReturn(target, result); err != nil {
 					return vm.throwTyped(instruction, ip, "TypeError", err.Error())
 				}
-				vm.push(result)
-				return ip, nil
+				return finish(result)
 			}
 		}
 	}
 	// A callable-typed cast accepts any invocable value as-is (mirrors the evaluator); reflect targets carry their bound callable here.
 	if vmCallableTypeName(stripped) && runtime.IsCallableValue(value) {
-		vm.push(value)
-		return ip, nil
+		return finish(value)
 	}
 	cast, err := castValue(value, target)
 	if err != nil {
 		return 0, vm.callPropagate(instruction, err)
 	}
-	vm.push(cast)
-	return ip, nil
+	return finish(cast)
 }
 
 func (vm *VM) selectRuntimeFunction(instruction Instruction, name string, indices []int64, args []runtime.Value, paramOffset int) (int64, error) {
@@ -492,7 +522,13 @@ func (vm *VM) selectRuntimeFunction(instruction Instruction, name string, indice
 
 // selectRuntimeFunctionWith breaks overload-selection ties with explicit
 // bindings; single-candidate mismatches stay with construct-site validation.
-func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, indices []int64, args []runtime.Value, paramOffset int, inherited map[string]string) (int64, error) {
+func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, indices []int64, args []runtime.Value, paramOffset int, inherited map[string]string, explicit ...[]string) (int64, error) {
+	bindingsFor := func(fn FunctionInfo) map[string]string {
+		if len(explicit) == 0 || len(explicit[0]) == 0 {
+			return nil
+		}
+		return vm.bindCallTypeArgs(runtime.BytecodeFunction{TypeParameters: fn.TypeParameters, TypeBindings: inherited}, explicit[0]).TypeBindings
+	}
 	/* Fast path: most classes declare a single overload per method.
 	 * Skip the slice allocation + post-loop "ambiguous" check and
 	 * just verify arity + types directly on the lone candidate. */
@@ -506,7 +542,7 @@ func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, in
 		if len(args) < min || (!variadic && len(args) > max) {
 			return 0, vm.runtimeError(instruction, "no matching overload for %s", vm.overloadLabel(name, indices))
 		}
-		if !vm.runtimeArgumentsMatch(function, args, paramOffset) {
+		if !vm.runtimeArgumentsMatchWith(function, args, paramOffset, bindingsFor(function)) {
 			if msg := vm.argumentMismatchMessage(function, args, paramOffset); msg != "" {
 				return 0, vm.typedFault(instruction, "TypeError", msg)
 			}
@@ -524,7 +560,7 @@ func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, in
 		if len(args) < min || (!variadic && len(args) > max) {
 			continue
 		}
-		if !vm.runtimeArgumentsMatch(function, args, paramOffset) {
+		if !vm.runtimeArgumentsMatchWith(function, args, paramOffset, bindingsFor(function)) {
 			continue
 		}
 		matches = append(matches, index)
@@ -549,7 +585,7 @@ func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, in
 	return matches[0], nil
 }
 
-func (vm *VM) selectRuntimeNamedFunction(instruction Instruction, name string, indices []int64, args []runtime.Value, names []string, paramOffset int) (int64, []runtime.Value, error) {
+func (vm *VM) selectRuntimeNamedFunction(instruction Instruction, name string, indices []int64, args []runtime.Value, names []string, paramOffset int, explicit ...[]string) (int64, []runtime.Value, error) {
 	matches := []int64{}
 	orderedMatches := [][]runtime.Value{}
 	for _, index := range indices {
@@ -560,7 +596,12 @@ func (vm *VM) selectRuntimeNamedFunction(instruction Instruction, name string, i
 		if err != nil {
 			continue
 		}
-		if !vm.runtimeArgumentsMatch(vm.curMod.Chunk.Functions[index], ordered, paramOffset) {
+		function := vm.curMod.Chunk.Functions[index]
+		var bindings map[string]string
+		if len(explicit) > 0 {
+			bindings = vm.bindCallTypeArgs(runtime.BytecodeFunction{TypeParameters: function.TypeParameters}, explicit[0]).TypeBindings
+		}
+		if !vm.runtimeArgumentsMatchWith(function, ordered, paramOffset, bindings) {
 			if len(indices) == 1 {
 				if msg := vm.argumentMismatchMessage(vm.curMod.Chunk.Functions[index], ordered, paramOffset); msg != "" {
 					return 0, nil, vm.typedFault(instruction, "TypeError", msg)
@@ -590,6 +631,9 @@ func (vm *VM) runtimeArgumentsMatchWith(function FunctionInfo, args []runtime.Va
 	}
 	typeParams := function.typeParamSet
 	for i, arg := range args {
+		if isPendingDefault(arg) {
+			continue
+		}
 		paramIndex := i + paramOffset
 		if paramIndex >= len(function.ParamTypes) {
 			if !function.Variadic || len(function.ParamTypes) == 0 {
@@ -756,16 +800,41 @@ func (vm *VM) matchValueToTypeSpecWith(typeParams map[string]bool, inherited map
 	// the function's own T rather than leaving it inference-open.
 	if len(inherited) > 0 {
 		if bound, ok := inherited[spec.base]; ok && bound != "" {
-			return vm.matchValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
+			return vm.matchBoundType(typeParams, value, bound)
 		}
 		if bound, ok := inherited[spec.baseLower]; ok && bound != "" {
-			return vm.matchValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
+			return vm.matchBoundType(typeParams, value, bound)
 		}
 	}
 	if typeParams[spec.baseLower] {
 		return true
 	}
 	return vm.matchValueToTypeSpec(typeParams, value, spec)
+}
+
+func (vm *VM) matchBoundType(typeParams map[string]bool, value runtime.Value, bound string) bool {
+	if !strings.Contains(bound, ".") {
+		return vm.matchValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
+	}
+	ref := vm.castTypeRef(bound)
+	if ref == nil {
+		return vm.matchValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
+	}
+	return runtime.MatchesCheckedCast(value, ref, func(value runtime.Value, typ *ast.TypeRef) bool {
+		return vm.matchValueToTypeSpec(typeParams, value, vm.typeSpec(typ.String()))
+	})
+}
+
+func (vm *VM) castTypeRef(name string) *ast.TypeRef {
+	if ref, ok := vm.castTypeRefs[name]; ok {
+		return ref
+	}
+	ref, _ := parser.ParseTypeRef(name)
+	if vm.castTypeRefs == nil {
+		vm.castTypeRefs = map[string]*ast.TypeRef{}
+	}
+	vm.castTypeRefs[name] = ref
+	return ref
 }
 
 func (vm *VM) typeSpec(typ string) vmTypeSpec {
@@ -912,7 +981,7 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 	switch spec.baseLower {
 	case "list":
 		elemSpec := spec.args[0]
-		if typeParams[elemSpec.baseLower] {
+		if elemSpec.kind == vmTypeAny || typeParams[elemSpec.baseLower] {
 			break
 		}
 		lst := value.(*runtime.List)
@@ -923,7 +992,7 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 		}
 	case "set":
 		elemSpec := spec.args[0]
-		if typeParams[elemSpec.baseLower] {
+		if elemSpec.kind == vmTypeAny || typeParams[elemSpec.baseLower] {
 			break
 		}
 		s := value.(runtime.Set)
@@ -937,6 +1006,12 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 			keySpec := spec.args[0]
 			valSpec := spec.args[1]
 			d := value.(runtime.Dict)
+			if keySpec.kind == vmTypeString && !keySpec.nullable && valSpec.kind == vmTypeAny {
+				return d.HasOnlyStringKeys()
+			}
+			if (keySpec.kind == vmTypeAny || typeParams[keySpec.baseLower]) && (valSpec.kind == vmTypeAny || typeParams[valSpec.baseLower]) {
+				return true
+			}
 			ok := true
 			d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 				if !typeParams[keySpec.baseLower] && !vm.matchValueToTypeSpec(typeParams, entry.Key, keySpec) {
@@ -961,21 +1036,28 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 		// sibling `Base` subtype that violates the original container's
 		// declared element type (the same unsoundness that motivates
 		// invariance in Kotlin/Java).
-		if instance, ok := value.(*runtime.Instance); ok && instance.Class != nil &&
-			len(instance.Class.TypeParameters) > 0 && len(instance.TypeBindings) > 0 {
+		if instance, ok := value.(*runtime.Instance); ok && instance.Class != nil && len(instance.TypeBindings) > 0 {
+			declaring := instance.Class
+			for declaring != nil && !strings.EqualFold(stripModulePrefix(declaring.Name), stripModulePrefix(spec.base)) {
+				declaring = declaring.Parent
+			}
+			if declaring == nil {
+				break
+			}
+			bindings := runtime.DeclaringClassBindings(instance, declaring)
 			for i, argSpec := range spec.args {
-				if i >= len(instance.Class.TypeParameters) {
+				if i >= len(declaring.TypeParameters) {
 					break
 				}
-				if typeParams[argSpec.baseLower] || argSpec.baseLower == "" || argSpec.kind == vmTypeAny {
+				if typeParams[argSpec.baseLower] || argSpec.raw == "" || argSpec.kind == vmTypeAny {
 					continue
 				}
-				paramName := instance.Class.TypeParameters[i]
-				bound, ok := instance.TypeBindings[paramName]
-				if !ok || bound == "" || slices.ContainsFunc(instance.Class.TypeParameters, func(p string) bool { return strings.EqualFold(p, bound) }) {
+				paramName := declaring.TypeParameters[i]
+				bound, ok := bindings[paramName]
+				if !ok || bound == "" || slices.ContainsFunc(declaring.TypeParameters, func(p string) bool { return strings.EqualFold(p, bound) }) {
 					continue
 				}
-				if !typeArgNamesEqual(bound, argSpec.base) {
+				if !typeArgNamesEqual(bound, vm.canonicalTypeName(argSpec.raw)) {
 					return false
 				}
 			}
@@ -1075,6 +1157,9 @@ func (vm *VM) runtimeValueMatchesTypeSpec(value runtime.Value, spec vmTypeSpec) 
 		return true
 	}
 	stripped := stripModulePrefix(spec.base)
+	if native, ok := value.(runtime.NativeObject); ok {
+		return strings.EqualFold(native.Kind, stripped)
+	}
 	// Error-derived values: walk the captured parent chain so a
 	// parameter typed `HttpException` accepts a `BadRequestError`.
 	if errValue, ok := value.(runtime.Error); ok {
@@ -1357,8 +1442,8 @@ func (vm *VM) qualifierNamesModule(qualified, module string) bool {
 }
 
 // selectRuntimeFunctionLiterals types int-literal args by float/decimal params of the chosen or fewest-conversion overload.
-func (vm *VM) selectRuntimeFunctionLiterals(instruction Instruction, name string, indices []int64, args []runtime.Value, paramOffset int, literals []bool, bindings map[string]string) (int64, error) {
-	index, err := vm.selectRuntimeFunction(instruction, name, indices, args, paramOffset)
+func (vm *VM) selectRuntimeFunctionLiterals(instruction Instruction, name string, indices []int64, args []runtime.Value, paramOffset int, literals []bool, bindings map[string]string, explicit ...[]string) (int64, error) {
+	index, err := vm.selectRuntimeFunctionWith(instruction, name, indices, args, paramOffset, nil, explicit...)
 	if literals == nil {
 		return index, err
 	}
@@ -1506,7 +1591,7 @@ func (vm *VM) argumentMismatchMessage(function FunctionInfo, args []runtime.Valu
 		if position >= len(function.ParamTypes) || (function.Variadic && position == len(function.ParamTypes)-1) {
 			return ""
 		}
-		if arg == nil || function.ParamTypes[position] == "" {
+		if arg == nil || isPendingDefault(arg) || function.ParamTypes[position] == "" {
 			continue
 		}
 		if vm.runtimeArgumentsMatch(function, args[i:i+1], position) {

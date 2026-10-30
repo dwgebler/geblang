@@ -1,0 +1,68 @@
+import test;
+
+type CastNumbers = list<int>;
+class CastBox<T> {
+    T value;
+    func CastBox(T value) { this.value = value; }
+}
+interface CastChecker {
+    func checked(any source): any { return source as list<int>; }
+}
+class CastTextBox extends CastBox<string> { func CastTextBox() { parent("x"); } }
+class CastReader implements CastChecker {
+    func CastReader() {}
+    func own(any source): any { return source as list<int>; }
+}
+class CastChild extends CastReader { func CastChild() { parent(); } }
+func castGeneric<T>(T example, any source): any { return source as list<T>; }
+
+class CheckedGenericCastTest extends test.Test {
+    @test
+    func checksNestedCollectionsAliasesAndConversions(): void {
+        any numbers = [1, 2];
+        let casted = numbers as CastNumbers;
+        this.assertTrue(casted is numbers);
+        this.assertEquals(2, casted.length());
+        this.assertNull(null as ?CastNumbers);
+        this.assertNull(null as ?int[]);
+        this.assertEquals(1, ([1, 1] as set<int>).length());
+        this.assertEquals(2, ({1, 2} as list<int>).length());
+        this.assertThrows(func(): void { let bad = ["x"] as CastNumbers; });
+        this.assertThrows(func(): void { let bad = {"x"} as list<int>; });
+        this.assertThrows(func(): void { let bad = [{"a": ["x"]}] as list<dict<string, list<int>>>; });
+        let nested = [{"a": [1]}] as list<dict<string, list<int>>>;
+        this.assertEquals(1, nested[0]["a"][0]);
+    }
+
+    @test
+    func checksReifiedClassArguments(): void {
+        any box = CastBox<string>("x");
+        this.assertTrue((box as CastBox<string>) is box);
+        this.assertThrows(func(): void { let bad = box as CastBox<int>; });
+        any inherited = CastTextBox();
+        this.assertTrue((inherited as CastBox<string>) is inherited);
+        this.assertThrows(func(): void { let bad = inherited as CastBox<int>; });
+        CastBox<list<int>> annotated = CastBox([1]);
+        this.assertTrue((annotated as CastBox<list<int>>) is annotated);
+        any union = CastBox<int|string>(1);
+        this.assertTrue((union as CastBox<int|string>) is union);
+        any optional = CastBox<?int>(null);
+        this.assertTrue((optional as CastBox<?int>) is optional);
+        any nested = CastBox<list<int>>([1]);
+        this.assertTrue((nested as CastBox<list<int>>) is nested);
+        this.assertThrows(func(): void { let bad = nested as CastBox<list<string>>; });
+    }
+
+    @test
+    func checksGenericFunctionsInheritedAndDefaultMethods(): void {
+        this.assertEquals(1, (castGeneric(0, [1]) as list<int>)[0]);
+        this.assertThrows(func(): void { castGeneric(0, ["x"]); });
+        let child = CastChild();
+        this.assertEquals([1], child.own([1]));
+        this.assertEquals([1], child.checked([1]));
+        let own = child.own;
+        let fallback = child.checked;
+        this.assertThrows(func(): void { own(["x"]); });
+        this.assertThrows(func(): void { fallback(["x"]); });
+    }
+}

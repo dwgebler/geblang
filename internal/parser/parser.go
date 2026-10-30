@@ -2389,14 +2389,14 @@ func (p *Parser) parseTypeRefFromCurrent() *ast.TypeRef {
 		nullable = true
 		p.nextToken()
 	}
-	if !isTypeStartToken(p.curToken.Type) {
+	if !isTypeStartToken(p.curToken.Type) && !(isIdentifierNameToken(p.curToken.Type) && p.peekTokenIs(token.Dot)) {
 		p.errorf(p.curToken, "expected type, got %s", p.curToken.Type)
 		return &ast.TypeRef{Token: p.curToken, Name: p.curToken.Literal, Nullable: nullable}
 	}
 	left := &ast.TypeRef{Token: p.curToken, Name: p.curToken.Literal, Nullable: nullable}
 	for p.peekTokenIs(token.Dot) {
 		p.nextToken()
-		if !p.expectPeek(token.Ident) {
+		if !p.expectPeekIdentifierName() {
 			return left
 		}
 		left.Name += "." + p.curToken.Literal

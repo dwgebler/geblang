@@ -7,6 +7,7 @@ import (
 
 	"geblang/internal/binding"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 )
 
 // Select returns the single overload whose signature binds the positional args and whose parameter types accept them; errors mirror the language's direct-call rules (no match / ambiguous).
@@ -79,7 +80,7 @@ func argsMatchParamTypes(fn runtime.Function, args []runtime.Value) bool {
 		}
 		typeStr := ""
 		if fn.Parameters[paramIdx].Type != nil {
-			typeStr = fn.Parameters[paramIdx].Type.String()
+			typeStr = typealias.Expand(fn.Parameters[paramIdx].Type, func(name string) (string, bool) { bound, ok := fn.TypeBindings[name]; return bound, ok }).String()
 		}
 		if !valueMatchesTypeString(typeParams, arg, typeStr) {
 			return false

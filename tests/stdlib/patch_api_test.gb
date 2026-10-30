@@ -1,0 +1,164 @@
+import test;
+import money;
+import cli;
+import io;
+import bytes;
+import json;
+import streams;
+import web.cache as cache;
+import async;
+
+class ShortJSONWriter {
+    string text = "";
+    int limit = 2;
+    bool closed = false;
+    func __writeBytes(bytes chunk): int {
+        int count = chunk.length() < this.limit ? chunk.length() : this.limit;
+        this.text = this.text + bytes.rawString(chunk.slice(0, count));
+        return count;
+    }
+    func close(): void { this.closed = true; }
+    func flush(): void { throw RuntimeError("borrowed stream must not be flushed"); }
+}
+class PatchApiTest extends test.Test {
+    @test
+    func byteLengthCountsStoredUtf8(): void {
+        this.assertEquals(0, "".byteLength());
+        this.assertEquals(3, "abc".byteLength());
+        this.assertEquals(1, "\u{20ac}".length());
+        this.assertEquals(3, "\u{20ac}".byteLength());
+        this.assertEquals(2, bytes.rawString(bytes.fromHex("ff61")).byteLength());
+        this.assertThrows(func(): void { "x".byteLength(1); });
+    }
+    @test
+    func moneyTotalsExactMinorUnitsAndChecksCurrency(): void {
+        let values = [money.Money("0.10", "GBP"), money.Money("0.20", "GBP")];
+        let total = money.sum(values);
+        this.assertEquals(30, total.minorUnits);
+        this.assertEquals("GBP", total.currency);
+        this.assertEquals(0, money.sum([], "JPY").minorUnits);
+        this.assertEquals(30, money.sum(values, "gbp").minorUnits);
+        this.assertThrows(func(): void { money.sum([]); });
+        this.assertThrows(func(): void { money.sum(values, "USD"); });
+        this.assertThrows(func(): void { money.sum([values[0], money.Money(1, "USD")]); });
+    }
+    @test
+    func decimalPromptSharesRetryCancelAndDefaultRules(): void {
+        let output = io.memory();
+        cli.withContext({"stdin": "bad\n\n0\n9\n2.5\n3.5\n\nQ\n", "stdout": output}, func(): void {
+            let result = cli.promptDecimal("Amount: ", {"min": 1, "max": 5, "choices": [2.5, 3.5], "validate": func(decimal value): ?string { return value == 2.5 ? "choose 3.5" : null; }});
+            this.assertEquals(3.5, result);
+            this.assertEquals(1.25, cli.promptDecimal("?", {"default": 1.25}));
+            this.assertNull(cli.promptDecimal("?", {"cancel": ["q"]}));
+            this.assertNull(cli.promptDecimal("?", {"default": 8}));
+        });
+        this.assertTrue(io.toString(output).contains("choose 3.5"));
+        cli.withContext({"stdin": "\n", "quiet": true}, func(): void {
+            this.assertEquals(decimal.type, typeof(cli.promptDecimal("?", {"default": 3})));
+            this.assertThrows(func(): void { cli.promptDecimal("?", {"default": "3"}); });
+            this.assertThrows(func(): void { cli.promptDecimal("?", {"min": 4, "max": 2}); });
+        });
+    }
+    @test
+    func jsonWriteRetriesShortWritesAndPreservesOwnership(): void {
+        let value = {"z": 1.25, "a": ["\u{20ac}", "line\n"]};
+        let writer = ShortJSONWriter();
+        this.assertEquals(json.stringify(value).byteLength(), json.write(value, writer));
+        this.assertEquals(json.stringify(value), writer.text);
+        this.assertFalse(writer.closed);
+        let handle = io.memory();
+        this.assertEquals(4, json.write(null, handle));
+        this.assertEquals("null", io.toString(handle));
+        io.write(handle, "!");
+        this.assertEquals("null!", io.toString(handle));
+        let wrapper = streams.memory();
+        this.assertEquals(4, json.write(true, wrapper));
+        writer.limit = 0;
+        this.assertThrows(func(): void { json.write(1, writer); });
+        this.assertThrows(func(): void { json.write(1, "/tmp/not-a-json-stream"); });
+        let cycle = []; cycle.push(cycle);
+        this.assertThrows(func(): void { json.write(cycle, ShortJSONWriter()); });
+    }
+    @test
+    func memoryCacheEvictsLeastRecentAndPreservesSnapshots(): void {
+        let bounded = cache.memoryCacheStore(3600, 2);
+        let original = {"items": [1]};
+        bounded.set("a", original);
+        original["items"].push(2);
+        bounded.set("b", 2);
+        let copy = bounded.get("a");
+        copy["items"].push(3);
+        bounded.set("c", 3);
+        this.assertNull(bounded.get("b"));
+        this.assertEquals([1], bounded.get("a")["items"]);
+        this.assertEquals(3, bounded.get("c"));
+        bounded.set("a", 4);
+        bounded.set("d", 5);
+        this.assertNull(bounded.get("c"));
+        this.assertEquals(4, bounded.get("a"));
+        this.assertTrue(bounded.delete("a"));
+        this.assertFalse(bounded.delete("a"));
+        this.assertThrows(func(): void { cache.memoryCacheStore(10, -1); });
+        let expired = cache.memoryCacheStore(-1, 1);
+        expired.set("gone", 1);
+        this.assertNull(expired.get("gone"));
+    }
+}
+
+class RetainingJSONWriter {
+    list<bytes> chunks = [];
+    func __writeBytes(bytes chunk): int { this.chunks.push(chunk); return chunk.length(); }
+    func text(): string {
+        string result = "";
+        for (chunk in this.chunks) { result = result + bytes.rawString(chunk); }
+        return result;
+    }
+}
+class JSONProtocolLifetimeTest extends test.Test {
+    @test
+    func writerCanRetainChunksAcrossBufferReuse(): void {
+        list<string> values = [];
+        for (i in 0..<3000) { values.push("record-${i}"); }
+        let writer = RetainingJSONWriter();
+        let expected = json.stringify(values);
+        this.assertEquals(expected.byteLength(), json.write(values, writer));
+        this.assertEquals(expected, writer.text());
+    }
+}
+
+import api_field_defaults as defaults;
+class LocalDefaults extends defaults.MiddleDefaults {
+    int own = 9;
+    string shared = "local";
+}
+func nestedDefault(list<list<int>> value = []): list<list<int>> { return value; }
+class InheritedDefaultRegressionTest extends test.Test {
+    @test
+    func crossModuleDefaultsAreInitializedAndIndependent(): void {
+        let first = LocalDefaults();
+        let second = LocalDefaults();
+        this.assertEquals(7, first.count);
+        this.assertEquals(9, first.own);
+        this.assertEquals("local", first.shared);
+        this.assertNull(first.unset);
+        first.items.push([8]);
+        first.mapping["a"] = [9];
+        this.assertEquals([], second.items);
+        this.assertEquals({}, second.mapping);
+        let parameter = nestedDefault();
+        parameter.push([9]);
+        this.assertEquals([], nestedDefault());
+    }
+}
+
+class LocalConstructorDefaults extends defaults.ConstructorDefaults {
+    func LocalConstructorDefaults() { parent(); this.items.push([9]); }
+}
+class ParentConstructorDefaultTest extends test.Test {
+    @test
+    func parentConstructorsSeeInitializedDefaults(): void {
+        let first = LocalConstructorDefaults();
+        first.items.push([10]);
+        this.assertEquals([[5], [9]], LocalConstructorDefaults().items);
+    }
+}

@@ -831,6 +831,9 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		a.declare(stmt.Name.Value, typeInfo{name: "func", known: true})
 		a.pushScope()
 		for _, param := range stmt.Parameters {
+			if param.Default != nil {
+				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
+			}
 			/* Parameter names are scoped to one function body and
 			 * tend to use common labels like `args`, `path`, `io`
 			 * intentionally. The shadowing diagnostic for those
@@ -839,9 +842,6 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 			 * confusion is more likely (`let errors = [...]`
 			 * followed by `errors.push(...)`). */
 			a.declare(param.Name.Value, a.parameterBindingType(param))
-			if param.Default != nil {
-				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
-			}
 		}
 		a.analyzeBlock(stmt.Body, stmt)
 		a.popScope()
@@ -941,10 +941,10 @@ func (a *Analyzer) analyzeFunctionLiteral(lit *ast.FunctionLiteral) {
 	a.pushScope()
 	defer a.popScope()
 	for _, param := range lit.Parameters {
-		a.declare(param.Name.Value, a.parameterBindingType(param))
 		if param.Default != nil {
 			a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
 		}
+		a.declare(param.Name.Value, a.parameterBindingType(param))
 	}
 	a.analyzeBlock(lit.Body, fn)
 }
@@ -1000,10 +1000,10 @@ func (a *Analyzer) analyzeClassMembers(stmt *ast.ClassStatement) {
 			a.declare("this", typeInfo{name: stmt.Name.Value, known: true})
 		}
 		for _, param := range method.Parameters {
-			a.declare(param.Name.Value, a.parameterBindingType(param))
 			if param.Default != nil {
 				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
 			}
+			a.declare(param.Name.Value, a.parameterBindingType(param))
 		}
 		a.analyzeBlock(method.Body, method)
 		a.popScope()
@@ -1023,10 +1023,10 @@ func (a *Analyzer) analyzeEnumMembers(stmt *ast.EnumStatement) {
 		a.pushScope()
 		a.declare("this", typeInfo{name: stmt.Name.Value, known: true})
 		for _, param := range method.Parameters {
-			a.declare(param.Name.Value, a.parameterBindingType(param))
 			if param.Default != nil {
 				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
 			}
+			a.declare(param.Name.Value, a.parameterBindingType(param))
 		}
 		a.analyzeBlock(method.Body, method)
 		a.popScope()

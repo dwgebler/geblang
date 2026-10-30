@@ -234,3 +234,24 @@ export func fromMinor(int units, string currency): Money {
     int fractionDigits = info["fractionDigits"] as int;
     return Money(units / (10 ** fractionDigits), info["code"] as string);
 }
+
+## Totals minor units without repeated Money allocations; empty input needs a currency.
+export func sum(list<Money> values, ?string currency = null): Money {
+    ?string selected = currency;
+    if (selected != null) {
+        selected = locale.currencyInfo(selected as string)["code"] as string;
+    }
+    int total = 0;
+    for (value in values) {
+        if (selected == null) {
+            selected = value.currency;
+        } else if (selected != value.currency) {
+            throw ValueError("money.sum: currencies must match");
+        }
+        total = total + value.minorUnits;
+    }
+    if (selected == null) {
+        throw ValueError("money.sum: empty input requires a currency");
+    }
+    return fromMinor(total, selected as string);
+}
