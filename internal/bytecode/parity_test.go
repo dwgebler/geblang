@@ -3095,6 +3095,101 @@ io.println(t instanceof donor.Countable);
 	}
 }
 
+// TestParityCrossModuleAliasedInterfaceParent covers a facade interface that
+// extends an interface its module imports under an alias (as gebweb's
+// MailerContract extends mailingmod.MailerContract): a class implementing the
+// facade must match the base interface in instanceof and casts, including a
+// cast inside the base interface's own module. The VM used to store the
+// parent as the alias and so lost the chain.
+func TestParityCrossModuleAliasedInterfaceParent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "lib"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	files := map[string]string{
+		"lib/base.gb": `module lib.base;
+
+export interface Contract {
+    func deliver(string to): string;
+}
+
+export func castHere(any v): string {
+    let c = v as Contract;
+    return "cast ok";
+}
+
+export func isHere(any v): bool {
+    return v instanceof Contract;
+}
+`,
+		"lib/facade.gb": `module lib.facade;
+import lib.base as basemod;
+
+export interface Contract extends basemod.Contract {}
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	source := `import io;
+import reflect;
+import lib.base as base;
+import lib.facade as facade;
+
+class ViaFacade implements facade.Contract {
+    func deliver(string to): string { return "to " + to; }
+}
+
+any v = ViaFacade();
+io.println(base.castHere(v));
+io.println(base.isHere(v));
+io.println(v instanceof base.Contract);
+let c = v as base.Contract;
+io.println(c.deliver("main"));
+io.println(v instanceof facade.Contract);
+io.println(reflect.interfaceParents(facade.Contract));
+io.println(reflect.interfaceMethods(base.Contract)[0]["name"]);
+`
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	want := "cast ok\ntrue\ntrue\nto main\ntrue\n[\"Contract\"]\ndeliver\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
 // TestParityCallResolvedMethod exercises the OpCallResolvedMethod
 // specialised opcode the compiler emits when the receiver's class is
 // statically known and the method resolves to a single non-decorated

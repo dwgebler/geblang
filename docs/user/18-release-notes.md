@@ -1,5 +1,21 @@
 # Release Notes
 
+## 1.40.4
+
+### Fixes
+
+- On the VM, an interface that extends an interface from a module imported
+  under an alias (`import lib.base as basemod;` then
+  `interface Contract extends basemod.Contract {}`) lost that parent when used
+  from other modules. A class implementing it did not match the parent in
+  `instanceof`, and casting it to the parent failed with `cannot cast`. The
+  evaluator was not affected.
+- On the VM, `reflect.interfaceParents` returns bare parent names for a
+  qualified parent, as the evaluator does.
+- On the VM, `reflect.interfaceParents`, `reflect.interfaceMethods` and
+  `reflect.doc` accept an interface imported from another module instead of
+  failing with `expects interface, got interface`.
+
 ## 1.40.3
 
 ### Performance

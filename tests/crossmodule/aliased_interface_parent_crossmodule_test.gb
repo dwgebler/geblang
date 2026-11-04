@@ -1,0 +1,52 @@
+/**
+ * @title Interface parent imported under an alias
+ * @summary A facade interface that extends an interface its module imports
+ *          under an alias keeps the parent chain: a class implementing the
+ *          facade matches and casts to the base interface everywhere,
+ *          including inside the base interface's own module.
+ */
+import test;
+import reflect;
+import aliased_iface_base_donor as base;
+import aliased_iface_facade_donor as facade;
+
+interface LocalContract extends base.Contract {
+}
+
+class ViaFacade implements facade.Contract {
+    func deliver(string to): string {
+        return "to " + to;
+    }
+}
+
+class AliasedInterfaceParentTest extends test.Test {
+    @test
+    func castInsideTheBaseModule(): void {
+        this.assertEquals("to base", base.castHere(ViaFacade()));
+        this.assertTrue(base.isHere(ViaFacade()));
+    }
+
+    @test
+    func castAndInstanceofInTheImporter(): void {
+        any v = ViaFacade();
+        this.assertTrue(v instanceof base.Contract);
+        this.assertTrue(v instanceof facade.Contract);
+        let c = v as base.Contract;
+        this.assertEquals("to main", c.deliver("main"));
+    }
+
+    @test
+    func reflectReportsBareParentNames(): void {
+        this.assertEquals(["Contract"], reflect.interfaceParents(LocalContract));
+    }
+
+    @test
+    func reflectReadsInterfacesFromOtherModules(): void {
+        this.assertEquals(["Contract"], reflect.interfaceParents(facade.Contract));
+        this.assertEquals([], reflect.interfaceParents(base.Contract));
+        let methods = reflect.interfaceMethods(base.Contract);
+        this.assertEquals(1, methods.length());
+        this.assertEquals("deliver", methods[0]["name"]);
+        this.assertEquals("Delivers a message.", reflect.doc(base.Contract));
+    }
+}

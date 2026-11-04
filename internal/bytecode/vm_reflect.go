@@ -294,7 +294,12 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 			return nil, fmt.Errorf("reflect.%s expects interface, got %s", fn, args[0].TypeName())
 		}
 		if fn == "interfaceParents" {
-			parents := append([]string(nil), iface.Parents...)
+			// Bare names, as the evaluator reports them: a qualified parent
+			// is stored with its module path.
+			parents := make([]string, 0, len(iface.Parents))
+			for _, parent := range iface.Parents {
+				parents = append(parents, stripModulePrefix(parent))
+			}
 			sort.Strings(parents)
 			return bytecodeStringList(parents), nil
 		}
@@ -316,6 +321,16 @@ func (vm *VM) reflectInterfaceInfo(value runtime.Value) (InterfaceInfo, bool) {
 	switch value := value.(type) {
 	case runtime.String:
 		return vm.lookupInterfaceInfo(value.Value)
+	case *runtime.Interface:
+		// An imported interface arrives as its export value; its metadata lives in the declaring chunk.
+		name := stripModulePrefix(value.Name)
+		if value.Module == "" || value.Module == vm.moduleName {
+			return vm.lookupInterfaceInfo(name)
+		}
+		if vm.moduleLoader == nil {
+			return InterfaceInfo{}, false
+		}
+		return vm.moduleLoader.LookupModuleInterface(value.Module, name)
 	default:
 		return InterfaceInfo{}, false
 	}

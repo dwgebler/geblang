@@ -518,6 +518,11 @@ func (c *Compiler) compileInterfaceStatement(stmt *ast.InterfaceStatement) error
 			if !strings.Contains(parent.Name, ".") {
 				return fmt.Errorf("bytecode compiler parent interface %s is not declared", parent.Name)
 			}
+			// Canonicalize an import alias (as class implements does): the
+			// VM resolves a foreign parent through the loader by module path,
+			// so `extends alias.Base` must be stored as `module.path.Base`.
+			iface.Parents = append(iface.Parents, c.resolveQualifiedClassName(parent.Name))
+			continue
 		}
 		iface.Parents = append(iface.Parents, parent.Name)
 	}

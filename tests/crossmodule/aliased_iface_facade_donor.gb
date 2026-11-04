@@ -1,0 +1,5 @@
+module aliased_iface_facade_donor;
+import aliased_iface_base_donor as basemod;
+
+export interface Contract extends basemod.Contract {
+}

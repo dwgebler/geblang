@@ -1,0 +1,15 @@
+module aliased_iface_base_donor;
+
+/** Delivers a message. */
+export interface Contract {
+    func deliver(string to): string;
+}
+
+export func castHere(any v): string {
+    let c = v as Contract;
+    return c.deliver("base");
+}
+
+export func isHere(any v): bool {
+    return v instanceof Contract;
+}
