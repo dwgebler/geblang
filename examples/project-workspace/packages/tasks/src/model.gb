@@ -1,0 +1,27 @@
+module project_tasks.model;
+import task_labels.text as text;
+
+export class Task {
+    string title;
+
+    func Task(string title) {
+        this.title = text.normalize(title);
+    }
+
+    func describe(): string {
+        return "Task: ${this.title}";
+    }
+}
+
+export class AssignedTask extends Task {
+    string owner;
+
+    func AssignedTask(string title, string owner) {
+        parent(title);
+        this.owner = owner;
+    }
+
+    func assigned(): string {
+        return "${this.describe()} / ${this.owner}";
+    }
+}

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -42,6 +43,7 @@ type Manifest struct {
 	Resources    []string
 	Dependencies map[string]Dependency
 	Permissions  ManifestPermissions
+	Workspace    Workspace
 }
 
 // ManifestPermissions is the geblang.yaml permissions block.
@@ -53,9 +55,10 @@ type ManifestPermissions struct {
 }
 
 type Dependency struct {
-	Path    string `yaml:"path"`
-	Git     string `yaml:"git"`
-	Version string `yaml:"version"`
+	Path      string `yaml:"path"`
+	Git       string `yaml:"git"`
+	Version   string `yaml:"version"`
+	Workspace bool   `yaml:"workspace,omitempty"`
 }
 
 func (d *Dependency) UnmarshalYAML(value *yamllib.Node) error {
@@ -84,6 +87,7 @@ type manifestFile struct {
 	ModulePaths  []string              `yaml:"modulePaths"`
 	Resources    []string              `yaml:"resources"`
 	Dependencies map[string]Dependency `yaml:"dependencies"`
+	Workspace    Workspace             `yaml:"workspace"`
 	Package      struct {
 		Name    string `yaml:"name"`
 		Version string `yaml:"version"`
@@ -152,81 +156,22 @@ func (r *Resolver) IsReservedModuleName(canonical string) bool {
 	return r.stdlibModuleNames()[top]
 }
 
-// resolveStdlibOnly resolves canonical strictly against the stdlib path,
-// ignoring user/program/package paths. Used for reserved built-in names and the
-// geblang. prefix so user files can never shadow a built-in. A not-found result
-// (e.g. a native-only module with no stdlib source) lets the caller fall back
-// to the native built-in.
-func (r *Resolver) resolveStdlibOnly(canonical string) (string, error) {
-	if r.DisableStdlib {
-		return "", fmt.Errorf("cannot resolve module %q", canonical)
-	}
-	baseRelative := filepath.Join(strings.Split(canonical, ".")...)
-	candidates := []string{baseRelative + ".gb", filepath.Join(baseRelative, "init.gb")}
-	for _, base := range r.StdlibPaths {
-		for _, relative := range candidates {
-			candidate := filepath.Clean(filepath.Join(base, relative))
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				return candidate, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("cannot resolve module %q", canonical)
-}
-
 func (r *Resolver) Resolve(canonical string) (string, error) {
-	// `geblang.X` is the canonical built-in path: resolve X strictly against the
-	// stdlib, never user/package files.
-	if rest, ok := strings.CutPrefix(canonical, ReservedNamespace+"."); ok {
-		return r.resolveStdlibOnly(rest)
-	}
-	// A reserved built-in name resolves only to the built-in; user/package files
-	// may not shadow it (parity with the VM, which always treats these natively).
-	if r.IsReservedModuleName(canonical) {
-		return r.resolveStdlibOnly(canonical)
-	}
-	baseRelative := filepath.Join(strings.Split(canonical, ".")...)
-	candidates := []string{baseRelative + ".gb", filepath.Join(baseRelative, "init.gb")}
-	seen := map[string]bool{}
-	for _, base := range r.searchPaths() {
-		if base == "" {
-			base = "."
+	var selected string
+	err := r.walkCandidates(canonical, func(candidate Candidate) bool {
+		if candidate.Exists {
+			selected = candidate.Path
+			return true
 		}
-		for _, relative := range candidates {
-			candidate := filepath.Clean(filepath.Join(base, relative))
-			if seen[candidate] {
-				continue
-			}
-			seen[candidate] = true
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				return candidate, nil
-			}
-		}
-	}
-	packageRoots, err := r.packageModuleRoots()
+		return false
+	})
 	if err != nil {
 		return "", err
 	}
-	for _, root := range packageRoots {
-		for _, relativeBase := range relativeModuleBases(canonical, root.manifest.Name) {
-			for _, relative := range []string{relativeBase + ".gb", filepath.Join(relativeBase, "init.gb")} {
-				candidate := filepath.Clean(filepath.Join(root.path, relative))
-				if seen[candidate] {
-					continue
-				}
-				seen[candidate] = true
-				if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-					return candidate, nil
-				}
-			}
-		}
+	if selected == "" {
+		return "", fmt.Errorf("cannot resolve module %q", canonical)
 	}
-	for _, relative := range candidates {
-		if info, err := os.Stat(relative); err == nil && !info.IsDir() {
-			return relative, nil
-		}
-	}
-	return "", fmt.Errorf("cannot resolve module %q", canonical)
+	return selected, nil
 }
 
 func (r *Resolver) searchPaths() []string {
@@ -442,9 +387,19 @@ func (r *Resolver) collectPackageModuleRoots(manifest *Manifest, seenManifests m
 		seenRoots[rootPath] = true
 		*roots = append(*roots, moduleRoot{path: rootPath, manifest: manifest})
 	}
-	for name, dependency := range manifest.Dependencies {
+	for _, name := range dependencyNames(manifest.Dependencies) {
+		dependency := manifest.Dependencies[name]
 		var dependencyRoot string
-		if dependency.Git != "" && dependency.Path == "" {
+		if dependency.Workspace {
+			member, err := r.workspaceDependency(manifest, name, dependency)
+			if err != nil {
+				return err
+			}
+			if err := r.collectPackageModuleRoots(member, seenManifests, seenRoots, roots); err != nil {
+				return err
+			}
+			continue
+		} else if dependency.Git != "" && dependency.Path == "" {
 			// Git dependency: resolved from vendor/<name> adjacent to this manifest.
 			vendorPath := filepath.Join(manifest.Root, "vendor", name)
 			if _, err := os.Stat(vendorPath); err != nil {
@@ -534,6 +489,7 @@ func (r *Resolver) LoadManifest(path string) (*Manifest, error) {
 		Paths:        paths,
 		Resources:    append([]string(nil), parsed.Resources...),
 		Dependencies: parsed.Dependencies,
+		Workspace:    parsed.Workspace,
 		Permissions: ManifestPermissions{
 			FFI:            parsed.Permissions.FFI,
 			Onnx:           parsed.Permissions.Onnx,
@@ -614,4 +570,13 @@ func relativeModuleBases(canonical, packageName string) []string {
 		bases = append(bases, filepath.Join(strings.Split(stripped, ".")...))
 	}
 	return bases
+}
+
+func dependencyNames(dependencies map[string]Dependency) []string {
+	names := make([]string, 0, len(dependencies))
+	for name := range dependencies {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

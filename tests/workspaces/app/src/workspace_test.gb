@@ -1,0 +1,24 @@
+import test;
+import workspace_domain.base as base;
+import workspace_domain.model as model;
+
+class WorkspaceResolutionTest extends test.Test {
+    @test
+    func resolvesWorkspaceClassAndTransitivePathDependency(): void {
+        let task = base.Task("  Model  ");
+
+        this.assertEquals("Model", task.title);
+        this.assertEquals("Task: Model", task.describe());
+    }
+
+    @test
+    func preservesOwnAndInheritedMembersAcrossPackages(): void {
+        let task = model.AssignedTask("  API  ", "Ada");
+        let describe = task.describe;
+
+        this.assertEquals("API", task.title);
+        this.assertEquals("Ada", task.owner);
+        this.assertEquals("Task: API", describe());
+        this.assertEquals("Task: API / Ada", model.describe(task));
+    }
+}

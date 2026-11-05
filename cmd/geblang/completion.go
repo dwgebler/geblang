@@ -10,7 +10,7 @@ import (
 // single source for shell completion. A guard test keeps it in sync
 // with the documented command set so completion cannot lag the CLI.
 var topLevelCommands = []string{
-	"run", "build", "install", "fmt", "check", "test", "doc", "bind",
+	"run", "build", "install", "resolve", "fmt", "check", "test", "doc", "bind",
 	"lsp", "dap", "doctor", "cache", "init", "completion", "licenses",
 	"help", "version",
 }

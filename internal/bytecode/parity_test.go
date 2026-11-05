@@ -19,6 +19,25 @@ import (
 	"geblang/internal/parser"
 )
 
+func TestParityWorkspaceDependenciesAndImportedInheritance(t *testing.T) {
+	dir, err := filepath.Abs("../../tests/workspaces/app/src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, `import io;
+import workspace_domain.base as base;
+import workspace_domain.model as model;
+let task = base.Task("  Model  ");
+io.println(task.describe());
+let assigned = model.AssignedTask("  API  ", "Ada");
+io.println(assigned.title);
+io.println(assigned.owner);
+io.println(model.describe(assigned));
+let describe = assigned.describe;
+io.println(describe());
+`, "Task: Model\nAPI\nAda\nTask: API / Ada\nTask: API\n")
+}
+
 func TestParityStringDictionaryLookups(t *testing.T) {
 	runParity(t, `import io;
  dict<any, any> values = {"": 7, "1": "string", 1: "integer", "s\u{0}\u{65e5}\u{672c}\u{8a9e}": 9};

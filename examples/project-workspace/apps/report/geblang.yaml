@@ -1,0 +1,5 @@
+name: report_app
+source: src
+dependencies:
+  project_tasks:
+    workspace: true

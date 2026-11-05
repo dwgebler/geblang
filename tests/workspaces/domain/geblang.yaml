@@ -1,0 +1,4 @@
+name: workspace_domain
+source: lib
+dependencies:
+  workspace_labels: {path: ../external}

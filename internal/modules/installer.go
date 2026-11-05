@@ -32,11 +32,20 @@ func Install(manifestPath, lockPath string) error {
 	if err != nil {
 		return fmt.Errorf("install: read manifest: %w", err)
 	}
+	for _, name := range dependencyNames(manifest.Dependencies) {
+		dependency := manifest.Dependencies[name]
+		if dependency.Workspace {
+			if _, err := r.workspaceDependency(manifest, name, dependency); err != nil {
+				return fmt.Errorf("install: %w", err)
+			}
+		}
+	}
 	vendorDir := filepath.Join(manifest.Root, "vendor")
 	lock := readLockFile(lockPath)
 	changed := false
 
-	for name, dep := range manifest.Dependencies {
+	for _, name := range dependencyNames(manifest.Dependencies) {
+		dep := manifest.Dependencies[name]
 		if dep.Git == "" {
 			continue
 		}

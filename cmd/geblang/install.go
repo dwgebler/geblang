@@ -10,6 +10,17 @@ import (
 )
 
 func runInstall(args []string) {
+	if len(args) == 1 && args[0] == "--workspace" {
+		wd, err := os.Getwd()
+		if err == nil {
+			err = modules.InstallWorkspace(wd)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "install:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	// Find the manifest for the current working directory.
 	wd, err := os.Getwd()
 	if err != nil {

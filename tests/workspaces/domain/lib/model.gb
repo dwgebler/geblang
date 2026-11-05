@@ -1,0 +1,13 @@
+module workspace_domain.model;
+import workspace_domain.base as base;
+
+export class AssignedTask extends base.Task {
+    string owner;
+    func AssignedTask(string title, string owner) {
+        parent(title);
+        this.owner = owner;
+    }
+    func assigned(): string { return "${this.describe()} / ${this.owner}"; }
+}
+
+export func describe(AssignedTask task): string { return task.assigned(); }

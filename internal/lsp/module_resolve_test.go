@@ -20,6 +20,28 @@ export class Widget {
 }
 `
 
+func TestDefinition_ResolvesExplicitWorkspaceDependency(t *testing.T) {
+	root, err := filepath.Abs("../../tests/workspaces")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := newTestServer()
+	s.workspaceRoots = []string{root}
+	uri := pathToURI(filepath.Join(root, "app/src/editor.gb"))
+	s.docs[uri] = "import workspace_domain.model as model;\nmodel.describe(null);\n"
+
+	result := s.definition(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: uri},
+		Position:     Position{Line: 1, Character: 8},
+	})
+
+	location, ok := result.(Location)
+	want := pathToURI(filepath.Join(root, "domain/lib/model.gb"))
+	if !ok || location.URI != want {
+		t.Fatalf("got %#v, want definition in %s", result, want)
+	}
+}
+
 // writeModuleFixture creates <root>/app/foo.gb and returns both paths.
 func writeModuleFixture(t *testing.T) (string, string) {
 	t.Helper()

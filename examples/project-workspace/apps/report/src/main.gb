@@ -1,0 +1,13 @@
+module report_app.main;
+import io;
+import project_tasks.model as model;
+import report_app.formatting as formatting;
+
+export func main(list<string> args): void {
+    let task = model.Task("  Model  ");
+    io.println(task.describe());
+    let assigned = model.AssignedTask("  API  ", "Ada");
+    io.println(formatting.label(assigned));
+    let describe = assigned.describe;
+    io.println(describe());
+}

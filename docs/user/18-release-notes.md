@@ -1,5 +1,26 @@
 # Release Notes
 
+## 1.41.0
+
+### Added
+
+- Opt-in project workspaces: list packages with `workspace.members` and
+  reference them explicitly with `workspace: true` dependencies. Existing
+  package layouts, source paths, imports and path/Git dependencies remain
+  supported.
+- `geblang install --workspace` installs member and transitive dependencies,
+  retaining each package's vendor directory and lockfile.
+- `geblang resolve` reports an import's source file or built-in provider.
+  `--explain` shows candidate paths and manifests, `--from` chooses the lookup
+  context, and `--strict` opts into failure on competing providers.
+
+### Fixes
+
+- Dependencies are traversed in alphabetical key order. Previously, an
+  ambiguous import could select different providers on repeated lookups.
+- Import-check diagnostics include the underlying resolution error, including
+  workspace configuration problems.
+
 ## 1.40.4
 
 ### Fixes

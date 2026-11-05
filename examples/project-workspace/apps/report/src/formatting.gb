@@ -1,0 +1,6 @@
+module report_app.formatting;
+import project_tasks.model as model;
+
+export func label(model.AssignedTask task): string {
+    return task.assigned();
+}

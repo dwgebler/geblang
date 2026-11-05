@@ -1,0 +1,5 @@
+name: project_tasks
+source: src
+dependencies:
+  task_labels:
+    path: ../../external/labels

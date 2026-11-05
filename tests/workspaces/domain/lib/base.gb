@@ -1,0 +1,8 @@
+module workspace_domain.base;
+import workspace_labels.text as text;
+
+export class Task {
+    string title;
+    func Task(string title) { this.title = text.normalize(title); }
+    func describe(): string { return "Task: ${this.title}"; }
+}

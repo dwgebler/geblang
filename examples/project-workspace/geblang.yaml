@@ -1,0 +1,8 @@
+name: project_workspace
+workspace:
+  members:
+    - apps/report
+    - packages/tasks
+dependencies:
+  report_app:
+    workspace: true

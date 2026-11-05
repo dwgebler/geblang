@@ -543,7 +543,7 @@ func checkImports(file string, program *ast.Program, opts Options) []Diagnostic 
 					Column:   imp.Token.Column,
 					Severity: SeverityError,
 					Rule:     "import",
-					Message:  fmt.Sprintf("cannot resolve import %s", canonical),
+					Message:  fmt.Sprintf("cannot resolve import %s: %v", canonical, err),
 				})
 			}
 		case *ast.FromImportStatement:
@@ -558,7 +558,7 @@ func checkImports(file string, program *ast.Program, opts Options) []Diagnostic 
 					Column:   imp.Token.Column,
 					Severity: SeverityError,
 					Rule:     "import",
-					Message:  fmt.Sprintf("cannot resolve import %s", canonical),
+					Message:  fmt.Sprintf("cannot resolve import %s: %v", canonical, err),
 				})
 			}
 		}

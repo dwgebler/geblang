@@ -1,5 +1,10 @@
 # vscode-geblang
 
+With Geblang 1.41.0, imported definitions in packages using explicit workspace
+dependencies resolve through the language server's shared module resolver.
+Open the workspace root or an individual member package. For an import lookup
+trace, run `geblang resolve --from path/to/member --explain package.module`.
+
 Visual Studio Code extension for [Geblang](https://github.com/dgebler/geblang).
 
 ## Features

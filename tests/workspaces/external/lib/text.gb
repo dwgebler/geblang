@@ -1,0 +1,2 @@
+module workspace_labels.text;
+export func normalize(string title): string { return title.trim(); }

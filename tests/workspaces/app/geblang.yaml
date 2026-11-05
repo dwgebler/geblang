@@ -1,0 +1,4 @@
+name: workspace_app
+source: src
+dependencies:
+  workspace_domain: {workspace: true}

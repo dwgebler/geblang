@@ -140,6 +140,10 @@ func main() {
 		runInstall(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "resolve" {
+		runResolve(os.Args[2:])
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "fmt" {
 		runFmt(os.Args[2:])
 		return
@@ -352,6 +356,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  geblang bind <manifest.yaml>       generate a Geblang module wrapping a C-ABI shared library (FFI)")
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "IDE / tooling integration:")
+	fmt.Fprintln(writer, "  geblang resolve [--explain] <module>  inspect module resolution and competing providers")
 	fmt.Fprintln(writer, "  geblang lsp                        start the Language Server Protocol server (stdio)")
 	fmt.Fprintln(writer, "  geblang dap                        start the Debug Adapter Protocol server (stdio)")
 	fmt.Fprintln(writer, "  geblang doctor [--json]            inspect the local install for common setup issues")
@@ -438,7 +443,13 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang build --entry app.main --out build/app ./packages/app")
 		fmt.Fprintln(writer, "  geblang build --entry app.main --out build/app --native")
 		return true
+	case "resolve":
+		fmt.Fprintln(writer, "usage: geblang resolve [--explain] [--strict] [--from path] <module>")
+		fmt.Fprintln(writer, "Show the selected source file or native built-in. --explain lists candidates and manifests.")
+		fmt.Fprintln(writer, "--strict fails on multiple providers; normal execution keeps first-match resolution.")
+		return true
 	case "install":
+		fmt.Fprintln(writer, "geblang install --workspace installs each listed workspace package's Git dependencies.")
 		fmt.Fprintln(writer, "usage: geblang install")
 		fmt.Fprintln(writer, "       geblang install <git-url>[@version] [<name>]")
 		fmt.Fprintln(writer)

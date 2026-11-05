@@ -384,7 +384,7 @@ paths:                    # extra module roots, relative to the manifest
 resources:                # files embedded into a geblang build binary
   - templates
   - assets
-dependencies:             # other packages, by mount name (see below)
+dependencies:             # other packages, by dependency key (see below)
   shared: ../shared
   httplib:
     git: https://github.com/acme/httplib
@@ -398,25 +398,39 @@ dependencies:             # other packages, by mount name (see below)
 | `source` | The primary module root, a single directory. Its tree resolves as modules: `import app.users;` finds `<source>/app/users.gb` or `<source>/app/users/init.gb`. When omitted, the manifest's own directory is the root. |
 | `paths` | Additional module roots, each relative to the manifest, searched after `source`. Use for generated or co-located code that should also resolve as modules. `modulePaths` is accepted as an alias and merged in. |
 | `resources` | Files and directories embedded into the binary by `geblang build`, so a single-file release can read them at runtime. They are not part of the import tree. See the Bundling chapter for details. |
-| `dependencies` | Other packages this one imports, each mounted under a name and pointing at a local path or a git repository (next section). |
+| `dependencies` | Other packages this one imports: a local path, Git repository, or explicitly named workspace member (next section). |
 
 A nested `package:` block with `name:` and `version:` keys is accepted as an
 alternative to the top-level `name` and `version`.
 
 ### Module resolution order
 
-For an ordinary (non-reserved) name, the resolver searches, in order: this
-package's roots (`source`, then each `paths` entry), each dependency's roots
-(transitively), the bundled source stdlib, then any directory on `GEBLANG_PATH`.
-The first matching `<name>.gb` (or `<name>/init.gb`) wins. Reserved built-in
-names always resolve to the built-in regardless of local files (see Reserved
-built-in module names below), so resolution is identical on the evaluator and
-the bytecode VM.
+Reserved built-in names resolve only to the built-in provider, regardless of
+local files. For other names, resolution preserves these existing stages:
+
+1. Direct dotted paths under the resolver's configured search directories,
+   source stdlib directories, and `GEBLANG_PATH` directories, in that order.
+2. Package manifests found from those directories: `source`, then `paths`,
+   followed by dependencies recursively. Within a package root, try the full
+   dotted path, then the path with that package's declared name removed.
+3. A direct dotted path relative to the current working directory.
+
+Each candidate base tries `.gb` before `/init.gb`; the first existing file
+wins. Dependency entries are traversed by alphabetical key, depth first.
+Before 1.41.0, colliding dependency providers could be selected in an unstable
+order. Other precedence rules are unchanged. Use `resolve --explain` below to
+inspect the actual candidates for your invocation.
 
 ### Dependencies
 
-Each dependency is keyed by the name it is mounted under and is either a path or
-a git source.
+Dependency keys identify dependency entries and Git vendor directories. They do
+not rename the dependency's declared package namespace. If a dependency keyed
+`shared` declares `name: acme.tools`, import its modules as `acme.tools.*`.
+Both existing layouts remain supported: a full path such as
+`src/acme/tools/users.gb`, and a package-relative path such as `src/users.gb`.
+The resolver tries the full path first, then the package-relative path.
+
+Each dependency has a key and a path, Git source, or explicit workspace source.
 
 **Path dependencies** point at another package on disk. A relative path is
 resolved against the manifest; an absolute path is used as-is. A leading `~`
@@ -434,9 +448,11 @@ dependencies:
     path: ~/src/tooling
 ```
 
-The target must itself be a package (have its own `geblang.yaml`); its `source`,
-`paths`, and transitive dependencies are all honored. Path dependencies need no
-install step.
+Use a target package with its own `geblang.yaml` to define its namespace,
+`source`, `paths`, and transitive dependencies. Legacy dependency directories
+without a manifest remain supported, using the dependency key as the package
+name and that directory as its source root. Path dependencies need no fetch;
+their external Git dependencies still need installation.
 
 **Git dependencies** point at a remote repository:
 
@@ -457,10 +473,10 @@ manifest and pins the resolved commit in `geblang.lock`:
 ```sh
 geblang install                                              # fetch all declared git deps
 geblang install https://github.com/acme/httplib              # add one and fetch it
-geblang install https://github.com/acme/httplib@v1.4.0 http  # pin a version, mount as http
+geblang install https://github.com/acme/httplib@v1.4.0 http  # pin a version, dependency key http
 ```
 
-The add form appends the dependency to `geblang.yaml`, inferring the mount name
+The add form appends the dependency to `geblang.yaml`, inferring the dependency key
 from the URL's last path segment when you omit it. A git dependency that has not
 been installed is skipped during resolution until you run `geblang install`.
 Commit `geblang.lock` so collaborators and CI resolve the same commits:
@@ -473,6 +489,106 @@ dependencies:
     version: v1.4.0
     commit: 9f2c1ab4e8d7b6...
 ```
+
+## Workspaces (1.41.0)
+
+A module is a source file; a package groups modules under one manifest. A
+workspace explicitly lists related packages, each with its own manifest,
+namespace, source directories and dependencies. Ordinary submodules need no
+extra manifests.
+
+```text
+project/
+  geblang.yaml
+  apps/api/
+    geblang.yaml
+    src/main.gb
+  packages/domain/
+    geblang.yaml
+    src/task.gb
+```
+
+The root manifest lists member directories. Paths are literal relative
+directories inside the workspace, rather than recursive discovery or globs:
+
+```yaml
+name: project
+workspace:
+  members:
+    - apps/api
+    - packages/domain
+dependencies:
+  app:
+    workspace: true
+```
+
+`apps/api/geblang.yaml` declares its dependency explicitly:
+
+```yaml
+name: app
+source: src
+dependencies:
+  domain:
+    workspace: true
+```
+
+`packages/domain/geblang.yaml` declares the selected member's package name:
+
+```yaml
+name: domain
+source: src
+```
+
+Now `apps/api/src/main.gb` can declare `module app.main;` and import
+`domain.task`, which resolves to `packages/domain/src/task.gb`. The root's
+explicit `app` dependency also lets `geblang -m app.main` and
+`geblang build --entry app.main --out app` resolve the entry from the root.
+Inside apps/api/, those commands use the member's own manifest.
+
+`workspace: true` looks up the dependency key as an exact member package name
+in an ancestor workspace. The requesting package must be that workspace root
+or a listed member. A listed member does not automatically become a dependency
+of other packages. Existing transitive dependencies remain available.
+Workspace dependencies cannot also specify `path`, `git` or `version`.
+Missing member manifests, duplicate member package names, and unknown member
+dependencies produce contextual errors when the workspace is used.
+
+Members may freely combine workspace, existing local path, and Git dependency
+entries. The explicit workspace form never replaces an existing path or Git
+dependency automatically. An external dependency's own manifest still controls
+its namespace and source roots.
+
+```sh
+geblang install --workspace
+```
+
+This installs Git dependencies for the root, all listed members, and their
+transitive dependencies. Each package retains its own `vendor/` and
+`geblang.lock`; local workspace references need no download or lock entry.
+Plain `geblang install` keeps its existing scope: the nearest package's direct
+Git dependencies. Workspaces do not introduce shared version constraints or
+automatically override external packages with local members.
+
+## Explain module resolution (1.41.0)
+
+```sh
+geblang resolve app.main
+geblang resolve --from apps/api --explain domain.task
+geblang resolve --from apps/api --strict domain.task
+geblang resolve --explain geblang.io
+```
+
+`resolve` prints the selected source path or native built-in. `--from` chooses
+the importing file or directory; it defaults to the working directory.
+`--explain` lists candidates, their search origin, package manifests, and
+whether each is missing, selected or shadowed. A failed lookup exits nonzero;
+use `--explain` to see the searched paths.
+
+Competing source providers produce a warning from this diagnostic command.
+`--strict` makes that ambiguity a failing exit status, suitable for CI. Normal
+execution retains first-match selection and does not gain new warnings or
+errors. Reserved built-ins cannot be shadowed by workspace packages.
+The evaluator, VM, checker, bundler and language server use the shared resolver.
 
 ## Source Stdlib
 
