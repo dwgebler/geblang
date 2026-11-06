@@ -977,6 +977,43 @@ io.println("after");
 `, "caught: TypeError: cannot cast list to int\nafter\n")
 }
 
+// A failed checked collection cast names the first offending key, element
+// or member and its path, so a deep mismatch is findable from the message.
+func TestParityCollectionCastNamesTheMismatch(t *testing.T) {
+	runParity(t, `import io;
+
+func show(callable f): void {
+    try {
+        f();
+        io.println("ok");
+    } catch (TypeError e) {
+        io.println(e.message);
+    }
+}
+any intKeys = {0: 1, 2: 3};
+any nested = {"report": {"ends": {0: 5}}};
+any items = [1, 2, "three"];
+any stats = {"stats": [1, 2, "x"]};
+any wrongInner = {"a": [1], "b": "not a list"};
+any members = {2, 1};
+show(func(): void { let x = intKeys as dict<string, any>; });
+show(func(): void { let x = nested as dict<string, dict<string, dict<string, int>>>; });
+show(func(): void { let x = items as list<int>; });
+show(func(): void { let x = stats as dict<string, list<int>>; });
+show(func(): void { let x = wrongInner as dict<string, list<int>>; });
+show(func(): void { let x = members as set<string>; });
+show(func(): void { let x = items as dict<string, any>; });
+show(func(): void { let x = {"a": 1} as dict<string, int>; });
+`, "cannot cast dict to dict<string, any>: key 0 is int, not string\n"+
+		"cannot cast dict to dict<string, dict<string, dict<string, int>>>: [\"report\"][\"ends\"] key 0 is int, not string\n"+
+		"cannot cast list to list<int>: [2] is string, not int\n"+
+		"cannot cast dict to dict<string, list<int>>: [\"stats\"][2] is string, not int\n"+
+		"cannot cast dict to dict<string, list<int>>: [\"b\"] is string, not list<int>\n"+
+		"cannot cast set to set<string>: member 1 is int, not string\n"+
+		"cannot cast list to dict\n"+
+		"ok\n")
+}
+
 func TestParityRuntimeTypeAndValueErrorClasses(t *testing.T) {
 	runParity(t, `import io;
 any left = 1;

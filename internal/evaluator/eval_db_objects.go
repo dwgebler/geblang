@@ -4,8 +4,41 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	goruntime "runtime"
+	"weak"
+
 	"geblang/internal/runtime"
 )
+
+// dbRowsKind tags a Rows value's handle. Its NativeObject payload owns the
+// *dbRowsHandle (rows, cancel and any all/get/first cache), so the handle is
+// freed with the last Rows value that refers to it instead of staying in a
+// per-evaluator registry for the life of the process.
+const dbRowsKind = "DBRows"
+
+// dbRowsCleanup closes the rows of a handle that was dropped while still
+// open. It holds what the cleanup needs without referring to the handle.
+type dbRowsCleanup struct {
+	owner  *Evaluator
+	id     int64
+	rows   *sql.Rows
+	cancel context.CancelFunc
+}
+
+func releaseAbandonedDBRows(c dbRowsCleanup) {
+	_ = c.rows.Close()
+	if c.cancel != nil {
+		c.cancel()
+	}
+	c.owner.forgetDBRows(c.id)
+}
+
+// forgetDBRows drops a handle's entry from the shutdown sweep's registry.
+func (e *Evaluator) forgetDBRows(id int64) {
+	e.dbMu.Lock()
+	delete(e.dbRows, id)
+	e.dbMu.Unlock()
+}
 
 func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 	rowsClass := &runtime.Class{
@@ -276,28 +309,24 @@ func (e *Evaluator) registerDBRowsContext(rows *sql.Rows, cancel context.CancelF
 		}
 		return nil, fmt.Errorf("Rows class is not initialized")
 	}
+	h := &dbRowsHandle{owner: e, rows: rows, cancel: cancel, columns: columns, textCols: sqlTextColumns(rows)}
 	e.dbMu.Lock()
 	e.nextDBRowsID++
-	id := e.nextDBRowsID
-	e.dbRows[id] = &dbRowsHandle{rows: rows, cancel: cancel, columns: columns, textCols: sqlTextColumns(rows)}
+	h.id = e.nextDBRowsID
+	e.dbRows[h.id] = weak.Make(h)
 	e.dbMu.Unlock()
-	return &runtime.Instance{Class: class, Fields: map[string]runtime.Value{"handle": runtime.NewInt64(id)}}, nil
+	goruntime.AddCleanup(h, releaseAbandonedDBRows, dbRowsCleanup{owner: e, id: h.id, rows: rows, cancel: cancel})
+	return &runtime.Instance{Class: class, Fields: map[string]runtime.Value{"handle": runtime.NativeObject{Kind: dbRowsKind, ID: h.id, Payload: h}}}, nil
 }
 
 func (e *Evaluator) dbRowsHandle(instance *runtime.Instance) (*dbRowsHandle, error) {
-	id, ok := instance.Fields["handle"].(runtime.Int)
-	if !ok || !id.Value.IsInt64() {
+	obj, ok := instance.Fields["handle"].(runtime.NativeObject)
+	if !ok || obj.Kind != dbRowsKind {
 		return nil, fmt.Errorf("Rows has invalid backing handle")
 	}
-	handle := id.Value.Int64()
-	e.dbMu.Lock()
-	rows, ok := e.dbRows[handle]
-	e.dbMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.dbRowsHandle(instance)
-	}
-	if !ok {
-		return nil, fmt.Errorf("unknown Rows handle %d", handle)
+	rows, ok := obj.Payload.(*dbRowsHandle)
+	if !ok || rows == nil {
+		return nil, fmt.Errorf("Rows has invalid backing handle")
 	}
 	return rows, nil
 }
@@ -315,6 +344,7 @@ func (e *Evaluator) dbRowsClose(instance *runtime.Instance) (runtime.Value, erro
 		defer rows.cancel()
 	}
 	rows.exhausted = true
+	rows.owner.forgetDBRows(rows.id)
 	return runtime.Null{}, rows.rows.Close()
 }
 
@@ -352,6 +382,7 @@ func dbRowsAdvance(rows *dbRowsHandle) (bool, error) {
 		rows.current = nil
 		rows.exhausted = true
 		rows.closed = true
+		rows.owner.forgetDBRows(rows.id)
 		if err := rows.rows.Err(); err != nil {
 			_ = rows.rows.Close()
 			return false, err
@@ -366,6 +397,7 @@ func dbRowsAdvance(rows *dbRowsHandle) (bool, error) {
 		rows.current = nil
 		rows.exhausted = true
 		rows.closed = true
+		rows.owner.forgetDBRows(rows.id)
 		_ = rows.rows.Close()
 		if rows.cancel != nil {
 			rows.cancel()

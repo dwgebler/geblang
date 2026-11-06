@@ -27,6 +27,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"weak"
 
 	"geblang/internal/ast"
 	"geblang/internal/binding"
@@ -153,7 +154,7 @@ type Evaluator struct {
 	nextStmtID            int64
 	stmts                 map[int64]*dbStmtHandle
 	nextDBRowsID          int64
-	dbRows                map[int64]*dbRowsHandle
+	dbRows                map[int64]weak.Pointer[dbRowsHandle]
 	fileMu                sync.Mutex
 	nextFileID            int64
 	files                 map[int64]*os.File
@@ -288,7 +289,13 @@ type httpFetchStreamHandle struct {
 	read  int
 }
 
+// dbRowsHandle backs one Rows value, which owns it through its NativeObject
+// payload; Evaluator.dbRows only tracks open handles weakly for the shutdown
+// sweep, so an abandoned Rows is collected with its cached rows.
 type dbRowsHandle struct {
+	// owner and id locate the handle's weak entry in owner.dbRows.
+	owner    *Evaluator
+	id       int64
 	cancel   context.CancelFunc
 	rows     *sql.Rows
 	columns  []string
@@ -579,7 +586,7 @@ func newEvaluatorCore(stdout io.Writer, args []string, modulePaths []string) *Ev
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, input: newConsoleInput(os.Stdin), imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, input: newConsoleInput(os.Stdin), imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]weak.Pointer[dbRowsHandle]{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
 	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer, StreamWriter: e.writeJSONBytes})
 	return e
 }
@@ -1057,13 +1064,17 @@ func (e *Evaluator) Cleanup() error {
 	stmts := e.stmts
 	txs := e.txs
 	dbs := e.dbs
-	e.dbRows = map[int64]*dbRowsHandle{}
+	e.dbRows = map[int64]weak.Pointer[dbRowsHandle]{}
 	e.stmts = map[int64]*dbStmtHandle{}
 	e.txs = map[int64]*dbTxHandle{}
 	e.dbs = map[int64]*sql.DB{}
 	e.dbDrivers = map[int64]string{}
 	e.dbMu.Unlock()
-	for _, rows := range dbRows {
+	for _, ref := range dbRows {
+		rows := ref.Value()
+		if rows == nil {
+			continue
+		}
 		if rows.cancel != nil {
 			rows.cancel()
 		}
@@ -1880,8 +1891,9 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		}
 		target := typealias.Qualified(typealias.Expand(e.resolveTypeRef(expr.Type, env), env.GetTypeBinding))
 		finish := func(converted runtime.Value) (runtime.Value, error) {
-			if !runtime.MatchesCheckedCast(converted, target, func(value runtime.Value, typ *ast.TypeRef) bool { return matchValueToTypeRef(nil, value, typ) }) {
-				return nil, thrownError{value: e.withTrace(runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot cast %s to %s", converted.TypeName(), target.String())})}
+			matches := func(value runtime.Value, typ *ast.TypeRef) bool { return matchValueToTypeRef(nil, value, typ) }
+			if !runtime.MatchesCheckedCast(converted, target, matches) {
+				return nil, thrownError{value: e.withTrace(runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot cast %s to %s%s", converted.TypeName(), target.String(), runtime.CastMismatchDetail(converted, target, matches))})}
 			}
 			return converted, nil
 		}

@@ -472,10 +472,11 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 		return 0, vm.callPropagate(instruction, err)
 	}
 	finish := func(converted runtime.Value) (int, error) {
-		if !runtime.MatchesCheckedCast(converted, castRef, func(value runtime.Value, typ *ast.TypeRef) bool {
+		matches := func(value runtime.Value, typ *ast.TypeRef) bool {
 			return vm.matchValueToTypeSpec(nil, value, vm.typeSpec(typ.String()))
-		}) {
-			return vm.throwTyped(instruction, ip, "TypeError", fmt.Sprintf("cannot cast %s to %s", converted.TypeName(), declared))
+		}
+		if !runtime.MatchesCheckedCast(converted, castRef, matches) {
+			return vm.throwTyped(instruction, ip, "TypeError", fmt.Sprintf("cannot cast %s to %s%s", converted.TypeName(), declared, runtime.CastMismatchDetail(converted, castRef, matches)))
 		}
 		vm.push(converted)
 		return ip, nil

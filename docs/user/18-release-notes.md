@@ -20,6 +20,16 @@
   ambiguous import could select different providers on repeated lookups.
 - Import-check diagnostics include the underlying resolution error, including
   workspace configuration problems.
+- Database `Rows` no longer accumulate for the life of the process. Every
+  query result stayed registered with its cached rows until the program
+  exited, closed or not, so a long-running server's memory grew with each
+  query (about 14 KB each for a small select). A `Rows` value that is
+  closed, read to the end or no longer referenced is now freed, and one
+  dropped part-way through is closed and returns its connection to the pool.
+- A failed checked collection cast now says what failed and where, on both
+  runtimes: `cannot cast dict to dict<string, any>: key 0 is int, not
+  string`, or `: ["stats"][2] is string, not int` for a nested element.
+  It previously said only `cannot cast dict to dict<string, any>`.
 
 ## 1.40.4
 
