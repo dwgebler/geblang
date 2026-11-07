@@ -1,5 +1,15 @@
 # Release Notes
 
+## 1.41.1
+
+### Fixes
+
+- On the evaluator, a method overriding a parent class's method from another
+  module no longer becomes a second overload when it names a parameter type
+  through the import alias (`base.State` in the subclass, `State` in the
+  parent's module). Calls to it failed with `ambiguous overload`; the
+  bytecode VM already treated it as the override.
+
 ## 1.41.0
 
 ### Added

@@ -1664,19 +1664,66 @@ func lookupMethodOverloads(class *runtime.Class, name string) []runtime.Function
 	return methods
 }
 
+// functionParameterSignatureKey identifies an overload by its parameter
+// types, so an override replaces the parent method it matches. Class and
+// interface names resolve through the function's own environment: a
+// subclass in another module that writes `eg.State` overrides a parent
+// method that wrote `State`.
 func functionParameterSignatureKey(fn runtime.Function) string {
 	parts := make([]string, 0, len(fn.Parameters))
 	for _, param := range fn.Parameters {
-		parts = append(parts, strings.ToLower(typeRefSignature(param.Type)))
+		parts = append(parts, canonicalTypeKey(param.Type, fn.Env))
 	}
 	return strings.Join(parts, ",")
 }
 
-func typeRefSignature(typ *ast.TypeRef) string {
+func canonicalTypeKey(typ *ast.TypeRef, env *runtime.Environment) string {
 	if typ == nil {
 		return "any"
 	}
-	return typ.String()
+	if typ.Operator != "" {
+		return "(" + canonicalTypeKey(typ.Left, env) + " " + typ.Operator + " " + canonicalTypeKey(typ.Right, env) + ")"
+	}
+	var out strings.Builder
+	if typ.Nullable {
+		out.WriteByte('?')
+	}
+	out.WriteString(nominalTypeKey(typ.Name, env))
+	if len(typ.Arguments) > 0 {
+		args := make([]string, len(typ.Arguments))
+		for i, arg := range typ.Arguments {
+			args[i] = canonicalTypeKey(arg, env)
+		}
+		out.WriteString("<" + strings.Join(args, ",") + ">")
+	}
+	if typ.ListAlias {
+		out.WriteString("[]")
+	}
+	return out.String()
+}
+
+// nominalTypeKey names a class or interface by identity, however it is
+// spelled where the signature was written; any other name by its spelling.
+func nominalTypeKey(name string, env *runtime.Environment) string {
+	if env != nil {
+		var value runtime.Value
+		if prefix, member, qualified := cutLastDot(name); qualified {
+			if moduleValue, ok := env.Get(prefix); ok {
+				if module, ok := moduleValue.(*runtime.Module); ok {
+					value = module.Exports[member]
+				}
+			}
+		} else if v, ok := env.Get(name); ok {
+			value = v
+		}
+		switch nominal := value.(type) {
+		case *runtime.Class:
+			return fmt.Sprintf("class@%p", nominal)
+		case *runtime.Interface:
+			return fmt.Sprintf("interface@%p", nominal)
+		}
+	}
+	return strings.ToLower(name)
 }
 
 func lookupStaticMethod(class *runtime.Class, name string) (runtime.Function, bool) {

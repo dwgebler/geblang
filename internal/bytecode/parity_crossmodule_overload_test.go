@@ -221,3 +221,20 @@ func TestParityCrossModuleOverloadMixedAsync(t *testing.T) {
 		"import io;\nimport async;\nimport mixmod;\nlet a = mixmod.mx(5);\nlet b = mixmod.mx(\"x\");\nlet f = mixmod.mx;\nlet c = f(5);\nlet d = f(\"y\");\nio.println(\"${typeof(a)} ${typeof(b)} ${typeof(c)} ${typeof(d)}\");\nio.println(\"${async.await(a)} ${b} ${async.await(c)} ${d}\");\n",
 		"Task string Task string\nasync:5 sync:x async:5 sync:y\n")
 }
+
+// A subclass in another module overrides a parent method whose parameter
+// type it names through the import alias (`base.State` there, `State` in the
+// parent's own module): the override replaces the parent method rather than
+// adding an overload, so the call is not ambiguous.
+func TestParityCrossModuleOverrideThroughAlias(t *testing.T) {
+	runMultiModuleParity(t, map[string]string{
+		"base": "module base;\n" +
+			"export class State {\n  func State() {}\n}\n" +
+			"export class Game {\n  func Game() {}\n  func play(State st, decimal m, ?string tag): string { return \"base\"; }\n}\n",
+		"child": "module child;\nimport base;\n" +
+			"export class Shells extends base.Game {\n  func Shells() { parent(); }\n" +
+			"  @override\n  func play(base.State st, decimal m, ?string tag): string { return \"child\"; }\n}\n",
+	},
+		"import io;\nimport base;\nimport child;\nlet g = child.Shells();\nint n = 3;\nio.println(g.play(base.State(), n as decimal, null));\nbase.Game asBase = g;\nio.println(asBase.play(base.State(), 2.00, \"x\"));\n",
+		"child\nchild\n")
+}
