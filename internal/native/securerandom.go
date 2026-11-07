@@ -55,6 +55,7 @@ func registerSecureRandom(r *Registry) {
 	r.Register("secureRandom", "auditLogJson", secureRandomAuditLogJson)
 	r.Register("secureRandom", "bytes", sessionRandomBytes)
 	r.Register("secureRandom", "uintRange", secureRandomUintRange)
+	r.Register("secureRandom", "randomInts", secureRandomRandomInts)
 	r.Register("secureRandom", "randomBytes", secureRandomRandomBytes)
 	r.Register("secureRandom", "randomInt", secureRandomRandomInt)
 	r.Register("secureRandom", "float", secureRandomFloat)
@@ -378,6 +379,87 @@ func secureRandomRandomInt(args []runtime.Value) (runtime.Value, error) {
 	})
 }
 
+// maxBatchDraws caps one randomInts call, so a single audit entry stays a
+// reasonable size.
+const maxBatchDraws = 65536
+
+// secureRandomRandomInts draws `count` ints in [min, max] as one audited
+// draw: one nonce and one log entry whose output is the whole list, so a
+// round needing many values pays the per-draw cost once.
+func secureRandomRandomInts(args []runtime.Value) (runtime.Value, error) {
+	sess, err := lookupSecureSession(firstArg(args), "secureRandom.randomInts")
+	if err != nil {
+		return nil, err
+	}
+	rest := args[1:]
+	count, lo, hi, err := batchBounds(rest, "secureRandom.randomInts")
+	if err != nil {
+		return nil, err
+	}
+	return drawAndLog(sess, "randomInts", rest, func(key *seedKey, nonce int64) (runtime.Value, error) {
+		msg, _ := makeMessage(sess.clientSeed, nonce, "randomInts", rest)
+		return batchIntDraw(key, msg, count, lo, hi), nil
+	})
+}
+
+// batchBounds reads randomInts' [count, min, max].
+func batchBounds(args []runtime.Value, label string) (int, int64, int64, error) {
+	if len(args) != 3 {
+		return 0, 0, 0, fmt.Errorf("%s expects count, min and max", label)
+	}
+	count, ok := AsInt64(args[0])
+	if !ok || count < 0 || count > maxBatchDraws {
+		return 0, 0, 0, fmt.Errorf("%s: count must be an int from 0 to %d", label, maxBatchDraws)
+	}
+	lo, hi, err := inclusiveBounds(args[1:], label)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return int(count), lo, hi, nil
+}
+
+// drawStream reads 64-bit values in order from HMAC-SHA-256(seed,
+// msg + ":block:" + k) for k = 0, 1, ..., four values to a block.
+type drawStream struct {
+	key   *seedKey
+	msg   string
+	buf   []byte
+	block int
+}
+
+func (d *drawStream) next() uint64 {
+	if len(d.buf) < 8 {
+		d.buf = d.key.appendSum(make([]byte, 0, sha256.Size), []byte(d.msg+":block:"+strconv.Itoa(d.block)))
+		d.block++
+	}
+	v := binary.BigEndian.Uint64(d.buf[:8])
+	d.buf = d.buf[8:]
+	return v
+}
+
+// batchIntDraw returns `count` ints uniform in [lo, hi], taken in order
+// from one draw stream; a value that would bias the range (rejection
+// sampling, as uniformUintInRange) is skipped for the next.
+func batchIntDraw(key *seedKey, msg string, count int, lo, hi int64) runtime.Value {
+	stream := &drawStream{key: key, msg: msg}
+	span := uint64(hi) - uint64(lo) + 1
+	out := make([]runtime.Value, count)
+	for i := range out {
+		// span wraps to 0 only for the full int64 range, where every value is valid.
+		if span == 0 {
+			out[i] = runtime.SmallInt{Value: int64(stream.next())}
+			continue
+		}
+		maxAccepted := (^uint64(0) / span) * span
+		v := stream.next()
+		for v >= maxAccepted {
+			v = stream.next()
+		}
+		out[i] = runtime.SmallInt{Value: int64(uint64(lo) + v%span)}
+	}
+	return &runtime.List{Elements: out}
+}
+
 func inclusiveBounds(args []runtime.Value, label string) (int64, int64, error) {
 	if len(args) != 2 {
 		return 0, 0, fmt.Errorf("%s expects min and max", label)
@@ -665,6 +747,12 @@ func secureRandomReplay(args []runtime.Value) (runtime.Value, error) {
 			return nil, err
 		}
 		return inclusiveIntDraw(key, msg, lo, hi), nil
+	case "randomInts":
+		count, lo, hi, err := batchBounds(argsList.Elements, "replay randomInts")
+		if err != nil {
+			return nil, err
+		}
+		return batchIntDraw(key, msg, count, lo, hi), nil
 	case "float":
 		bytes := deriveBytes(key, msg, 8)
 		u := binary.BigEndian.Uint64(bytes) >> 11

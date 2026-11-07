@@ -2,6 +2,29 @@
 
 ## 1.41.1
 
+### Added
+
+- `secureRandom.randomInts(s, count, min, max)` draws `count` unbiased ints
+  in `[min, max]` as one audited draw: one nonce and one audit-log entry whose
+  output is the whole list, which `replay` reproduces. A round that needs many
+  values (a reel feature placing 150 symbols, say) pays the per-draw cost of
+  building and logging a message once instead of for every value.
+- `geblang run --go-profile <cpu.pprof>` (or `GEBLANG_GO_PROFILE`) profiles
+  the engine itself: it writes Go's CPU profile, and lock-contention and heap
+  profiles beside it, when the program exits, for `go tool pprof`. Where
+  `--profile` shows which Geblang code is slow, this shows time going to
+  garbage collection, memory or contention between workers.
+
+### Performance
+
+- A call into another module's code (a method on an object from another
+  module, a constructor, a module function) runs on a pooled VM, and handing
+  it back cleared the VM's whole stack, locals and frame capacity, about
+  90 KB, however little the call used. It now clears only what the call
+  wrote. Cross-module-heavy code runs faster, most of all on several
+  workers at once, where the clearing saturated memory bandwidth: a slot
+  simulation on 6 workers ran 67% faster.
+
 ### Fixes
 
 - On the evaluator, a method overriding a parent class's method from another

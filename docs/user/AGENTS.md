@@ -520,7 +520,7 @@ introspection builtins.
 | `process` | own pid/uid/gid; inspect (`list`/`info`/`exists`); gated control (`kill`/`signal`/`setuid`) behind `--allow-process-control`. |
 | `file` | `File` object wrapping a handle with method-style read/write/seek and `with`-block auto-close. |
 | `llm` | provider-neutral chat/embed client (OpenAI/Anthropic/Bedrock): `chat`, `chatStream`, tool calling, `embed`/`embedBatch`. |
-| `profiler` | `timer()`, `profile()` context managers; CPU/memory/wall. Whole-program sampling: `geblang run --profile <report>` / `GEBLANG_PROFILE`. |
+| `profiler` | `timer()`, `profile()` context managers; CPU/memory/wall. Whole-program sampling: `geblang run --profile <report>` / `GEBLANG_PROFILE`; the engine itself (GC, memory, lock contention) as pprof files: `--go-profile <cpu.pprof>` / `GEBLANG_GO_PROFILE`. |
 | `image` | decode/encode PNG/JPEG/GIF/WebP, resize, crop, rotate. |
 | `errors` | `wrap`, `is`, stack traces. |
 | `ffi`, `clib.*` | call C libraries (zstd, magic, ncurses, systemd). |

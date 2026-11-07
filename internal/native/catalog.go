@@ -2089,6 +2089,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"uintRange":        Fn([]string{"SecureRandomSession s", "int lo", "int hi"}, "int", "Returns an unbiased uniform int in [lo, hi)."),
 		"randomBytes":      Fn([]string{"int n"}, "bytes", "Returns n cryptographically random bytes; pass a session first to draw them provably fair.").Or("SecureRandomSession s", "int n"),
 		"randomInt":        Fn([]string{"int min", "int max"}, "int", "Returns a cryptographically random int in [min, max]; pass a session first to draw it provably fair.").Or("SecureRandomSession s", "int min", "int max"),
+		"randomInts":       Fn([]string{"SecureRandomSession s", "int count", "int min", "int max"}, "list<int>", "Draws count unbiased ints in [min, max] as one audited draw (one nonce and one log entry), for a round that needs many values."),
 		"float":            Fn([]string{"SecureRandomSession s"}, "float", "Returns a uniform float in [0, 1)."),
 		"bool":             Fn([]string{}, "bool", "Returns an OS-backed fair coin flip; pass a session for an audited draw.").Or("SecureRandomSession s"),
 		"choice":           Fn([]string{"list<any> items"}, "any", "Returns one element uniformly using OS randomness; pass a session for an audited draw.").Or("SecureRandomSession s", "list<any> items"),

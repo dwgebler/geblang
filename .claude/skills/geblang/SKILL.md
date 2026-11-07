@@ -113,4 +113,6 @@ Read the one that matches your task:
   `dir(module)`.
 - **`references/toolchain.md`** - the full CLI reference, the `geblang.yaml`
   manifest, building and bundling (including `--native` and `--docker`), launch
-  capabilities (`--allow-ffi` and friends), and writing tests in depth.
+  capabilities (`--allow-ffi` and friends), writing tests in depth, and
+  profiling (`--profile` for Geblang code, `--go-profile` for the engine).
+  Read it before optimising anything slow.

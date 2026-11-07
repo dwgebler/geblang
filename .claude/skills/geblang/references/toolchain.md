@@ -188,6 +188,39 @@ Generates a Geblang module wrapping a C-ABI shared library. Manifest sections:
 `module`, `library`, `doc`, `constants`, `structs`, `functions`. Types: `VOID`,
 `INT8..INT64`, `UINT8..UINT64`, `FLOAT`, `DOUBLE`, `PTR`, `CSTRING`, `BYTES`.
 
+## Profiling (finding where time goes)
+
+Measure before optimising, and start with the Geblang-level profile:
+
+```sh
+geblang run --profile profile.txt app.gb args   # or GEBLANG_PROFILE=profile.txt for any run / built binary
+```
+
+`profile.txt` ranks Geblang functions and lines by samples (about one a
+millisecond), and `profile.folded` beside it feeds a flame graph. Time in a
+native call (`secureRandom`, `json`, a query) counts towards the Geblang
+function that made it.
+
+When that profile does not explain the time, profile the engine itself
+(1.41.1+). Typical signs: many workers barely faster than one, time spread
+evenly over everything, or a run much slower than its hot functions suggest.
+
+```sh
+geblang run --go-profile engine.pprof app.gb args   # or GEBLANG_GO_PROFILE=engine.pprof
+go tool pprof -top engine.pprof             # CPU inside the engine: GC, memclr, dispatch
+go tool pprof -top engine.mutex.pprof       # lock contention between workers
+go tool pprof -top engine.heap.pprof        # live heap at exit
+go tool pprof -peek 'someFunc' engine.pprof # who calls a hot engine function
+```
+
+For a long-running server, `GEBLANG_PPROF=localhost:6060` serves Go's
+`net/http/pprof` endpoint instead (bind to localhost only; unauthenticated).
+
+Draw-heavy code: each `secureRandom` session draw has a fixed cost (message,
+HMAC, audit entry), so take many values in one draw with
+`secureRandom.randomInts(s, count, min, max)` (1.41.1+) rather than a loop of
+single draws.
+
 ## Diagnostics, cache, IDE
 
 ```sh

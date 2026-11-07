@@ -63,6 +63,11 @@ func main() {
 	if path := os.Getenv("GEBLANG_PROFILE"); path != "" {
 		profiling.Start(path)
 	}
+	// GEBLANG_GO_PROFILE=path writes Go CPU, lock-contention and heap
+	// profiles of the engine itself when the program exits.
+	if path := os.Getenv("GEBLANG_GO_PROFILE"); path != "" {
+		startGoProfile(path)
+	}
 	if b, err := bundle.OpenFromExecutable(); err == nil && b != nil {
 		profiling.Exit(runBundled(b))
 	}
@@ -251,6 +256,13 @@ func runScriptOrModule(args []string) {
 			}
 			profiling.Start(args[1])
 			args = args[2:]
+		case "--go-profile":
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "usage: --go-profile <cpu.pprof>")
+				os.Exit(2)
+			}
+			startGoProfile(args[1])
+			args = args[2:]
 		case "-m", "--module":
 			if len(args) < 2 {
 				fmt.Fprintln(os.Stderr, "usage: geblang -m <module> [args...]")
@@ -394,7 +406,7 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang repl --vm-strict")
 		return true
 	case "run":
-		fmt.Fprintln(writer, "usage: geblang [run] [--disable-vm|--vm-strict|--trace-exec] [--allow-ffi <path-or-glob>] [--profile <report>] <script.gb> [args...]")
+		fmt.Fprintln(writer, "usage: geblang [run] [--disable-vm|--vm-strict|--trace-exec] [--allow-ffi <path-or-glob>] [--profile <report>] [--go-profile <cpu.pprof>] <script.gb> [args...]")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Runs a script. VM execution is attempted by default and falls back to the evaluator when needed.")
 		fmt.Fprintln(writer, "The `run` verb is optional; `geblang app.gb` and `geblang run app.gb` are equivalent.")
@@ -402,6 +414,10 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "`--profile <report>` samples the program's call stacks about once a millisecond and, when it exits,")
 		fmt.Fprintln(writer, "writes a report of where the time went to <report> and folded stacks (for flame graphs) beside it.")
 		fmt.Fprintln(writer, "GEBLANG_PROFILE=<report> does the same for any run, including a built binary.")
+		fmt.Fprintln(writer, "`--go-profile <cpu.pprof>` profiles the engine itself rather than your code: it writes Go's CPU profile")
+		fmt.Fprintln(writer, "there, and lock-contention and heap profiles beside it (<name>.mutex.pprof, <name>.heap.pprof), for")
+		fmt.Fprintln(writer, "`go tool pprof`. Use it when time goes to garbage collection, memory or contention between workers.")
+		fmt.Fprintln(writer, "GEBLANG_GO_PROFILE=<cpu.pprof> does the same for any run, including a built binary.")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Examples:")
 		fmt.Fprintln(writer, "  geblang app.gb")
@@ -2091,4 +2107,12 @@ func bytecodeCacheRoot() string {
 
 func bytecodeCacheDir() string {
 	return filepath.Join(bytecodeCacheRoot(), version)
+}
+
+// startGoProfile starts --go-profile, or exits when its file cannot be written.
+func startGoProfile(path string) {
+	if err := profiling.StartGo(path); err != nil {
+		fmt.Fprintf(os.Stderr, "geblang: --go-profile: %v\n", err)
+		os.Exit(2)
+	}
 }

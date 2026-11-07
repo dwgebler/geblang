@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
+	"runtime/pprof"
 	"sort"
 	"strings"
 	"sync"
@@ -121,8 +123,71 @@ func record(frames []string, leaf string) {
 	samples++
 }
 
+// Go-level profiling (--go-profile): the engine's own CPU time, lock
+// contention and live heap, as pprof files.
+var (
+	goMu      sync.Mutex
+	goPath    string
+	goCPUFile *os.File
+)
+
+// StartGo starts Go's CPU profiler, writing it to cpuPath when Finish runs,
+// with lock-contention and heap profiles beside it (GoProfilePaths). Unlike
+// Start it sees inside the engine: garbage collection, memory clearing,
+// scheduling and workers contending for locks.
+func StartGo(cpuPath string) error {
+	goMu.Lock()
+	defer goMu.Unlock()
+	if goCPUFile != nil {
+		return nil
+	}
+	f, err := os.Create(cpuPath)
+	if err != nil {
+		return err
+	}
+	goruntime.SetMutexProfileFraction(5)
+	if err := pprof.StartCPUProfile(f); err != nil {
+		f.Close()
+		return err
+	}
+	goPath = cpuPath
+	goCPUFile = f
+	return nil
+}
+
+// GoProfilePaths returns where --go-profile writes its lock-contention and
+// heap profiles beside the CPU profile at cpuPath.
+func GoProfilePaths(cpuPath string) (mutex, heap string) {
+	base := strings.TrimSuffix(cpuPath, filepath.Ext(cpuPath))
+	return base + ".mutex.pprof", base + ".heap.pprof"
+}
+
+func finishGo() {
+	goMu.Lock()
+	defer goMu.Unlock()
+	if goCPUFile == nil {
+		return
+	}
+	pprof.StopCPUProfile()
+	goCPUFile.Close()
+	goCPUFile = nil
+	mutexPath, heapPath := GoProfilePaths(goPath)
+	for _, p := range []struct{ name, path string }{{"mutex", mutexPath}, {"heap", heapPath}} {
+		f, err := os.Create(p.path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "geblang: go profile: %v\n", err)
+			continue
+		}
+		if err := pprof.Lookup(p.name).WriteTo(f, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "geblang: go profile: %v\n", err)
+		}
+		f.Close()
+	}
+}
+
 // Finish stops profiling and writes the report (once; later calls do nothing).
 func Finish() {
+	finishGo()
 	if !Active.Load() {
 		return
 	}

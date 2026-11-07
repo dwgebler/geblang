@@ -922,6 +922,7 @@ the operating system's cryptographic random source without an audit log.
 | `secureRandom.bytes(s, n)` | Draws `n` provably-fair random bytes. |
 | `secureRandom.uintRange(s, lo, hi)` | Unbiased uniform integer in `[lo, hi)`. Uses rejection sampling. |
 | `secureRandom.randomInt(min, max)` / `randomInt(s, min, max)` | Uniform integer in `[min, max]`, both ends included (1.35.2). Session optional. |
+| `secureRandom.randomInts(s, count, min, max)` | `count` uniform integers in `[min, max]` (both ends included) as one audited draw: one nonce, one audit entry whose output is the list (1.41.1). `count` is 0 to 65,536. |
 | `secureRandom.randomBytes(n)` / `randomBytes(s, n)` | `n` random bytes (1.35.2). Session optional. |
 | `secureRandom.float(s)` | Uniform float in `[0, 1)`. |
 | `secureRandom.bool()` / `bool(s)` | Fair coin flip. Session optional (1.39.0). |
@@ -1099,6 +1100,10 @@ for (draw in published["draws"]) {
   invalidating the commitment.
 - `uintRange` uses rejection sampling so the distribution stays
   unbiased even for ranges that are not powers of two.
+- `randomInts` reads its values in order from
+  `hmacSha256(serverSeed, message + ":block:" + k)` for `k = 0, 1, ...`,
+  four 64-bit values to a block, skipping any value rejection sampling
+  turns down, so the whole list replays from its one audit entry.
 - `shuffle` uses Fisher-Yates with unbiased index draws. Replay checks
   that a published draw follows the committed seed and recorded inputs;
   it cannot prove that the server used good entropy, published every

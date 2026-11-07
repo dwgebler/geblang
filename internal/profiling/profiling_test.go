@@ -100,3 +100,31 @@ func TestSamplingWhileCollectionsStartAndStop(t *testing.T) {
 	close(finish)
 	<-stopped
 }
+
+func TestGoProfileWritesCPUMutexAndHeapProfiles(t *testing.T) {
+	dir := t.TempDir()
+	cpu := filepath.Join(dir, "engine.pprof")
+	if err := StartGo(cpu); err != nil {
+		t.Fatal(err)
+	}
+	busy := 0
+	for i := 0; i < 2_000_000; i++ {
+		busy += i % 7
+	}
+	_ = busy
+	Finish()
+	Finish()
+	mutex, heap := GoProfilePaths(cpu)
+	if mutex != filepath.Join(dir, "engine.mutex.pprof") || heap != filepath.Join(dir, "engine.heap.pprof") {
+		t.Fatalf("paths = %q, %q", mutex, heap)
+	}
+	for _, p := range []string{cpu, mutex, heap} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Size() == 0 {
+			t.Errorf("%s is empty", p)
+		}
+	}
+}

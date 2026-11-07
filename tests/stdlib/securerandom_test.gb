@@ -168,4 +168,41 @@ class SecureRandomTest extends test.Test {
         # Astronomically unlikely they overlap > 1 time across 20 draws.
         this.assertTrue(same < 2);
     }
+
+    @test
+    func randomIntsDrawsManyValuesAsOneAuditedDraw(): void {
+        let s = secureRandom.openSession({"clientSeed": "Batch"});
+        let first = secureRandom.randomInt(s, 1, 6);
+        let many = secureRandom.randomInts(s, 500, -3, 3);
+        this.assertEquals(500, many.length());
+        list<int> seen = [0, 0, 0, 0, 0, 0, 0];
+        for (v in many) {
+            this.assertTrue(v >= -3 && v <= 3);
+            seen[v + 3] += 1;
+        }
+        for (n in seen) {
+            this.assertTrue(n > 30);
+        }
+        let log = secureRandom.auditLog(s);
+        this.assertEquals(2, log.length());
+        this.assertEquals("randomInts", log[1]["method"]);
+        this.assertEquals(1, log[1]["nonce"]);
+        this.assertEquals(many, log[1]["output"]);
+        let seed = secureRandom.reveal(s);
+        this.assertEquals(first, secureRandom.replay(seed, "Batch", 0, "randomInt", [1, 6]));
+        this.assertEquals(many, secureRandom.replay(seed, "Batch", 1, "randomInts", [500, -3, 3]));
+    }
+
+    @test
+    func randomIntsIsDeterministicPerSeedAndChecksItsArguments(): void {
+        let seed = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let a = secureRandom.randomInts(secureRandom.fromSeed(seed, "x"), 40, 0, 1000000);
+        let b = secureRandom.randomInts(secureRandom.fromSeed(seed, "x"), 40, 0, 1000000);
+        this.assertEquals(a, b);
+        this.assertEquals(0, secureRandom.randomInts(secureRandom.fromSeed(seed, "x"), 0, 1, 6).length());
+        let s = secureRandom.fromSeed(seed, "x");
+        this.assertThrows(func(): void { secureRandom.randomInts(s, -1, 1, 6); }, "count");
+        this.assertThrows(func(): void { secureRandom.randomInts(s, 70000, 1, 6); }, "count");
+        this.assertThrows(func(): void { secureRandom.randomInts(s, 3, 6, 1); }, "min");
+    }
 }

@@ -99,5 +99,5 @@ func runParallelTestFiles(files []string, jobs int, args []string) ([]testFileRe
 }
 
 func isWorkerProfileSetting(value string) bool {
-	return strings.HasPrefix(value, "GEBLANG_PROFILE=") || strings.HasPrefix(value, "GEBLANG_PPROF=")
+	return strings.HasPrefix(value, "GEBLANG_PROFILE=") || strings.HasPrefix(value, "GEBLANG_PPROF=") || strings.HasPrefix(value, "GEBLANG_GO_PROFILE=")
 }

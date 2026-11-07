@@ -160,7 +160,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 	"secureRandom": {
 		"openSession": {}, "fromSeed": {}, "commitment": {}, "reveal": {},
 		"auditLog": {}, "auditLogJson": {},
-		"bytes": {}, "uintRange": {}, "randomBytes": {}, "randomInt": {}, "float": {}, "bool": {},
+		"bytes": {}, "uintRange": {}, "randomBytes": {}, "randomInt": {}, "randomInts": {}, "float": {}, "bool": {},
 		"choice": {}, "shuffle": {}, "weightedChoice": {},
 		"verifyCommitment": {}, "replay": {},
 	},

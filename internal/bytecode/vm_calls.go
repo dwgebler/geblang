@@ -505,6 +505,9 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 		vm.frames = grown
 	}
 	vm.frames = vm.frames[:len(vm.frames)+1]
+	if len(vm.frames) > vm.framesHigh {
+		vm.framesHigh = len(vm.frames)
+	}
 	// syncMode only makes the entry call run inline; calls nested inside it start Tasks as usual.
 	vm.syncMode = false
 	frame := &vm.frames[len(vm.frames)-1]
@@ -972,6 +975,9 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 		vm.frames = grown
 	}
 	vm.frames = vm.frames[:len(vm.frames)+1]
+	if len(vm.frames) > vm.framesHigh {
+		vm.framesHigh = len(vm.frames)
+	}
 	vm.syncMode = false
 	frame := &vm.frames[len(vm.frames)-1]
 	frame.returnIP = ip

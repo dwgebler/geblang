@@ -531,9 +531,14 @@ func (vm *VM) Recyclable() bool { return vm.escapedRefs.Load() == 0 }
 
 func (vm *VM) resetForReuse() {
 	clear(vm.globals)
-	clear(vm.stack[:cap(vm.stack)])
-	clear(vm.localsStack[:cap(vm.localsStack)])
-	clear(vm.frames[:cap(vm.frames)])
+	// Only slots up to each high-water mark were ever written; clearing the
+	// whole capacity on every pooled cross-module call dominated busy
+	// multi-worker runs (it zeroed ~90 KB per call and saturated memory
+	// bandwidth).
+	clear(vm.stack[:min(vm.stackHigh, cap(vm.stack))])
+	clear(vm.localsStack[:min(vm.localsHigh, cap(vm.localsStack))])
+	clear(vm.frames[:min(vm.framesHigh, cap(vm.frames))])
+	vm.stackHigh, vm.localsHigh, vm.framesHigh = 0, 0, 0
 	for _, actions := range vm.defers[:cap(vm.defers)] {
 		clear(actions[:cap(actions)])
 	}
@@ -693,6 +698,9 @@ func (vm *VM) ensureLocalsStackFrom(end, clearFrom int) {
 	cur := len(vm.localsStack)
 	if end <= cur {
 		return
+	}
+	if end > vm.localsHigh {
+		vm.localsHigh = end
 	}
 	if end > cap(vm.localsStack) {
 		newCap := cap(vm.localsStack) * 2

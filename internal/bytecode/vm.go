@@ -64,9 +64,15 @@ type VM struct {
 	wrapperBase []Instruction
 	// staticLocal holds call-local static writes when staticsLocalOnly
 	// is set (wrapper calls); otherwise writes go to the shared overlay.
-	staticLocal       map[int64]runtime.Value
-	staticsLocalOnly  bool
-	localsStack       []runtime.VMValue
+	staticLocal      map[int64]runtime.Value
+	staticsLocalOnly bool
+	localsStack      []runtime.VMValue
+	// High-water marks of stack, localsStack and frames since the last
+	// resetForReuse: slots above them were never written, so a pooled VM's
+	// reset clears only up to them instead of each slice's whole capacity.
+	stackHigh         int
+	localsHigh        int
+	framesHigh        int
 	currentFrameBP    int
 	frames            []callFrame
 	maxCallDepth      int
@@ -5896,6 +5902,9 @@ func indexInt(value runtime.Value) (int, error) {
 // directly to skip the conversion.
 func (vm *VM) push(value runtime.Value) {
 	vm.stack = append(vm.stack, runtime.VMValueFromValue(value))
+	if len(vm.stack) > vm.stackHigh {
+		vm.stackHigh = len(vm.stack)
+	}
 }
 
 // pushVM pushes a pre-converted VMValue. Used by the hot integer/bool
@@ -5903,6 +5912,9 @@ func (vm *VM) push(value runtime.Value) {
 // interface.
 func (vm *VM) pushVM(value runtime.VMValue) {
 	vm.stack = append(vm.stack, value)
+	if len(vm.stack) > vm.stackHigh {
+		vm.stackHigh = len(vm.stack)
+	}
 }
 
 func (vm *VM) truncateStack(n int) {

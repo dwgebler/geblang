@@ -186,7 +186,23 @@ after the module of the function that called it.
 Sampling costs one check per function call and loop iteration while it is
 off, and a few percent of run time while it is on.
 
-For engine-level profiling, set `GEBLANG_PPROF=localhost:6060` when
+`--profile` shows which Geblang code is slow. When the time goes somewhere
+the program's own code does not show (garbage collection, memory being
+cleared or copied, workers contending for locks), profile the engine itself
+with `--go-profile`:
+
+```sh
+geblang run --go-profile engine.pprof tools/simulate.gb 100000
+go tool pprof -top engine.pprof          # CPU time inside the engine
+go tool pprof -top engine.mutex.pprof    # lock contention between workers
+go tool pprof -top engine.heap.pprof     # live heap when the program exited
+```
+
+The CPU profile is written to the path given, and the lock-contention and
+heap profiles beside it, when the program exits. `GEBLANG_GO_PROFILE=engine.pprof`
+does the same for any run, including a built binary.
+
+To profile a long-running program while it runs, set `GEBLANG_PPROF=localhost:6060` when
 starting any program (script or built binary) and a standard Go
 `net/http/pprof` endpoint comes up on that address:
 
