@@ -1,5 +1,16 @@
 # Release Notes
 
+## 1.41.2
+
+### Fixes
+
+- A module-qualified type annotation naming a class, interface or enum that
+  its module declares without `export` (`lib.Box` in a parameter, a local or
+  a `type` alias) was rejected with `lib has no exported type Box` by
+  `geblang check`, `geblang run`, `geblang test` and `geblang build`, a
+  regression in 1.41.1. Such types are accepted again; calling or importing
+  an unexported name (`lib.Box()`, `from lib import Box`) is still an error.
+
 ## 1.41.1
 
 ### Added

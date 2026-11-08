@@ -1,0 +1,9 @@
+module unexported_type_facade;
+
+import unexported_type_donor;
+
+export type Box = unexported_type_donor.Box;
+
+export func describe(unexported_type_donor.Box b): string {
+    return "box ${b.area()}";
+}

@@ -12,7 +12,7 @@ import (
 // `m.Nope` where `m` is a resolved import but `Nope` is not in its
 // export set. It walks every type-bearing position and bails (stays
 // silent) on any uncertainty: an unknown alias, an unresolvable module,
-// Membership uses the full export set plus exported type aliases, so a
+// Membership uses the export set, exported type aliases and declared types, so a
 // function name in type position is tolerated rather than flagged.
 func checkCrossModuleTypes(file string, program *ast.Program, opts Options) []Diagnostic {
 	aliases := collectImportAliases(program)
@@ -59,7 +59,7 @@ func (c *crossTypeCollector) visit(ref *ast.TypeRef) {
 	if _, exists := exports[member]; exists {
 		return
 	}
-	if c.exportsTypeAlias(alias, member) {
+	if c.exportsTypeAlias(alias, member) || c.declaresType(alias, member) {
 		return
 	}
 	c.diags = append(c.diags, Diagnostic{
@@ -80,7 +80,38 @@ func (c *crossTypeCollector) exportsTypeAlias(alias importAlias, member string) 
 	return ok
 }
 
+// The runtimes accept unexported classes, interfaces and enums as qualified types.
+func (c *crossTypeCollector) declaresType(alias importAlias, member string) bool {
+	program := c.moduleProgram(alias)
+	if program == nil {
+		return false
+	}
+	for _, stmt := range program.Statements {
+		var name *ast.Identifier
+		switch s := stmt.(type) {
+		case *ast.ClassStatement:
+			name = s.Name
+		case *ast.InterfaceStatement:
+			name = s.Name
+		case *ast.EnumStatement:
+			name = s.Name
+		}
+		if name != nil && name.Value == member {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *crossTypeCollector) typeAliasNames(alias importAlias) map[string]string {
+	program := c.moduleProgram(alias)
+	if program == nil {
+		return nil
+	}
+	return typealias.ExportedFromProgram(program, alias.canonical)
+}
+
+func (c *crossTypeCollector) moduleProgram(alias importAlias) *ast.Program {
 	if c.opts.Resolver == nil {
 		return nil
 	}
@@ -89,10 +120,10 @@ func (c *crossTypeCollector) typeAliasNames(alias importAlias) map[string]string
 		return nil
 	}
 	program, _, err := c.cache.load(path)
-	if err != nil || program == nil {
+	if err != nil {
 		return nil
 	}
-	return typealias.ExportedFromProgram(program, alias.canonical)
+	return program
 }
 
 // collectTypeRef recursively visits a TypeRef and its generic arguments,

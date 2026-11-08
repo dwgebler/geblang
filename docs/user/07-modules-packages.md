@@ -109,6 +109,30 @@ export func findUser(string id): dict<string, any> {
 }
 ```
 
+Importers cannot call, construct or `from`-import a private name, but a
+module-qualified type annotation may still name a class, interface or enum the
+module declares without `export`. That way an exported function can return a
+private class and callers can still annotate the value:
+
+```gb
+module app.session;
+
+class Session {
+    string id = "";
+}
+
+export func open(): Session {
+    return Session();
+}
+```
+
+```gb
+import app.session as session;
+
+session.Session s = session.open();   # allowed
+session.Session();                    # error: no exported member Session
+```
+
 ### Exporting type aliases
 
 `export type` publishes a type alias that importers can use under the module's

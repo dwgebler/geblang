@@ -1,0 +1,45 @@
+/**
+ * @title Qualified types naming unexported declarations
+ * @summary A module-qualified type annotation may name a class, interface or
+ * enum its module declares without `export`, directly or through a type alias.
+ */
+import test;
+import unexported_type_donor;
+import unexported_type_facade;
+
+func areaOf(unexported_type_donor.Shape s): int {
+    return s.area();
+}
+
+func tintName(unexported_type_donor.Tint t): string {
+    return "${t}";
+}
+
+func viaAlias(unexported_type_facade.Box b): string {
+    return unexported_type_facade.describe(b);
+}
+
+class UnexportedTypeCrossModuleTest extends test.Test {
+    @test
+    func unexportedClassAsParameterAndLocal(): void {
+        unexported_type_donor.Box b = unexported_type_donor.box();
+        this.assertEquals(4, b.area());
+    }
+
+    @test
+    func subclassThroughUnexportedBaseType(): void {
+        unexported_type_donor.Box b = unexported_type_donor.bigBox();
+        this.assertEquals(25, b.area());
+    }
+
+    @test
+    func unexportedInterfaceAndEnum(): void {
+        this.assertEquals(25, areaOf(unexported_type_donor.bigBox()));
+        this.assertEquals("Tint.Blue", tintName(unexported_type_donor.tint()));
+    }
+
+    @test
+    func typeAliasOfUnexportedClass(): void {
+        this.assertEquals("box 25", viaAlias(unexported_type_donor.bigBox()));
+    }
+}

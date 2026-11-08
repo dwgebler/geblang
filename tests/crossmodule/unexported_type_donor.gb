@@ -1,0 +1,33 @@
+module unexported_type_donor;
+
+interface Shape {
+    func area(): int;
+}
+
+enum Tint { Red, Blue }
+
+class Box implements Shape {
+    int side = 2;
+
+    func area(): int {
+        return this.side * this.side;
+    }
+}
+
+class BigBox extends Box {
+    func BigBox() {
+        this.side = 5;
+    }
+}
+
+export func box(): Box {
+    return Box();
+}
+
+export func bigBox(): BigBox {
+    return BigBox();
+}
+
+export func tint(): Tint {
+    return Tint.Blue;
+}
