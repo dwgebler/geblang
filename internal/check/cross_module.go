@@ -59,42 +59,19 @@ func (c *ModuleCache) load(path string) (*ast.Program, map[string]struct{}, erro
 }
 
 // collectExports returns the set of names a module exposes to importers:
-// every `export` declaration, every top-level `class` / `interface` /
-// `enum`, and every top-level `func` whose name does not begin with `_`.
+// its `export` declarations.
 func collectExports(program *ast.Program) map[string]struct{} {
 	exports := map[string]struct{}{}
 	if program == nil {
 		return exports
 	}
-	add := func(name string) {
-		if name == "" || name[0] == '_' {
-			return
-		}
-		exports[name] = struct{}{}
-	}
+	// Only `export` declarations: both runtimes refuse anything else
+	// ("module m has no export x"), whether or not the module exports
+	// anything at all.
 	for _, stmt := range program.Statements {
-		switch s := stmt.(type) {
-		case *ast.ExportStatement:
-			add(exportedName(s.Statement))
-		case *ast.FunctionStatement:
-			if s.Name != nil {
-				add(s.Name.Value)
-			}
-		case *ast.ClassStatement:
-			if s.Name != nil {
-				add(s.Name.Value)
-			}
-		case *ast.InterfaceStatement:
-			if s.Name != nil {
-				add(s.Name.Value)
-			}
-		case *ast.EnumStatement:
-			if s.Name != nil {
-				add(s.Name.Value)
-			}
-		case *ast.DeclarationStatement:
-			if s.Name != nil {
-				add(s.Name.Value)
+		if s, ok := stmt.(*ast.ExportStatement); ok {
+			if name := exportedName(s.Statement); name != "" {
+				exports[name] = struct{}{}
 			}
 		}
 	}

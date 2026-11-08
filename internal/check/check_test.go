@@ -189,7 +189,7 @@ func TestSourceCrossModuleFlagsMissingProjectSymbol(t *testing.T) {
 func TestSourceCrossModuleAllowsProjectSymbol(t *testing.T) {
 	dir := t.TempDir()
 	depPath := filepath.Join(dir, "util.gb")
-	depBody := "func helper(): int { return 1; }\n"
+	depBody := "export func helper(): int { return 1; }\n"
 	if err := os.WriteFile(depPath, []byte(depBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestSourceCrossModuleAllowsProjectSymbol(t *testing.T) {
 	opts := Options{Resolver: modules.NewResolver([]string{dir}), CrossModule: true}
 	_, diags := Source(mainPath, mainBody, opts)
 	for _, d := range diags {
-		if d.Rule == "import" && strings.Contains(d.Message, "util.helper") {
+		if d.Rule == "import" && strings.Contains(d.Message, "helper") {
 			t.Fatalf("known project symbol flagged: %+v", d)
 		}
 	}
@@ -499,7 +499,7 @@ func TestSourceFromImportFlagsMissingNativeExport(t *testing.T) {
 
 func TestSourceFromImportFlagsMissingProjectSymbol(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "util.gb"), []byte("func helper(): int { return 1; }\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "util.gb"), []byte("export func helper(): int { return 1; }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	main := filepath.Join(dir, "main.gb")
@@ -821,5 +821,40 @@ class HiddenTest extends test.Test {
 	}
 	if _, ok := SameModuleTestProgram(testPath, parse("module nothere;\n"), resolver); ok {
 		t.Fatal("unresolvable module declaration must not merge")
+	}
+}
+
+// Declarations without `export` are private, whether or not the module
+// exports anything else; both runtimes refuse them ("module util has no
+// export x"), so the checker must flag every kind.
+func TestSourceCrossModuleFlagsUnexportedMembers(t *testing.T) {
+	dir := t.TempDir()
+	dep := "func hiddenFn(): int { return 1; }\n" +
+		"class Hidden {}\n" +
+		"const int HIDDEN = 3;\n" +
+		"export func shown(): int { return 2; }\n"
+	if err := os.WriteFile(filepath.Join(dir, "util.gb"), []byte(dep), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bare.gb"), []byte("func plain(): int { return 1; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mainPath := filepath.Join(dir, "main.gb")
+	body := "import util;\nimport bare;\nfrom util import HIDDEN;\n" +
+		"util.hiddenFn();\nutil.Hidden();\nlet n = util.HIDDEN;\nutil.shown();\nbare.plain();\n"
+	opts := Options{Resolver: modules.NewResolver([]string{dir}), CrossModule: true}
+	_, diags := Source(mainPath, body, opts)
+	for _, want := range []string{
+		"util has no exported member hiddenFn",
+		"util has no exported member Hidden",
+		"util has no exported member HIDDEN",
+		"bare has no exported member plain",
+	} {
+		if !hasDiag(diags, "import", want) {
+			t.Errorf("expected %q, got %+v", want, diags)
+		}
+	}
+	if hasDiag(diags, "import", "util has no exported member shown") {
+		t.Errorf("exported function flagged: %+v", diags)
 	}
 }

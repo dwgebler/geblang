@@ -35,7 +35,7 @@ func TestUndefinedQualifiedTypeFlagsMissingProjectType(t *testing.T) {
 
 func TestUndefinedQualifiedTypeAllowsRealType(t *testing.T) {
 	dir := t.TempDir()
-	writeModule(t, dir, "shapes.gb", "class Circle {}\n")
+	writeModule(t, dir, "shapes.gb", "export class Circle {}\n")
 	mainPath := filepath.Join(dir, "main.gb")
 	main := "import shapes;\nfunc area(shapes.Circle c): int { return 0; }\n"
 	opts := Options{Resolver: modules.NewResolver([]string{dir}), CrossModule: true}
@@ -97,5 +97,22 @@ func TestUndefinedQualifiedTypeFlagsNativeStdlibSourceType(t *testing.T) {
 	_, diags := Source(mainPath, main, opts)
 	if !hasDiag(diags, "type", "image has no exported type Nope") {
 		t.Fatalf("expected qualified-type diagnostic for stdlib source module, got %+v", diags)
+	}
+}
+
+// A class without `export` is private to its module: both runtimes refuse
+// it as a type ("no exported type"), so the checker must too.
+func TestUndefinedQualifiedTypeFlagsUnexportedClass(t *testing.T) {
+	dir := t.TempDir()
+	writeModule(t, dir, "shapes.gb", "class Circle {}\nexport class Square {}\n")
+	mainPath := filepath.Join(dir, "main.gb")
+	main := "import shapes;\nfunc area(shapes.Circle c, shapes.Square s): int { return 0; }\n"
+	opts := Options{Resolver: modules.NewResolver([]string{dir}), CrossModule: true}
+	_, diags := Source(mainPath, main, opts)
+	if !hasDiag(diags, "type", "shapes has no exported type Circle") {
+		t.Fatalf("expected the unexported class to be flagged, got %+v", diags)
+	}
+	if hasDiag(diags, "type", "shapes has no exported type Square") {
+		t.Fatalf("exported class flagged: %+v", diags)
 	}
 }

@@ -27,6 +27,11 @@
 
 ### Fixes
 
+- `geblang check` (and the language server) treated every top-level
+  declaration as exported, so `lib.Helper()` passed the check when `Helper`
+  lacked `export`, and both runtimes then failed with `module lib has no
+  export Helper`. The checker now counts only `export` declarations, for
+  members, `from` imports and qualified types alike.
 - On the evaluator, a method overriding a parent class's method from another
   module no longer becomes a second overload when it names a parameter type
   through the import alias (`base.State` in the subclass, `State` in the
