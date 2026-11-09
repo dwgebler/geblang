@@ -313,7 +313,7 @@ func (e *Evaluator) registerDBRowsContext(rows *sql.Rows, cancel context.CancelF
 	e.dbMu.Lock()
 	e.nextDBRowsID++
 	h.id = e.nextDBRowsID
-	e.dbRows[h.id] = weak.Make(h)
+	ensureMap(&e.dbRows)[h.id] = weak.Make(h)
 	e.dbMu.Unlock()
 	goruntime.AddCleanup(h, releaseAbandonedDBRows, dbRowsCleanup{owner: e, id: h.id, rows: rows, cancel: cancel})
 	return &runtime.Instance{Class: class, Fields: map[string]runtime.Value{"handle": runtime.NativeObject{Kind: dbRowsKind, ID: h.id, Payload: h}}}, nil

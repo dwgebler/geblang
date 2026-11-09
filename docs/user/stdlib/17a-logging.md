@@ -75,6 +75,8 @@ part of the API, but entries include at least:
 
 `fields` must be a dictionary. Keep fields machine-readable: prefer ids,
 status codes, durations, paths, and booleans over preformatted message text.
+Field values are encoded like `json.stringify`, so a class instance logs its
+public fields or its `__serialize()` result (1.41.3).
 
 ```gb
 log.info(logger, "user login", {

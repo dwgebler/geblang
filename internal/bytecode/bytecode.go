@@ -471,6 +471,8 @@ type FunctionInfo struct {
 	// False when every ParamTypes entry is "" or "any"; lets call
 	// entry skip the validation walk for dynamically-typed funcs.
 	requiresParamValidation bool
+	// constructorFlag is 1 for a compiled constructor, 2 otherwise, 0 when not yet prepared.
+	constructorFlag uint8
 }
 
 // displayParamName returns the original-case name, falling back to the lowercased matching name.

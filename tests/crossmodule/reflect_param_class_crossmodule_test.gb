@@ -1,0 +1,87 @@
+/**
+ * @title Reflected parameter classes across modules
+ * @summary reflect.parameters resolves each parameter's class in the declaring
+ * module, and reflect.class accepts a canonical module.Class name.
+ */
+import test;
+import json;
+import reflect;
+import param_class_donor;
+import param_class_other;
+import param_class_handlers;
+
+func paramsOf(any handler): dict<string, dict<string, any>> {
+    dict<string, dict<string, any>> out = {};
+    for (p in reflect.parameters(handler)) {
+        let entry = p as dict<string, any>;
+        out[entry["name"] as string] = entry;
+    }
+    return out;
+}
+
+class ReflectParamClassCrossModuleTest extends test.Test {
+    @test
+    func aliasQualifiedClassResolvesInDeclaringModule(): void {
+        let params = paramsOf(reflect.method(param_class_handlers.Handlers(), "create"));
+        this.assertTrue(params["body"]["class"] == param_class_donor.Widget);
+        this.assertTrue(params["body"]["class"] != param_class_other.Widget);
+        this.assertNull(params["body"]["elementClass"]);
+    }
+
+    @test
+    func unexportedNullableAndLocalClasses(): void {
+        let params = paramsOf(reflect.method(param_class_handlers.Handlers, "create"));
+        this.assertEquals("Secret", reflect.className(params["secret"]["class"]));
+        this.assertEquals("Note", reflect.className(params["note"]["class"]));
+        this.assertEquals("param_class_handlers", reflect.location(params["note"]["class"])["module"]);
+    }
+
+    @test
+    func collectionElementClasses(): void {
+        let params = paramsOf(reflect.method(param_class_handlers.Handlers, "create"));
+        this.assertNull(params["batch"]["class"]);
+        this.assertTrue(params["batch"]["elementClass"] == param_class_donor.Widget);
+        this.assertTrue(params["codes"]["elementClass"] == param_class_other.Widget);
+    }
+
+    @test
+    func fromImportedGenericAndPrimitive(): void {
+        let params = paramsOf(reflect.method(param_class_handlers.Handlers, "create"));
+        this.assertTrue(params["holder"]["class"] == param_class_donor.Holder);
+        this.assertNull(params["count"]["class"]);
+        this.assertNull(params["count"]["elementClass"]);
+    }
+
+    @test
+    func subclassOwnAndInheritedMethods(): void {
+        let own = paramsOf(reflect.method(param_class_handlers.MoreHandlers(), "update"));
+        this.assertTrue(own["body"]["class"] == param_class_donor.Widget);
+        let base = reflect.class(reflect.parent(param_class_handlers.MoreHandlers));
+        let inherited = paramsOf(reflect.method(base, "create"));
+        this.assertTrue(inherited["body"]["class"] == param_class_donor.Widget);
+    }
+
+    @test
+    func moduleFunctionClassDeserializes(): void {
+        let params = paramsOf(param_class_handlers.standalone);
+        let parsed = json.parseAs("{\"code\": 7}", params["body"]["class"]);
+        this.assertTrue(parsed instanceof param_class_other.Widget);
+        this.assertNull(params["label"]["class"]);
+    }
+
+    @test
+    func canonicalNameLookup(): void {
+        string widget = "param_class_donor.Widget";
+        string other = "param_class_other.Widget";
+        this.assertTrue(reflect.class(widget) == param_class_donor.Widget);
+        this.assertTrue(reflect.class(other) == param_class_other.Widget);
+        this.assertNull(reflect.class("param_class_missing.Widget"));
+    }
+
+    @test
+    func importedPrefixSeesOnlyExports(): void {
+        string secret = "param_class_donor.Secret";
+        this.assertNull(reflect.class(secret));
+        this.assertNull(reflect.class("param_class_donor.Secret"));
+    }
+}

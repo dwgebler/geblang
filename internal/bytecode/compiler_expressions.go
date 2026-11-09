@@ -2008,8 +2008,12 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "reflect." + name})
 		c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 		return nil
-	case "decorators", "hasDecorator", "decorator", "parameters", "returnType", "doc", "docs", "typeOf", "location", "fields", "methods", "staticMethods", "parent", "interfaces", "className", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
-		if reflectSingleValueCall(name) && len(expr.Arguments) != 1 {
+	case "decorators", "hasDecorator", "decorator", "parameters", "returnType", "returnClass", "parentClass", "doc", "docs", "typeOf", "location", "fields", "methods", "staticMethods", "parent", "interfaces", "className", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
+		if name == "fields" && len(expr.Arguments) == 2 {
+			if arg := expr.Arguments[1]; arg.Name != nil && arg.Name.Value != "inherited" {
+				return fmt.Errorf("fields has no parameter %s", arg.Name.Value)
+			}
+		} else if reflectSingleValueCall(name) && len(expr.Arguments) != 1 {
 			return fmt.Errorf("reflect.%s expects value", name)
 		}
 		if name == "decorators" && len(expr.Arguments) != 1 && len(expr.Arguments) != 2 {
@@ -2076,7 +2080,7 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 
 func reflectSingleValueCall(name string) bool {
 	switch name {
-	case "parameters", "returnType", "doc", "docs", "typeOf", "location", "fields", "methods", "staticMethods", "parent", "interfaces", "className", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
+	case "parameters", "returnType", "returnClass", "parentClass", "doc", "docs", "typeOf", "location", "fields", "methods", "staticMethods", "parent", "interfaces", "className", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
 		return true
 	default:
 		return false
@@ -2252,7 +2256,11 @@ func (c *Compiler) compileReflectQualifiedLookup(expr *ast.CallExpression, name 
 			c.emitConstant(runtime.String{Value: exportName}, expr.Token.Line, expr.Token.Column)
 			return 2, nil
 		}
-		// Unknown module: the evaluator's env-miss yields null, so match it.
+		// A canonical module.Class name resolves at runtime; other unknown modules yield null like the evaluator.
+		if name == "class" {
+			c.emitConstant(runtime.String{Value: nameLiteral.Value}, expr.Token.Line, expr.Token.Column)
+			return 1, nil
+		}
 		c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)
 		return 0, nil
 	}

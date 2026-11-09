@@ -10,6 +10,9 @@ repository. It provides:
   classes, and common language keywords.
 - **Step debugging** - breakpoints, step over/into/out, call stack, and
   variable inspection, via the built-in debug adapter (`geblang dap`).
+- **Formatting** through `geblang fmt`, a **Test Explorer** for `@test`
+  methods, and **Run / Debug code lenses** above `func main()` and test
+  classes.
 
 ## Building The Extension
 
@@ -258,6 +261,7 @@ Open **File > Preferences > Settings** (or Cmd+, on macOS) and search for
 |---|---|---|
 | `geblang.executablePath` | `"geblang"` | Absolute path to the `geblang` binary. Useful when `geblang` is not on the system `PATH`. |
 | `geblang.executionMode` | `"auto"` | Launch mode: `auto`, `native`, or `wsl`. `auto` runs native executables directly and uses `wsl.exe` only for Linux/WSL paths on Windows. |
+| `geblang.format.clean` | `false` | Format with `geblang fmt --clean`: drop redundant parentheses and flatten multi-line operator and method chains. |
 
 Example `settings.json` entry:
 

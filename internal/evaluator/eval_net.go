@@ -353,7 +353,7 @@ func (e *Evaluator) registerNetHandle(handle *netHandle) runtime.Value {
 	e.netMu.Lock()
 	defer e.netMu.Unlock()
 	e.nextNetID++
-	e.netHandles[e.nextNetID] = handle
+	ensureMap(&e.netHandles)[e.nextNetID] = handle
 	return runtime.NewInt64(e.nextNetID)
 }
 
@@ -486,7 +486,7 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 	e.netServerMu.Lock()
 	e.nextNetServerID++
 	id := e.nextNetServerID
-	e.netServers[id] = server
+	ensureMap(&e.netServers)[id] = server
 	e.netServerMu.Unlock()
 	server.wg.Add(1)
 	go func() {

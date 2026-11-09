@@ -16,7 +16,7 @@ go build -o "$LOADGEN" "$ROOT/benchmarks/web/loadgen"
 run_target() {
     local name="$1" script="$2" url="$3"
     echo "== $name =="
-    (cd "$ROOT/gebweb" && "$BIN" "$script") &
+    "$BIN" "$script" &
     local pid=$!
     trap "kill -9 $pid 2>/dev/null || true" RETURN
     for _ in $(seq 1 50); do
@@ -31,7 +31,7 @@ run_target() {
 }
 
 if [ -d "$ROOT/gebweb" ]; then
-    run_target "gebweb (VM mode)" "$ROOT/benchmarks/web/fixtures/gwapp.gb" "http://localhost:8201/json/7"
+    run_target "gebweb (VM mode)" "$ROOT/benchmarks/web/fixtures/gebweb-app/main.gb" "http://localhost:8201/json/7"
 fi
 run_target "raw http.serve" "$ROOT/benchmarks/web/fixtures/rawapp.gb" "http://localhost:8202/"
 rm -f "$LOADGEN"

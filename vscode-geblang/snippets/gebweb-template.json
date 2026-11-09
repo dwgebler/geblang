@@ -1,0 +1,79 @@
+{
+    "Output": {
+        "prefix": "out",
+        "body": [
+            "{{ ${1:value} }}"
+        ],
+        "description": "Escaped output"
+    },
+    "If": {
+        "prefix": "if",
+        "body": [
+            "{% if ${1:condition} %}",
+            "    $0",
+            "{% endif %}"
+        ],
+        "description": "Conditional block"
+    },
+    "If else": {
+        "prefix": "ifelse",
+        "body": [
+            "{% if ${1:condition} %}",
+            "    $2",
+            "{% else %}",
+            "    $0",
+            "{% endif %}"
+        ],
+        "description": "Conditional with else"
+    },
+    "For": {
+        "prefix": "for",
+        "body": [
+            "{% for ${1:item} in ${2:items} %}",
+            "    $0",
+            "{% endfor %}"
+        ],
+        "description": "Loop over a list (loop.index, loop.first, loop.last)"
+    },
+    "Set": {
+        "prefix": "set",
+        "body": [
+            "{% set ${1:name} = ${2:value} %}"
+        ],
+        "description": "Assign a template variable"
+    },
+    "Block": {
+        "prefix": "block",
+        "body": [
+            "{% block ${1:content} %}",
+            "    $0",
+            "{% endblock %}"
+        ],
+        "description": "Overridable block"
+    },
+    "Extends": {
+        "prefix": "extends",
+        "body": [
+            "{% extends \"${1:layout}.html\" %}",
+            "",
+            "{% block ${2:content} %}",
+            "    $0",
+            "{% endblock %}"
+        ],
+        "description": "Child template extending a layout"
+    },
+    "Include": {
+        "prefix": "include",
+        "body": [
+            "{% include \"${1:partial}.html\" %}"
+        ],
+        "description": "Include a partial template"
+    },
+    "Comment": {
+        "prefix": "comment",
+        "body": [
+            "{# ${1:comment} #}"
+        ],
+        "description": "Template comment"
+    }
+}

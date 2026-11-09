@@ -22,6 +22,8 @@ const (
 type FieldTypeInfo struct {
 	Name string
 	Type string
+	// Class is the nested class resolved in the declaring module, when known; it wins over a name lookup.
+	Class runtime.Value
 }
 
 // ParseNestedFieldType extracts the recursion shape and the candidate
@@ -131,7 +133,10 @@ func HydrateNestedClassFields(
 		if kind == NestedNone {
 			continue
 		}
-		class, ok := resolveClass(inner)
+		class, ok := f.Class, f.Class != nil
+		if !ok {
+			class, ok = resolveClass(inner)
+		}
 		if !ok {
 			continue
 		}

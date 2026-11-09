@@ -1447,6 +1447,7 @@ func (vm *VM) resolveCrossModuleInterfaceMembers(instruction Instruction, classI
 	if len(classInfo.Implements) == 0 {
 		return nil
 	}
+	vm.unshareCallMaps()
 	declaredFields := map[string]bool{}
 	for _, name := range classInfo.FieldNames {
 		declaredFields[strings.ToLower(name)] = true

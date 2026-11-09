@@ -473,7 +473,7 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 	}
 	finish := func(converted runtime.Value) (int, error) {
 		matches := func(value runtime.Value, typ *ast.TypeRef) bool {
-			return vm.matchValueToTypeSpec(nil, value, vm.typeSpec(typ.String()))
+			return vm.matchValueToTypeSpec(nil, value, vm.typeRefSpec(typ))
 		}
 		if !runtime.MatchesCheckedCast(converted, castRef, matches) {
 			return vm.throwTyped(instruction, ip, "TypeError", fmt.Sprintf("cannot cast %s to %s%s", converted.TypeName(), declared, runtime.CastMismatchDetail(converted, castRef, matches)))
@@ -849,6 +849,23 @@ func (vm *VM) castTypeRef(name string) *ast.TypeRef {
 	return ref
 }
 
+// maxTypeRefSpecs bounds the pointer-keyed cache: checked casts copy element refs, which would otherwise grow it.
+const maxTypeRefSpecs = 4096
+
+func (vm *VM) typeRefSpec(ref *ast.TypeRef) vmTypeSpec {
+	if spec, ok := vm.typeRefSpecs[ref]; ok {
+		return spec
+	}
+	spec := vm.typeSpec(ref.String())
+	if vm.typeRefSpecs == nil {
+		vm.typeRefSpecs = map[*ast.TypeRef]vmTypeSpec{}
+	}
+	if len(vm.typeRefSpecs) < maxTypeRefSpecs {
+		vm.typeRefSpecs[ref] = spec
+	}
+	return spec
+}
+
 func (vm *VM) typeSpec(typ string) vmTypeSpec {
 	typ = strings.TrimSpace(typ)
 	if vm.typeSpecCache == nil {
@@ -863,6 +880,17 @@ func (vm *VM) typeSpec(typ string) vmTypeSpec {
 }
 
 func parseVMTypeSpec(typ string) vmTypeSpec {
+	spec := parseVMTypeSpecShape(typ)
+	if len(spec.args) > 0 {
+		spec.argTags = make([]string, len(spec.args))
+		for i, arg := range spec.args {
+			spec.argTags[i] = elementSpecTag(arg)
+		}
+	}
+	return spec
+}
+
+func parseVMTypeSpecShape(typ string) vmTypeSpec {
 	raw := strings.TrimSpace(typ)
 	// Top-level `|` or `&` (outside angle brackets) builds a
 	// union / intersection spec whose args are the branches.

@@ -1,0 +1,10 @@
+module globals_reuse_donor;
+
+let seen = 0;
+let items = [1];
+
+export func run(callable cb): any { return cb(); }
+export func peek(): int { return seen; }
+export func setSeen(int n): void { seen = n; }
+export func itemsNow(): list<int> { return items; }
+export func swapItems(): void { items = [7, 8]; }

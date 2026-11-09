@@ -1,5 +1,92 @@
 # Release Notes
 
+## 1.41.3
+
+### Added
+
+- `reflect.parameters` and `reflect.constructors` entries gain `class` and
+  `elementClass`: the class a parameter's type names (`Widget`, `?Widget`,
+  `geo.Widget`, `Box<int>`), and the element class of `list<T>`, `set<T>`
+  or `T[]`, resolved in the module that declares the function. Import
+  aliases, `from` imports and unexported classes resolve even when the
+  caller is another module, so code that binds or documents typed
+  parameters no longer has to look a type up by its string.
+- `reflect.fields` entries gain the same `class` and `elementClass`, and
+  `reflect.fields(cls, inherited: true)` lists inherited fields after the
+  class's own, nearest ancestor first, each tagged with `declaringClass`.
+  The default result is unchanged apart from the two new keys.
+- `reflect.returnClass(fn)` returns `{class, elementClass}` for a function's
+  declared return type, resolved the same way.
+- `reflect.class("module.Class")` finds a class by its module's canonical
+  name, exported or not, even from a module that never imported it.
+- `reflect.parentClass(cls)` returns the parent class itself, resolved in the
+  child's module, or `null` for no parent or a built-in parent such as
+  `Error`.
+- `xml.parseAs` maps elements onto class fields: child elements and
+  attributes fill same-named fields converted to their declared types,
+  nested elements fill class fields and repeated elements fill lists.
+  `xml.stringify` accepts a class instance and writes it in the same shape,
+  so the two round-trip. Previously `xml.parseAs` left every field `null`.
+
+### Performance
+
+- Building a string with repeated `s = s + x` (or `+=`, or interpolation)
+  was quadratic on both runtimes: every append copied the whole string.
+  Appends now reuse spare buffer capacity, so such loops are linear; 50,000
+  appends went from 3.2s to 31ms.
+- Deleting dict keys no longer shifts the key order on every delete:
+  removing 40,000 keys went from 527ms to 62ms. Iteration order is unchanged.
+- Calling methods on strings, lists, dicts, sets and bytes is about 40%
+  faster, and dict literals about 30% faster.
+- `reflect.fields` caches each class's field metadata: an inherited lookup is
+  about 2.4x faster and allocates about 80% less. Each call still returns
+  fresh dicts.
+- Smaller savings: field writes on classes without field decorators,
+  checked casts, string-key dict lookups for keys over 32 bytes, startup (the
+  HTML sanitiser policy is built on first use), and the memory held by idle
+  cross-module worker VMs.
+- Programs that call between modules or hand callbacks to native functions
+  at a high rate, such as HTTP servers, do less work per call. A pooled
+  worker reuses its copy of top-level values that have not changed instead
+  of recopying them, per-request runtime state is created only when used,
+  and decorator tables are shared instead of copied. On a small JSON HTTP
+  endpoint this served 15 to 20% more requests per second, with about a
+  third lower p99 latency and about 18% lower peak memory.
+- The deployment guide now gives measured `GOGC` / `GOMEMLIMIT` trade-offs
+  for HTTP servers.
+
+### Fixes
+
+- `re.compile` and `pcre.compile` kept every compiled pattern for the life of
+  the process, so a program compiling patterns repeatedly grew without bound
+  (about 210 bytes per compile). A pattern is now freed with its `Pattern`
+  value.
+- `json.parseAs`, `yaml.parseAs` and `toml.parseAs` left every inherited
+  field `null` when the target was a subclass. Inherited fields, including
+  those declared in another module, are now filled and type-checked like
+  the class's own.
+- `http.jsonResponse`, `http.postJson` and structured log fields rejected
+  class instances with `json.stringify does not support X`. They now encode
+  exactly as `json.stringify` does: public fields, inherited included, or
+  the `__serialize()` result. Output for other values is unchanged.
+- `json.stringify` escaped `<`, `>` and `&` in the string fields of class
+  instances (`\u003cb\u003e`) but not in dicts, lists or plain strings.
+  Instance fields are now written as-is too.
+- On the bytecode VM, `reflect.returnType` dropped type arguments
+  (`list` for `list<int>`, `?Box` for `?Box<int>`) on functions, lambdas,
+  methods and static methods. It now reports the full type, as the
+  evaluator always did.
+- On the bytecode VM, `reflect.class` with a name string whose prefix is an
+  import alias (`let n = "geo.Widget"; reflect.class(n)`) returned `null`;
+  it now resolves to the aliased module's export, as on the evaluator.
+- A bare `reflect.class("Widget")` that several modules could satisfy picked
+  the last-declared class on the evaluator and an arbitrary one on the
+  bytecode VM. Both now look in the calling module, then the entry script,
+  then the other modules in alphabetical order.
+- `parseAs` resolved a nested field's class by its bare name, so a field
+  typed `geo.Widget` could be filled with another module's `Widget`. Nested
+  fields now use the class the declaring module names.
+
 ## 1.41.2
 
 ### Fixes

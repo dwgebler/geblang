@@ -1,0 +1,9 @@
+module bco_zeta;
+
+export class Widget {
+    string tag;
+}
+
+export class Base {
+    int level;
+}

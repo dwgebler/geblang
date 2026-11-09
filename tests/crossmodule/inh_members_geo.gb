@@ -1,0 +1,9 @@
+module inh_members_geo;
+
+export class Point {
+    int x;
+}
+
+export class Tag {
+    string label;
+}

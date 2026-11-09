@@ -1,0 +1,13 @@
+module param_class_donor;
+
+export class Widget {
+    string id;
+}
+
+class Secret {
+    int n;
+}
+
+export class Holder<T> {
+    T value;
+}

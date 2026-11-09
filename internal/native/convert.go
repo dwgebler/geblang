@@ -30,10 +30,20 @@ type InstanceInvokerFunc func(instance *runtime.Instance, method string, args []
 // to turn a parsed value into a class instance.
 type ClassDeserializerFunc func(class runtime.Value, value runtime.Value) (runtime.Value, error)
 
+type ClassFieldInfo struct {
+	Name         string
+	Type         string
+	Class        runtime.Value
+	ElementClass runtime.Value
+}
+
+type ClassFieldsFunc func(class runtime.Value) ([]ClassFieldInfo, error)
+
 // ConversionContext carries the active backend's serialize/deserialize callbacks; each backend builds its own and threads it through the convert ops, so concurrent backends never cross-dispatch and no partially built VM is published.
 type ConversionContext struct {
 	InstanceInvoker   InstanceInvokerFunc
 	ClassDeserializer ClassDeserializerFunc
+	ClassFields       ClassFieldsFunc
 	StreamWriter      func(runtime.Value, []byte) (int, error)
 	jsonStream        *jsonStreamState
 	jsonPath          []unsafe.Pointer
@@ -567,11 +577,12 @@ func encodeJSONValueInto(ctx ConversionContext, buf *bytes.Buffer, value runtime
 		if err != nil {
 			return err
 		}
-		encoded, err := json.Marshal(converted)
-		if err != nil {
+		encoder := json.NewEncoder(buf)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(converted); err != nil {
 			return err
 		}
-		buf.Write(encoded)
+		buf.Truncate(buf.Len() - 1)
 		return nil
 	default:
 		return fmt.Errorf("json.stringify does not support %s", v.TypeName())

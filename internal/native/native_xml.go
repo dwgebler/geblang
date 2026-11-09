@@ -70,5 +70,32 @@ func xmlParseAsCtx(ctx ConversionContext, args []runtime.Value) (runtime.Value, 
 	if parseErr != nil {
 		return nil, fmt.Errorf("%s", parseErr.Message)
 	}
-	return deserializeIntoClassCtx(ctx, class, value)
+	element, ok := value.(runtime.Dict)
+	if !ok || ctx.ClassFields == nil {
+		return deserializeIntoClassCtx(ctx, class, value)
+	}
+	fields, err := xmlElementFields(ctx, class, element, 0)
+	if err != nil {
+		return nil, err
+	}
+	return deserializeIntoClassCtx(ctx, class, fields)
+}
+
+func xmlStringifyCtx(ctx ConversionContext, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("xml.stringify expects exactly one argument")
+	}
+	value := args[0]
+	if instance, ok := value.(*runtime.Instance); ok && instance != nil && instance.Class != nil {
+		element, err := xmlInstanceElement(ctx, instance, simpleClassName(instance.Class.Name), 0)
+		if err != nil {
+			return nil, err
+		}
+		value = element
+	}
+	text, err := StringifyXML(value)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.String{Value: text}, nil
 }

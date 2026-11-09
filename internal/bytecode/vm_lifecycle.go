@@ -10,48 +10,60 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
+type vmCapacities struct {
+	stack, frames, locals, defers int
+}
+
+// Pooled loader workers start small: up to maxPooledVMs of them stay resident per module, and the buffers grow on demand.
+var mainVMCapacities = vmCapacities{stack: 1024, frames: 256, locals: 256, defers: 64}
+var workerVMCapacities = vmCapacities{stack: 128, frames: 32, locals: 32, defers: 8}
+
 func NewVM(chunk Chunk, stdout io.Writer) *VM {
+	return newVMWithCapacities(chunk, stdout, mainVMCapacities)
+}
+
+func newVMWithCapacities(chunk Chunk, stdout io.Writer, caps vmCapacities) *VM {
 	classIndex := make(map[string]int, len(chunk.Classes))
 	for i, classInfo := range chunk.Classes {
 		classIndex[strings.ToLower(classInfo.Name)] = i
 	}
-	initialDefers := make([][]deferredAction, 1, 64)
-	// Pre-allocate stack; 1024 entries x 32 bytes = 32 KB, avoids early growth.
-	initialStack := make([]runtime.VMValue, 0, 1024)
+	initialDefers := make([][]deferredAction, 1, caps.defers)
+	initialStack := make([]runtime.VMValue, 0, caps.stack)
 	// Pre-size globals/locals from compiled counts; 256 is the historical minimum.
 	globalSize := int(chunk.GlobalCount)
 	if globalSize < 256 {
 		globalSize = 256
 	}
 	localsCap := int(chunk.TopLevelLocalCount)
-	if localsCap < 256 {
-		localsCap = 256
+	if localsCap < caps.locals {
+		localsCap = caps.locals
 	}
 	if meta := chunk.sharedMeta; meta != nil {
 		// Shared-meta path: reuse the memoised functions, class index, and type-assert specs.
 		meta.prepare(chunk)
 		chunk.Functions = meta.preparedFunctions
-		vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), localsStack: make([]runtime.VMValue, 0, localsCap), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: meta.classIndex, natives: native.NewBuiltinRegistry(), nativeCache: make([]native.Function, len(chunk.Constants)), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, interfaceFallbacks: map[int64]map[string]crossModuleDefault{}, interfaceExtraFields: map[int64][]extraField{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
+		vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), localsStack: make([]runtime.VMValue, 0, localsCap), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, caps.frames), defers: initialDefers, classIndex: meta.classIndex, natives: native.NewBuiltinRegistry(), nativeCache: make([]native.Function, len(chunk.Constants)), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, interfaceFallbacks: map[int64]map[string]crossModuleDefault{}, interfaceExtraFields: map[int64][]extraField{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
 		vm.typeAssertSpecs = meta.typeAssertSpecs
 		vm.requiresCallSitePolymorphism = meta.requiresCallSitePolymorphism
 		vm.curMod = &ModuleContext{Chunk: chunk, classIndex: meta.classIndex}
 		vm.curGlobals = vm.globals
 		vm.instanceInvokerFn = vm.invokeInstanceMethod
 		vm.classDeserializerFn = vm.deserializeIntoClass
-		vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn, StreamWriter: vm.writeJSONBytes})
+		vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn, ClassFields: vm.classFieldsForConversion, StreamWriter: vm.writeJSONBytes})
 		return vm
 	}
 	// Detach Functions so per-VM metadata mutations don't race concurrent VMs sharing the chunk.
 	chunk.Functions = append([]FunctionInfo(nil), chunk.Functions...)
-	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), localsStack: make([]runtime.VMValue, 0, localsCap), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), nativeCache: make([]native.Function, len(chunk.Constants)), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, interfaceFallbacks: map[int64]map[string]crossModuleDefault{}, interfaceExtraFields: map[int64][]extraField{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
+	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), localsStack: make([]runtime.VMValue, 0, localsCap), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, caps.frames), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), nativeCache: make([]native.Function, len(chunk.Constants)), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, interfaceFallbacks: map[int64]map[string]crossModuleDefault{}, interfaceExtraFields: map[int64][]extraField{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
 	vm.curMod = &ModuleContext{Chunk: chunk, classIndex: classIndex}
 	vm.curGlobals = vm.globals
 	vm.prepareFunctionTypeMetadata()
 	vm.instanceInvokerFn = vm.invokeInstanceMethod
 	vm.classDeserializerFn = vm.deserializeIntoClass
-	vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn, StreamWriter: vm.writeJSONBytes})
+	vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn, ClassFields: vm.classFieldsForConversion, StreamWriter: vm.writeJSONBytes})
 	return vm
 }
 
@@ -95,83 +107,7 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 	if vm.moduleLoader != nil && class.Module != vm.moduleName {
 		return vm.moduleLoader.DeserializeModuleClass(class, value)
 	}
-	if class.Index < 0 || int(class.Index) >= len(vm.chunk.Classes) {
-		return nil, fmt.Errorf("deserialize %s: class index out of range", class.Name)
-	}
-	classInfo := vm.chunk.Classes[class.Index]
-	if indices, name, ok := vm.lookupStaticDunder(classInfo, "__deserialize", "__deserialize__"); ok && len(indices) > 0 {
-		args := []runtime.Value{value}
-		functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 0)
-		if err != nil {
-			return nil, fmt.Errorf("deserialize %s: %w", class.Name, err)
-		}
-		return vm.CallFunctionRaw(functionIndex, args)
-	}
-	if result, found, err := vm.deserializeViaInheritedFactory(class, value); found || err != nil {
-		return result, err
-	}
-	dict, ok := value.(runtime.Dict)
-	if !ok {
-		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
-	}
-	hydrated, herr := native.HydrateNestedClassFields(vmFieldTypeInfos(classInfo), dict, vm.resolveDeserializeClass, vm.deserializeIntoClass)
-	if herr != nil {
-		return nil, herr
-	}
-	dict = hydrated
-	if len(classInfo.ConstructorIndices) == 0 {
-		// Classes without an explicit constructor get their fields
-		// populated directly from the dict. Matches the evaluator's
-		// data-class behaviour so `json.parseAs(text, MyDTO)` is
-		// usable without writing a constructor.
-		v, err := vm.ConstructClass(class.Index, nil)
-		if err != nil {
-			return nil, err
-		}
-		instance, ok := v.(*runtime.Instance)
-		if !ok {
-			return v, nil
-		}
-		for i, fieldName := range classInfo.FieldNames {
-			key := runtime.String{Value: fieldName}
-			entry, hit := dict.GetEntry(native.DictKey(key))
-			if hit {
-				value := entry.Value
-				if i < len(classInfo.FieldCheckTypes) && classInfo.FieldCheckTypes[i] != "" {
-					value = native.ConvertParsedNumbers(value, classInfo.FieldCheckTypes[i])
-				}
-				if msg, ok := vm.fieldWriteMismatch(instance, fieldName, value); !ok {
-					return nil, runtime.ClassifiedError{Class: "TypeError", Message: msg}
-				}
-				instance.Fields[fieldName] = value
-			}
-		}
-		return instance, nil
-	}
-	ctorIndex := classInfo.ConstructorIndices[0]
-	if ctorIndex < 0 || int(ctorIndex) >= len(vm.chunk.Functions) {
-		return nil, fmt.Errorf("deserialize %s: constructor index out of range", class.Name)
-	}
-	ctor := vm.chunk.Functions[ctorIndex]
-	args := make([]runtime.Value, 0, len(ctor.ParamNames))
-	for i, paramName := range ctor.ParamNames {
-		// Skip the implicit "this" receiver, which the compiler
-		// prepends to method/constructor parameter lists.
-		if paramName == "this" {
-			continue
-		}
-		key := runtime.String{Value: paramName}
-		entry, ok := dict.GetEntry(native.DictKey(key))
-		if !ok {
-			return nil, fmt.Errorf("deserialize %s: missing field %q", class.Name, paramName)
-		}
-		value := entry.Value
-		if i < len(ctor.ParamTypes) {
-			value = native.ConvertParsedNumbers(value, vm.expandTypeAliases(ctor.ParamTypes[i]))
-		}
-		args = append(args, value)
-	}
-	return vm.ConstructClass(class.Index, args)
+	return vm.DeserializeIntoChunkClass(class, value)
 }
 
 // deserializeViaInheritedFactory runs a static __deserialize factory inherited from a cross-module ancestor (same-chunk ancestors handled by lookupStaticDunder); found is false when none declares it.
@@ -220,12 +156,19 @@ func (vm *VM) resolveDeserializeClass(name string) (runtime.Value, bool) {
 }
 
 func NewVMWithModuleLoader(chunk Chunk, stdout io.Writer, loader ModuleLoader) *VM {
-	vm := NewVM(chunk, stdout)
+	return newLoaderVM(newVMWithCapacities(chunk, stdout, mainVMCapacities), loader)
+}
+
+func NewWorkerVMWithModuleLoader(chunk Chunk, stdout io.Writer, loader ModuleLoader) *VM {
+	return newLoaderVM(newVMWithCapacities(chunk, stdout, workerVMCapacities), loader)
+}
+
+func newLoaderVM(vm *VM, loader ModuleLoader) *VM {
 	vm.moduleLoader = loader
 	// Conversion context set on this VM's own registry after moduleLoader is assigned; serialize/deserialize routes through the loader (a fresh exclusive worker per call) with no process-global, so no partially built VM is ever published.
 	vm.instanceInvokerFn = loaderInstanceInvoker(loader)
 	vm.classDeserializerFn = loaderClassDeserializer(loader)
-	vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn, StreamWriter: vm.writeJSONBytes})
+	vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn, ClassFields: vm.classFieldsForConversion, StreamWriter: vm.writeJSONBytes})
 	return vm
 }
 
@@ -407,6 +350,7 @@ func (vm *VM) RestoreGlobals(globals []runtime.Value) {
 		vm.globals = make([]runtime.VMValue, len(globals))
 	}
 	vm.curGlobals = vm.globals
+	vm.globalsStamp = 0
 	for i, v := range globals {
 		vm.globals[i] = runtime.VMValueFromValue(v)
 	}
@@ -447,6 +391,46 @@ func (vm *VM) RestoreGlobalsVM(globals []runtime.VMValue) {
 	}
 	copy(vm.globals, globals)
 	vm.curGlobals = vm.globals
+	vm.globalsStamp = 0
+}
+
+// AdoptGlobalsVM is RestoreGlobalsVM for a source whose contents are named by stamp; it skips the copy when this VM already holds them.
+func (vm *VM) AdoptGlobalsVM(globals []runtime.VMValue, stamp uint64) {
+	vm.adoptGlobals(globals, stamp)
+}
+
+// ClearGlobals drops every global, including ones a pooled VM kept across reuse.
+func (vm *VM) ClearGlobals() {
+	clear(vm.globals)
+	vm.globalsStamp = 0
+}
+
+var globalsStamps atomic.Uint64
+
+// NewGlobalsStamp returns a process-unique name for one version of a globals slice.
+func NewGlobalsStamp() uint64 { return globalsStamps.Add(1) }
+
+// stampGlobalsLocked names the current globals contents; the caller holds globalsMu.
+func (vm *VM) stampGlobalsLocked() uint64 {
+	if vm.globalsStamp == 0 {
+		vm.globalsStamp = NewGlobalsStamp()
+	}
+	return vm.globalsStamp
+}
+
+func (vm *VM) adoptGlobals(globals []runtime.VMValue, stamp uint64) {
+	if stamp != 0 && vm.globalsStamp == stamp && len(vm.globals) == len(globals) {
+		return
+	}
+	vm.restoreGlobalsVM(globals)
+	vm.globalsStamp = stamp
+}
+
+// CopyGlobalsTo hands this VM's globals to a worker VM without boxing them into runtime.Values.
+func (vm *VM) CopyGlobalsTo(dst *VM) {
+	vm.globalsMu.Lock()
+	dst.adoptGlobals(vm.globals, vm.stampGlobalsLocked())
+	vm.globalsMu.Unlock()
 }
 
 // restoreGlobalsVM is the VM-internal fast path used when one VM hands
@@ -455,6 +439,7 @@ func (vm *VM) RestoreGlobalsVM(globals []runtime.VMValue) {
 func (vm *VM) restoreGlobalsVM(globals []runtime.VMValue) {
 	vm.globals = append(vm.globals[:0], globals...)
 	vm.curGlobals = vm.globals
+	vm.globalsStamp = 0
 }
 
 func (vm *VM) FunctionDecoratorState() FunctionDecoratorState {
@@ -530,7 +515,11 @@ func (vm *VM) ResetForReuse() { vm.resetForReuse() }
 func (vm *VM) Recyclable() bool { return vm.escapedRefs.Load() == 0 }
 
 func (vm *VM) resetForReuse() {
-	clear(vm.globals)
+	vm.strAppend.Reset()
+	// A stamped copy is kept so the next borrow of this VM can skip recopying the same globals.
+	if vm.globalsStamp == 0 {
+		clear(vm.globals)
+	}
 	// Only slots up to each high-water mark were ever written; clearing the
 	// whole capacity on every pooled cross-module call dominated busy
 	// multi-worker runs (it zeroed ~90 KB per call and saturated memory
@@ -605,6 +594,7 @@ func (vm *VM) prepareFunctionTypeMetadata() {
 		function := &vm.chunk.Functions[i]
 		function.typeParamSet = functionTypeParameterSetOrNil(*function)
 		function.requiresParamValidation = functionRequiresParamValidation(*function)
+		function.constructorFlag = constructorFlagFor(function.Name)
 		function.frameMeta = newFrameMeta(*function, vm.typeSpec)
 		if function.Async || function.IsGenerator || len(function.Decorators) > 0 {
 			hasCallSitePolymorphism = true

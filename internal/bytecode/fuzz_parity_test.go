@@ -608,6 +608,36 @@ func (g *fuzzGen) unionForwardBlock() (decls string, calls []string) {
 	return d.String(), calls
 }
 
+// reflectTypesBlock reflects generic, nullable, collection and class types on every callable shape and field (returnType erased type args on the VM until 1.41.3).
+func (g *fuzzGen) reflectTypesBlock() (decls string, calls []string) {
+	types := [][2]string{
+		{"list<int>", "[]"}, {"?dict<string, int>", "null"}, {"?Box<int>", "null"},
+		{"Box<string>", "Box<string>()"}, {"int", "0"}, {"list<Box<int>>", "[]"},
+		{"int[]", "[]"}, {"?Item", "null"}, {"Item", "Item()"}, {"Item[]", "[]"},
+	}
+	pick := func() [2]string { return types[g.rng.Intn(len(types))] }
+	rf, rm, rs, rl, pa, fa, fb := pick(), pick(), pick(), pick(), pick(), pick(), pick()
+	var d strings.Builder
+	d.WriteString("import reflect;\nclass Box<T> {\n  ?T v;\n}\nclass Item {\n  int n;\n}\n")
+	d.WriteString("class RBase {\n  " + fa[0] + " inheritedField;\n}\n")
+	d.WriteString("class RHolder extends RBase {\n  " + fb[0] + " ownField;\n")
+	d.WriteString("  func m(" + pa[0] + " p): " + rm[0] + " { return " + rm[1] + "; }\n")
+	d.WriteString("  static func s(): " + rs[0] + " { return " + rs[1] + "; }\n}\n")
+	d.WriteString("func rtop(" + pa[0] + " p): " + rf[0] + " { return " + rf[1] + "; }\n")
+	d.WriteString("let rlam = func(): " + rl[0] + " { return " + rl[1] + "; };\n")
+	d.WriteString("func rcls(any v): string { return v == null ? \"null\" : reflect.className(v); }\n")
+	d.WriteString("func rret(any f): string { let r = reflect.returnClass(f); return (reflect.returnType(f) as string) + \" \" + rcls(r[\"class\"]) + \" \" + rcls(r[\"elementClass\"]); }\n")
+	calls = append(calls,
+		"io.println(rret(rtop));",
+		"io.println(rret(rlam));",
+		"io.println(rret(reflect.method(RHolder, \"m\")));",
+		"io.println(rret(reflect.staticMethod(RHolder, \"s\")));",
+		"for (p in reflect.parameters(rtop)) { io.println((p[\"type\"] as string) + \" \" + rcls(p[\"class\"]) + \" \" + rcls(p[\"elementClass\"])); }",
+		"for (f in reflect.fields(RHolder, inherited: true)) { io.println((f[\"name\"] as string) + \" \" + (f[\"type\"] as string) + \" \" + rcls(f[\"class\"]) + \" \" + rcls(f[\"elementClass\"]) + \" \" + rcls(f[\"declaringClass\"])); }",
+	)
+	return d.String(), calls
+}
+
 func (g *fuzzGen) program() string {
 	var b strings.Builder
 	b.WriteString("import io;\n")
@@ -615,7 +645,7 @@ func (g *fuzzGen) program() string {
 	// declarations cannot collide; the rest of the budget is scalar
 	// expressions and fault statements.
 	var sectionCalls []string
-	switch g.rng.Intn(12) {
+	switch g.rng.Intn(13) {
 	case 0:
 		decls, calls := g.classBlock()
 		b.WriteString(decls)
@@ -662,6 +692,10 @@ func (g *fuzzGen) program() string {
 		sectionCalls = calls
 	case 11:
 		decls, calls := g.unionForwardBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 12:
+		decls, calls := g.reflectTypesBlock()
 		b.WriteString(decls)
 		sectionCalls = calls
 	}

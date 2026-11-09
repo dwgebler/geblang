@@ -1,0 +1,91 @@
+/**
+ * @title Class instances in JSON output
+ * @summary http.jsonResponse, http.postJson and structured log fields
+ * serialize class instances exactly as json.stringify does: public fields
+ * (inherited included), __serialize() overrides, and no HTML escaping.
+ */
+import test;
+import json;
+import http;
+import log;
+import streams;
+
+class Point {
+    int x;
+    int _hidden;
+}
+
+class Point3 extends Point {
+    int z;
+}
+
+class Money {
+    int cents;
+
+    func __serialize(): any {
+        return {"amount": this.cents};
+    }
+}
+
+class Label {
+    string text;
+}
+
+func point3(): Point3 {
+    let p = Point3();
+    p.x = 1;
+    p.z = 3;
+    return p;
+}
+
+func money(): Money {
+    let m = Money();
+    m.cents = 250;
+    return m;
+}
+
+class JsonInstanceOutputTest extends test.Test {
+    @test
+    func jsonResponseMatchesStringify(): void {
+        for (v in [point3(), money(), {"items": [point3(), money()]}]) {
+            let r = http.jsonResponse(v, 201);
+            this.assertEquals(201, r.status);
+            this.assertEquals(json.stringify(v), r.body as string);
+        }
+        this.assertEquals("{\"x\":1,\"z\":3}", http.jsonResponse(point3()).body as string);
+        this.assertEquals("{\"amount\":250}", http.jsonResponse(money()).body as string);
+    }
+
+    @test
+    func instanceStringsAreNotHtmlEscaped(): void {
+        let label = Label();
+        label.text = "<b>&";
+        this.assertEquals("{\"text\":\"<b>&\"}", json.stringify(label));
+        this.assertEquals("[{\"text\":\"<b>&\"}]", json.stringify([label]));
+        this.assertEquals("{\"k\":\"<b>&\"}", json.stringify({"k": "<b>&"}));
+    }
+
+    @test
+    func logFieldsSerializeInstances(): void {
+        let buf = streams.memory();
+        let logger = log.toStream(buf);
+        log.info(logger, "saved", {"point": point3(), "money": money()});
+        log.close(logger);
+        let line = json.parse(buf.toString().trim()) as dict<string, any>;
+        let fields = line["fields"] as dict<string, any>;
+        this.assertEquals({"x": 1, "z": 3}, fields["point"]);
+        this.assertEquals({"amount": 250}, fields["money"]);
+    }
+
+    @test
+    func postJsonSendsInstanceBody(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return {"status": 200, "body": request["body"]};
+        });
+        let url = "http://" + http.serverAddr(server) + "/";
+        let r = http.postJson(url, point3());
+        http.shutdown(server);
+        this.assertEquals(200, r["status"]);
+        this.assertEquals("{\"x\":1,\"z\":3}", r["body"]);
+    }
+}

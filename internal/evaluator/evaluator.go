@@ -102,6 +102,11 @@ type Evaluator struct {
 	// class registers here at definition time so reflect.class(name)
 	// from any module can find it.
 	globalClasses map[string]*runtime.Class
+	// moduleClasses keys every user class by "module.Name" so same-named classes stay distinct.
+	moduleClasses      map[string]*runtime.Class
+	classModulesByName map[string][]string
+	stringAppendMu     sync.Mutex
+	stringAppend       runtime.StringAppender
 	// Cross-module function registry mirroring globalClasses, so
 	// reflect.function(name) resolves an imported module's export.
 	globalFunctions map[string]runtime.Function
@@ -586,8 +591,8 @@ func newEvaluatorCore(stdout io.Writer, args []string, modulePaths []string) *Ev
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, input: newConsoleInput(os.Stdin), imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]weak.Pointer[dbRowsHandle]{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
-	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer, StreamWriter: e.writeJSONBytes})
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, webApps: map[int64]*webApp{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, moduleClasses: map[string]*runtime.Class{}, classModulesByName: map[string][]string{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
+	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer, ClassFields: e.classFieldsForConversion, StreamWriter: e.writeJSONBytes})
 	return e
 }
 
@@ -599,7 +604,9 @@ func (e *Evaluator) ensureBuiltinFunctions() {
 
 // NewWithArgsAndModulePaths builds a root evaluator; newEvaluatorCore installs its serialize/deserialize context on its own native registry, so concurrent or independent evaluators never cross-dispatch.
 func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []string) *Evaluator {
-	return newEvaluatorCore(stdout, args, modulePaths)
+	e := newEvaluatorCore(stdout, args, modulePaths)
+	e.input = newConsoleInput(os.Stdin)
+	return e
 }
 
 // isolatedInstanceInvoker dispatches a native instance callback (e.g. __serialize) on a fresh child evaluator so concurrent calls never share the root's mutable call state. lookupMethod is read-only, so the existence check avoids a child clone for instances without the method.
@@ -622,26 +629,58 @@ func (e *Evaluator) isolatedClassDeserializer(classValue runtime.Value, value ru
 // the tree-walking evaluator. Tries static __deserialize__ first;
 // falls back to positional constructor calls with dict keys
 // matched against constructor parameter names.
-func evalFieldTypeInfos(class *runtime.Class) []native.FieldTypeInfo {
-	infos := make([]native.FieldTypeInfo, len(class.Fields))
-	for i, field := range class.Fields {
-		t := ""
-		if field.Type != nil {
-			t = field.Type.String()
+func (e *Evaluator) classFieldsForConversion(classValue runtime.Value) ([]native.ClassFieldInfo, error) {
+	class, ok := classValue.(*runtime.Class)
+	if !ok {
+		return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
+	}
+	seen := map[string]bool{}
+	var out []native.ClassFieldInfo
+	for c := class; c != nil; c = c.Parent {
+		for _, field := range c.Fields {
+			if seen[field.Name] {
+				continue
+			}
+			seen[field.Name] = true
+			typ := typeRefToString(field.Type)
+			className, elementName := runtime.ParameterClassNames(typ)
+			out = append(out, native.ClassFieldInfo{
+				Name:         field.Name,
+				Type:         typ,
+				Class:        nonNullValue(e.resolveScopedClass(className, c.Env)),
+				ElementClass: nonNullValue(e.resolveScopedClass(elementName, c.Env)),
+			})
 		}
-		infos[i] = native.FieldTypeInfo{Name: field.Name, Type: t}
+	}
+	return out, nil
+}
+
+func (e *Evaluator) resolvedFieldTypeInfos(class *runtime.Class) []native.FieldTypeInfo {
+	fields, _ := e.classFieldsForConversion(class)
+	infos := make([]native.FieldTypeInfo, len(fields))
+	for i, field := range fields {
+		resolved := field.Class
+		if resolved == nil {
+			resolved = field.ElementClass
+		}
+		infos[i] = native.FieldTypeInfo{Name: field.Name, Type: field.Type, Class: resolved}
 	}
 	return infos
+}
+
+func nonNullValue(v runtime.Value) runtime.Value {
+	if _, isNull := v.(runtime.Null); isNull {
+		return nil
+	}
+	return v
 }
 
 // resolveDeserializeClass resolves a field's declared class name to a
 // class value for nested parseAs via the cross-module class registry.
 func (e *Evaluator) resolveDeserializeClass(name string) (runtime.Value, bool) {
 	// Walk the parent chain: a per-call callback child has empty globalClasses and resolves nested classes against the root that declared them.
-	for cur := e; cur != nil; cur = cur.parent {
-		if class, ok := cur.globalClasses[name]; ok {
-			return class, true
-		}
+	if class, ok := e.bareClass(name); ok {
+		return class, true
 	}
 	return nil, false
 }
@@ -658,7 +697,8 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 	if !ok {
 		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
 	}
-	hydrated, herr := native.HydrateNestedClassFields(evalFieldTypeInfos(class), dict, e.resolveDeserializeClass, e.deserializeIntoClass)
+	fields := append(append([]runtime.Field(nil), class.Fields...), runtime.InheritedFields(class)...)
+	hydrated, herr := native.HydrateNestedClassFields(e.resolvedFieldTypeInfos(class), dict, e.resolveDeserializeClass, e.deserializeIntoClass)
 	if herr != nil {
 		return nil, herr
 	}
@@ -676,13 +716,15 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 		if !ok {
 			return v, nil
 		}
-		for _, field := range class.Fields {
+		for _, field := range fields {
 			key := runtime.String{Value: field.Name}
 			entry, hit := native.LookupDictEntry(dict, key)
 			if hit {
 				value := entry.Value
 				if declared := field.CheckType; declared != nil {
 					value = native.ConvertParsedNumbers(value, declared.String())
+				} else if field.TypeName != "" {
+					value = native.ConvertParsedNumbers(value, field.TypeName)
 				}
 				if err := checkFieldWrite(instance, field.Name, value); err != nil {
 					return nil, err
@@ -834,6 +876,14 @@ func (e *Evaluator) CallBuiltin(module, name string, args []runtime.Value, argNa
 		}
 	}
 	return function(call, args)
+}
+
+// ensureMap allocates a handle map on first write; most evaluators (one per request) never open one.
+func ensureMap[K comparable, V any](m *map[K]V) map[K]V {
+	if *m == nil {
+		*m = map[K]V{}
+	}
+	return *m
 }
 
 func (e *Evaluator) childForCallback() *Evaluator {
@@ -1003,7 +1053,7 @@ func (e *Evaluator) Cleanup() error {
 
 	e.fileMu.Lock()
 	files := e.files
-	e.files = map[int64]*os.File{}
+	e.files = nil
 	e.fileMu.Unlock()
 	for _, file := range files {
 		record(file.Close())
@@ -1011,7 +1061,7 @@ func (e *Evaluator) Cleanup() error {
 
 	e.streamMu.Lock()
 	streams := e.streams
-	e.streams = map[int64]*ioStreamHandle{}
+	e.streams = nil
 	e.streamMu.Unlock()
 	for _, stream := range streams {
 		record(closeIOStreamHandle(stream))
@@ -1019,7 +1069,7 @@ func (e *Evaluator) Cleanup() error {
 
 	e.watchMu.Lock()
 	watches := e.watches
-	e.watches = map[int64]*watchHandle{}
+	e.watches = nil
 	e.watchMu.Unlock()
 	for _, watcher := range watches {
 		record(stopWatchHandle(watcher))
@@ -1035,7 +1085,7 @@ func (e *Evaluator) Cleanup() error {
 
 	e.netServerMu.Lock()
 	netServers := e.netServers
-	e.netServers = map[int64]*netServerHandle{}
+	e.netServers = nil
 	e.netServerMu.Unlock()
 	for _, server := range netServers {
 		record(stopNetServerHandle(server))
@@ -1045,9 +1095,9 @@ func (e *Evaluator) Cleanup() error {
 	sshTunnels := e.sshTunnels
 	sshSessions := e.sshSessions
 	sshClients := e.sshClients
-	e.sshTunnels = map[int64]*sshTunnelHandle{}
-	e.sshSessions = map[int64]*sshSessionHandle{}
-	e.sshClients = map[int64]*sshClientHandle{}
+	e.sshTunnels = nil
+	e.sshSessions = nil
+	e.sshClients = nil
 	e.sshMu.Unlock()
 	for _, tunnel := range sshTunnels {
 		record(stopSSHTunnelHandle(tunnel))
@@ -1064,11 +1114,11 @@ func (e *Evaluator) Cleanup() error {
 	stmts := e.stmts
 	txs := e.txs
 	dbs := e.dbs
-	e.dbRows = map[int64]weak.Pointer[dbRowsHandle]{}
-	e.stmts = map[int64]*dbStmtHandle{}
-	e.txs = map[int64]*dbTxHandle{}
-	e.dbs = map[int64]*sql.DB{}
-	e.dbDrivers = map[int64]string{}
+	e.dbRows = nil
+	e.stmts = nil
+	e.txs = nil
+	e.dbs = nil
+	e.dbDrivers = nil
 	e.dbMu.Unlock()
 	for _, ref := range dbRows {
 		rows := ref.Value()
@@ -1097,7 +1147,7 @@ func (e *Evaluator) Cleanup() error {
 
 	e.netMu.Lock()
 	netHandles := e.netHandles
-	e.netHandles = map[int64]*netHandle{}
+	e.netHandles = nil
 	e.netMu.Unlock()
 	for _, handle := range netHandles {
 		record(closeNetHandle(handle))
@@ -1105,31 +1155,31 @@ func (e *Evaluator) Cleanup() error {
 
 	e.httpServerMu.Lock()
 	httpServers := e.httpServers
-	e.httpServers = map[int64]*httpServerHandle{}
+	e.httpServers = nil
 	e.httpServerMu.Unlock()
 	for _, handle := range httpServers {
 		record(closeHTTPServerHandle(handle))
 	}
 
 	e.httpStreamMu.Lock()
-	e.httpStreams = map[int64]*httpStreamHandle{}
+	e.httpStreams = nil
 	e.httpStreamMu.Unlock()
 
 	e.httpResponseStreamMu.Lock()
 	respStreams := e.httpResponseStreams
-	e.httpResponseStreams = map[int64]*httpResponseStreamHandle{}
+	e.httpResponseStreams = nil
 	e.httpResponseStreamMu.Unlock()
 	for _, h := range respStreams {
 		h.closeBody()
 	}
 
 	e.httpFetchStreamMu.Lock()
-	e.httpFetchStreams = map[int64]*httpFetchStreamHandle{}
+	e.httpFetchStreams = nil
 	e.httpFetchStreamMu.Unlock()
 
 	e.httpClientMu.Lock()
 	clientHandles := e.httpClientHandles
-	e.httpClientHandles = map[int64]*httpClientHandle{}
+	e.httpClientHandles = nil
 	e.httpClientMu.Unlock()
 	for _, h := range clientHandles {
 		if h.client != nil {
@@ -1139,8 +1189,8 @@ func (e *Evaluator) Cleanup() error {
 
 	e.browserMu.Lock()
 	browsers := e.browsers
-	e.browsers = map[int64]*cdp.Browser{}
-	e.pages = map[int64]*cdp.Page{}
+	e.browsers = nil
+	e.pages = nil
 	e.browserRoutes = nil
 	e.browserSetups = nil
 	e.browserContexts = nil
@@ -1151,7 +1201,7 @@ func (e *Evaluator) Cleanup() error {
 
 	e.wsMu.Lock()
 	websockets := e.websockets
-	e.websockets = map[int64]*wsHandle{}
+	e.websockets = nil
 	e.wsMu.Unlock()
 	for _, h := range websockets {
 		conn := h.conn
@@ -1160,7 +1210,7 @@ func (e *Evaluator) Cleanup() error {
 
 	e.logMu.Lock()
 	loggers := e.loggers
-	e.loggers = map[int64]*loggerHandle{}
+	e.loggers = nil
 	e.logMu.Unlock()
 	for _, logger := range loggers {
 		if logger.closer != nil {
@@ -1170,35 +1220,35 @@ func (e *Evaluator) Cleanup() error {
 
 	e.processMu.Lock()
 	processes := e.processes
-	e.processes = map[int64]*processHandle{}
+	e.processes = nil
 	e.processMu.Unlock()
 	for _, process := range processes {
 		cleanupProcess(process)
 	}
 
 	e.traceMu.Lock()
-	e.traces = map[int64]*traceSpan{}
+	e.traces = nil
 	e.traceMu.Unlock()
 
 	e.jsonMu.Lock()
-	e.jsonReaders = map[int64]*jsonStreamReader{}
+	e.jsonReaders = nil
 	e.jsonMu.Unlock()
 
 	e.xmlMu.Lock()
-	e.xmlReaders = map[int64]*xmlStreamReader{}
+	e.xmlReaders = nil
 	e.xmlMu.Unlock()
 
 	e.csvMu.Lock()
-	e.csvReaders = map[int64]*csvStreamReader{}
+	e.csvReaders = nil
 	e.csvMu.Unlock()
 
 	e.yamlMu.Lock()
-	e.yamlReaders = map[int64]*yamlStreamReader{}
+	e.yamlReaders = nil
 	e.yamlMu.Unlock()
 
 	e.extMu.Lock()
 	extConns := e.extConns
-	e.extConns = map[int64]*extHandle{}
+	e.extConns = nil
 	e.extMu.Unlock()
 	for _, h := range extConns {
 		closeExtHandle(h)
@@ -4022,57 +4072,6 @@ func jsonToValue(value any) (runtime.Value, error) {
 	}
 }
 
-func valueToJSON(value runtime.Value) (any, error) {
-	switch value := value.(type) {
-	case runtime.Null:
-		return nil, nil
-	case runtime.Bool:
-		return value.Value, nil
-	case runtime.SmallInt:
-		return value.Value, nil
-	case runtime.Int:
-		if value.Value.IsInt64() {
-			return value.Value.Int64(), nil
-		}
-		return value.Value.String(), nil
-	case runtime.Decimal:
-		return json.Number(value.Value.FloatString(10)), nil
-	case runtime.Float:
-		return value.Value, nil
-	case runtime.String:
-		return value.Value, nil
-	case runtime.Bytes:
-		return base64.StdEncoding.EncodeToString(value.Value), nil
-	case *runtime.List:
-		items := make([]any, 0, len(value.Elements))
-		for _, item := range value.Elements {
-			converted, err := valueToJSON(item)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, converted)
-		}
-		return items, nil
-	case runtime.Dict:
-		items := map[string]any{}
-		for _, __dk := range value.EntryKeys() {
-			entry, _ := value.GetEntry(__dk)
-			key, ok := entry.Key.(runtime.String)
-			if !ok {
-				return nil, fmt.Errorf("json.stringify only supports dicts with string keys")
-			}
-			converted, err := valueToJSON(entry.Value)
-			if err != nil {
-				return nil, err
-			}
-			items[key.Value] = converted
-		}
-		return items, nil
-	default:
-		return nil, fmt.Errorf("json.stringify does not support %s", value.TypeName())
-	}
-}
-
 func valueToYAML(value runtime.Value) (any, error) {
 	switch value := value.(type) {
 	case runtime.Null:
@@ -6624,7 +6623,10 @@ func (e *Evaluator) evalInfix(operator string, left runtime.Value, right runtime
 		return value, err
 	}
 	if left.TypeName() == "string" && right.TypeName() == "string" && operator == "+" {
-		return runtime.String{Value: left.(runtime.String).Value + right.(runtime.String).Value}, nil
+		e.stringAppendMu.Lock()
+		joined := e.stringAppend.Concat(left.(runtime.String).Value, right.(runtime.String).Value)
+		e.stringAppendMu.Unlock()
+		return runtime.String{Value: joined}, nil
 	}
 	if isComparison(operator) {
 		return evalComparison(operator, left, right)

@@ -9,14 +9,13 @@ import (
 	"math/big"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/microcosm-cc/bluemonday"
 )
 
-// htmlSanitizePolicy is a reusable UGC allow-list (safe formatting tags,
-// strips scripts/styles/event handlers). bluemonday policies are immutable and
-// safe for concurrent Sanitize calls.
-var htmlSanitizePolicy = bluemonday.UGCPolicy()
+// htmlSanitizePolicy is built on first use: constructing it costs about a millisecond of every startup.
+var htmlSanitizePolicy = sync.OnceValue(bluemonday.UGCPolicy)
 
 func registerEncoding(r *Registry) {
 	r.Register("encoding", "base64Encode", func(args []runtime.Value) (runtime.Value, error) {
@@ -74,7 +73,7 @@ func registerEncoding(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		return runtime.String{Value: htmlSanitizePolicy.Sanitize(s)}, nil
+		return runtime.String{Value: htmlSanitizePolicy().Sanitize(s)}, nil
 	})
 	r.Register("encoding", "base32Encode", base32EncodeFn)
 	r.Register("encoding", "base32Decode", base32DecodeFn)

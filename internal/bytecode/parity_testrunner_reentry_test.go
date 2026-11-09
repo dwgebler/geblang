@@ -168,8 +168,8 @@ let local = func(int n): int { return base + n; };
 io.println(reflect.parameters(typed));
 io.println(reflect.parameters(local));
 io.println(reflect.parameters(mk.handler()));
-`, `[{"hasDefault": false, "name": "xs", "type": "list<int>", "variadic": false}, {"hasDefault": false, "name": "s", "type": "?set<string>", "variadic": false}, {"hasDefault": false, "name": "arr", "type": "int[]", "variadic": false}]
-[{"hasDefault": false, "name": "n", "type": "int", "variadic": false}]
-[{"hasDefault": false, "name": "request", "type": "dict<string, any>", "variadic": false}, {"hasDefault": true, "name": "code", "type": "int", "variadic": false}]
+`, `[{"class": null, "elementClass": null, "hasDefault": false, "name": "xs", "type": "list<int>", "variadic": false}, {"class": null, "elementClass": null, "hasDefault": false, "name": "s", "type": "?set<string>", "variadic": false}, {"class": null, "elementClass": null, "hasDefault": false, "name": "arr", "type": "int[]", "variadic": false}]
+[{"class": null, "elementClass": null, "hasDefault": false, "name": "n", "type": "int", "variadic": false}]
+[{"class": null, "elementClass": null, "hasDefault": false, "name": "request", "type": "dict<string, any>", "variadic": false}, {"class": null, "elementClass": null, "hasDefault": true, "name": "code", "type": "int", "variadic": false}]
 `)
 }

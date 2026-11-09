@@ -123,9 +123,35 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		}
 		values := make([]runtime.Value, 0, len(metadata.Parameters))
 		for _, parameter := range metadata.Parameters {
-			values = append(values, parameterMetadataDict(parameter))
+			entry := parameterMetadataDict(parameter)
+			className, elementName := runtime.ParameterClassNames(parameter.Type)
+			putBytecodeDict(entry.Entries, "class", vm.resolveScopedClass(className, metadata.Module))
+			putBytecodeDict(entry.Entries, "elementClass", vm.resolveScopedClass(elementName, metadata.Module))
+			values = append(values, entry)
 		}
 		return &runtime.List{Elements: values}, nil
+	case "parentClass":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("reflect.parentClass expects class")
+		}
+		class, ok := vm.concreteClassValue(args[0])
+		if !ok || class.Parent == "" {
+			return runtime.Null{}, nil
+		}
+		return vm.resolveScopedClass(class.Parent, class.Module), nil
+	case "returnClass":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("reflect.returnClass expects value")
+		}
+		metadata, ok := vm.reflectFunctionMetadataValue(args[0])
+		if !ok {
+			return nil, fmt.Errorf("reflect.returnClass expects function or method, got %s", args[0].TypeName())
+		}
+		className, elementName := runtime.ParameterClassNames(metadata.ReturnType)
+		entries := map[string]runtime.DictEntry{}
+		putBytecodeDict(entries, "class", vm.resolveScopedClass(className, metadata.Module))
+		putBytecodeDict(entries, "elementClass", vm.resolveScopedClass(elementName, metadata.Module))
+		return runtime.Dict{Entries: entries}, nil
 	case "returnType":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.returnType expects value")
@@ -197,6 +223,19 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		instance.Fields[name.Value] = args[2]
 		return instance, nil
 	case "fields", "methods", "staticMethods", "parent", "interfaces", "className":
+		if fn == "fields" {
+			inherited := false
+			if len(args) == 2 {
+				flag, ok := args[1].(runtime.Bool)
+				if !ok {
+					return nil, fmt.Errorf("reflect.fields inherited must be bool")
+				}
+				inherited = flag.Value
+			}
+			if len(args) == 1 || len(args) == 2 {
+				return vm.cachedReflectFields(args[0], inherited)
+			}
+		}
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.%s expects class", fn)
 		}
@@ -222,7 +261,7 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		}
 		switch fn {
 		case "fields":
-			return vm.reflectFieldsResult(args[0], metadata), nil
+			return vm.withFieldClasses(vm.reflectFieldsResult(args[0], metadata), args[0]), nil
 		case "methods":
 			methods := append([]string(nil), metadata.Methods...)
 			sort.Strings(methods)
@@ -253,7 +292,15 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.constructors expects class")
 		}
-		return vm.reflectConstructors(args[0])
+		result, err := vm.reflectConstructors(args[0])
+		if err != nil {
+			return nil, err
+		}
+		class, ok := vm.concreteClassValue(args[0])
+		if !ok {
+			return result, nil
+		}
+		return vm.withOverloadParameterClasses(result, class.Module), nil
 	case "typeBindings":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.typeBindings expects instance")
@@ -422,8 +469,36 @@ func (vm *VM) reflectLookupNativeCall(fn string, args []runtime.Value) (runtime.
 				classInfo := vm.chunk.Classes[classIndex]
 				return vm.bytecodeClassFromInfo(classInfo, int64(classIndex)), nil
 			}
+			if target, imported := vm.importScopeChunk().FromImports[value.Value]; imported {
+				if dot := strings.LastIndexByte(target, '.'); dot > 0 {
+					if found, ok := vm.classValueInModule(target[:dot], target[dot+1:]); ok {
+						return found, nil
+					}
+				}
+			}
 			if vm.moduleLoader != nil {
 				if found, ok := vm.moduleLoader.FindClassByName(value.Value); ok {
+					return found, nil
+				}
+			}
+			if dot := strings.LastIndexByte(value.Value, '.'); dot > 0 {
+				prefix, member := value.Value[:dot], value.Value[dot+1:]
+				// A prefix bound by an import names only that module's exports, as in the evaluator.
+				if canonical, bound := vm.importScopeChunk().ModuleAliases[prefix]; bound {
+					if vm.moduleLoader == nil {
+						return runtime.Null{}, nil
+					}
+					module, err := vm.moduleLoader.LoadModule(canonical, "")
+					if err != nil || module == nil {
+						return runtime.Null{}, nil
+					}
+					exported, ok := module.Exports[member]
+					if !ok {
+						return runtime.Null{}, nil
+					}
+					return vm.reflectLookupNativeCall("class", []runtime.Value{exported})
+				}
+				if found, ok := vm.classValueInModule(prefix, member); ok {
 					return found, nil
 				}
 			}
@@ -1153,13 +1228,17 @@ func bytecodeStringList(values []string) *runtime.List {
 }
 
 func bytecodeFunctionMetadata(value runtime.BytecodeFunction) *runtime.FunctionMetadata {
+	returnType := value.ReturnType
+	if value.DeclaredReturnType != "" {
+		returnType = value.DeclaredReturnType
+	}
 	return &runtime.FunctionMetadata{
 		Name:           value.Name,
 		Target:         "function",
 		Doc:            value.Doc,
 		TypeParameters: append([]string(nil), value.TypeParameters...),
 		Parameters:     append([]runtime.ParameterMetadata(nil), value.Parameters...),
-		ReturnType:     value.ReturnType,
+		ReturnType:     returnType,
 		Async:          value.Async,
 		Variadic:       value.Variadic,
 		Decorators:     append([]runtime.DecoratorMetadata(nil), value.Decorators...),
@@ -1281,7 +1360,7 @@ func constructorFunctionMetadataForChunk(chunk Chunk, module string, indices []i
 			Target:     "constructor",
 			Doc:        info.Doc,
 			Parameters: parameterMetadataFromFunctionInfo(info, 1),
-			ReturnType: info.ReturnType,
+			ReturnType: info.reflectedReturnType(),
 			Async:      info.Async,
 			Variadic:   info.Variadic,
 			Decorators: append([]runtime.DecoratorMetadata(nil), info.Decorators...),
@@ -1311,7 +1390,7 @@ func classFunctionMetadataForChunk(chunk Chunk, module string, methods map[strin
 				Doc:            info.Doc,
 				TypeParameters: append([]string(nil), info.TypeParameters...),
 				Parameters:     parameterMetadataFromFunctionInfo(info, paramOffset),
-				ReturnType:     info.ReturnType,
+				ReturnType:     info.reflectedReturnType(),
 				Async:          info.Async,
 				Variadic:       info.Variadic,
 				Decorators:     append([]runtime.DecoratorMetadata(nil), info.Decorators...),
@@ -1541,4 +1620,362 @@ func (vm *VM) reflectFieldsResult(target runtime.Value, metadata runtime.ClassMe
 		}})
 	}
 	return &runtime.List{Elements: entries}
+}
+
+type moduleFromImportsSource interface {
+	FromImportsFor(module string) map[string]string
+}
+
+func (vm *VM) resolveScopedClass(name, module string) runtime.Value {
+	if name == "" {
+		return runtime.Null{}
+	}
+	if dot := strings.LastIndexByte(name, '.'); dot > 0 {
+		prefix := name[:dot]
+		if canonical, ok := vm.importScopeFor(module).moduleAliases[prefix]; ok {
+			prefix = canonical
+		}
+		if class, ok := vm.classValueInModule(prefix, name[dot+1:]); ok {
+			return class
+		}
+		return runtime.Null{}
+	}
+	if class, ok := vm.classValueInModule(module, name); ok {
+		return class
+	}
+	if target, ok := vm.importScopeFor(module).fromImports[name]; ok {
+		if dot := strings.LastIndexByte(target, '.'); dot > 0 {
+			if class, ok := vm.classValueInModule(target[:dot], target[dot+1:]); ok {
+				return class
+			}
+		}
+	}
+	return runtime.Null{}
+}
+
+type importScope struct {
+	moduleAliases map[string]string
+	fromImports   map[string]string
+}
+
+func (vm *VM) importScopeFor(module string) importScope {
+	if module == vm.moduleName {
+		return importScope{moduleAliases: vm.chunk.ModuleAliases, fromImports: vm.chunk.FromImports}
+	}
+	var scope importScope
+	if source, ok := vm.moduleLoader.(moduleAliasSource); ok {
+		scope.moduleAliases = source.ModuleAliasesFor(module)
+	}
+	if source, ok := vm.moduleLoader.(moduleFromImportsSource); ok {
+		scope.fromImports = source.FromImportsFor(module)
+	}
+	return scope
+}
+
+func (vm *VM) classValueInModule(module, name string) (runtime.Value, bool) {
+	if module == vm.moduleName {
+		if index, ok := vm.classIndex[strings.ToLower(name)]; ok && vm.chunk.Classes[index].Name == name {
+			return vm.bytecodeClassFromInfo(vm.chunk.Classes[index], int64(index)), true
+		}
+	}
+	if vm.moduleLoader == nil {
+		return nil, false
+	}
+	found, ok := vm.moduleLoader.ClassValueInModule(module, name)
+	if !ok {
+		return nil, false
+	}
+	if class, isClass := found.(runtime.BytecodeClass); !isClass || class.Name != name {
+		return nil, false
+	}
+	return found, true
+}
+
+func (vm *VM) reflectInheritedFields(target runtime.Value) (runtime.Value, error) {
+	class, ok := vm.concreteClassValue(target)
+	if !ok {
+		return vm.reflectNativeCall("fields", []runtime.Value{target})
+	}
+	seen := map[string]bool{}
+	out := []runtime.Value{}
+	for depth := 0; depth < 256; depth++ {
+		own, err := vm.reflectNativeCall("fields", []runtime.Value{class})
+		if err != nil {
+			return nil, err
+		}
+		if list, isList := own.(*runtime.List); isList {
+			for _, entry := range list.Elements {
+				dict, isDict := entry.(runtime.Dict)
+				if !isDict {
+					continue
+				}
+				name, _ := dict.EntryValue(native.DictKey(runtime.String{Value: "name"})).(runtime.String)
+				if seen[name.Value] {
+					continue
+				}
+				seen[name.Value] = true
+				tagged := runtime.Dict{Entries: make(map[string]runtime.DictEntry, len(dict.Entries)+1)}
+				for k, v := range dict.Entries {
+					tagged.Entries[k] = v
+				}
+				putBytecodeDict(tagged.Entries, "declaringClass", class)
+				out = append(out, tagged)
+			}
+		}
+		if class.Parent == "" {
+			break
+		}
+		parent, found := vm.resolveScopedClass(class.Parent, class.Module).(runtime.BytecodeClass)
+		if !found {
+			break
+		}
+		class = parent
+	}
+	return &runtime.List{Elements: out}, nil
+}
+
+func (vm *VM) concreteClassValue(value runtime.Value) (runtime.BytecodeClass, bool) {
+	resolved, err := vm.reflectNativeCall("class", []runtime.Value{value})
+	if err != nil {
+		return runtime.BytecodeClass{}, false
+	}
+	switch v := resolved.(type) {
+	case runtime.BytecodeClass:
+		// Some class values carry no parent metadata; the declaring chunk has it.
+		if v.Parent == "" {
+			if full, ok := vm.classValueInModule(v.Module, v.Name); ok {
+				if class, isClass := full.(runtime.BytecodeClass); isClass {
+					return class, true
+				}
+			}
+		}
+		return v, true
+	case runtime.DecoratorTarget:
+		if v.Target == "class" && v.Class != nil {
+			if found, ok := vm.classValueInModule(vm.moduleName, v.Class.Name); ok {
+				class, isClass := found.(runtime.BytecodeClass)
+				return class, isClass
+			}
+		}
+	}
+	return runtime.BytecodeClass{}, false
+}
+
+func (vm *VM) withFieldClasses(result runtime.Value, target runtime.Value) runtime.Value {
+	list, ok := result.(*runtime.List)
+	if !ok {
+		return result
+	}
+	class, haveClass := vm.concreteClassValue(target)
+	out := make([]runtime.Value, 0, len(list.Elements))
+	for _, entry := range list.Elements {
+		dict, isDict := entry.(runtime.Dict)
+		if !isDict {
+			out = append(out, entry)
+			continue
+		}
+		tagged := runtime.Dict{Entries: make(map[string]runtime.DictEntry, len(dict.Entries)+2)}
+		for k, v := range dict.Entries {
+			tagged.Entries[k] = v
+		}
+		var className, elementName string
+		if typ, isString := dict.EntryValue(native.DictKey(runtime.String{Value: "type"})).(runtime.String); isString {
+			className, elementName = runtime.ParameterClassNames(typ.Value)
+		}
+		classValue, elementValue := runtime.Value(runtime.Null{}), runtime.Value(runtime.Null{})
+		if haveClass {
+			classValue = vm.resolveScopedClass(className, class.Module)
+			elementValue = vm.resolveScopedClass(elementName, class.Module)
+		}
+		putBytecodeDict(tagged.Entries, "class", classValue)
+		putBytecodeDict(tagged.Entries, "elementClass", elementValue)
+		out = append(out, tagged)
+	}
+	return &runtime.List{Elements: out}
+}
+
+func (vm *VM) withOverloadParameterClasses(result runtime.Value, module string) runtime.Value {
+	overloads, ok := result.(*runtime.List)
+	if !ok {
+		return result
+	}
+	out := make([]runtime.Value, 0, len(overloads.Elements))
+	for _, overload := range overloads.Elements {
+		params, isList := overload.(*runtime.List)
+		if !isList {
+			out = append(out, overload)
+			continue
+		}
+		resolved := make([]runtime.Value, 0, len(params.Elements))
+		for _, param := range params.Elements {
+			dict, isDict := param.(runtime.Dict)
+			if !isDict {
+				resolved = append(resolved, param)
+				continue
+			}
+			tagged := runtime.Dict{Entries: make(map[string]runtime.DictEntry, len(dict.Entries)+2)}
+			for k, v := range dict.Entries {
+				tagged.Entries[k] = v
+			}
+			typ, _ := dict.EntryValue(native.DictKey(runtime.String{Value: "type"})).(runtime.String)
+			className, elementName := runtime.ParameterClassNames(typ.Value)
+			putBytecodeDict(tagged.Entries, "class", vm.resolveScopedClass(className, module))
+			putBytecodeDict(tagged.Entries, "elementClass", vm.resolveScopedClass(elementName, module))
+			resolved = append(resolved, tagged)
+		}
+		out = append(out, &runtime.List{Elements: resolved})
+	}
+	return &runtime.List{Elements: out}
+}
+
+func (vm *VM) classFieldsForConversion(classValue runtime.Value) ([]native.ClassFieldInfo, error) {
+	class, ok := vm.concreteClassValue(classValue)
+	if !ok {
+		return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
+	}
+	key := class.Module + "." + class.Name
+	if cached, hit := vm.classFieldsCache[key]; hit {
+		return cached, nil
+	}
+	listed, err := vm.reflectInheritedFields(class)
+	if err != nil {
+		return nil, err
+	}
+	var out []native.ClassFieldInfo
+	if list, isList := listed.(*runtime.List); isList {
+		for _, entry := range list.Elements {
+			dict, isDict := entry.(runtime.Dict)
+			if !isDict {
+				continue
+			}
+			name, _ := dict.EntryValue(native.DictKey(runtime.String{Value: "name"})).(runtime.String)
+			typ, _ := dict.EntryValue(native.DictKey(runtime.String{Value: "type"})).(runtime.String)
+			out = append(out, native.ClassFieldInfo{
+				Name:         name.Value,
+				Type:         typ.Value,
+				Class:        nonNullValue(dict.EntryValue(native.DictKey(runtime.String{Value: "class"}))),
+				ElementClass: nonNullValue(dict.EntryValue(native.DictKey(runtime.String{Value: "elementClass"}))),
+			})
+		}
+	}
+	if vm.classFieldsCache == nil {
+		vm.classFieldsCache = map[string][]native.ClassFieldInfo{}
+	}
+	vm.classFieldsCache[key] = out
+	return out, nil
+}
+
+func (vm *VM) resolvedFieldTypeInfos(class runtime.BytecodeClass) []native.FieldTypeInfo {
+	fields, _ := vm.classFieldsForConversion(class)
+	infos := make([]native.FieldTypeInfo, len(fields))
+	for i, field := range fields {
+		resolved := field.Class
+		if resolved == nil {
+			resolved = field.ElementClass
+		}
+		infos[i] = native.FieldTypeInfo{Name: field.Name, Type: field.Type, Class: resolved}
+	}
+	return infos
+}
+
+func nonNullValue(v runtime.Value) runtime.Value {
+	if v == nil {
+		return nil
+	}
+	if _, isNull := v.(runtime.Null); isNull {
+		return nil
+	}
+	return v
+}
+
+func (vm *VM) reflectOwnFields(target runtime.Value) (runtime.Value, error) {
+	metadata, ok := vm.reflectClassMetadata(target)
+	if !ok {
+		metadata, ok = vmPrimitiveTypeMetadata(target)
+	}
+	if !ok {
+		return nil, fmt.Errorf("reflect.fields expects class, got %s", target.TypeName())
+	}
+	return vm.withFieldClasses(vm.reflectFieldsResult(target, metadata), target), nil
+}
+
+func reflectFieldsCacheKey(target runtime.Value, inherited bool, module string) (string, bool) {
+	suffix := "|own"
+	if inherited {
+		suffix = "|inherited"
+	}
+	switch v := target.(type) {
+	case runtime.BytecodeClass:
+		return "c:" + v.Module + "." + v.Name + suffix, true
+	case *runtime.Instance:
+		if v != nil && v.Class != nil {
+			return "i:" + v.Class.Module + "." + v.Class.Name + suffix, true
+		}
+	case runtime.DecoratorTarget:
+		if v.Target == "class" && v.Class != nil {
+			return "t:" + module + "." + v.Class.Name + suffix, true
+		}
+	}
+	return "", false
+}
+
+// cachedReflectFields memoises reflect.fields per class (chunks are immutable once loaded) and hands each caller fresh dicts.
+func (vm *VM) cachedReflectFields(target runtime.Value, inherited bool) (runtime.Value, error) {
+	key, cacheable := reflectFieldsCacheKey(target, inherited, vm.moduleName)
+	if cacheable {
+		if cached, ok := vm.reflectFieldsCache[key]; ok {
+			return copyFieldEntries(cached), nil
+		}
+	}
+	var result runtime.Value
+	var err error
+	if inherited {
+		result, err = vm.reflectInheritedFields(target)
+	} else {
+		result, err = vm.reflectOwnFields(target)
+	}
+	if err != nil || !cacheable {
+		return result, err
+	}
+	list, ok := result.(*runtime.List)
+	if !ok {
+		return result, nil
+	}
+	if vm.reflectFieldsCache == nil {
+		vm.reflectFieldsCache = map[string]*runtime.List{}
+	}
+	vm.reflectFieldsCache[key] = copyFieldEntries(list).(*runtime.List)
+	return result, nil
+}
+
+func copyFieldEntries(value runtime.Value) runtime.Value {
+	list, ok := value.(*runtime.List)
+	if !ok {
+		return value
+	}
+	out := make([]runtime.Value, len(list.Elements))
+	for i, element := range list.Elements {
+		out[i] = copyMetadataValue(element)
+	}
+	return &runtime.List{Elements: out}
+}
+
+// copyMetadataValue copies the dict and list containers of reflection metadata; leaf values (strings, classes) are shared.
+func copyMetadataValue(value runtime.Value) runtime.Value {
+	switch v := value.(type) {
+	case runtime.Dict:
+		entries := make(map[string]runtime.DictEntry, v.Len())
+		v.ForEachEntry(func(k string, entry runtime.DictEntry) bool {
+			entries[k] = runtime.DictEntry{Key: entry.Key, Value: copyMetadataValue(entry.Value)}
+			return true
+		})
+		return runtime.Dict{Entries: entries}
+	case *runtime.List:
+		elements := make([]runtime.Value, len(v.Elements))
+		for i, element := range v.Elements {
+			elements[i] = copyMetadataValue(element)
+		}
+		return &runtime.List{Elements: elements}
+	}
+	return value
 }

@@ -1,0 +1,17 @@
+module bco_kids;
+
+import bco_mid as m;
+import bco_zeta;
+
+export class Kid extends m.Base {
+    string name;
+}
+
+export class GrandKid extends Kid {}
+
+export class Holder {
+    bco_zeta.Widget item;
+    list<m.Widget> items;
+}
+
+export class Oops extends Error {}

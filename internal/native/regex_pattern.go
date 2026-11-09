@@ -3,8 +3,6 @@ package native
 import (
 	"fmt"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"regexp"
 
@@ -13,32 +11,18 @@ import (
 	"geblang/internal/runtime"
 )
 
-// Compiled-pattern objects for re / pcre. re.compile(pattern) and
-// pcre.compile(pattern, flags) compile once and stash the compiled
-// regex in a handle table; the returned Pattern instance carries the
-// handle id and runs the shared operation cores directly, so a hot
-// loop pays neither the pattern-cache lookup nor the module-call
-// dispatch the plain functions go through. Both backends dispatch the
-// native instance methods (vm.CallMethod / the evaluator native path),
-// so the surface is identical. The plain module functions are
-// unchanged (pure native calls).
-
-var (
-	reHandles    sync.Map // int64 -> *regexp.Regexp
-	pcreHandles  sync.Map // int64 -> *regexp2.Regexp
-	regexHandleN atomic.Int64
+// A Pattern instance holds its compiled regex as a NativeObject payload, so it is freed with the instance.
+const (
+	rePatternKind   = "RePattern"
+	pcrePatternKind = "PcrePattern"
 )
 
-func patternHandleID(this *runtime.Instance) (int64, bool) {
-	id, ok := this.Fields["__handle"].(runtime.SmallInt)
-	if ok {
-		return id.Value, true
+func patternPayload(this *runtime.Instance, kind string) (any, bool) {
+	handle, ok := this.Fields["__handle"].(runtime.NativeObject)
+	if !ok || handle.Kind != kind {
+		return nil, false
 	}
-	big, ok := this.Fields["__handle"].(runtime.Int)
-	if ok && big.Value.IsInt64() {
-		return big.Value.Int64(), true
-	}
-	return 0, false
+	return handle.Payload, handle.Payload != nil
 }
 
 func buildRePatternClass() *runtime.Class {
@@ -148,32 +132,24 @@ func buildPcrePatternClass() *runtime.Class {
 	return class
 }
 
-// reCompiled wraps the Go regexp so the handle map holds a single
-// concrete type.
 type reCompiled struct{ r *regexp.Regexp }
 
 func lookupReHandle(this *runtime.Instance) (*reCompiled, bool) {
-	id, ok := patternHandleID(this)
+	v, ok := patternPayload(this, rePatternKind)
 	if !ok {
 		return nil, false
 	}
-	v, ok := reHandles.Load(id)
-	if !ok {
-		return nil, false
-	}
-	return v.(*reCompiled), true
+	re, ok := v.(*reCompiled)
+	return re, ok
 }
 
 func lookupPcreHandle(this *runtime.Instance) (*regexp2.Regexp, bool) {
-	id, ok := patternHandleID(this)
+	v, ok := patternPayload(this, pcrePatternKind)
 	if !ok {
 		return nil, false
 	}
-	v, ok := pcreHandles.Load(id)
-	if !ok {
-		return nil, false
-	}
-	return v.(*regexp2.Regexp), true
+	re, ok := v.(*regexp2.Regexp)
+	return re, ok
 }
 
 func registerRegexCompile(r *Registry) {
@@ -192,13 +168,11 @@ func registerRegexCompile(r *Registry) {
 		if err != nil {
 			return nil, fmt.Errorf("re.compile: invalid pattern: %v", err)
 		}
-		id := regexHandleN.Add(1)
-		reHandles.Store(id, &reCompiled{r: compiled})
 		return &runtime.Instance{
 			Class: reClass,
 			Fields: map[string]runtime.Value{
 				"source":   pattern,
-				"__handle": runtime.SmallInt{Value: id},
+				"__handle": runtime.NativeObject{Kind: rePatternKind, Payload: &reCompiled{r: compiled}},
 			},
 		}, nil
 	})
@@ -223,14 +197,12 @@ func registerRegexCompile(r *Registry) {
 		if err != nil {
 			return nil, fmt.Errorf("pcre.compile: %v", err)
 		}
-		id := regexHandleN.Add(1)
-		pcreHandles.Store(id, compiled)
 		return &runtime.Instance{
 			Class: pcreClass,
 			Fields: map[string]runtime.Value{
 				"source":   pattern,
 				"flags":    flags,
-				"__handle": runtime.SmallInt{Value: id},
+				"__handle": runtime.NativeObject{Kind: pcrePatternKind, Payload: compiled},
 			},
 		}, nil
 	})

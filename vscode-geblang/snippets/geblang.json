@@ -1187,5 +1187,14 @@
             "let ${1:store} = cache.memoryCacheStore(${2:3600}, ${3:1000});"
         ],
         "description": "Shared memory cache with TTL, LRU eviction and snapshot isolation"
+    },
+    "Batch secure draw": {
+        "prefix": "securerandomints",
+        "body": [
+            "import secureRandom;",
+            "let ${1:session} = secureRandom.openSession({\"clientSeed\": \"${2:player}\"});",
+            "let ${3:rolls} = secureRandom.randomInts(${1:session}, ${4:10}, ${5:1}, ${6:6});"
+        ],
+        "description": "Draw many unbiased ints in [min, max] as one audited draw"
     }
 }

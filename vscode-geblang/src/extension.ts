@@ -9,6 +9,7 @@ import {
     StreamInfo,
     TransportKind,
 } from 'vscode-languageclient/node';
+import { activateGebweb } from './gebweb';
 
 let client: LanguageClient | undefined;
 let lspProcess: cp.ChildProcess | undefined;
@@ -311,6 +312,8 @@ export function activate(context: vscode.ExtensionContext): void {
             launchLsp();
         })
     );
+
+    activateGebweb(context, { shouldUseWsl, toWslPath, quote });
 }
 
 // ---- Helpers for the new commands ----

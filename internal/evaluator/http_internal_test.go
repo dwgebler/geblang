@@ -257,7 +257,7 @@ func TestWriteHTTPResponseStreamsFileAndBufferBodies(t *testing.T) {
 	e.fileMu.Lock()
 	e.nextFileID++
 	fileID := e.nextFileID
-	e.files[fileID] = file
+	ensureMap(&e.files)[fileID] = file
 	e.fileMu.Unlock()
 
 	fileResponse := newResponseInstance(e.httpResponseClass, gruntime.NewInt64(http.StatusOK), gruntime.NewInt64(fileID), nil, gruntime.String{})
@@ -278,7 +278,7 @@ func TestWriteHTTPResponseStreamsFileAndBufferBodies(t *testing.T) {
 	bufferID := e.nextBufferID
 	buffer := &bytes.Buffer{}
 	buffer.WriteString("buffer-body")
-	e.buffers[bufferID] = buffer
+	ensureMap(&e.buffers)[bufferID] = buffer
 	e.bufferMu.Unlock()
 
 	bufferResponse := newResponseInstance(e.httpResponseClass, gruntime.NewInt64(http.StatusOK), gruntime.NativeObject{Kind: "IOBuffer", ID: bufferID}, nil, gruntime.String{})

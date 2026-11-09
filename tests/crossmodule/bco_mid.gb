@@ -1,0 +1,9 @@
+module bco_mid;
+
+export class Widget {
+    string tag;
+}
+
+export class Base {
+    int level;
+}

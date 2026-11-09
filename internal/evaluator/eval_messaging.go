@@ -28,7 +28,7 @@ func (e *Evaluator) amqpDial(call *ast.CallExpression, args []runtime.Value) (ru
 	defer e.amqpMu.Unlock()
 	e.nextAmqpConnID++
 	id := e.nextAmqpConnID
-	e.amqpConns[id] = conn
+	ensureMap(&e.amqpConns)[id] = conn
 	return runtime.NewInt64(id), nil
 }
 
@@ -54,7 +54,7 @@ func (e *Evaluator) amqpChannel(call *ast.CallExpression, args []runtime.Value) 
 	defer e.amqpMu.Unlock()
 	e.nextAmqpChanID++
 	chID := e.nextAmqpChanID
-	e.amqpChans[chID] = ch
+	ensureMap(&e.amqpChans)[chID] = ch
 	return runtime.NewInt64(chID), nil
 }
 
@@ -406,7 +406,7 @@ func (e *Evaluator) kafkaWriter(call *ast.CallExpression, args []runtime.Value) 
 	defer e.kafkaMu.Unlock()
 	e.nextKafkaWriterID++
 	id := e.nextKafkaWriterID
-	e.kafkaWriters[id] = w
+	ensureMap(&e.kafkaWriters)[id] = w
 	return runtime.NewInt64(id), nil
 }
 
@@ -482,7 +482,7 @@ func (e *Evaluator) kafkaReader(call *ast.CallExpression, args []runtime.Value) 
 	defer e.kafkaMu.Unlock()
 	e.nextKafkaReaderID++
 	id := e.nextKafkaReaderID
-	e.kafkaReaders[id] = &kafkaReaderHandle{reader: r}
+	ensureMap(&e.kafkaReaders)[id] = &kafkaReaderHandle{reader: r}
 	return runtime.NewInt64(id), nil
 }
 

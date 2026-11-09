@@ -184,7 +184,7 @@ func (e *Evaluator) sshConnect(call *ast.CallExpression, args []runtime.Value) (
 	e.sshMu.Lock()
 	e.nextSSHID++
 	id := e.nextSSHID
-	e.sshClients[id] = handle
+	ensureMap(&e.sshClients)[id] = handle
 	e.sshMu.Unlock()
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "handle", runtime.NewInt64(id))
@@ -287,7 +287,7 @@ func (e *Evaluator) sshSpawn(call *ast.CallExpression, args []runtime.Value) (ru
 	e.sshMu.Lock()
 	e.nextSSHID++
 	sid := e.nextSSHID
-	e.sshSessions[sid] = sessionHandle
+	ensureMap(&e.sshSessions)[sid] = sessionHandle
 	e.sshMu.Unlock()
 	stdinStream := e.registerIOStream(&ioStreamHandle{name: "ssh stdin", writer: stdin, closer: stdin})
 	stdoutStream := e.registerIOStream(&ioStreamHandle{name: "ssh stdout", reader: stdout})
@@ -597,7 +597,7 @@ func (e *Evaluator) sshForwardLocal(call *ast.CallExpression, args []runtime.Val
 	e.sshMu.Lock()
 	e.nextSSHID++
 	tid := e.nextSSHID
-	e.sshTunnels[tid] = tunnel
+	ensureMap(&e.sshTunnels)[tid] = tunnel
 	e.sshMu.Unlock()
 	tunnel.wg.Add(1)
 	go func() {
@@ -651,7 +651,7 @@ func (e *Evaluator) sshForwardRemote(call *ast.CallExpression, args []runtime.Va
 	e.sshMu.Lock()
 	e.nextSSHID++
 	tid := e.nextSSHID
-	e.sshTunnels[tid] = tunnel
+	ensureMap(&e.sshTunnels)[tid] = tunnel
 	e.sshMu.Unlock()
 	tunnel.wg.Add(1)
 	go func() {

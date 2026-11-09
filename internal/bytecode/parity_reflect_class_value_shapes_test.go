@@ -59,7 +59,7 @@ const reflectShapesWant = "methods:[\"extra\"]\n" +
 	"interfaces:[]\n" +
 	"parent:Base\n" +
 	"className:Mid\n" +
-	"fields:[{\"decorators\": [], \"doc\": null, \"hasDefault\": false, \"name\": \"extraField\", \"nullable\": false, \"type\": \"int\"}]\n" +
+	"fields:[{\"class\": null, \"decorators\": [], \"doc\": null, \"elementClass\": null, \"hasDefault\": false, \"name\": \"extraField\", \"nullable\": false, \"type\": \"int\"}]\n" +
 	"docs:{\"body\": \"\", \"lines\": [\"Mid class doc.\"], \"summary\": \"Mid class doc.\", \"text\": \"Mid class doc.\"}\n" +
 	"location:{\"column\": 1, \"line\": 17, \"module\": \"\"}\n" +
 	"decorators:[]\n" +

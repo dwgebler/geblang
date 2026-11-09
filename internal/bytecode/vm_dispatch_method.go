@@ -369,6 +369,7 @@ func restampDecoratedFrames(fault *runtime.Error, decoratedName string) {
 	}
 }
 
+// methodCall restores the type-arg handoff explicitly; a defer here is not open-coded and showed in every method call's profile.
 func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
 		return 0, vm.fatalError(instruction, "method call instruction has invalid operands")
@@ -378,7 +379,12 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	vm.pendingCallTypeArgs = nil
 	previousTypeArgs := vm.typeArgHandoff
 	vm.typeArgHandoff = callTypeArgs
-	defer func() { vm.typeArgHandoff = previousTypeArgs }()
+	next, err := vm.dispatchMethodCall(instruction, ip, callTypeArgs)
+	vm.typeArgHandoff = previousTypeArgs
+	return next, err
+}
+
+func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs []string) (int, error) {
 	literalArgs := vm.pendingLiteralArgs
 	vm.pendingLiteralArgs = nil
 	nameIndex := instruction.Operands[0]
@@ -406,6 +412,10 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	slots[0] = receiver
 	receiver = vm.bindCallableTypeArgs(receiver, callTypeArgs)
 	args := slots[1:]
+	switch receiver.(type) {
+	case runtime.String, *runtime.List, runtime.Dict, runtime.Set, runtime.Bytes:
+		return vm.primitiveMethodCall(instruction, ip, receiver, nameValue, args)
+	}
 	if target, ok := receiver.(runtime.DecoratorTarget); ok {
 		if nameValue.Value != "__invoke" {
 			return 0, vm.runtimeError(instruction, "reflect target has no method %s", nameValue.Value)
@@ -1001,10 +1011,19 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		}
 		return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], slots, nil)
 	}
-	// Primitive receivers reached here run their callbacks inline; stamp the call site so a throwing callback attributes this method call's line to the caller frame. Frame-pushing (instance/class) branches returned above, so this never leaks into a user method body.
+	return vm.primitiveMethodCall(instruction, ip, receiver, nameValue, args)
+}
+
+// primitiveMethodCall stamps the call site so a throwing callback attributes this method call's line to the caller frame.
+func (vm *VM) primitiveMethodCall(instruction Instruction, ip int, receiver runtime.Value, nameValue runtime.String, args []runtime.Value) (int, error) {
 	savedHofLine := vm.hofCallLine
 	vm.hofCallLine = int(instruction.Line)
-	defer func() { vm.hofCallLine = savedHofLine }()
+	next, err := vm.dispatchPrimitiveMethod(instruction, ip, receiver, nameValue, args)
+	vm.hofCallLine = savedHofLine
+	return next, err
+}
+
+func (vm *VM) dispatchPrimitiveMethod(instruction Instruction, ip int, receiver runtime.Value, nameValue runtime.String, args []runtime.Value) (int, error) {
 	if list, ok := receiver.(*runtime.List); ok {
 		result, handled, err := vm.listHigherOrderMethod(instruction, list, nameValue.Value, args)
 		if err != nil {

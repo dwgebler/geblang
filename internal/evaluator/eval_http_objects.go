@@ -776,7 +776,7 @@ func (e *Evaluator) httpJSONResponseObject(call *ast.CallExpression, args []runt
 		}
 		status = args[1]
 	}
-	body, err := jsonStringFromValue(args[0])
+	body, err := e.jsonStringFromValue(args[0])
 	if err != nil {
 		return nil, err
 	}

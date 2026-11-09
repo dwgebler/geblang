@@ -78,6 +78,7 @@ func (meta *chunkSharedMeta) prepare(chunk Chunk) {
 			f := &functions[i]
 			f.typeParamSet = functionTypeParameterSetOrNil(*f)
 			f.requiresParamValidation = functionRequiresParamValidation(*f)
+			f.constructorFlag = constructorFlagFor(f.Name)
 			f.frameMeta = newFrameMeta(*f, spec)
 			if f.Async || f.IsGenerator || len(f.Decorators) > 0 {
 				hasPoly = true

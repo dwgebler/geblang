@@ -1,0 +1,8 @@
+module inh_members_leaf;
+
+import inh_members_base;
+
+export class Leaf extends inh_members_base.Mid {
+    bool active;
+    int level;
+}

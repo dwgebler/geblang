@@ -1,0 +1,102 @@
+/**
+ * @title Inherited fields and resolved member classes across modules
+ * @summary reflect.fields(cls, inherited: true) lists own then ancestor fields
+ * with their declaring class, fields and return types resolve to classes in
+ * the declaring module, and parseAs fills inherited fields.
+ */
+import test;
+import json;
+import yaml;
+import toml;
+import reflect;
+import inh_members_geo;
+import inh_members_base;
+import inh_members_leaf;
+
+func byName(list<any> fields): dict<string, dict<string, any>> {
+    dict<string, dict<string, any>> out = {};
+    for (f in fields) {
+        let e = f as dict<string, any>;
+        out[e["name"] as string] = e;
+    }
+    return out;
+}
+
+func names(list<any> fields): list<string> {
+    list<string> out = [];
+    for (f in fields) {
+        out.push((f as dict<string, any>)["name"] as string);
+    }
+    return out;
+}
+
+class InheritedMembersCrossModuleTest extends test.Test {
+    @test
+    func inheritedFieldsListOwnThenAncestors(): void {
+        let fields = reflect.fields(inh_members_leaf.Leaf, inherited: true);
+        this.assertEquals(["active", "level", "path", "origin", "score", "tag"], names(fields));
+        let f = byName(fields);
+        this.assertTrue(f["level"]["declaringClass"] == inh_members_leaf.Leaf);
+        this.assertTrue(f["path"]["declaringClass"] == inh_members_base.Mid);
+        this.assertTrue(f["origin"]["declaringClass"] == inh_members_base.Root);
+    }
+
+    @test
+    func ownFieldsAreUnchangedByDefault(): void {
+        this.assertEquals(["active", "level"], names(reflect.fields(inh_members_leaf.Leaf)));
+        this.assertEquals(["active", "level"], names(reflect.fields(inh_members_leaf.Leaf, inherited: false)));
+        this.assertFalse((reflect.fields(inh_members_leaf.Leaf)[0] as dict<string, any>).contains("declaringClass"));
+        this.assertEquals(6, reflect.fields(inh_members_leaf.Leaf(), true).length());
+    }
+
+    @test
+    func fieldClassesResolveInDeclaringModule(): void {
+        let f = byName(reflect.fields(inh_members_leaf.Leaf, inherited: true));
+        this.assertTrue(f["origin"]["class"] == inh_members_geo.Point);
+        this.assertTrue(f["tag"]["class"] == inh_members_geo.Tag);
+        this.assertTrue(f["path"]["elementClass"] == inh_members_geo.Point);
+        this.assertNull(f["score"]["class"]);
+        this.assertNull(f["active"]["elementClass"]);
+    }
+
+    @test
+    func returnClassAndGenericReturnTypes(): void {
+        let make = reflect.method(inh_members_base.Maker, "make");
+        let many = reflect.method(inh_members_base.Maker(), "many");
+        let counts = reflect.method(inh_members_base.Maker, "counts");
+        this.assertTrue(reflect.returnClass(make)["class"] == inh_members_geo.Point);
+        this.assertTrue(reflect.returnClass(many)["elementClass"] == inh_members_geo.Point);
+        this.assertNull(reflect.returnClass(counts)["class"]);
+        this.assertEquals("list<g.Point>", reflect.returnType(many));
+        this.assertEquals("?dict<string, int>", reflect.returnType(counts));
+    }
+
+    @test
+    func parseAsFillsInheritedFieldsAcrossModules(): void {
+        string text = "{\"active\": true, \"level\": 3, \"path\": [{\"x\": 5}], \"origin\": {\"x\": 7}, \"tag\": {\"label\": \"t\"}, \"score\": 1.5}";
+        let leaf = json.parseAs(text, inh_members_leaf.Leaf) as inh_members_leaf.Leaf;
+        this.assertTrue(leaf.active);
+        this.assertEquals(3, leaf.level);
+        this.assertEquals(5, leaf.path[0].x);
+        this.assertEquals(7, leaf.origin.x);
+        this.assertTrue(leaf.origin instanceof inh_members_geo.Point);
+        this.assertEquals("t", leaf.tag.label);
+        this.assertEquals(1.5, leaf.score);
+    }
+
+    @test
+    func yamlAndTomlParseAsFillInheritedFields(): void {
+        let fromYaml = yaml.parseAs("level: 2\norigin:\n  x: 9\n", inh_members_leaf.Leaf) as inh_members_leaf.Leaf;
+        this.assertEquals(9, fromYaml.origin.x);
+        let fromToml = toml.parseAs("level = 4\nscore = 0.5\n[origin]\nx = 1\n", inh_members_leaf.Leaf) as inh_members_leaf.Leaf;
+        this.assertEquals(1, fromToml.origin.x);
+        this.assertEquals(0.5, fromToml.score);
+    }
+
+    @test
+    func inheritedFieldTypeIsEnforced(): void {
+        this.assertThrows(func(): void {
+            json.parseAs("{\"origin\": 5}", inh_members_leaf.Leaf);
+        });
+    }
+}

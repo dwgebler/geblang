@@ -2,7 +2,6 @@ package evaluator
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/native"
@@ -235,7 +234,7 @@ func (e *Evaluator) httpPost(call *ast.CallExpression, args []runtime.Value) (ru
 	return doHTTPRequest(http.DefaultClient, req)
 }
 
-func httpPostJSON(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) httpPostJSON(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 && len(args) != 3 {
 		return nil, fmt.Errorf("%s expects url, value, and optional headers", call.Callee.String())
 	}
@@ -243,17 +242,11 @@ func httpPostJSON(call *ast.CallExpression, args []runtime.Value) (runtime.Value
 	if !ok {
 		return nil, fmt.Errorf("%s URL must be string", call.Callee.String())
 	}
-	encoded, err := valueToJSON(args[1])
+	body, err := e.jsonStringFromValue(args[1])
 	if err != nil {
 		return nil, err
 	}
-	var body bytes.Buffer
-	encoder := json.NewEncoder(&body)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(encoded); err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, url.Value, strings.NewReader(strings.TrimSuffix(body.String(), "\n")))
+	req, err := http.NewRequest(http.MethodPost, url.Value, strings.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -626,7 +619,7 @@ func (e *Evaluator) registerWebSocket(conn *websocket.Conn) runtime.Value {
 	e.wsMu.Lock()
 	defer e.wsMu.Unlock()
 	e.nextWSID++
-	e.websockets[e.nextWSID] = &wsHandle{conn: conn}
+	ensureMap(&e.websockets)[e.nextWSID] = &wsHandle{conn: conn}
 	return runtime.NewInt64(e.nextWSID)
 }
 
@@ -634,7 +627,7 @@ func (e *Evaluator) registerHTTPStream(w http.ResponseWriter, flusher http.Flush
 	e.httpStreamMu.Lock()
 	defer e.httpStreamMu.Unlock()
 	e.nextHTTPStreamID++
-	e.httpStreams[e.nextHTTPStreamID] = &httpStreamHandle{writer: w, flusher: flusher}
+	ensureMap(&e.httpStreams)[e.nextHTTPStreamID] = &httpStreamHandle{writer: w, flusher: flusher}
 	return runtime.NewInt64(e.nextHTTPStreamID)
 }
 
@@ -924,7 +917,7 @@ func (e *Evaluator) httpNewClient(call *ast.CallExpression, args []runtime.Value
 	e.httpClientMu.Lock()
 	id := e.nextHTTPClientID
 	e.nextHTTPClientID++
-	e.httpClientHandles[id] = h
+	ensureMap(&e.httpClientHandles)[id] = h
 	e.httpClientMu.Unlock()
 	if e.httpClientClass == nil {
 		return nil, fmt.Errorf("Client class is not initialized")
@@ -965,7 +958,7 @@ func (e *Evaluator) httpNewCookieJar(call *ast.CallExpression, _ []runtime.Value
 	e.httpCookieJarMu.Lock()
 	id := e.nextCookieJarID
 	e.nextCookieJarID++
-	e.httpCookieJars[id] = jar
+	ensureMap(&e.httpCookieJars)[id] = jar
 	e.httpCookieJarMu.Unlock()
 	if e.httpCookieJarClass == nil {
 		return nil, fmt.Errorf("CookieJar class is not initialized")
@@ -1167,7 +1160,7 @@ func (e *Evaluator) httpFetchStream(call *ast.CallExpression, args []runtime.Val
 	e.httpFetchStreamMu.Lock()
 	id := e.nextFetchStreamID
 	e.nextFetchStreamID++
-	e.httpFetchStreams[id] = sh
+	ensureMap(&e.httpFetchStreams)[id] = sh
 	e.httpFetchStreamMu.Unlock()
 	for i, specVal := range specs {
 		go func(idx int, sv runtime.Value) {
@@ -1194,18 +1187,8 @@ func (e *Evaluator) httpFetchStream(call *ast.CallExpression, args []runtime.Val
 	}, nil
 }
 
-func jsonStringFromValue(value runtime.Value) (string, error) {
-	encoded, err := valueToJSON(value)
-	if err != nil {
-		return "", err
-	}
-	var body bytes.Buffer
-	encoder := json.NewEncoder(&body)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(encoded); err != nil {
-		return "", err
-	}
-	return strings.TrimSuffix(body.String(), "\n"), nil
+func (e *Evaluator) jsonStringFromValue(value runtime.Value) (string, error) {
+	return native.EncodeJSONValueCtx(e.natives.ConversionContext(), value)
 }
 
 func buildResponseInstance(class *runtime.Class, label string, args []runtime.Value) (runtime.Value, error) {

@@ -45,7 +45,7 @@ func reflectFunctionMetadataFromStatement(c *Compiler, stmt *ast.FunctionStateme
 		Target:     target,
 		Doc:        stmt.Doc,
 		Parameters: parameters,
-		ReturnType: c.bytecodeReturnType(stmt.ReturnType),
+		ReturnType: c.reflectReturnTypeName(stmt.ReturnType),
 		Async:      stmt.Async,
 		Variadic:   len(stmt.Parameters) > 0 && stmt.Parameters[len(stmt.Parameters)-1].Variadic,
 		Decorators: dec,
@@ -79,7 +79,7 @@ func reflectFunctionMetadataFromSignature(c *Compiler, sig *ast.FunctionSignatur
 		Target:     "interfaceMethod",
 		Doc:        sig.Doc,
 		Parameters: parameters,
-		ReturnType: c.bytecodeReturnType(sig.ReturnType),
+		ReturnType: c.reflectReturnTypeName(sig.ReturnType),
 		Variadic:   len(sig.Parameters) > 0 && sig.Parameters[len(sig.Parameters)-1].Variadic,
 	}
 }

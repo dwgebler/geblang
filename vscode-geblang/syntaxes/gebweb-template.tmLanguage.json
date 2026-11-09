@@ -1,0 +1,74 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Gebweb Template",
+  "scopeName": "text.html.gebweb",
+  "patterns": [
+    { "include": "text.html.basic" }
+  ],
+  "injections": {
+    "L:text.html.gebweb -comment.block.gebweb -meta.embedded.output.gebweb -meta.embedded.tag.gebweb": {
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#output" },
+        { "include": "#tag" }
+      ]
+    }
+  },
+  "repository": {
+    "comment": {
+      "name": "comment.block.gebweb",
+      "begin": "\\{#",
+      "end": "#\\}",
+      "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.gebweb" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.comment.end.gebweb" } }
+    },
+    "output": {
+      "name": "meta.embedded.output.gebweb",
+      "begin": "\\{\\{",
+      "end": "\\}\\}",
+      "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.gebweb" } },
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.gebweb" } },
+      "patterns": [ { "include": "#expression" } ]
+    },
+    "tag": {
+      "name": "meta.embedded.tag.gebweb",
+      "begin": "(\\{%)\\s*([A-Za-z_]\\w*)?",
+      "end": "%\\}",
+      "beginCaptures": {
+        "1": { "name": "punctuation.section.embedded.begin.gebweb" },
+        "2": { "name": "keyword.control.gebweb" }
+      },
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.gebweb" } },
+      "patterns": [ { "include": "#expression" } ]
+    },
+    "expression": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.gebweb",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [ { "name": "constant.character.escape.gebweb", "match": "\\\\." } ]
+        },
+        {
+          "name": "string.quoted.single.gebweb",
+          "begin": "'",
+          "end": "'",
+          "patterns": [ { "name": "constant.character.escape.gebweb", "match": "\\\\." } ]
+        },
+        { "name": "constant.numeric.gebweb", "match": "\\b\\d+(?:\\.\\d+)?\\b" },
+        { "name": "constant.language.gebweb", "match": "\\b(?:true|false|null)\\b" },
+        { "name": "keyword.operator.word.gebweb", "match": "\\b(?:and|or|not|in|is|defined|empty)\\b" },
+        {
+          "match": "(\\|)\\s*([A-Za-z_]\\w*)",
+          "captures": {
+            "1": { "name": "keyword.operator.filter.gebweb" },
+            "2": { "name": "support.function.filter.gebweb" }
+          }
+        },
+        { "name": "keyword.operator.gebweb", "match": "==|!=|<=|>=|<|>|=|\\+|-|\\*|/|%|\\?|:" },
+        { "name": "punctuation.accessor.gebweb", "match": "\\." },
+        { "name": "variable.other.gebweb", "match": "\\b[A-Za-z_]\\w*\\b" }
+      ]
+    }
+  }
+}

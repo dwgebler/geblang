@@ -90,7 +90,7 @@ func (e *Evaluator) httpRequestStream(call *ast.CallExpression, args []runtime.V
 	e.httpResponseStreamMu.Lock()
 	id := e.nextResponseStreamID
 	e.nextResponseStreamID++
-	e.httpResponseStreams[id] = handle
+	ensureMap(&e.httpResponseStreams)[id] = handle
 	e.httpResponseStreamMu.Unlock()
 	return &runtime.Instance{Class: e.responseStreamClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(id)}}, nil
 }

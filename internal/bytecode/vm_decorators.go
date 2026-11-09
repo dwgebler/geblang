@@ -20,6 +20,7 @@ func (vm *VM) applyCallableDecorators() error {
 	defer func() {
 		vm.applyingDecorators = false
 	}()
+	vm.unshareCallMaps()
 	// Restore leaves these nil for an undecorated module; lazy decorator application (this path) writes them.
 	if vm.decoratedFuncs == nil {
 		vm.decoratedFuncs = map[int64]runtime.Value{}
@@ -295,19 +296,20 @@ func (vm *VM) bytecodeFunctionValue(index int64, raw bool) runtime.BytecodeFunct
 
 func bytecodeFunctionFromInfo(info FunctionInfo, index int64, module string, raw bool) runtime.BytecodeFunction {
 	return runtime.BytecodeFunction{
-		Index:          index,
-		Raw:            raw,
-		Module:         module,
-		Name:           info.Name,
-		Doc:            info.Doc,
-		TypeParameters: append([]string(nil), info.TypeParameters...),
-		Parameters:     parameterMetadataFromFunctionInfo(info, 0),
-		ReturnType:     info.ReturnType,
-		Async:          info.Async,
-		Variadic:       info.Variadic,
-		Decorators:     append([]runtime.DecoratorMetadata(nil), info.Decorators...),
-		DefLine:        info.DefLine,
-		DefColumn:      info.DefColumn,
+		Index:              index,
+		Raw:                raw,
+		Module:             module,
+		Name:               info.Name,
+		Doc:                info.Doc,
+		TypeParameters:     append([]string(nil), info.TypeParameters...),
+		Parameters:         parameterMetadataFromFunctionInfo(info, 0),
+		ReturnType:         info.ReturnType,
+		DeclaredReturnType: info.reflectedReturnType(),
+		Async:              info.Async,
+		Variadic:           info.Variadic,
+		Decorators:         append([]runtime.DecoratorMetadata(nil), info.Decorators...),
+		DefLine:            info.DefLine,
+		DefColumn:          info.DefColumn,
 	}
 }
 
@@ -360,11 +362,42 @@ func (vm *VM) fieldBarrier(instruction Instruction, instance *runtime.Instance, 
 		}
 		return vm.moduleLoader.ApplyModuleFieldDecorators(instance.Class.Module, instance.Class.Name, name, value, vm)
 	}
+	free, cached := vm.fieldDecoratorFree[instance.Class.Name]
+	if cached && free {
+		return value, nil
+	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
 	if !ok {
 		return value, nil
 	}
+	if !cached {
+		free = vm.chainHasNoFieldDecorators(classInfo)
+		if vm.fieldDecoratorFree == nil {
+			vm.fieldDecoratorFree = make(map[string]bool, 8)
+		}
+		vm.fieldDecoratorFree[instance.Class.Name] = free
+		if free {
+			return value, nil
+		}
+	}
 	return vm.applyInheritedFieldDecorators(instruction, classInfo, name, value)
+}
+
+// chainHasNoFieldDecorators is false when any class up the chain might decorate a field, including a parent in another module.
+func (vm *VM) chainHasNoFieldDecorators(classInfo ClassInfo) bool {
+	for ci := classInfo; ; {
+		for _, decorators := range ci.FieldDecorators {
+			if len(decorators) > 0 {
+				return false
+			}
+		}
+		if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+			ci = vm.curMod.Chunk.Classes[ci.ParentIndex]
+			continue
+		}
+		_, _, crossModule := splitQualifiedClassName(ci.ParentName)
+		return !crossModule
+	}
 }
 
 // applyInheritedFieldDecorators finds the nearest class in the chain declaring decorators for the field, crossing into a parent's module when the chain leaves this chunk.

@@ -45,6 +45,8 @@ type VM struct {
 	// Cached bound-method closures re-registered every reset; taking the bound method per call allocates.
 	instanceInvokerFn   native.InstanceInvokerFunc
 	classDeserializerFn native.ClassDeserializerFunc
+	// classFieldsCache memoises conversion field metadata per "module.Class"; chunks are immutable once loaded.
+	classFieldsCache map[string][]native.ClassFieldInfo
 	// bridgeActive is set once a wrap-bridge worker is, or could become,
 	// alive against this VM's globals. While false, setGlobalVM /
 	// setGlobal can write without taking globalsMu because no concurrent
@@ -56,6 +58,10 @@ type VM struct {
 	// (method wrappers, stateful-native bridges, lazy generators). A
 	// wrapper VM is only recycled when none escaped.
 	escapedRefs atomic.Int32
+	// globalsStamp names the exact globals contents (0 = unknown, reset by every write) so a pooled VM holding the same stamp can skip recopying them.
+	globalsStamp uint64
+	// callMapsShared marks decoratedFuncs/decoratedClasses/rawFunctionCalls/interface maps as possibly aliased by another VM.
+	callMapsShared atomic.Bool
 	// constantsExtra holds wrapper-call values addressed as constants at
 	// indices >= len(chunk.Constants), so the constant pool stays shared.
 	constantsExtra []runtime.Value
@@ -152,6 +158,11 @@ type VM struct {
 	// in the dispatch loop - cache the resolved ClassInfo so the
 	// hot path is a single direct read.
 	classInfoNameCache map[string]ClassInfo
+	// fieldDecoratorFree caches classes whose whole local chain declares no field decorators.
+	fieldDecoratorFree map[string]bool
+	typeRefSpecs       map[*ast.TypeRef]vmTypeSpec
+	reflectFieldsCache map[string]*runtime.List
+	strAppend          runtime.StringAppender
 	// methodLookupCache is a single-slot cache for the most-recent
 	// `lookupMethodLower` result. A tight loop calling one method on
 	// one class - the class_dispatch benchmark's
@@ -519,6 +530,8 @@ type vmTypeSpec struct {
 	nullable  bool
 	kind      vmTypeKind
 	args      []vmTypeSpec
+	// argTags caches elementSpecTag of each arg; collection tags share it, so it must never be written in place.
+	argTags []string
 }
 
 type vmTypeKind int8
@@ -752,6 +765,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				offset = vm.currentFrameBP
 			} else {
 				target = vm.curGlobals
+				vm.globalsStamp = 0
 			}
 			idx := int(slot) + offset
 			if idx >= len(target) {
@@ -767,7 +781,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					continue
 				}
 				if l, lok := cur.Boxed.(runtime.String); lok {
-					next := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: l.Value + litVal.Value}}
+					next := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: vm.strAppend.Concat(l.Value, litVal.Value)}}
 					target[idx] = next
 					vm.pushVM(next)
 					continue
@@ -803,6 +817,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				offset = vm.currentFrameBP
 			} else {
 				target = vm.curGlobals
+				vm.globalsStamp = 0
 			}
 			idx := int(slot) + offset
 			if idx >= len(target) {
@@ -855,7 +870,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			leftVM := vm.stack[n-1]
 			if leftVM.Kind == runtime.VMKindBoxed {
 				if l, lok := leftVM.Boxed.(runtime.String); lok {
-					vm.stack[n-1] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: l.Value + litVal.Value}}
+					vm.stack[n-1] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: vm.strAppend.Concat(l.Value, litVal.Value)}}
 					continue
 				}
 			}
@@ -876,7 +891,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if leftVM.Kind == runtime.VMKindBoxed && rightVM.Kind == runtime.VMKindBoxed {
 				if l, lok := leftVM.Boxed.(runtime.String); lok {
 					if r, rok := rightVM.Boxed.(runtime.String); rok {
-						vm.stack[n-2] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: l.Value + r.Value}}
+						vm.stack[n-2] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: vm.strAppend.Concat(l.Value, r.Value)}}
 						vm.stack[n-1].Boxed = nil
 						vm.stack = vm.stack[:n-1]
 						continue
@@ -1057,6 +1072,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					nv := cur.I64 + delta
 					if (cur.I64^nv)&(delta^nv) >= 0 {
 						vm.curGlobals[slot] = runtime.VMValueSmallInt(nv)
+						vm.globalsStamp = 0
 						vm.pushVM(cur)
 						continue
 					}
@@ -1294,6 +1310,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				cur := vm.curGlobals[slot]
 				if cur.Kind != runtime.VMKindBoxed {
 					vm.curGlobals[slot] = value
+					vm.globalsStamp = 0
 					if vm.persistGlobals && int(slot) < len(vm.dirtyGlobals) && !vm.dirtyGlobals[slot] {
 						vm.dirtyGlobals[slot] = true
 						vm.dirtySlots = append(vm.dirtySlots, int(slot))
@@ -1370,23 +1387,16 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if count < 0 {
 				return vm.runtimeError(*instruction, "dict entry count out of range")
 			}
-			// Stack is LIFO; reorder pairs so Order tracks source order.
-			pairs := make([][2]runtime.Value, count)
-			for i := count - 1; i >= 0; i-- {
-				value, err := vm.pop()
-				if err != nil {
-					return vm.runtimeError(*instruction, "%s", err.Error())
-				}
-				key, err := vm.pop()
-				if err != nil {
-					return vm.runtimeError(*instruction, "%s", err.Error())
-				}
-				pairs[i] = [2]runtime.Value{key, value}
+			base := len(vm.stack) - int(2*count)
+			if base < 0 {
+				return vm.runtimeError(*instruction, "stack underflow")
 			}
-			d := runtime.NewDict()
-			for _, p := range pairs {
-				d.PutEntry(native.DictKey(p[0]), runtime.DictEntry{Key: p[0], Value: p[1]})
+			d := runtime.NewDictHint(int(count))
+			for i := base; i < len(vm.stack); i += 2 {
+				key := vm.stack[i].ToValue()
+				d.PutEntry(native.DictKey(key), runtime.DictEntry{Key: key, Value: vm.stack[i+1].ToValue()})
 			}
+			vm.truncateStack(base)
 			vm.push(d)
 		case OpBuildSet:
 			count := instruction.Operands[0]
@@ -1679,6 +1689,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					return err
 				}
 				if decorated {
+					vm.unshareCallMaps()
 					vm.decoratedClasses[classIndex] = classValue
 				}
 				if err := vm.resolveCrossModuleInterfaceMembers(*instruction, classIndex, classInfo); err != nil {
@@ -4195,7 +4206,7 @@ func (vm *VM) add(instruction Instruction, ip int) (int, error) {
 	// built-in `string` has no __add__ overload.
 	if l, ok := leftV.(runtime.String); ok {
 		if r, ok := rightV.(runtime.String); ok {
-			vm.push(runtime.String{Value: l.Value + r.Value})
+			vm.push(runtime.String{Value: vm.strAppend.Concat(l.Value, r.Value)})
 			return ip, nil
 		}
 	}
@@ -4922,6 +4933,7 @@ func (vm *VM) execDel(instruction Instruction) error {
 		}
 	case 1:
 		vm.curGlobals[slot] = runtime.VMValueNull
+		vm.globalsStamp = 0
 	}
 	return nil
 }
@@ -4993,10 +5005,7 @@ func (vm *VM) tagCollectionWithSpec(value runtime.Value, spec vmTypeSpec) (runti
 	switch v := value.(type) {
 	case *runtime.List:
 		if len(spec.args) >= 1 {
-			tag := make([]string, len(spec.args))
-			for i, a := range spec.args {
-				tag[i] = elementSpecTag(a)
-			}
+			tag := spec.elementTags(len(spec.args))
 			if v.Frozen {
 				// A frozen list may be shared between tasks; tag a copy of
 				// the header rather than writing to the shared value.
@@ -5007,16 +5016,27 @@ func (vm *VM) tagCollectionWithSpec(value runtime.Value, spec vmTypeSpec) (runti
 		}
 	case runtime.Set:
 		if len(spec.args) >= 1 {
-			v.ElementTypes = []string{elementSpecTag(spec.args[0])}
+			v.ElementTypes = spec.elementTags(1)
 			return v, true
 		}
 	case runtime.Dict:
 		if len(spec.args) >= 2 {
-			v.ElementTypes = []string{elementSpecTag(spec.args[0]), elementSpecTag(spec.args[1])}
+			v.ElementTypes = spec.elementTags(2)
 			return v, true
 		}
 	}
 	return value, false
+}
+
+func (spec vmTypeSpec) elementTags(n int) []string {
+	if len(spec.argTags) >= n {
+		return spec.argTags[:n:n]
+	}
+	tags := make([]string, n)
+	for i := range tags {
+		tags[i] = elementSpecTag(spec.args[i])
+	}
+	return tags
 }
 
 // execRange implements OpRange: pops 2 or 3 integer values and pushes a
@@ -5625,6 +5645,7 @@ func (vm *VM) Exports() (map[string]runtime.Value, error) {
 				function.TypeParameters = append([]string(nil), info.TypeParameters...)
 				function.Parameters = parameterMetadataFromFunctionInfo(info, 0)
 				function.ReturnType = info.ReturnType
+				function.DeclaredReturnType = info.reflectedReturnType()
 				function.Async = info.Async
 				function.Variadic = info.Variadic
 				function.Decorators = append([]runtime.DecoratorMetadata(nil), info.Decorators...)
@@ -6093,6 +6114,7 @@ func (vm *VM) bitwiseNot(instruction Instruction, ip int) (int, error) {
 
 func (vm *VM) setGlobal(slot int64, value runtime.Value) error {
 	if int(slot) >= len(vm.curGlobals) {
+		vm.globalsStamp = 0
 		if err := ensureSlot(&vm.globals, slot, "global"); err != nil {
 			return err
 		}
@@ -6100,10 +6122,12 @@ func (vm *VM) setGlobal(slot int64, value runtime.Value) error {
 	}
 	if !vm.bridgeActive.Load() {
 		vm.curGlobals[slot] = runtime.VMValueFromValue(value)
+		vm.globalsStamp = 0
 		return nil
 	}
 	vm.globalsMu.Lock()
 	vm.curGlobals[slot] = runtime.VMValueFromValue(value)
+	vm.globalsStamp = 0
 	vm.markGlobalDirtyLocked(int(slot))
 	vm.globalsMu.Unlock()
 	return nil
@@ -6111,6 +6135,7 @@ func (vm *VM) setGlobal(slot int64, value runtime.Value) error {
 
 func (vm *VM) setGlobalVM(slot int64, value runtime.VMValue) error {
 	if int(slot) >= len(vm.curGlobals) {
+		vm.globalsStamp = 0
 		if err := ensureSlot(&vm.globals, slot, "global"); err != nil {
 			return err
 		}
@@ -6119,6 +6144,7 @@ func (vm *VM) setGlobalVM(slot int64, value runtime.VMValue) error {
 	// Fast path: no wrap-bridge worker can be touching this VM's globals.
 	if !vm.bridgeActive.Load() {
 		vm.curGlobals[slot] = value
+		vm.globalsStamp = 0
 		if vm.persistGlobals && int(slot) < len(vm.dirtyGlobals) && !vm.dirtyGlobals[slot] {
 			vm.dirtyGlobals[slot] = true
 			vm.dirtySlots = append(vm.dirtySlots, int(slot))
@@ -6127,6 +6153,7 @@ func (vm *VM) setGlobalVM(slot int64, value runtime.VMValue) error {
 	}
 	vm.globalsMu.Lock()
 	vm.curGlobals[slot] = value
+	vm.globalsStamp = 0
 	vm.markGlobalDirtyLocked(int(slot))
 	vm.globalsMu.Unlock()
 	return nil
@@ -6162,6 +6189,7 @@ func (vm *VM) markDirtySlot(slot int) {
 
 func (vm *VM) getGlobal(slot int64) (runtime.Value, error) {
 	if int(slot) >= len(vm.curGlobals) {
+		vm.globalsStamp = 0
 		if err := ensureSlot(&vm.globals, slot, "global"); err != nil {
 			return nil, err
 		}
@@ -6175,6 +6203,7 @@ func (vm *VM) getGlobal(slot int64) (runtime.Value, error) {
 		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
 			s := acc.Materialize()
 			vm.curGlobals[slot] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: s}
+			vm.globalsStamp = 0
 			return s, nil
 		}
 	}
@@ -6183,6 +6212,7 @@ func (vm *VM) getGlobal(slot int64) (runtime.Value, error) {
 
 func (vm *VM) getGlobalVM(slot int64) (runtime.VMValue, error) {
 	if int(slot) >= len(vm.curGlobals) {
+		vm.globalsStamp = 0
 		if err := ensureSlot(&vm.globals, slot, "global"); err != nil {
 			return runtime.VMValueNull, err
 		}
@@ -6196,6 +6226,7 @@ func (vm *VM) getGlobalVM(slot int64) (runtime.VMValue, error) {
 		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
 			materialized := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: acc.Materialize()}
 			vm.curGlobals[slot] = materialized
+			vm.globalsStamp = 0
 			return materialized, nil
 		}
 	}

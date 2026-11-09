@@ -186,6 +186,50 @@ Import `xml`:
 - `validate(text)` - returns `bool`; `validateDetailed(text)` - returns detail dict
 - `reader(source)`, `stream(source, handler)`
 
+`parse` returns an element dict (`name`, `attributes`, `children`, `text`),
+and `stringify` accepts one back.
+
+### Classes and XML (1.41.3)
+
+`xml.parseAs(text, ClassRef)` fills a class from an element:
+
+- A child element or an attribute with a field's name fills that field; when
+  both exist, the child element wins. Unknown elements are ignored, and the
+  root element's name does not matter.
+- Text converts to the field's declared type: `int`, `decimal`, `float`,
+  `bool` (`true`/`false`/`1`/`0`) or `string`. Text that does not fit throws
+  `TypeError` naming the field. An empty element fills a nullable non-string
+  field with `null`.
+- A child element fills a class-typed field, recursively. Repeated child
+  elements fill a `list<T>`, `set<T>` or `T[]` field, in document order.
+- Inherited fields are filled like the class's own.
+
+`xml.stringify(instance)` writes the reverse shape: `<ClassName>` with one
+child element per public field, sorted by name, repeating the element for
+list items and omitting `null` fields. A class with `__serialize()` writes
+the returned value instead.
+
+```gb
+import io;
+import xml;
+
+class Address {
+    string city;
+}
+
+class Person {
+    string id;
+    int age;
+    list<string> tags;
+    Address home;
+}
+
+let p = xml.parseAs("<person id=\"p1\"><age>36</age><tags>a</tags><tags>b</tags><home><city>Leeds</city></home></person>", Person);
+io.println("${p.id} ${p.age} ${p.tags} ${p.home.city}");   # p1 36 ["a", "b"] Leeds
+io.println(xml.stringify(p));
+# <Person><age>36</age><home><city>Leeds</city></home><id>p1</id><tags>a</tags><tags>b</tags></Person>
+```
+
 ## HTML (1.28.0)
 
 For parsing real-world HTML with the lenient HTML5 parser and querying it with
@@ -198,7 +242,9 @@ CSS selectors, use the `html` module. It has its own chapter: see
 user-defined class instances. By default the call emits the
 **public** fields - any field whose name does not start with `_` or
 `__`. Classes can replace the default by implementing
-`__serialize()`; the return value is recursively serialised.
+`__serialize()`; the return value is recursively serialised. Inherited
+fields are included, and string values are written as-is: `<`, `>` and `&`
+are not escaped, for instances exactly as for dicts and lists (1.41.3).
 
 ```gb
 import json;
@@ -254,6 +300,10 @@ or `float`, `1.5` fills a `float`, `3.0` fills an `int`, and elements of
 mismatch (a string where an `int` or an object is declared, or `2.5` for an
 `int`) throws `TypeError` naming the field, such as
 `cannot assign string to int field Plain.age`.
+
+A subclass is filled from its own fields and every inherited field (1.41.3),
+including ancestors declared in other modules; each inherited field keeps its
+declared type, so the same conversions and `TypeError`s apply.
 
 The same conventions apply to `yaml.parseAs`, `toml.parseAs`, and
 `xml.parseAs`. See chapter 6's *Serialisation* section for details.

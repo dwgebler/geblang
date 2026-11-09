@@ -17,6 +17,8 @@ type Registry struct {
 // SetConversionContext installs this backend's serialize/deserialize callbacks for the conversion natives.
 func (r *Registry) SetConversionContext(ctx ConversionContext) { r.convCtx = ctx }
 
+func (r *Registry) ConversionContext() ConversionContext { return r.convCtx }
+
 func NewRegistry() *Registry {
 	return &Registry{functions: map[string]Function{}}
 }

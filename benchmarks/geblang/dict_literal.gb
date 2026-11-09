@@ -1,0 +1,11 @@
+import io;
+import sys;
+
+let args = sys.args();
+int n = args.length() > 0 ? args[0].toInt() : 200000;
+int total = 0;
+for (int i = 0; i < n; i++) {
+    let row = {"a": i, "b": i + 1, "c": i + 2};
+    total = total + (row["c"] as int);
+}
+io.println(total);

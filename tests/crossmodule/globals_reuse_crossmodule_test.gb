@@ -1,0 +1,99 @@
+/**
+ * @title Globals stay current across repeated cross-module calls
+ * @summary Calling into another module, or being called back from one, many
+ * times in a row always sees the latest top-level values on both sides, even
+ * when nothing changed between some of the calls.
+ */
+import test;
+import reflect;
+import globals_reuse_donor as donor;
+
+int factor = 1;
+list<string> tags = ["a"];
+dict<string, any> registry = {};
+
+func readFactor(): int { return factor; }
+func bumpFactor(): int { factor = factor + 10; return factor; }
+func readTags(): string { return tags.join(","); }
+
+func register(any cls): any {
+    registry[reflect.className(cls)] = factor;
+    return cls;
+}
+
+class Reader {
+    int offset = 100;
+    func read(): int { return factor + this.offset; }
+}
+
+int early = donor.run(readFactor);
+
+@register
+class Late {
+    func value(): int { return factor * 2; }
+}
+
+class GlobalsReuseCrossModuleTest extends test.Test {
+    @test
+    func callbackSeesEntryGlobalChanges(): void {
+        factor = 1;
+        this.assertEquals(1, donor.run(readFactor));
+        this.assertEquals(1, donor.run(readFactor));
+        factor = 5;
+        this.assertEquals(5, donor.run(readFactor));
+        this.assertEquals(6, donor.run(func(): int { return factor + 1; }));
+        this.assertEquals(6, donor.run(func(): int { return factor + 1; }));
+    }
+
+    @test
+    func boundMethodCallbackSeesChanges(): void {
+        factor = 5;
+        let r = Reader();
+        this.assertEquals(105, donor.run(r.read));
+        factor = 6;
+        this.assertEquals(106, donor.run(r.read));
+    }
+
+    @test
+    func callbackWritesReachTheCaller(): void {
+        factor = 6;
+        this.assertEquals(16, donor.run(bumpFactor));
+        this.assertEquals(16, factor);
+        this.assertEquals(16, donor.run(readFactor));
+    }
+
+    @test
+    func reassignedAndMutatedCollectionsAreSeen(): void {
+        tags = ["a"];
+        this.assertEquals("a", donor.run(readTags));
+        tags = ["b", "c"];
+        this.assertEquals("b,c", donor.run(readTags));
+        tags.push("d");
+        this.assertEquals("b,c,d", donor.run(readTags));
+    }
+
+    @test
+    func classDecoratedAfterAnEarlyCallbackWorks(): void {
+        this.assertEquals(1, early);
+        this.assertEquals(1, registry["Late"]);
+        factor = 16;
+        this.assertEquals(32, donor.run(func(): int { return Late().value(); }));
+    }
+
+    @test
+    func moduleGlobalsSeenAfterRepeatedReads(): void {
+        donor.setSeen(0);
+        this.assertEquals(0, donor.peek());
+        this.assertEquals(0, donor.peek());
+        donor.setSeen(4);
+        this.assertEquals(4, donor.peek());
+        this.assertEquals(4, donor.peek());
+    }
+
+    @test
+    func reassignedModuleCollectionIsSeen(): void {
+        this.assertEquals(1, donor.itemsNow().length());
+        donor.swapItems();
+        this.assertEquals([7, 8], donor.itemsNow());
+    }
+}

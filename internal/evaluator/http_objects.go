@@ -163,7 +163,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		}
 		newJar, _ := cookiejar.New(nil)
 		e.httpCookieJarMu.Lock()
-		e.httpCookieJars[id.Value.Int64()] = newJar
+		ensureMap(&e.httpCookieJars)[id.Value.Int64()] = newJar
 		e.httpCookieJarMu.Unlock()
 		return runtime.Null{}, nil
 	}}}
@@ -366,7 +366,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		h.client.Jar = jar
 		id := e.nextCookieJarID
 		e.nextCookieJarID++
-		e.httpCookieJars[id] = jar
+		ensureMap(&e.httpCookieJars)[id] = jar
 		return newJarInst(id), nil
 	}}}
 
@@ -590,7 +590,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		e.httpFetchStreamMu.Lock()
 		id := e.nextFetchStreamID
 		e.nextFetchStreamID++
-		e.httpFetchStreams[id] = sh
+		ensureMap(&e.httpFetchStreams)[id] = sh
 		e.httpFetchStreamMu.Unlock()
 		for i, specVal := range specs {
 			go func(idx int, sv runtime.Value) {

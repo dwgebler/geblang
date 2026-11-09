@@ -1,0 +1,19 @@
+module param_class_handlers;
+
+import param_class_donor as model;
+import param_class_other;
+from param_class_donor import Holder;
+
+class Note {
+    string text;
+}
+
+export class Handlers {
+    func create(model.Widget body, ?model.Secret secret, list<model.Widget> batch, param_class_other.Widget[] codes, Holder<int> holder, Note note, int count): void {}
+}
+
+export class MoreHandlers extends Handlers {
+    func update(model.Widget body): void {}
+}
+
+export func standalone(param_class_other.Widget body, string label): void {}

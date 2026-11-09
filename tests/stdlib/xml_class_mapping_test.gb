@@ -1,0 +1,112 @@
+/**
+ * @title XML to class mapping
+ * @summary xml.parseAs fills fields from child elements and attributes with
+ * typed conversion, nested classes, repeated elements and inherited fields;
+ * xml.stringify writes an instance back in the same shape.
+ */
+import test;
+import xml;
+
+class Address {
+    string city;
+    int zip;
+}
+
+class Base {
+    string id;
+}
+
+class Person extends Base {
+    string name;
+    int age;
+    bool active;
+    decimal score;
+    float ratio;
+    ?string nick;
+    ?int rank;
+    Address home;
+    list<string> tags;
+    list<Address> places;
+    int _secret;
+}
+
+class Money {
+    int cents;
+
+    func __serialize(): any {
+        return {"amount": this.cents};
+    }
+}
+
+class XmlClassMappingTest extends test.Test {
+    func person(): Person {
+        string text = "<person id=\"p1\"><name>Ada</name><age>36</age><active>true</active><score>1.5</score><ratio>0.25</ratio><rank></rank><home><city>Leeds</city><zip>12</zip></home><tags>x</tags><tags>y</tags><places><city>York</city><zip>1</zip></places><places><city>Bath</city><zip>2</zip></places></person>";
+        return xml.parseAs(text, Person) as Person;
+    }
+
+    @test
+    func scalarsConvertToDeclaredTypes(): void {
+        let p = this.person();
+        this.assertEquals("Ada", p.name);
+        this.assertEquals(36, p.age);
+        this.assertTrue(p.active);
+        this.assertEquals(1.5, p.score);
+        this.assertEquals(0.25 as float, p.ratio);
+    }
+
+    @test
+    func attributesNullablesAndInheritedFields(): void {
+        let p = this.person();
+        this.assertEquals("p1", p.id);
+        this.assertNull(p.nick);
+        this.assertNull(p.rank);
+    }
+
+    @test
+    func nestedAndRepeatedElements(): void {
+        let p = this.person();
+        this.assertEquals("Leeds", p.home.city);
+        this.assertEquals(12, p.home.zip);
+        this.assertEquals(["x", "y"], p.tags);
+        this.assertEquals(2, p.places.length());
+        this.assertEquals("Bath", p.places[1].city);
+    }
+
+    @test
+    func childElementWinsOverAttribute(): void {
+        let p = xml.parseAs("<p age=\"1\"><age>2</age></p>", Person) as Person;
+        this.assertEquals(2, p.age);
+    }
+
+    @test
+    func stringifyRoundTrips(): void {
+        let p = this.person();
+        string out = xml.stringify(p);
+        this.assertTrue(out.startsWith("<Person>"));
+        this.assertFalse(out.contains("_secret"));
+        let back = xml.parseAs(out, Person) as Person;
+        this.assertEquals("p1", back.id);
+        this.assertEquals(36, back.age);
+        this.assertEquals("York", back.places[0].city);
+        this.assertEquals(["x", "y"], back.tags);
+    }
+
+    @test
+    func stringifyUsesSerialize(): void {
+        let m = Money();
+        m.cents = 250;
+        this.assertEquals("<Money><amount>250</amount></Money>", xml.stringify(m));
+    }
+
+    @test
+    func badScalarThrowsTypeError(): void {
+        this.assertThrows(func(): void {
+            xml.parseAs("<p><age>old</age></p>", Person);
+        });
+    }
+
+    @test
+    func elementDictsStillStringify(): void {
+        this.assertEquals("<a k=\"v\">t</a>", xml.stringify({"name": "a", "attributes": {"k": "v"}, "children": [], "text": "t"}));
+    }
+}

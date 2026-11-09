@@ -1,0 +1,5 @@
+name: bench-web-gebweb
+version: 0.1.0
+dependencies:
+  gebweb:
+    path: ../../../../gebweb

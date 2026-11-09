@@ -1,0 +1,13 @@
+import io;
+import sys;
+
+let args = sys.args();
+int n = args.length() > 0 ? args[0].toInt() : 40000;
+let d = {};
+for (int i = 0; i < n; i++) {
+    d["k" + (i as string)] = i;
+}
+for (int i = 0; i < n; i++) {
+    d.delete("k" + (i as string));
+}
+io.println(d.length());

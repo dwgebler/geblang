@@ -1,0 +1,5 @@
+module param_class_other;
+
+export class Widget {
+    int code;
+}

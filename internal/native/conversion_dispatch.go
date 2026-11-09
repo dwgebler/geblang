@@ -16,6 +16,7 @@ var conversionKeys = map[string]bool{
 	"yaml.parseAs":   true,
 	"toml.parseAs":   true,
 	"xml.parseAs":    true,
+	"xml.stringify":  true,
 }
 
 func isConversionKey(key string) bool { return conversionKeys[key] }
@@ -39,6 +40,8 @@ func callConversion(ctx ConversionContext, key string, args []runtime.Value) (ru
 		return tomlParseAsCtx(ctx, args)
 	case "xml.parseAs":
 		return xmlParseAsCtx(ctx, args)
+	case "xml.stringify":
+		return xmlStringifyCtx(ctx, args)
 	}
 	return nil, fmt.Errorf("unsupported native call %s", key)
 }

@@ -1,0 +1,12 @@
+module bco_picker;
+
+import reflect;
+from bco_zeta import Widget;
+
+export func literal(): any {
+    return reflect.class("Widget");
+}
+
+export func dynamic(string name): any {
+    return reflect.class(name);
+}

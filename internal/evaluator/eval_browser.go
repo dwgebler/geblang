@@ -313,7 +313,7 @@ func (e *Evaluator) browserLaunch(call *ast.CallExpression, args []runtime.Value
 	e.browserMu.Lock()
 	id := e.nextBrowserID
 	e.nextBrowserID++
-	e.browsers[id] = b
+	ensureMap(&e.browsers)[id] = b
 	if e.browserSetups == nil {
 		e.browserSetups = map[*cdp.Browser]pageSetup{}
 	}
@@ -423,7 +423,7 @@ func (e *Evaluator) pageInstance(p *cdp.Page) runtime.Value {
 	}
 	pid := e.nextPageID
 	e.nextPageID++
-	e.pages[pid] = p
+	ensureMap(&e.pages)[pid] = p
 	return &runtime.Instance{Class: e.pageClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(pid)}}
 }
 

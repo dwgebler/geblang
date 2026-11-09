@@ -1,17 +1,42 @@
 {
   "name": "vscode-geblang",
   "displayName": "Geblang",
-  "description": "Geblang language support for Visual Studio Code",
-  "version": "1.5.1",
+  "description": "Geblang language support: highlighting, diagnostics, completion, formatting, testing and debugging",
+  "version": "1.6.0",
   "publisher": "geblang",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#0b7285",
+    "theme": "dark"
+  },
+  "homepage": "https://geblang.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dwgebler/geblang"
+  },
+  "bugs": {
+    "url": "https://github.com/dwgebler/geblang/issues"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
   "categories": [
     "Programming Languages",
-    "Debuggers"
+    "Debuggers",
+    "Formatters",
+    "Linters",
+    "Snippets",
+    "Testing"
   ],
-  "keywords": ["geblang", "gb"],
+  "keywords": [
+    "geblang",
+    "gb",
+    "gebweb",
+    "language server",
+    "lsp",
+    "debugger"
+  ],
   "activationEvents": [
     "onLanguage:geblang",
     "onDebugResolve:geblang",
@@ -21,9 +46,13 @@
     "onCommand:geblang.openRepl",
     "onCommand:geblang.runDoctor",
     "onCommand:geblang.buildProject",
-    "onCommand:geblang.cleanCache"
+    "onCommand:geblang.cleanCache",
+    "workspaceContains:**/geblang.yaml",
+    "onLanguage:gebweb-template"
   ],
-  "extensionKind": ["workspace"],
+  "extensionKind": [
+    "workspace"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -66,14 +95,62 @@
         "command": "geblang.showLspOutput",
         "title": "Show Language Server Output",
         "category": "Geblang"
+      },
+      {
+        "command": "geblang.gebweb.newProject",
+        "title": "New Project",
+        "category": "Gebweb"
+      },
+      {
+        "command": "geblang.gebweb.dev",
+        "title": "Start Dev Server",
+        "category": "Gebweb"
+      },
+      {
+        "command": "geblang.gebweb.routes",
+        "title": "Show Routes",
+        "category": "Gebweb"
+      },
+      {
+        "command": "geblang.gebweb.generate",
+        "title": "Generate...",
+        "category": "Gebweb"
+      },
+      {
+        "command": "geblang.gebweb.migrate",
+        "title": "Migrate...",
+        "category": "Gebweb"
+      },
+      {
+        "command": "geblang.gebweb.build",
+        "title": "Build Release Binary",
+        "category": "Gebweb"
+      },
+      {
+        "command": "geblang.gebweb.worker",
+        "title": "Start Worker",
+        "category": "Gebweb"
       }
     ],
     "languages": [
       {
         "id": "geblang",
-        "aliases": ["Geblang", "geblang"],
-        "extensions": [".gb"],
+        "aliases": [
+          "Geblang",
+          "geblang"
+        ],
+        "extensions": [
+          ".gb"
+        ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "gebweb-template",
+        "aliases": [
+          "Gebweb Template",
+          "gebweb-template"
+        ],
+        "configuration": "./gebweb-template-configuration.json"
       }
     ],
     "grammars": [
@@ -81,22 +158,43 @@
         "language": "geblang",
         "scopeName": "source.geblang",
         "path": "./syntaxes/geblang.tmLanguage.json"
+      },
+      {
+        "language": "gebweb-template",
+        "scopeName": "text.html.gebweb",
+        "path": "./syntaxes/gebweb-template.tmLanguage.json",
+        "embeddedLanguages": {
+          "source.css": "css",
+          "source.js": "javascript"
+        }
       }
     ],
     "snippets": [
       {
         "language": "geblang",
         "path": "./snippets/geblang.json"
+      },
+      {
+        "language": "geblang",
+        "path": "./snippets/gebweb.json"
+      },
+      {
+        "language": "gebweb-template",
+        "path": "./snippets/gebweb-template.json"
       }
     ],
     "debuggers": [
       {
         "type": "geblang",
         "label": "Geblang",
-        "languages": ["geblang"],
+        "languages": [
+          "geblang"
+        ],
         "configurationAttributes": {
           "launch": {
-            "required": ["program"],
+            "required": [
+              "program"
+            ],
             "properties": {
               "program": {
                 "type": "string",
@@ -105,7 +203,9 @@
               },
               "args": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Arguments passed to the script.",
                 "default": []
               },
@@ -162,7 +262,11 @@
         },
         "geblang.executionMode": {
           "type": "string",
-          "enum": ["auto", "native", "wsl"],
+          "enum": [
+            "auto",
+            "native",
+            "wsl"
+          ],
           "default": "auto",
           "markdownDescription": "How the extension launches `geblang`. `auto` uses native execution except for Linux/WSL paths on Windows, `native` always runs the configured executable directly, and `wsl` runs it through `wsl.exe`."
         },
@@ -170,6 +274,21 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Format with `geblang fmt --clean`, which produces the minimal canonical form: redundant parentheses are dropped and multi-line operator and method chains are flattened onto one line. When off (the default), formatting preserves your grouping parentheses and multi-line chains. Either way the result is guaranteed identical to the source at the AST level."
+        },
+        "geblang.gebweb.executablePath": {
+          "type": "string",
+          "default": "gebweb",
+          "markdownDescription": "Path to the `gebweb` CLI used by the Gebweb commands. Leave as `gebweb` if it is on your `PATH`."
+        },
+        "geblang.gebweb.templateDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "templates"
+          ],
+          "markdownDescription": "Folders, relative to a Gebweb project's `geblang.yaml`, whose `.html` files open as Gebweb templates. Matches the `gebweb.useViews(app, \"templates\")` default."
         }
       }
     }

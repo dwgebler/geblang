@@ -6,6 +6,7 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/runtime"
 	"geblang/internal/typealias"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -1063,6 +1064,24 @@ func (e *Evaluator) registerGlobalClass(class *runtime.Class) {
 		return
 	}
 	e.globalClasses[class.Name] = class
+	key := class.DefinitionModule + "." + class.Name
+	if _, seen := e.moduleClasses[key]; !seen {
+		modules := append(e.classModulesByName[class.Name], class.DefinitionModule)
+		sort.Strings(modules)
+		e.classModulesByName[class.Name] = modules
+	}
+	e.moduleClasses[key] = class
+}
+
+// bareClass resolves a class by bare name: the entry script, then other modules in alphabetical order, matching the VM loader.
+func (e *Evaluator) bareClass(name string) (*runtime.Class, bool) {
+	for cur := e; cur != nil; cur = cur.parent {
+		if modules := cur.classModulesByName[name]; len(modules) > 0 {
+			class, ok := cur.moduleClasses[modules[0]+"."+name]
+			return class, ok
+		}
+	}
+	return nil, false
 }
 
 func (e *Evaluator) registerTopLevelFunction(stmt ast.Statement, env *runtime.Environment) {

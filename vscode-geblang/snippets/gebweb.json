@@ -1,0 +1,153 @@
+{
+    "Gebweb controller": {
+        "prefix": "gwcontroller",
+        "body": [
+            "import gebweb;",
+            "",
+            "export class ${1:Item}Controller extends gebweb.Controller {",
+            "    func ${1:Item}Controller() {",
+            "        parent();",
+            "    }",
+            "",
+            "    @Get(\"/${2:items}\")",
+            "    @Summary(\"${3:List items}\")",
+            "    func list(): gebweb.Response {",
+            "        return this.json([${0}]);",
+            "    }",
+            "}"
+        ],
+        "description": "Gebweb controller class with a GET route"
+    },
+    "Gebweb GET route": {
+        "prefix": "gwget",
+        "body": [
+            "@Get(\"/${1:items}/{${2:id}}\")",
+            "@Summary(\"${3:Get one item}\")",
+            "func ${4:get}(string ${2:id}): gebweb.Response {",
+            "    return this.json({\"id\": ${2:id}});$0",
+            "}"
+        ],
+        "description": "Gebweb GET handler with a path parameter"
+    },
+    "Gebweb POST route": {
+        "prefix": "gwpost",
+        "body": [
+            "@Post(\"/${1:items}\")",
+            "@Summary(\"${2:Create an item}\")",
+            "func ${3:create}(${4:ItemDto} body): gebweb.Response {",
+            "    ${0}",
+            "    return this.created(body, \"/${1:items}/\" + body.id);",
+            "}"
+        ],
+        "description": "Gebweb POST handler bound to a typed request body"
+    },
+    "Gebweb view route": {
+        "prefix": "gwview",
+        "body": [
+            "@Get(\"/${1}\")",
+            "func ${2:index}(gebweb.Request request): gebweb.Response {",
+            "    return this.view(request, \"${3:page}.html\", {",
+            "        \"title\": \"${4:Home}\",${0}",
+            "    });",
+            "}"
+        ],
+        "description": "Gebweb handler rendering a template"
+    },
+    "Gebweb DTO": {
+        "prefix": "gwdto",
+        "body": [
+            "export class ${1:Item}Dto {",
+            "    string id;",
+            "",
+            "    @Assert.notBlank",
+            "    @Assert.maxLength(${2:120})",
+            "    string name;",
+            "",
+            "    @Assert.email",
+            "    string email;${0}",
+            "}"
+        ],
+        "description": "Request body class with @Assert validation"
+    },
+    "Gebweb API resource": {
+        "prefix": "gwresource",
+        "body": [
+            "import gebweb.repository as repository;",
+            "",
+            "@ApiResource(\"/${2:items}\")",
+            "export class ${1:Item} {",
+            "    string id;",
+            "",
+            "    @Assert.notBlank",
+            "    string name;",
+            "",
+            "    static func repositoryClass(): any {",
+            "        return ${1:Item}Repository;",
+            "    }",
+            "}",
+            "",
+            "export class ${1:Item}Repository implements repository.Repository<${1:Item}> {",
+            "    dict<string, ${1:Item}> store;",
+            "",
+            "    func ${1:Item}Repository() {",
+            "        this.store = {};",
+            "    }",
+            "",
+            "    func find(string id): ?${1:Item} {",
+            "        return this.store.contains(id) ? this.store[id] : null;",
+            "    }",
+            "",
+            "    func list(repository.Page page): list<${1:Item}> {",
+            "        list<${1:Item}> out = [];",
+            "        for (key in this.store.keys()) {",
+            "            out.push(this.store[key]);",
+            "        }",
+            "        return out;",
+            "    }",
+            "",
+            "    func save(${1:Item} entity): ${1:Item} {",
+            "        this.store[entity.id] = entity;",
+            "        return entity;",
+            "    }",
+            "",
+            "    func delete(string id): void {",
+            "        if (this.store.contains(id)) {",
+            "            this.store.delete(id);",
+            "        }",
+            "    }",
+            "}"
+        ],
+        "description": "@ApiResource entity with an in-memory repository (auto CRUD routes)"
+    },
+    "Gebweb app": {
+        "prefix": "gwapp",
+        "body": [
+            "import gebweb;",
+            "",
+            "export func main(list<string> args): int {",
+            "    let app = gebweb.app([${1:HomeController()}]);",
+            "    gebweb.useViews(app, \"templates\");",
+            "    gebweb.serve(app, \"0.0.0.0:${2:8080}\");",
+            "    return 0;",
+            "}"
+        ],
+        "description": "Gebweb application entry point"
+    },
+    "Gebweb TestClient test": {
+        "prefix": "gwtest",
+        "body": [
+            "import test;",
+            "import gebweb;",
+            "",
+            "class ${1:Routes}Test extends test.Test {",
+            "    @test",
+            "    func ${2:indexReturns200}(): void {",
+            "        let client = gebweb.TestClient(gebweb.app([${3:HomeController()}]));",
+            "        let r = client.get(\"${4:/}\");",
+            "        this.assertEquals(200, r.status);${0}",
+            "    }",
+            "}"
+        ],
+        "description": "In-process route test with TestClient"
+    }
+}

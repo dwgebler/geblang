@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,8 +36,10 @@ type moduleRecord struct {
 	module *runtime.Module
 	chunk  bytecode.Chunk
 	// globalsMu guards globalsVM: restores share the read lock, so concurrent calls into one module never wait on each other; a write-back takes the write lock. Module-global writes persist with lost-update semantics under concurrency (use a thread-safe handle for shared state).
-	globalsMu      sync.RWMutex
-	globalsVM      []runtime.VMValue
+	globalsMu sync.RWMutex
+	globalsVM []runtime.VMValue
+	// globalsStamp names globalsVM's current contents; changed under globalsMu on every write-back.
+	globalsStamp   uint64
 	decorators     bytecode.FunctionDecoratorState
 	ifaceFallbacks bytecode.InterfaceFallbackState
 }
@@ -80,6 +83,9 @@ type Loader struct {
 
 	// records holds one *moduleRecord per canonical module; reads are lock-free, loads serialize on loadLock.
 	records sync.Map
+	// sortedModules caches the record keys in order for bare-name class lookup; modulesGen invalidates it.
+	sortedModules atomic.Pointer[sortedModuleNames]
+	modulesGen    atomic.Uint64
 	// runtimeClasses caches the built *runtime.Class per "module.Class" so a cross-module parent chain is materialised once (immutable).
 	runtimeClasses sync.Map
 	mainVM         *bytecode.VM
@@ -190,6 +196,7 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 	if err != nil {
 		if native := l.lookupBuiltin(canonical, alias); native != nil {
 			l.records.Store(canonical, &moduleRecord{module: native})
+			l.modulesGen.Add(1)
 			return native, nil
 		}
 		return nil, err
@@ -197,6 +204,7 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 	if l.loading[path] {
 		if native := l.lookupBuiltin(canonical, alias); native != nil {
 			l.records.Store(canonical, &moduleRecord{module: native})
+			l.modulesGen.Add(1)
 			return native, nil
 		}
 		return nil, fmt.Errorf("circular import detected for %s", canonical)
@@ -268,9 +276,12 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 		module:         module,
 		chunk:          chunk,
 		globalsVM:      vm.GlobalsSnapshotVM(),
+		globalsStamp:   bytecode.NewGlobalsStamp(),
 		decorators:     vm.FunctionDecoratorState(),
 		ifaceFallbacks: vm.InterfaceFallbackState(),
 	})
+	l.modulesGen.Add(1)
+
 	return module, nil
 }
 
@@ -288,15 +299,16 @@ func (l *Loader) ifaceFallbackStateFor(module string) bytecode.InterfaceFallback
 // restoreModuleGlobals loads a worker's globals: the entry chunk reads live from the main VM; a sub-module restores its live module globals (mutations persist via releaseModuleVM's write-back).
 func (l *Loader) restoreModuleGlobals(vm *bytecode.VM, module string, rec *moduleRecord) {
 	if module == "" && l.mainVM != nil {
-		vm.RestoreGlobals(l.mainVM.GlobalsSnapshot())
+		l.mainVM.CopyGlobalsTo(vm)
 		return
 	}
 	if rec == nil {
+		vm.ClearGlobals()
 		return
 	}
 	vm.SetPersistGlobals(true)
 	rec.globalsMu.RLock()
-	vm.RestoreGlobalsVM(rec.globalsVM)
+	vm.AdoptGlobalsVM(rec.globalsVM, rec.globalsStamp)
 	rec.globalsMu.RUnlock()
 }
 
@@ -307,6 +319,7 @@ func persistModuleGlobals(vm *bytecode.VM, rec *moduleRecord) {
 	}
 	rec.globalsMu.Lock()
 	vm.PersistDirtyGlobals(rec.globalsVM)
+	rec.globalsStamp = bytecode.NewGlobalsStamp()
 	rec.globalsMu.Unlock()
 }
 
@@ -368,7 +381,7 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.
 	}
 	vm := pool.Get()
 	if vm == nil {
-		vm = bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
+		vm = bytecode.NewWorkerVMWithModuleLoader(chunk, l.stdout, l)
 	}
 	vm.SetModuleName(module)
 	vm.SetModulePaths(l.basePaths)
@@ -1269,16 +1282,37 @@ func (l *Loader) FindClassByName(name string) (runtime.Value, bool) {
 			return r, true
 		}
 	}
-	var result runtime.Value
-	var ok bool
-	l.records.Range(func(k, v any) bool {
-		if r, found := classFromChunk(v.(*moduleRecord).chunk, k.(string), name, key); found {
-			result, ok = r, true
-			return false
+	// Several modules may declare the name; the alphabetically first module wins so every lookup agrees.
+	for _, module := range l.moduleNamesSorted() {
+		v, ok := l.records.Load(module)
+		if !ok {
+			continue
 		}
+		if r, found := classFromChunk(v.(*moduleRecord).chunk, module, name, key); found {
+			return r, true
+		}
+	}
+	return nil, false
+}
+
+type sortedModuleNames struct {
+	gen   uint64
+	names []string
+}
+
+func (l *Loader) moduleNamesSorted() []string {
+	gen := l.modulesGen.Load()
+	if cached := l.sortedModules.Load(); cached != nil && cached.gen == gen {
+		return cached.names
+	}
+	var modules []string
+	l.records.Range(func(k, _ any) bool {
+		modules = append(modules, k.(string))
 		return true
 	})
-	return result, ok
+	sort.Strings(modules)
+	l.sortedModules.Store(&sortedModuleNames{gen: gen, names: modules})
+	return modules
 }
 
 func (l *Loader) ClassValueInModule(module, className string) (runtime.Value, bool) {
@@ -1335,4 +1369,12 @@ func (l *Loader) ModuleAliasesFor(module string) map[string]string {
 		return nil
 	}
 	return chunk.ModuleAliases
+}
+
+func (l *Loader) FromImportsFor(module string) map[string]string {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return nil
+	}
+	return chunk.FromImports
 }

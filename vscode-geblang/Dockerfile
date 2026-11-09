@@ -11,12 +11,13 @@ COPY tsconfig.json build.mjs ./
 COPY src/ ./src/
 COPY syntaxes/ ./syntaxes/
 COPY snippets/ ./snippets/
-COPY language-configuration.json ./
+COPY language-configuration.json gebweb-template-configuration.json README.md CHANGELOG.md LICENSE .vscodeignore ./
+COPY images/ ./images/
+RUN npm run typecheck
 RUN npm run compile
 
-# Package as VSIX — no node_modules needed since everything is bundled
-RUN npx --yes @vscode/vsce package --no-dependencies --out /ext/geblang.vsix 2>/dev/null \
-    || (echo "VSIX packaging skipped" && touch /ext/geblang.vsix)
+# Package as VSIX; no node_modules needed since everything is bundled
+RUN npx --yes @vscode/vsce package --no-dependencies --out /ext/geblang.vsix
 
 # Export compiled output and VSIX as a minimal artifacts image
 FROM scratch AS artifacts

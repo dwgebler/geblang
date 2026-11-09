@@ -181,7 +181,7 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 	e.httpServerMu.Lock()
 	e.nextHTTPServerID++
 	id := e.nextHTTPServerID
-	e.httpServers[id] = handle
+	ensureMap(&e.httpServers)[id] = handle
 	e.httpServerMu.Unlock()
 	go func() {
 		var err error

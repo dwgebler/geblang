@@ -530,7 +530,7 @@ func (e *Evaluator) startProcessSpec(spec processSpec) (runtime.Value, error) {
 	e.processMu.Lock()
 	defer e.processMu.Unlock()
 	e.nextProcID++
-	e.processes[e.nextProcID] = &processHandle{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, cancel: cancel}
+	ensureMap(&e.processes)[e.nextProcID] = &processHandle{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, cancel: cancel}
 	return runtime.NewInt64(e.nextProcID), nil
 }
 
@@ -906,7 +906,7 @@ func (e *Evaluator) procSpawn(call *ast.CallExpression, args []runtime.Value) (r
 	e.processMu.Lock()
 	e.nextProcID++
 	procID := e.nextProcID
-	e.processes[procID] = handle
+	ensureMap(&e.processes)[procID] = handle
 	e.processMu.Unlock()
 	stdinVal := e.registerIOStream(stdinStream)
 	stdoutVal := e.registerIOStream(stdoutStream)

@@ -494,7 +494,7 @@ func (e *Evaluator) ioOpen(call *ast.CallExpression, args []runtime.Value) (runt
 	e.fileMu.Lock()
 	defer e.fileMu.Unlock()
 	e.nextFileID++
-	e.files[e.nextFileID] = file
+	ensureMap(&e.files)[e.nextFileID] = file
 	return runtime.NewInt64(e.nextFileID), nil
 }
 
@@ -553,7 +553,7 @@ func (e *Evaluator) registerIOStream(handle *ioStreamHandle) runtime.Value {
 	e.streamMu.Lock()
 	defer e.streamMu.Unlock()
 	e.nextStreamID++
-	e.streams[e.nextStreamID] = handle
+	ensureMap(&e.streams)[e.nextStreamID] = handle
 	return runtime.NativeObject{Kind: "IOStream", ID: e.nextStreamID}
 }
 
@@ -953,7 +953,7 @@ func (e *Evaluator) ioBuffer(call *ast.CallExpression, args []runtime.Value) (ru
 	defer e.bufferMu.Unlock()
 	e.nextBufferID++
 	id := e.nextBufferID
-	e.buffers[id] = &bytes.Buffer{}
+	ensureMap(&e.buffers)[id] = &bytes.Buffer{}
 	return runtime.NativeObject{Kind: "IOBuffer", ID: id}, nil
 }
 
@@ -1081,7 +1081,7 @@ func (e *Evaluator) fileBufReader(handle int64) (*bufio.Reader, error) {
 		return nil, fmt.Errorf("unknown file handle %d", handle)
 	}
 	r := bufio.NewReader(file)
-	e.bufReaders[handle] = r
+	ensureMap(&e.bufReaders)[handle] = r
 	return r, nil
 }
 

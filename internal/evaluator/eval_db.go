@@ -52,8 +52,8 @@ func (e *Evaluator) dbOpen(call *ast.CallExpression, args []runtime.Value) (runt
 	e.dbMu.Lock()
 	defer e.dbMu.Unlock()
 	e.nextDBID++
-	e.dbs[e.nextDBID] = db
-	e.dbDrivers[e.nextDBID] = driverName
+	ensureMap(&e.dbs)[e.nextDBID] = db
+	ensureMap(&e.dbDrivers)[e.nextDBID] = driverName
 	return runtime.NewInt64(e.nextDBID), nil
 }
 
@@ -189,7 +189,7 @@ func (e *Evaluator) dbBegin(call *ast.CallExpression, args []runtime.Value) (run
 	e.dbMu.Lock()
 	defer e.dbMu.Unlock()
 	e.nextTxID++
-	e.txs[e.nextTxID] = &dbTxHandle{tx: tx, driver: driver, cancel: cancel, ctx: ctx}
+	ensureMap(&e.txs)[e.nextTxID] = &dbTxHandle{tx: tx, driver: driver, cancel: cancel, ctx: ctx}
 	return runtime.NewInt64(e.nextTxID), nil
 }
 
@@ -342,7 +342,7 @@ func (e *Evaluator) dbPrepare(call *ast.CallExpression, args []runtime.Value) (r
 	e.dbMu.Lock()
 	defer e.dbMu.Unlock()
 	e.nextStmtID++
-	e.stmts[e.nextStmtID] = &dbStmtHandle{stmt: stmt, driver: driver, paramNames: paramNames}
+	ensureMap(&e.stmts)[e.nextStmtID] = &dbStmtHandle{stmt: stmt, driver: driver, paramNames: paramNames}
 	return runtime.NewInt64(e.nextStmtID), nil
 }
 

@@ -1,0 +1,50 @@
+/**
+ * @title Bare class names and parent classes across modules
+ * @summary A bare reflect.class name resolves in the calling module, then the
+ * entry script, then other modules alphabetically; reflect.parentClass and
+ * nested parseAs use the class the declaring module names.
+ */
+import test;
+import json;
+import reflect;
+import bco_zeta;
+import bco_mid;
+import bco_alpha;
+import bco_picker;
+import bco_kids;
+
+func ownerOf(any cls): string {
+    return reflect.location(cls)["module"] as string;
+}
+
+class BareClassOrderCrossModuleTest extends test.Test {
+    @test
+    func bareNameUsesAlphabeticalModuleOrder(): void {
+        string name = "Widget";
+        this.assertEquals("bco_alpha", ownerOf(reflect.class("Widget")));
+        this.assertEquals("bco_alpha", ownerOf(reflect.class(name)));
+    }
+
+    @test
+    func callingModuleImportsWinOverOrder(): void {
+        this.assertTrue(bco_picker.literal() == bco_zeta.Widget);
+        this.assertTrue(bco_picker.dynamic("Widget") == bco_zeta.Widget);
+    }
+
+    @test
+    func parentClassResolvesInDeclaringModule(): void {
+        this.assertTrue(reflect.parentClass(bco_kids.Kid) == bco_mid.Base);
+        this.assertTrue(reflect.parentClass(bco_kids.GrandKid) == bco_kids.Kid);
+        this.assertTrue(reflect.parentClass(bco_kids.Kid()) == bco_mid.Base);
+        this.assertNull(reflect.parentClass(bco_mid.Base));
+        this.assertNull(reflect.parentClass(bco_kids.Oops));
+    }
+
+    @test
+    func nestedParseAsUsesDeclaredFieldClass(): void {
+        let h = json.parseAs("{\"item\": {\"tag\": \"z\"}, \"items\": [{\"tag\": \"m\"}]}", bco_kids.Holder) as bco_kids.Holder;
+        this.assertTrue(h.item instanceof bco_zeta.Widget);
+        this.assertTrue(h.items[0] instanceof bco_mid.Widget);
+        this.assertFalse(h.item instanceof bco_alpha.Widget);
+    }
+}

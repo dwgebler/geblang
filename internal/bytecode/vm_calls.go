@@ -461,7 +461,7 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	if function.requiresParamValidation {
 		typeParams := function.typeParamSet
 		inherited := vm.pendingTypeBindings
-		if len(function.ParamNames) > 0 && function.ParamNames[0] == "this" && paramCount > 0 && stackArgs[0].Kind == runtime.VMKindBoxed && !compiledConstructorName(function.Name) {
+		if len(function.ParamNames) > 0 && function.ParamNames[0] == "this" && paramCount > 0 && stackArgs[0].Kind == runtime.VMKindBoxed && !function.isCompiledConstructor() {
 			if inst, ok := stackArgs[0].Boxed.(*runtime.Instance); ok {
 				inherited = mergedTypeBindings(inherited, inst.TypeBindings)
 			}
@@ -584,6 +584,20 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 
 // compiledConstructorName reports the Class.Class constructor name form;
 // constructors validate at the construct site, not against the receiver.
+func constructorFlagFor(name string) uint8 {
+	if compiledConstructorName(name) {
+		return 1
+	}
+	return 2
+}
+
+func (f *FunctionInfo) isCompiledConstructor() bool {
+	if f.constructorFlag != 0 {
+		return f.constructorFlag == 1
+	}
+	return compiledConstructorName(f.Name)
+}
+
 func compiledConstructorName(name string) bool {
 	dot := strings.IndexByte(name, '.')
 	if dot <= 0 || dot+1 >= len(name) {
@@ -693,7 +707,7 @@ func newFrameMeta(function FunctionInfo, spec func(string) vmTypeSpec) *frameMet
 }
 
 func checkedReturnSpecFor(function FunctionInfo, spec func(string) vmTypeSpec) *vmTypeSpec {
-	if function.IsGenerator || compiledConstructorName(function.Name) {
+	if function.IsGenerator || function.isCompiledConstructor() {
 		return nil
 	}
 	switch strings.ToLower(function.ReturnCheckType) {
@@ -942,7 +956,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 		}
 	}
 	receiverBindings := map[string]string(nil)
-	if function.requiresParamValidation && len(args) > 0 && !compiledConstructorName(function.Name) {
+	if function.requiresParamValidation && len(args) > 0 && !function.isCompiledConstructor() {
 		receiverBindings = receiverTypeBindings(function, args[0])
 	}
 	if (validateTypes || len(receiverBindings) > 0) && function.requiresParamValidation {
@@ -2047,6 +2061,9 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 			}
 			return true
 		})
+		if len(rewriteKeys) == 0 {
+			return value
+		}
 		for i, key := range rewriteKeys {
 			e, _ := callable.GetEntry(key)
 			callable.PutEntry(key, runtime.DictEntry{Key: e.Key, Value: rewriteVals[i]})
@@ -2336,18 +2353,7 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 		vm.globalsMu.Unlock()
 		clonedGlobals, clonedF := runtime.CloneIsolated(snapshot, f)
 		f = clonedF.(runtime.BytecodeClosure)
-		constants := make([]runtime.Value, 0, len(args)+2)
-		constants = append(constants, f)
-		constants = append(constants, args...)
-		methodNameIndex := int64(len(constants))
-		constants = append(constants, runtime.String{Value: "__invoke"})
-		wrapper := make([]Instruction, 0, len(args)+3)
-		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{0}})
-		for i := range args {
-			wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i + 1)}})
-		}
-		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
-		wrapper = append(wrapper, Instruction{Op: OpReturn})
+		constants, wrapper := invokeWrapper(f, args)
 		return vm.runWrapperWithRawCall(constants, wrapper, -1, true, nil, clonedGlobals)
 	default:
 		return vm.callCallableSlow(fn, args)
@@ -2559,33 +2565,11 @@ func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value,
 		if allowInline && len(f.Upvalues) == 0 && f.TypeBindings == nil && !vm.requiresCallSitePolymorphism {
 			return vm.callBytecodeInline(f.FunctionIndex, args)
 		}
-		constants := make([]runtime.Value, 0, len(args)+2)
-		constants = append(constants, f)
-		constants = append(constants, args...)
-		methodNameIndex := int64(len(constants))
-		constants = append(constants, runtime.String{Value: "__invoke"})
-		wrapper := make([]Instruction, 0, len(args)+3)
-		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{0}})
-		for i := range args {
-			wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i + 1)}})
-		}
-		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
-		wrapper = append(wrapper, Instruction{Op: OpReturn})
+		constants, wrapper := invokeWrapper(f, args)
 		res, err := vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost, nil)
 		return res, vm.stitchHofCallbackError(err)
 	case *runtime.Instance:
-		constants := make([]runtime.Value, 0, len(args)+2)
-		constants = append(constants, f)
-		constants = append(constants, args...)
-		methodNameIndex := int64(len(constants))
-		constants = append(constants, runtime.String{Value: "__invoke"})
-		wrapper := make([]Instruction, 0, len(args)+3)
-		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{0}})
-		for i := range args {
-			wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i + 1)}})
-		}
-		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
-		wrapper = append(wrapper, Instruction{Op: OpReturn})
+		constants, wrapper := invokeWrapper(f, args)
 		res, err := vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost, nil)
 		return res, vm.stitchHofCallbackError(err)
 	default:
@@ -2843,7 +2827,9 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 	if !ok {
 		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
 	}
-	hydrated, herr := native.HydrateNestedClassFields(vmFieldTypeInfos(classInfo), dict, vm.resolveDeserializeClass, vm.deserializeIntoClass)
+	inherited := runtime.InheritedFields(vm.RuntimeClassValue(class.Index))
+	infos := vm.resolvedFieldTypeInfos(class)
+	hydrated, herr := native.HydrateNestedClassFields(infos, dict, vm.resolveDeserializeClass, vm.deserializeIntoClass)
 	if herr != nil {
 		return nil, herr
 	}
@@ -2871,6 +2857,17 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 				instance.Fields[fieldName] = value
 			}
 		}
+		for _, field := range inherited {
+			entry, hit := dict.GetEntry(native.DictKey(runtime.String{Value: field.Name}))
+			if !hit {
+				continue
+			}
+			value := native.ConvertParsedNumbers(entry.Value, field.TypeName)
+			if msg, ok := vm.fieldWriteMismatch(instance, field.Name, value); !ok {
+				return nil, runtime.ClassifiedError{Class: "TypeError", Message: msg}
+			}
+			instance.Fields[field.Name] = value
+		}
 		return instance, nil
 	}
 	ctorIndex := classInfo.ConstructorIndices[0]
@@ -2885,8 +2882,8 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 			continue
 		}
 		key := runtime.String{Value: paramName}
-		entry, hit := dict.GetEntry(native.DictKey(key))
-		if !hit {
+		entry, ok := dict.GetEntry(native.DictKey(key))
+		if !ok {
 			return nil, fmt.Errorf("deserialize %s: missing field %q", class.Name, paramName)
 		}
 		value := entry.Value
@@ -3453,9 +3450,16 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 		// shifted or copied per call.
 		base := vm.chunk.Instructions
 		translated := make([]Instruction, len(wrapper))
+		operandCount := 0
+		for _, instruction := range wrapper {
+			operandCount += len(instruction.Operands)
+		}
+		operands := make([]int64, 0, operandCount)
 		for i, instruction := range wrapper {
 			copied := instruction
-			copied.Operands = append([]int64(nil), instruction.Operands...)
+			start := len(operands)
+			operands = append(operands, instruction.Operands...)
+			copied.Operands = operands[start:len(operands):len(operands)]
 			shiftInstructionOperands(&copied, 0, len(vm.chunk.Constants))
 			translated[i] = copied
 		}
@@ -3552,7 +3556,7 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 		}
 	} else {
 		vm.globalsMu.Lock()
-		callVM.restoreGlobalsVM(vm.globals)
+		callVM.adoptGlobals(vm.globals, vm.stampGlobalsLocked())
 		vm.globalsMu.Unlock()
 	}
 	callVM.SetModuleName(vm.moduleName)
@@ -3561,18 +3565,15 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	}
 	callVM.syncMode = true
 	callVM.forwardThis = vm.forwardThis
-	callVM.decoratedFuncs = copyRuntimeValueMap(vm.decoratedFuncs)
-	callVM.decoratedClasses = copyRuntimeValueMap(vm.decoratedClasses)
+	// Interface defaults ride along so a function body run on this wrapper still dispatches them (built binaries hit this path).
+	shareCallMaps(vm, callVM)
 	callVM.decoratorsApplied = true
-	// Carry cross-module interface defaults so a function body run on this
-	// wrapper VM still dispatches them (built binaries hit this path).
-	callVM.RestoreInterfaceFallbackState(vm.InterfaceFallbackState())
-	callVM.rawFunctionCalls = copyBoolMap(vm.rawFunctionCalls)
 	callVM.methodReceiverFuncs = vm.methodReceiverFuncs
 	callVM.generatorExecution = vm.generatorExecution
 	callVM.generatorYield = vm.generatorYield
 	callVM.generatorDone = vm.generatorDone
 	if rawIndex >= 0 {
+		callVM.rawFunctionCalls = copyBoolMap(callVM.rawFunctionCalls)
 		callVM.rawFunctionCalls[rawIndex] = true
 	}
 	// A transient wrap-bridge run never owns a destructor lifetime; it hands its destructibles up to the caller. The per-request isolated root keeps sweeping its own at request end.
@@ -3602,6 +3603,7 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 				continue
 			}
 			vm.globals[i] = callVM.globals[i]
+			vm.globalsStamp = 0
 			if i < len(vm.dirtyGlobals) {
 				vm.markDirtySlot(i)
 			}
@@ -3618,6 +3620,47 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 		wrapperPool.Put(callVM)
 	}
 	return result, popErr
+}
+
+// invokeWrapper builds the constants and code for callee.__invoke(args...), with all operands in one backing array.
+func invokeWrapper(callee runtime.Value, args []runtime.Value) ([]runtime.Value, []Instruction) {
+	n := len(args)
+	constants := make([]runtime.Value, 0, n+2)
+	constants = append(constants, callee)
+	constants = append(constants, args...)
+	constants = append(constants, runtime.String{Value: "__invoke"})
+	operands := make([]int64, n+3)
+	wrapper := make([]Instruction, 0, n+3)
+	for i := 0; i <= n; i++ {
+		operands[i] = int64(i)
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: operands[i : i+1 : i+1]})
+	}
+	operands[n+1], operands[n+2] = int64(n+1), int64(n)
+	wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: operands[n+1 : n+3 : n+3]}, Instruction{Op: OpReturn})
+	return constants, wrapper
+}
+
+// shareCallMaps aliases parent's read-mostly call maps into child instead of copying them per call; a later writer copies first (unshareCallMaps).
+func shareCallMaps(parent, child *VM) {
+	parent.callMapsShared.Store(true)
+	child.callMapsShared.Store(true)
+	child.decoratedFuncs = parent.decoratedFuncs
+	child.decoratedClasses = parent.decoratedClasses
+	child.rawFunctionCalls = parent.rawFunctionCalls
+	child.interfaceFallbacks = parent.interfaceFallbacks
+	child.interfaceExtraFields = parent.interfaceExtraFields
+}
+
+func (vm *VM) unshareCallMaps() {
+	if !vm.callMapsShared.Load() {
+		return
+	}
+	vm.decoratedFuncs = copyRuntimeValueMap(vm.decoratedFuncs)
+	vm.decoratedClasses = copyRuntimeValueMap(vm.decoratedClasses)
+	vm.rawFunctionCalls = copyBoolMap(vm.rawFunctionCalls)
+	state := vm.InterfaceFallbackState()
+	vm.interfaceFallbacks, vm.interfaceExtraFields = state.fallbacks, state.extraFields
+	vm.callMapsShared.Store(false)
 }
 
 func copyRuntimeValueMap(values map[int64]runtime.Value) map[int64]runtime.Value {

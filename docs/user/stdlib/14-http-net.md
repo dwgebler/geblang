@@ -635,6 +635,11 @@ client returns, with the `status()` / `ok()` / status-predicate methods):
 `http.response(body, status=200)`, `http.jsonResponse(payload, status=200)`,
 and `http.redirect(url, status=302)`.
 
+`http.jsonResponse` and `http.postJson` encode their payload exactly as
+`json.stringify` does (1.41.3), so a class instance (or a list or dict of
+them) sends its public fields, inherited ones included, or whatever its
+`__serialize()` returns.
+
 #### Trusted proxies
 
 By default `scheme()`, `isSecure()`, `host()`, and `clientIp()` come from

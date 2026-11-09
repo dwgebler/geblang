@@ -129,6 +129,24 @@ io.println(reflect.className(byName));   # Dog
 io.println(reflect.className(byValue));  # Dog
 ```
 
+A class name string is resolved as follows (1.41.3):
+
+- A bare name (`"Dog"`) finds a class in the calling module first (its own
+  classes and `from` imports), then in the entry script, then in the other
+  loaded modules in alphabetical order of their canonical names. Every lookup
+  gives the same answer on both runtimes, but when several modules declare
+  the name the alphabetical winner may not be the class you meant; prefer one
+  of the forms below.
+- `"module.Class"` with a module's canonical name (`"shapes.Widget"`) finds
+  the class that module declares, exported or not, even when the calling
+  module never imported it.
+- When the prefix is an import name in the calling scope (`import shapes as
+  geo;` then `"geo.Widget"`), only that module's exports are visible.
+- An import alias belongs to the module that wrote it. A framework that reads
+  a type such as `geo.Widget` from your code cannot look it up by that string;
+  it should use the resolved `class` that `reflect.parameters`,
+  `reflect.fields`, `reflect.constructors` and `reflect.returnClass` report.
+
 `reflect.function(name)` returns an inspectable handle for a top-level function.
 Pass the handle to `reflect.parameters`, `reflect.returnType`,
 `reflect.decorators`, and the other introspection calls below:
@@ -181,7 +199,8 @@ they resolve and call.
 Given a class value (from `reflect.class`, an instance, or a class name used
 directly), these calls report its structure. Field and method listings cover the
 class's own declared members; inherited members live on the parent class, which
-you can reach with `reflect.parent`.
+you can reach with `reflect.parent`. `reflect.fields` can also include inherited
+fields (see below).
 
 ```gb
 @immutable
@@ -208,10 +227,11 @@ class Dog extends Animal implements Greeter {
 io.println(reflect.className(Dog));   # Dog
 ```
 
-`reflect.fields(class)` returns one dict per declared field, each with `name`,
-`type`, `nullable`, `hasDefault`, `doc`, and `decorators`. A docblock (a `##`
-line comment or a `/** ... */` block) written immediately before a field is
-surfaced as its `doc` string; fields without one report `doc` as `null`:
+`reflect.fields(class)` returns one dict per declared field, sorted by name,
+each with `name`, `type`, `nullable`, `hasDefault`, `doc`, `decorators`,
+`class` and `elementClass`. A docblock (a `##` line comment or a `/** ... */`
+block) written immediately before a field is surfaced as its `doc` string;
+fields without one report `doc` as `null`:
 
 ```gb
 class Dog {
@@ -220,7 +240,27 @@ class Dog {
 }
 
 io.println(reflect.fields(Dog));
-# [{"decorators": [], "doc": "the breed, or null if unknown", "hasDefault": false, "name": "breed", "nullable": true, "type": "?string"}]
+# [{"class": null, "decorators": [], "doc": "the breed, or null if unknown", "elementClass": null, "hasDefault": false, "name": "breed", "nullable": true, "type": "?string"}]
+```
+
+`class` and `elementClass` are described under
+[parameter metadata](#parameter-metadata); a field's type is resolved in the
+module that declares the field.
+
+`reflect.fields(class, inherited: true)` (1.41.3) also lists inherited fields:
+the class's own fields first, then each ancestor's, nearest first, each group
+sorted by name. A field redeclared lower in the chain appears once, from the
+class that redeclares it. Every entry gains `declaringClass`, the class that
+declares the field. Ancestors in other modules are included. Without the flag
+(or with `inherited: false`) the result is unchanged.
+
+```gb
+for (f in reflect.fields(Dog, inherited: true)) {
+    io.println("${f["name"]} ${reflect.className(f["declaringClass"])}");
+}
+# breed Dog
+# legs Animal
+# name Animal
 ```
 
 `reflect.methods(class)` returns the names of the class's own methods:
@@ -234,8 +274,8 @@ list of parameter dicts (see [parameter metadata](#parameter-metadata) below):
 
 ```gb
 io.println(reflect.constructors(Dog));
-# [[{"hasDefault": false, "name": "name", "type": "string", "variadic": false},
-#   {"hasDefault": false, "name": "breed", "type": "?string", "variadic": false}]]
+# [[{"class": null, "elementClass": null, "hasDefault": false, "name": "name", "type": "string", "variadic": false},
+#   {"class": null, "elementClass": null, "hasDefault": false, "name": "breed", "type": "?string", "variadic": false}]]
 ```
 
 `reflect.parent(class)` returns the parent class name as a string, or `null`
@@ -248,21 +288,67 @@ io.println(reflect.parent(Animal));    # null
 io.println(reflect.interfaces(Dog));   # ["Greeter"]
 ```
 
+`reflect.parentClass(class)` (1.41.3) returns the parent class itself,
+resolved in the module that declares the child, so it is the right class even
+when the parent was written through an import alias or another module declares
+a class with the same name. It returns `null` for a class with no parent and
+for built-in parents such as `Error`. Walk a hierarchy with it rather than
+`reflect.class(reflect.parent(c))`:
+
+```gb
+let current = Dog;
+while (current != null) {
+    io.println(reflect.className(current));   # Dog, then Animal
+    current = reflect.parentClass(current);
+}
+```
+
 ### Parameter metadata
 
 `reflect.parameters(function)` returns one dict per parameter. Each entry has
-`name`, `type`, `hasDefault`, and `variadic`. `reflect.returnType(function)`
-returns the declared return type:
+`name`, `type` (the type as written), `hasDefault`, `variadic`, `class` and
+`elementClass`, plus `decorators` when the parameter has any.
+`reflect.returnType(function)` returns the declared return type, including its
+type arguments (`list<int>`, `?Box<string>`):
 
 ```gb
 func handler(int id, string name = "anon"): string { return name; }
 
 io.println(reflect.parameters(handler));
-# [{"hasDefault": false, "name": "id", "type": "int", "variadic": false},
-#  {"hasDefault": true, "name": "name", "type": "string", "variadic": false}]
+# [{"class": null, "elementClass": null, "hasDefault": false, "name": "id", "type": "int", "variadic": false},
+#  {"class": null, "elementClass": null, "hasDefault": true, "name": "name", "type": "string", "variadic": false}]
 
 io.println(reflect.returnType(handler));   # string
 ```
+
+`class` and `elementClass` (1.41.3) give the class the type names, resolved in
+the module that declares the function, so import aliases, `from` imports and
+unexported classes all resolve even when the caller is another module:
+
+- `class` is the class for `Widget`, `?Widget`, `geo.Widget` or `Box<int>`
+  (the generic class `Box`).
+- `elementClass` is the element class for `list<Widget>`, `set<Widget>` and
+  `Widget[]`.
+- Both are `null` for primitives, `dict`, unions, function types, native
+  module classes and type parameters.
+
+```gb
+# in shapes.gb: export class Widget { string id; }
+import shapes as geo;
+
+func save(geo.Widget w, list<geo.Widget> batch): void {}
+
+let params = reflect.parameters(save);
+io.println(params[0]["class"] == geo.Widget);          # true
+io.println(params[1]["elementClass"] == geo.Widget);   # true
+```
+
+A framework that binds request bodies or builds schemas should read `class`
+rather than calling `reflect.class(p["type"])`: the alias `geo` only exists in
+the module that imported it.
+
+`reflect.returnClass(function)` (1.41.3) returns `{class, elementClass}` for the
+declared return type, resolved the same way.
 
 The same shape is produced for class fields (`reflect.fields`), constructors
 (`reflect.constructors`), and methods, so framework code can walk parameters

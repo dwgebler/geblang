@@ -79,8 +79,15 @@ func (e *Evaluator) evalReflectLookupCall(call *ast.CallExpression, env *runtime
 		// doesn't have it (the user's classes live in their own
 		// module's env, but a framework helper imported into the
 		// user's program still needs to reflect on them).
-		if class, found := e.globalClasses[targetName.Value]; found {
+		if class, found := e.bareClass(targetName.Value); found {
 			return class, nil
+		}
+		if dot := strings.LastIndexByte(targetName.Value, '.'); dot > 0 {
+			if _, bound := env.Get(targetName.Value[:dot]); !bound {
+				if class, found := e.classInModule(targetName.Value[:dot], targetName.Value[dot+1:]); found {
+					return class, nil
+				}
+			}
 		}
 	}
 	if !ok && name == "function" {
@@ -437,7 +444,7 @@ func reflectDecorator(call *ast.CallExpression, args []runtime.Value) (runtime.V
 	return runtime.Null{}, nil
 }
 
-func reflectParameters(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) reflectParameters(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects value", call.Callee.String())
 	}
@@ -445,11 +452,89 @@ func reflectParameters(call *ast.CallExpression, args []runtime.Value) (runtime.
 	if !ok {
 		return nil, fmt.Errorf("%s expects function or method, got %s", call.Callee.String(), args[0].TypeName())
 	}
+	scope := reflectDeclaringEnv(args[0])
 	values := make([]runtime.Value, 0, len(fn.Parameters))
 	for _, parameter := range fn.Parameters {
-		values = append(values, parameterMetadataValue(parameter))
+		entry := parameterMetadataValue(parameter).(runtime.Dict)
+		className, elementName := runtime.ParameterClassNames(parameter.Type)
+		putDict(entry.Entries, "class", e.resolveScopedClass(className, scope))
+		putDict(entry.Entries, "elementClass", e.resolveScopedClass(elementName, scope))
+		values = append(values, entry)
 	}
 	return &runtime.List{Elements: values}, nil
+}
+
+func reflectDeclaringEnv(value runtime.Value) *runtime.Environment {
+	var fn runtime.Function
+	switch v := value.(type) {
+	case runtime.Function:
+		fn = v
+		if v.Bound != nil && len(v.Bound.Overloads) > 0 {
+			fn = v.Bound.Overloads[0]
+		}
+	case runtime.OverloadedFunction:
+		if len(v.Overloads) == 0 {
+			return nil
+		}
+		fn = v.Overloads[0]
+	default:
+		return nil
+	}
+	if fn.OriginalEnv != nil {
+		return fn.OriginalEnv
+	}
+	return fn.Env
+}
+
+func (e *Evaluator) resolveScopedClass(name string, scope *runtime.Environment) runtime.Value {
+	if name == "" || scope == nil {
+		return runtime.Null{}
+	}
+	if prefix, member, qualified := strings.Cut(name, "."); qualified {
+		moduleValue, ok := scope.Get(prefix)
+		if !ok {
+			return runtime.Null{}
+		}
+		module, ok := moduleValue.(*runtime.Module)
+		if !ok {
+			return runtime.Null{}
+		}
+		if class, ok := e.classInModule(module.Canonical, member); ok {
+			return class
+		}
+		return runtime.Null{}
+	}
+	if value, ok := scope.Get(name); ok {
+		if class, ok := value.(*runtime.Class); ok && class.Env != nil {
+			return class
+		}
+	}
+	return runtime.Null{}
+}
+
+func (e *Evaluator) classInModule(module, name string) (*runtime.Class, bool) {
+	for cur := e; cur != nil; cur = cur.parent {
+		if class, ok := cur.moduleClasses[module+"."+name]; ok {
+			return class, true
+		}
+	}
+	return nil, false
+}
+
+func (e *Evaluator) reflectReturnClass(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects value", call.Callee.String())
+	}
+	fn, ok := reflectFunctionMetadataValue(args[0])
+	if !ok {
+		return nil, fmt.Errorf("%s expects function or method, got %s", call.Callee.String(), args[0].TypeName())
+	}
+	scope := reflectDeclaringEnv(args[0])
+	className, elementName := runtime.ParameterClassNames(fn.ReturnType)
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "class", e.resolveScopedClass(className, scope))
+	putDict(entries, "elementClass", e.resolveScopedClass(elementName, scope))
+	return runtime.Dict{Entries: entries}, nil
 }
 
 func reflectReturnType(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -584,10 +669,46 @@ func reflectLocation(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 	return runtime.Null{}, nil
 }
 
-func reflectFields(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("%s expects class", call.Callee.String())
+func (e *Evaluator) reflectFields(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 && len(args) != 2 {
+		return nil, fmt.Errorf("%s expects class and optional inherited flag", call.Callee.String())
 	}
+	if len(args) == 1 {
+		return e.reflectOwnFields(call, args)
+	}
+	inherited, ok := args[1].(runtime.Bool)
+	if !ok {
+		return nil, fmt.Errorf("%s inherited must be bool", call.Callee.String())
+	}
+	if !inherited.Value {
+		return e.reflectOwnFields(call, args[:1])
+	}
+	cls, ok := classForReflectFields(args[0])
+	if !ok || cls == nil {
+		return e.reflectOwnFields(call, args[:1])
+	}
+	seen := map[string]bool{}
+	out := []runtime.Value{}
+	for c := cls; c != nil; c = c.Parent {
+		own, err := e.reflectOwnFields(call, []runtime.Value{c})
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range own.(*runtime.List).Elements {
+			dict := entry.(runtime.Dict)
+			name := dict.EntryValue(native.DictKey(runtime.String{Value: "name"})).(runtime.String).Value
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			putDict(dict.Entries, "declaringClass", c)
+			out = append(out, dict)
+		}
+	}
+	return &runtime.List{Elements: out}, nil
+}
+
+func (e *Evaluator) reflectOwnFields(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	// Prefer structured field metadata - matches the
 	// `reflect.parameters` shape (each entry {name, type, nullable,
 	// hasDefault}). When the value is a *runtime.Class or an
@@ -615,6 +736,9 @@ func reflectFields(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 			if derr == nil {
 				putDict(fd, "decorators", decs)
 			}
+			className, elementName := runtime.ParameterClassNames(typeRefToString(field.Type))
+			putDict(fd, "class", e.resolveScopedClass(className, cls.Env))
+			putDict(fd, "elementClass", e.resolveScopedClass(elementName, cls.Env))
 			entries = append(entries, runtime.Dict{Entries: fd})
 		}
 		sort.SliceStable(entries, func(i, j int) bool {
@@ -675,6 +799,17 @@ func reflectStaticMethods(call *ast.CallExpression, args []runtime.Value) (runti
 		return nil, err
 	}
 	return stringList(metadata.StaticMethods), nil
+}
+
+func reflectParentClass(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects class", call.Callee.String())
+	}
+	class, ok := classForReflectFields(args[0])
+	if !ok || class == nil || class.Parent == nil || class.Parent.Env == nil {
+		return runtime.Null{}, nil
+	}
+	return class.Parent, nil
 }
 
 func reflectParent(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -765,6 +900,35 @@ func reflectInterfaces(call *ast.CallExpression, args []runtime.Value) (runtime.
 		return nil, err
 	}
 	return stringList(metadata.Interfaces), nil
+}
+
+func (e *Evaluator) reflectConstructorsResolved(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	result, err := reflectConstructors(call, args)
+	if err != nil || len(args) != 1 {
+		return result, err
+	}
+	class, ok := classForReflectFields(args[0])
+	overloads, isList := result.(*runtime.List)
+	if !ok || class == nil || !isList {
+		return result, nil
+	}
+	for _, overload := range overloads.Elements {
+		params, isParams := overload.(*runtime.List)
+		if !isParams {
+			continue
+		}
+		for _, param := range params.Elements {
+			dict, isDict := param.(runtime.Dict)
+			if !isDict {
+				continue
+			}
+			typ, _ := dict.EntryValue(native.DictKey(runtime.String{Value: "type"})).(runtime.String)
+			className, elementName := runtime.ParameterClassNames(typ.Value)
+			putDict(dict.Entries, "class", e.resolveScopedClass(className, class.Env))
+			putDict(dict.Entries, "elementClass", e.resolveScopedClass(elementName, class.Env))
+		}
+	}
+	return result, nil
 }
 
 func reflectConstructors(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

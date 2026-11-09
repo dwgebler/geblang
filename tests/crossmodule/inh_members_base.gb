@@ -1,0 +1,29 @@
+module inh_members_base;
+
+import inh_members_geo as g;
+from inh_members_geo import Tag;
+
+export class Root {
+    g.Point origin;
+    ?Tag tag;
+    decimal score;
+}
+
+export class Mid extends Root {
+    int level;
+    list<g.Point> path;
+}
+
+export class Maker {
+    func make(): g.Point {
+        return g.Point();
+    }
+
+    func many(): list<g.Point> {
+        return [];
+    }
+
+    func counts(): ?dict<string, int> {
+        return null;
+    }
+}

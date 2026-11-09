@@ -5,9 +5,9 @@
 Import `reflect` for runtime metadata:
 
 - decorators: `decorators`, `hasDecorator`, `decorator`
-- functions: `function`, `parameters`, `returnType`, `doc`, `docs`
+- functions: `function`, `parameters`, `returnType`, `returnClass`, `doc`, `docs`
 - classes: `class`, `fields`, `methods`, `staticMethods`, `parent`,
-  `interfaces`, `constructors`, `typeBindings`
+  `parentClass`, `interfaces`, `constructors`, `typeBindings`
 - interfaces: `interfaceMethods`, `interfaceParents`
 - modules: `module`, `exports`
 - method lookup: `method`, `staticMethod`

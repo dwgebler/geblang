@@ -261,7 +261,7 @@ func NewDictHint(n int) Dict {
 		d.items = make([]dictItem, 0, n)
 	}
 	if n > dictInlineMax {
-		d.m = make(map[string]DictEntry, n)
+		d.m = make(map[string]dictSlot, n)
 		d.order = make([]string, 0, n)
 	}
 	return Dict{data: d}
@@ -355,8 +355,8 @@ const DictStringKeyPrefix = "s"
 func (v Dict) GetStringEntry(key string) (DictEntry, bool) {
 	if v.data != nil {
 		if v.data.m != nil {
-			entry, ok := v.data.m[DictStringKeyPrefix+key]
-			return entry, ok
+			slot, ok := lookupStringSlot(v.data.m, key)
+			return slot.entry, ok
 		}
 		for _, item := range v.data.items {
 			encoded := item.key
@@ -366,8 +366,30 @@ func (v Dict) GetStringEntry(key string) (DictEntry, bool) {
 		}
 		return DictEntry{}, false
 	}
-	entry, ok := v.Entries[DictStringKeyPrefix+key]
+	return lookupStringKey(v.Entries, key)
+}
+
+// lookupStringKey builds the encoded key in a stack buffer: m[string(buf)] does not allocate, while a concatenation over 32 bytes does.
+func lookupStringKey(m map[string]DictEntry, key string) (DictEntry, bool) {
+	if len(key) >= 64 {
+		entry, ok := m[DictStringKeyPrefix+key]
+		return entry, ok
+	}
+	var buf [64]byte
+	encoded := append(append(buf[:0], DictStringKeyPrefix[0]), key...)
+	entry, ok := m[string(encoded)]
 	return entry, ok
+}
+
+func lookupStringSlot(m map[string]dictSlot, key string) (dictSlot, bool) {
+	if len(key) >= 64 {
+		slot, ok := m[DictStringKeyPrefix+key]
+		return slot, ok
+	}
+	var buf [64]byte
+	encoded := append(append(buf[:0], DictStringKeyPrefix[0]), key...)
+	slot, ok := m[string(encoded)]
+	return slot, ok
 }
 
 // Len reports the number of entries.
@@ -930,9 +952,11 @@ type BytecodeFunction struct {
 	Raw            bool
 	Parameters     []ParameterMetadata
 	ReturnType     string
-	Async          bool
-	Variadic       bool
-	Decorators     []DecoratorMetadata
+	// DeclaredReturnType keeps the type arguments ReturnType erases, for reflection.
+	DeclaredReturnType string
+	Async              bool
+	Variadic           bool
+	Decorators         []DecoratorMetadata
 	// DefLine / DefColumn capture the source position of the
 	// function declaration, surfaced by reflect.location.
 	DefLine   int64

@@ -1,0 +1,164 @@
+/**
+ * @title Runtime fast paths keep their semantics
+ * @summary Repeated string appends, dict deletes, cached reflection, field
+ * write barriers and compiled regex patterns behave exactly as before their
+ * fast paths.
+ */
+import test;
+import re;
+import reflect;
+
+string globalLog = "";
+
+func upper(string v): string {
+    return v.upper();
+}
+
+class Tagged {
+    @upper
+    string code;
+    int count;
+}
+
+class TaggedChild extends Tagged {
+    string extra;
+}
+
+class Plain {
+    string code;
+}
+
+func appendGlobal(string piece): void {
+    globalLog = globalLog + piece;
+}
+
+class RuntimeFastPathsTest extends test.Test {
+    @test
+    func earlierStringsSurviveLaterAppends(): void {
+        let base = "x".repeat(300);
+        let one = base + "1";
+        let two = one + "2";
+        let branch = one + "3";
+        let longer = two + "y".repeat(1000);
+        this.assertEquals(301, one.length());
+        this.assertTrue(one.endsWith("x1"));
+        this.assertTrue(two.endsWith("12"));
+        this.assertTrue(branch.endsWith("13"));
+        this.assertEquals(1302, longer.length());
+        this.assertEquals(300, base.length());
+    }
+
+    @test
+    func loopAppendsMatchExpectedContent(): void {
+        string s = "";
+        string snapshot = "";
+        for (int i = 0; i < 20000; i++) {
+            s = s + (i as string) + ",";
+            if (i == 9999) {
+                snapshot = s;
+            }
+        }
+        this.assertEquals(108890, s.length());
+        this.assertEquals(48890, snapshot.length());
+        this.assertTrue(s.startsWith(snapshot));
+        this.assertTrue(snapshot.endsWith("9999,"));
+    }
+
+    @test
+    func globalAppendsThroughCallsKeepOrder(): void {
+        globalLog = "";
+        for (int i = 0; i < 300; i++) {
+            appendGlobal("ab");
+        }
+        globalLog = globalLog + "!";
+        this.assertEquals(601, globalLog.length());
+        this.assertTrue(globalLog.endsWith("ab!"));
+    }
+
+    @test
+    func dictDeletesKeepInsertionOrder(): void {
+        let d = {};
+        for (int i = 0; i < 100; i++) {
+            d["k" + (i as string)] = i;
+        }
+        for (int i = 0; i < 100; i += 2) {
+            d.delete("k" + (i as string));
+        }
+        d["k4"] = 99;
+        list<string> keys = [];
+        for (k in d.keys()) {
+            keys.push(k as string);
+        }
+        this.assertEquals(51, d.length());
+        this.assertEquals("k1", keys[0]);
+        this.assertEquals("k99", keys[49]);
+        this.assertEquals("k4", keys[50]);
+        this.assertEquals(99, d["k4"]);
+        this.assertFalse(d.contains("k2"));
+    }
+
+    @test
+    func manyDeletesThenReuse(): void {
+        let d = {};
+        for (int i = 0; i < 5000; i++) {
+            d[i] = i * 2;
+        }
+        for (int i = 0; i < 5000; i++) {
+            if (i % 7 != 0) {
+                d.delete(i);
+            }
+        }
+        this.assertEquals(715, d.length());
+        int total = 0;
+        int previous = -1;
+        for (k in d.keys()) {
+            this.assertTrue((k as int) > previous);
+            previous = k as int;
+            total = total + (d[k] as int);
+        }
+        this.assertEquals(7 * 714 * 715, total);
+        d[3] = 1;
+        this.assertEquals(3, d.keys()[d.length() - 1]);
+    }
+
+    @test
+    func reflectedFieldsAreIndependentCopies(): void {
+        let first = reflect.fields(TaggedChild, inherited: true);
+        (first[0] as dict<string, any>)["name"] = "changed";
+        first.push({"name": "extra"});
+        let second = reflect.fields(TaggedChild, inherited: true);
+        this.assertEquals(3, second.length());
+        this.assertEquals("extra", (second[0] as dict<string, any>)["name"]);
+        let decorators = (reflect.fields(Tagged)[0] as dict<string, any>)["decorators"] as list<any>;
+        decorators.clear();
+        this.assertEquals(1, ((reflect.fields(Tagged)[0] as dict<string, any>)["decorators"] as list<any>).length());
+    }
+
+    @test
+    func fieldBarriersStillRunThroughSubclasses(): void {
+        let plain = Plain();
+        plain.code = "abc";
+        this.assertEquals("abc", plain.code);
+        let child = TaggedChild();
+        child.code = "abc";
+        child.extra = "x";
+        child.count = 2;
+        this.assertEquals("ABC", child.code);
+        let parentInstance = Tagged();
+        parentInstance.code = "def";
+        this.assertEquals("DEF", parentInstance.code);
+    }
+
+    @test
+    func compiledPatternsStayIndependent(): void {
+        int hits = 0;
+        for (int i = 0; i < 2000; i++) {
+            let digits = re.compile("[0-9]+");
+            let words = re.compile("[a-z]+");
+            if (digits.test("a1") && words.test("a1") && !digits.test("abc")) {
+                hits = hits + 1;
+            }
+        }
+        this.assertEquals(2000, hits);
+    }
+}

@@ -60,7 +60,7 @@ func (e *Evaluator) registerExtHandle(h *extHandle) runtime.Value {
 	e.extMu.Lock()
 	defer e.extMu.Unlock()
 	e.nextExtID++
-	e.extConns[e.nextExtID] = h
+	ensureMap(&e.extConns)[e.nextExtID] = h
 	return runtime.NewInt64(e.nextExtID)
 }
 

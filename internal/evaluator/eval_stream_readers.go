@@ -160,7 +160,7 @@ func (e *Evaluator) yamlReader(call *ast.CallExpression, args []runtime.Value) (
 	defer e.yamlMu.Unlock()
 	e.nextYAMLID++
 	id := e.nextYAMLID
-	e.yamlReaders[id] = &yamlStreamReader{decoder: decoder}
+	ensureMap(&e.yamlReaders)[id] = &yamlStreamReader{decoder: decoder}
 	return runtime.NativeObject{Kind: "YamlReader", ID: id}, nil
 }
 
@@ -398,7 +398,7 @@ func (e *Evaluator) csvReader(call *ast.CallExpression, args []runtime.Value) (r
 	defer e.csvMu.Unlock()
 	e.nextCSVID++
 	id := e.nextCSVID
-	e.csvReaders[id] = &csvStreamReader{reader: reader}
+	ensureMap(&e.csvReaders)[id] = &csvStreamReader{reader: reader}
 	return runtime.NativeObject{Kind: "CsvReader", ID: id}, nil
 }
 
@@ -597,7 +597,7 @@ func (e *Evaluator) xmlReader(call *ast.CallExpression, args []runtime.Value) (r
 	defer e.xmlMu.Unlock()
 	e.nextXMLID++
 	id := e.nextXMLID
-	e.xmlReaders[id] = &xmlStreamReader{decoder: decoder, source: source.Text}
+	ensureMap(&e.xmlReaders)[id] = &xmlStreamReader{decoder: decoder, source: source.Text}
 	return runtime.NativeObject{Kind: "XmlReader", ID: id}, nil
 }
 
@@ -807,7 +807,7 @@ func (e *Evaluator) jsonReader(call *ast.CallExpression, args []runtime.Value) (
 	defer e.jsonMu.Unlock()
 	e.nextJSONID++
 	id := e.nextJSONID
-	e.jsonReaders[id] = &jsonStreamReader{decoder: decoder}
+	ensureMap(&e.jsonReaders)[id] = &jsonStreamReader{decoder: decoder}
 	return runtime.NativeObject{Kind: "JsonReader", ID: id}, nil
 }
 

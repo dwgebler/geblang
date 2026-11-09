@@ -1,0 +1,11 @@
+src/**
+node_modules/**
+templates/**
+**/*.map
+**/*.ts
+tsconfig.json
+build.mjs
+eslint.config.mjs
+vitest.config.ts
+.prettierrc.json
+Dockerfile

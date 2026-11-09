@@ -193,7 +193,7 @@ func (e *Evaluator) watchStart(call *ast.CallExpression, args []runtime.Value) (
 	e.watchMu.Lock()
 	e.nextWatchID++
 	id := e.nextWatchID
-	e.watches[id] = handle
+	ensureMap(&e.watches)[id] = handle
 	e.watchMu.Unlock()
 	handle.wg.Add(1)
 	go func() {
@@ -389,7 +389,7 @@ func (e *Evaluator) logMessage(call *ast.CallExpression, args []runtime.Value, l
 		_, err := e.applyFunctionWithThis(method, []runtime.Value{runtime.String{Value: level}, message, fields}, logger.handler)
 		return runtime.Null{}, err
 	}
-	line, err := formatLogLine(level, message.Value, fields)
+	line, err := formatLogLine(e.natives.ConversionContext(), level, message.Value, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +418,7 @@ func (e *Evaluator) logShorthand(call *ast.CallExpression, args []runtime.Value,
 			return nil, fmt.Errorf("%s fields must be dict", call.Callee.String())
 		}
 	}
-	line, err := formatLogLine(level, message.Value, fields)
+	line, err := formatLogLine(e.natives.ConversionContext(), level, message.Value, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +453,7 @@ func (e *Evaluator) registerLogger(logger *loggerHandle) runtime.Value {
 	e.logMu.Lock()
 	defer e.logMu.Unlock()
 	e.nextLogID++
-	e.loggers[e.nextLogID] = logger
+	ensureMap(&e.loggers)[e.nextLogID] = logger
 	return runtime.NewInt64(e.nextLogID)
 }
 
@@ -482,17 +482,17 @@ func logHandleID(value runtime.Value) (int64, error) {
 	return id, nil
 }
 
-func formatLogLine(level string, message string, fields runtime.Dict) (string, error) {
+func formatLogLine(ctx native.ConversionContext, level string, message string, fields runtime.Dict) (string, error) {
 	entries := map[string]any{
 		"level":   level,
 		"message": message,
 		"time":    time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	fieldValues, err := valueToJSON(fields)
+	fieldValues, err := native.EncodeJSONValueCtx(ctx, fields)
 	if err != nil {
 		return "", err
 	}
-	entries["fields"] = fieldValues
+	entries["fields"] = json.RawMessage(fieldValues)
 	data, err := json.Marshal(entries)
 	if err != nil {
 		return "", err

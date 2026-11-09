@@ -808,6 +808,20 @@ func (c *Compiler) currentExpectedType() string {
 	return c.expectedTypes[len(c.expectedTypes)-1]
 }
 
+func (c *Compiler) reflectReturnTypeName(typ *ast.TypeRef) string {
+	if typ == nil {
+		return "void"
+	}
+	return c.bytecodeReturnCheckType(typ)
+}
+
+func (info FunctionInfo) reflectedReturnType() string {
+	if info.ReturnCheckType != "" {
+		return info.ReturnCheckType
+	}
+	return info.ReturnType
+}
+
 // Source form with aliases resolved, matching the evaluator's messages.
 func (c *Compiler) bytecodeReturnCheckType(typ *ast.TypeRef) string {
 	return c.resolveTypeRef(typ).String()
