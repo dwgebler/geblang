@@ -17,6 +17,22 @@ type dictSlot struct {
 // Encoded keys always start with a type prefix, so "" marks a deleted order position.
 const dictTombstone = ""
 
+// Small dicts allocate their header and inline items together, one allocation instead of two.
+type dictDataWith2 struct {
+	d   dictData
+	buf [2]dictItem
+}
+
+type dictDataWith4 struct {
+	d   dictData
+	buf [4]dictItem
+}
+
+type dictDataWith8 struct {
+	d   dictData
+	buf [dictInlineMax]dictItem
+}
+
 type dictData struct {
 	items         []dictItem
 	m             map[string]dictSlot

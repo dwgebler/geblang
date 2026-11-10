@@ -75,7 +75,7 @@ Validate before mutation when accepting dynamic data.
 |--------|---------|-------------|
 | `length()` | `int` | Number of elements |
 | `isEmpty()` | `bool` | `true` when the list has no elements |
-| `get(index)` | `T` | Element at `index` (negative = from end) |
+| `get(index)` | `?T` | Element at `index` (negative = from end), or `null` when out of range |
 | `first()` | `T\|null` | First element, or `null` if empty |
 | `last()` | `T\|null` | Last element, or `null` if empty |
 | `contains(value)` | `bool` | `true` when `value` is in the list |

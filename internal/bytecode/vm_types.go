@@ -433,6 +433,13 @@ func vmCallableTypeName(name string) bool {
 }
 
 func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
+	// A value that already has the (unaliased) primitive target type stays on the stack untouched.
+	if n := len(vm.stack); n >= 2 && vm.stack[n-1].Kind == runtime.VMKindBoxed {
+		if t, ok := vm.stack[n-1].Boxed.(runtime.String); ok && vmValueHasPrimitiveType(vm.stack[n-2], t.Value) && !vm.castTargetRebound(t.Value) {
+			vm.truncateStack(n - 1)
+			return ip, nil
+		}
+	}
 	target, err := vm.popString(instruction, "cast target must be string")
 	if err != nil {
 		return 0, err
@@ -1308,6 +1315,33 @@ func castMayDispatch(slot runtime.VMValue) bool {
 		return true
 	}
 	return false
+}
+
+func vmValueHasPrimitiveType(v runtime.VMValue, target string) bool {
+	switch target {
+	case "int":
+		return v.Kind == runtime.VMKindSmallInt
+	case "bool":
+		return v.Kind == runtime.VMKindBool
+	case "float":
+		return v.Kind == runtime.VMKindFloat
+	case "string":
+		if v.Kind == runtime.VMKindBoxed {
+			_, ok := v.Boxed.(runtime.String)
+			return ok
+		}
+	}
+	return false
+}
+
+// castTargetRebound reports whether a generic binding or type alias gives target another meaning here.
+func (vm *VM) castTargetRebound(target string) bool {
+	if len(vm.frames) > 0 {
+		if _, ok := vm.frames[len(vm.frames)-1].typeBindings[target]; ok {
+			return true
+		}
+	}
+	return vm.expandTypeAliases(target) != target
 }
 
 func castValue(value runtime.Value, target string) (runtime.Value, error) {

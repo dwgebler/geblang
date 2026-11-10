@@ -3749,7 +3749,7 @@ func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
 
 func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
 	switch instruction.Op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpCallStaticMethodSpread, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpCallSpread, OpConstructClassSpread, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpDeferMethodCallSpread, OpDeferNativeCallSpread, OpDeferFuncCallSpread, OpDeferCallableCallSpread, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpCallStaticMethodSpread, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpCallSpread, OpConstructClassSpread, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpDeferMethodCallSpread, OpDeferNativeCallSpread, OpDeferFuncCallSpread, OpDeferCallableCallSpread, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt, OpBuildDictConstKeys, OpPrimMethod:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -3791,6 +3791,10 @@ func isConstantOperand(op Op, index int) bool {
 		return index == 0 || index >= 2
 	case OpCallSpread, OpConstructClassSpread:
 		return index >= 2
+	case OpBuildDictConstKeys:
+		return index >= 1
+	case OpPrimMethod:
+		return index == 0
 	case OpDeferNativeCallNamed:
 		return index == 0 || index >= 2
 	case OpDeferMethodCallNamed:

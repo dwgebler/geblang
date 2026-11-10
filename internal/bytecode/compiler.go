@@ -451,9 +451,24 @@ func (c *Compiler) crossModuleBoundary(classInfo ClassInfo) (string, bool) {
 }
 
 func (c *Compiler) emitConstant(value runtime.Value, line int, column int) {
-	index := int64(len(c.chunk.Constants))
+	c.emitAt(OpConstant, line, column, c.addConstant(value))
+}
+
+func (c *Compiler) addConstant(value runtime.Value) int64 {
 	c.chunk.Constants = append(c.chunk.Constants, value)
-	c.emitAt(OpConstant, line, column, index)
+	return int64(len(c.chunk.Constants) - 1)
+}
+
+func dictHasOnlyStringLiteralKeys(entries []ast.DictEntry) bool {
+	if len(entries) == 0 {
+		return false
+	}
+	for _, entry := range entries {
+		if _, ok := entry.Key.(*ast.StringLiteral); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Compiler) emit(op Op, operands ...int64) {

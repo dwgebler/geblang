@@ -1,0 +1,58 @@
+/**
+ * @title Integer edge cases and ints returned by built-in methods
+ * @summary Multiplication at the int64 boundary promotes to a big int, and
+ * ints returned by methods such as length() work with every operator,
+ * including unary minus, ~, ++ and --.
+ */
+import test;
+import math;
+
+class IntEdgesTest extends test.Test {
+    @test
+    func minIntTimesMinusOneIsExact(): void {
+        int mn = -9223372036854775807 - 1;
+        int neg1 = -1;
+        this.assertEquals("9223372036854775808", "${neg1 * mn}");
+        this.assertEquals("9223372036854775808", "${mn * neg1}");
+        int c = -1;
+        c *= mn;
+        this.assertEquals("9223372036854775808", "${c}");
+        this.assertEquals("9223372036854775808", "${-mn}");
+    }
+
+    @test
+    func productsNearTheBoundary(): void {
+        int d = 3037000500;
+        this.assertEquals("9223372037000250000", "${d * d}");
+        int e = 3037000499;
+        this.assertEquals(9223372030926249001, e * e);
+    }
+
+    @test
+    func methodResultIntsWorkWithUnaryOperators(): void {
+        int n = "abc".length();
+        this.assertEquals(-3, -n);
+        this.assertEquals(-4, ~n);
+        this.assertEquals(3, math.abs(-n));
+        this.assertEquals(3, (-n).abs());
+    }
+
+    @test
+    func methodResultIntsIncrementAndDecrement(): void {
+        int m = "ab".length();
+        m++;
+        m++;
+        this.assertEquals(4, m);
+        m--;
+        this.assertEquals(3, m);
+    }
+
+    @test
+    func methodResultIntsInRangesAndKeys(): void {
+        int n = "abc".length();
+        this.assertTrue(range(0, 5).contains(n));
+        let d = {3: "three"};
+        this.assertEquals("three", d[n]);
+        this.assertEquals([1, 7, 2, 12, 1], [n & 1, n | 4, n ^ 1, n << 2, n >> 1]);
+    }
+}

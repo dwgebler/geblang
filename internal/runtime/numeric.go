@@ -60,3 +60,16 @@ func NumericValuesEqual(left Value, right Value) (equal bool, bothNumeric bool) 
 	}
 	return false, false
 }
+
+// MulInt64 multiplies exactly, reporting ok=false when the product does not fit in int64.
+func MulInt64(a, b int64) (int64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	c := a * b
+	// The sign test catches MinInt64 * -1, where the division check alone would itself overflow.
+	if (c < 0) != ((a < 0) != (b < 0)) || c/b != a {
+		return c, false
+	}
+	return c, true
+}

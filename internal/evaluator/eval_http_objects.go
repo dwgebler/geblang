@@ -674,8 +674,8 @@ func nativeResponseInspect(this *runtime.Instance, args []runtime.Value) (runtim
 		return nil, fmt.Errorf("Response.inspect expects no arguments")
 	}
 	status := "200"
-	if value, ok := this.Fields["status"].(runtime.Int); ok {
-		status = value.Value.String()
+	if value, ok := native.IntValueToBigInt(this.Fields["status"]); ok {
+		status = value.String()
 	}
 	return runtime.String{Value: "HTTP " + status}, nil
 }

@@ -19,7 +19,8 @@ Import `bytes`:
 Bytes values also expose `b.toHex()`, `b.toBase64()`, and
 `b.toBase64Url()` as methods, equivalent to the module helpers.
 `b.toList()` returns the byte values as a `list<int>` (the inverse of
-`bytes.fromList`); `b.get(i)` / `b[i]` reads a single byte value.
+`bytes.fromList`); `b.get(i)` / `b[i]` reads a single byte value (out of
+range, `get` returns `null` and `b[i]` throws a `ValueError`).
 `bytes.toString(data)` and `data.toString()` decode valid UTF-8 and throw a
 `RuntimeError` when the bytes are not valid UTF-8.
 

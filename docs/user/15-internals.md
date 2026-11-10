@@ -390,6 +390,7 @@ examples:
 | `OpMethodCall` | call named method on receiver |
 | `OpNativeCall` | call a registered native function |
 | `OpBuildList` / `OpBuildDict` / `OpBuildSet` | pop N values, push collection |
+| `OpBuildDictConstKeys` | pop N values, push a dict whose string-literal keys were prepared at compile time |
 | `OpJump` / `OpJumpIfFalse` | unconditional / conditional branch |
 | `OpReturn` | pop return value, restore frame |
 | `OpPushExceptionHandler` / `OpPopExceptionHandler` | try/catch frame management |

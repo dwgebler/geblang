@@ -555,6 +555,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if err != nil {
 				return nil, err
 			}
+			if n := len(value.Elements); i >= n || i < -n {
+				return runtime.Null{}, nil
+			}
 			return listElement(value, i)
 		case "set":
 			if len(args) != 2 {
@@ -1945,6 +1948,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if err != nil {
 				return nil, err
 			}
+			if n := runtime.StringRuneInfo(value.Value).RuneCount(value.Value); i >= n || i < -n {
+				return runtime.Null{}, nil
+			}
 			return stringElement(value, i)
 		case "contains":
 			if len(args) != 1 {
@@ -2411,7 +2417,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				i = len(value.Value) + i
 			}
 			if i < 0 || i >= len(value.Value) {
-				return nil, fmt.Errorf("bytes index out of range")
+				return runtime.Null{}, nil
 			}
 			return runtime.NewInt64(int64(value.Value[i])), nil
 		case "toString":
@@ -2654,11 +2660,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 1 {
 				return nil, fmt.Errorf("range.contains expects one argument")
 			}
-			n, ok := args[0].(runtime.Int)
+			n, ok := native.IntValueToBigInt(args[0])
 			if !ok {
 				return runtime.Bool{Value: false}, nil
 			}
-			return runtime.Bool{Value: value.ContainsInt(n.Value)}, nil
+			return runtime.Bool{Value: value.ContainsInt(n)}, nil
 		case "first":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("range.first expects no arguments")

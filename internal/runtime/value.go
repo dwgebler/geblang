@@ -256,15 +256,23 @@ func NewDict() Dict {
 // NewDictHint sizes ordered compact storage for small dicts and starts
 // larger dictionaries directly in map form.
 func NewDictHint(n int) Dict {
-	d := &dictData{}
-	if n > 0 && n <= dictInlineMax {
-		d.items = make([]dictItem, 0, n)
+	switch {
+	case n <= 0:
+		return Dict{data: &dictData{}}
+	case n <= 2:
+		s := &dictDataWith2{}
+		s.d.items = s.buf[:0]
+		return Dict{data: &s.d}
+	case n <= 4:
+		s := &dictDataWith4{}
+		s.d.items = s.buf[:0]
+		return Dict{data: &s.d}
+	case n <= dictInlineMax:
+		s := &dictDataWith8{}
+		s.d.items = s.buf[:0]
+		return Dict{data: &s.d}
 	}
-	if n > dictInlineMax {
-		d.m = make(map[string]dictSlot, n)
-		d.order = make([]string, 0, n)
-	}
-	return Dict{data: d}
+	return Dict{data: &dictData{m: make(map[string]dictSlot, n), order: make([]string, 0, n)}}
 }
 
 // HasOnlyStringKeys uses live store metadata; aliases and mutations share it.

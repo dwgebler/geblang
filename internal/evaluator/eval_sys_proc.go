@@ -48,11 +48,11 @@ func (e *Evaluator) processObjectClasses() []*runtime.Class {
 		Methods: map[string][]runtime.Function{},
 	}
 	resultClass.Methods["isok"] = []runtime.Function{{Name: "isOk", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
-		code, ok := this.Fields["code"].(runtime.Int)
+		code, ok := native.IntValueToBigInt(this.Fields["code"])
 		if !ok {
 			return runtime.Bool{Value: false}, nil
 		}
-		return runtime.Bool{Value: code.Value.Sign() == 0}, nil
+		return runtime.Bool{Value: code.Sign() == 0}, nil
 	}}}
 	resultClass.Methods["code"] = []runtime.Function{{Name: "code", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
 		return this.Fields["code"], nil

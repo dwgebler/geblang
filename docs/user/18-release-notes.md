@@ -1,5 +1,46 @@
 # Release Notes
 
+## 1.41.4
+
+### Performance
+
+- Dict literals whose keys are all string literals (`{"a": i, "b": i + 1}`)
+  build about 25% faster and allocate about half as many objects: keys are
+  prepared at compile time and small dicts take one allocation instead of
+  two.
+- `length()`, `isEmpty()`, `get(key)` and `contains(x)` on strings, lists,
+  dicts, sets and bytes run inline on the bytecode VM, other method calls
+  with no arguments on those types no longer allocate, and a cast to the
+  type a value already has (`x as int` on an int) skips the conversion. A
+  loop of such calls runs about twice as fast.
+- The tree-walking evaluator does integer arithmetic, `++` and `--` without
+  allocating while values fit in 64 bits, and skips re-resolving a cast's
+  type when the value already has it: about twice as fast on method-heavy
+  loops, 30% on dict literals and 20 to 30% on integer loops.
+- Bytecode caches from earlier versions are recompiled on first run.
+
+### Fixes
+
+- Calling a string, list, dict, set or bytes method with the wrong number of
+  arguments gave a message without the receiver type on the bytecode VM
+  (`contains expects one argument`); it now names it, as the tree-walking
+  evaluator does (`string.contains expects one argument`). `isEmpty` with
+  arguments no longer reports itself as `length`.
+- `dict.clear(...)` with arguments was silently accepted on the bytecode VM;
+  it now raises `dict.clear expects no arguments` on both runtimes.
+- `-1 * x` where `x` is the smallest int (-9223372036854775808) returned
+  -9223372036854775808 on the bytecode VM instead of 9223372036854775808.
+- `get(i)` on a list, string or bytes with an out-of-range index threw a
+  `ValueError` on the tree-walking evaluator but returned `null` on the
+  bytecode VM. Both now return `null`; indexing with `x[i]` still throws.
+- Calling a method a value does not have now reads `unknown method
+  <type>.<name>` on both runtimes; the bytecode VM said `null has no method
+  length` or `closure does not have method x` instead.
+- On the tree-walking evaluator, unary `-`, `~`, `++` and `--` rejected ints
+  returned by built-in methods (for example `-s.length()` raised
+  `- expects numeric value, got int`), as did `math.abs` and `.abs()` of a
+  negated one. They now work as on the bytecode VM.
+
 ## 1.41.3
 
 ### Added

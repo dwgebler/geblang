@@ -100,12 +100,12 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		return nil, native.UnknownMethodError(receiver.TypeName(), name)
 	case "length":
 		if len(args) != 0 {
-			return nil, fmt.Errorf("length expects no arguments")
+			return nil, fmt.Errorf("%s.length expects no arguments", receiver.TypeName())
 		}
 		return primitiveLength(receiver)
 	case "isEmpty":
 		if len(args) != 0 {
-			return nil, fmt.Errorf("length expects no arguments")
+			return nil, fmt.Errorf("%s.isEmpty expects no arguments", receiver.TypeName())
 		}
 		length, err := primitiveLength(receiver)
 		if err != nil {
@@ -120,7 +120,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		return runtime.Bool{Value: false}, nil
 	case "contains":
 		if len(args) != 1 {
-			return nil, fmt.Errorf("contains expects one argument")
+			return nil, fmt.Errorf("%s.contains expects one argument", receiver.TypeName())
 		}
 		switch value := receiver.(type) {
 		case runtime.String:
@@ -161,15 +161,15 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.Bool{Value: value.ContainsInt(nb)}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method contains", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "contains")
 		}
 	case "startsWith":
 		if len(args) != 1 {
-			return nil, fmt.Errorf("startsWith expects one argument")
+			return nil, fmt.Errorf("%s.startsWith expects one argument", receiver.TypeName())
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method startsWith", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "startsWith")
 		}
 		arg, err := singleStringArg(args, "string.startsWith")
 		if err != nil {
@@ -178,11 +178,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		return runtime.Bool{Value: strings.HasPrefix(value.Value, arg)}, nil
 	case "endsWith":
 		if len(args) != 1 {
-			return nil, fmt.Errorf("endsWith expects one argument")
+			return nil, fmt.Errorf("%s.endsWith expects one argument", receiver.TypeName())
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method endsWith", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "endsWith")
 		}
 		arg, err := singleStringArg(args, "string.endsWith")
 		if err != nil {
@@ -195,7 +195,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method trim", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "trim")
 		}
 		return runtime.String{Value: strings.TrimSpace(value.Value)}, nil
 	case "trimStart":
@@ -204,7 +204,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method trimStart", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "trimStart")
 		}
 		return runtime.String{Value: strings.TrimLeftFunc(value.Value, unicode.IsSpace)}, nil
 	case "trimEnd":
@@ -213,7 +213,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method trimEnd", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "trimEnd")
 		}
 		return runtime.String{Value: strings.TrimRightFunc(value.Value, unicode.IsSpace)}, nil
 	case "repeat":
@@ -222,7 +222,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method repeat", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "repeat")
 		}
 		n, err := indexInt(args[0])
 		if err != nil {
@@ -238,7 +238,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method padStart", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "padStart")
 		}
 		targetLen, err := indexInt(args[0])
 		if err != nil {
@@ -272,7 +272,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method padEnd", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "padEnd")
 		}
 		targetLen, err := indexInt(args[0])
 		if err != nil {
@@ -306,7 +306,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method chars", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "chars")
 		}
 		runes := []rune(value.Value)
 		elements := make([]runtime.Value, len(runes))
@@ -320,7 +320,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method codePoints", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "codePoints")
 		}
 		runes := []rune(value.Value)
 		elements := make([]runtime.Value, len(runes))
@@ -334,7 +334,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method graphemes", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "graphemes")
 		}
 		clusters := native.Graphemes(value.Value)
 		elements := make([]runtime.Value, len(clusters))
@@ -348,7 +348,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method graphemeLength", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "graphemeLength")
 		}
 		return runtime.NewInt64(int64(native.GraphemeCount(value.Value))), nil
 	case "truncateGraphemes":
@@ -357,7 +357,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method truncateGraphemes", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "truncateGraphemes")
 		}
 		n, err := indexInt(args[0])
 		if err != nil {
@@ -370,7 +370,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method codePointAt", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "codePointAt")
 		}
 		i, err := indexInt(args[0])
 		if err != nil {
@@ -402,7 +402,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.String{Value: value.Value.FloatString(scale)}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method format", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "format")
 		}
 	case "lower":
 		if len(args) != 0 {
@@ -410,7 +410,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method lower", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "lower")
 		}
 		return runtime.String{Value: strings.ToLower(value.Value)}, nil
 	case "upper":
@@ -419,7 +419,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method upper", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "upper")
 		}
 		return runtime.String{Value: strings.ToUpper(value.Value)}, nil
 	case "capitalize":
@@ -428,7 +428,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method capitalize", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "capitalize")
 		}
 		return runtime.String{Value: native.StringCapitalize(value.Value)}, nil
 	case "title":
@@ -437,7 +437,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method title", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "title")
 		}
 		return runtime.String{Value: native.StringTitle(value.Value)}, nil
 	case "isBlank":
@@ -446,7 +446,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method isBlank", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "isBlank")
 		}
 		return runtime.Bool{Value: native.StringIsBlank(value.Value)}, nil
 	case "isDecimal":
@@ -455,7 +455,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method isDecimal", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "isDecimal")
 		}
 		return runtime.Bool{Value: native.StringIsDecimal(value.Value)}, nil
 	case "isNumeric":
@@ -464,7 +464,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method isNumeric", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "isNumeric")
 		}
 		return runtime.Bool{Value: native.StringIsInt(value.Value) || native.StringIsDecimal(value.Value)}, nil
 	case "lines":
@@ -473,7 +473,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method lines", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "lines")
 		}
 		parts := native.StringLines(value.Value)
 		out := make([]runtime.Value, 0, len(parts))
@@ -503,7 +503,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method equalsIgnoreCase", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "equalsIgnoreCase")
 		}
 		other, ok := args[0].(runtime.String)
 		if !ok {
@@ -516,7 +516,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method containsIgnoreCase", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "containsIgnoreCase")
 		}
 		sub, ok := args[0].(runtime.String)
 		if !ok {
@@ -529,7 +529,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method replace", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "replace")
 		}
 		oldValue, ok := args[0].(runtime.String)
 		if !ok {
@@ -554,7 +554,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method splitRegex", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "splitRegex")
 		}
 		return primitiveReSplit(args[0], value.Value)
 	case "replaceRegex":
@@ -563,7 +563,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method replaceRegex", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "replaceRegex")
 		}
 		return primitiveReReplace(args[0], value.Value, args[1])
 	case "matchesRegex":
@@ -572,7 +572,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method matchesRegex", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "matchesRegex")
 		}
 		return primitiveReMatches(args[0], value.Value)
 	case "split":
@@ -581,7 +581,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method split", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "split")
 		}
 		sep, err := singleStringArg(args, "string.split")
 		if err != nil {
@@ -595,7 +595,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		return &runtime.List{Elements: out}, nil
 	case "indexOf":
 		if len(args) != 1 {
-			return nil, fmt.Errorf("indexOf expects one argument")
+			return nil, fmt.Errorf("%s.indexOf expects one argument", receiver.TypeName())
 		}
 		switch value := receiver.(type) {
 		case runtime.String:
@@ -616,7 +616,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.NewInt64(-1), nil
 		default:
-			return nil, fmt.Errorf("%s has no method indexOf", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "indexOf")
 		}
 	case "substring", "slice":
 		switch value := receiver.(type) {
@@ -741,7 +741,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 	case "lastIndexOf":
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method lastIndexOf", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "lastIndexOf")
 		}
 		if len(args) != 1 {
 			return nil, fmt.Errorf("string.lastIndexOf expects one argument")
@@ -767,7 +767,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.String{Value: string(runes)}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method reverse", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "reverse")
 		}
 	case "count":
 		switch value := receiver.(type) {
@@ -781,11 +781,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.NewInt64(int64(strings.Count(value.Value, needle.Value))), nil
 		default:
-			return nil, fmt.Errorf("%s has no method count", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "count")
 		}
 	case "get":
 		if len(args) != 1 {
-			return nil, fmt.Errorf("get expects one argument")
+			return nil, fmt.Errorf("%s.get expects one argument", receiver.TypeName())
 		}
 		switch value := receiver.(type) {
 		case *runtime.List:
@@ -832,7 +832,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.NewInt64(int64(value.Value[i])), nil
 		default:
-			return nil, fmt.Errorf("%s has no method get", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "get")
 		}
 	case "copy":
 		if len(args) != 0 {
@@ -857,7 +857,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.Set{Elements: elements}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method copy", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "copy")
 		}
 	case "deepCopy":
 		if len(args) != 0 {
@@ -867,11 +867,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		case *runtime.List, runtime.Dict, runtime.Set:
 			return runtime.CloneValue(receiver), nil
 		default:
-			return nil, fmt.Errorf("%s has no method deepCopy", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "deepCopy")
 		}
 	case "set":
 		if len(args) != 2 {
-			return nil, fmt.Errorf("set expects two arguments")
+			return nil, fmt.Errorf("%s.set expects two arguments", receiver.TypeName())
 		}
 		switch value := receiver.(type) {
 		case *runtime.List:
@@ -903,7 +903,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			value.PutEntry(native.DictKey(args[0]), runtime.DictEntry{Key: args[0], Value: args[1]})
 			return runtime.Null{}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method set", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "set")
 		}
 	case "delete":
 		if len(args) != 1 {
@@ -911,7 +911,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Dict)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method delete", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "delete")
 		}
 		if value.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen dict"}
@@ -934,7 +934,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		if list, ok := receiver.(*runtime.List); ok {
 			if len(args) != 2 {
-				return nil, fmt.Errorf("list.insert expects two arguments (index, value)")
+				return nil, fmt.Errorf("list.insert expects two arguments (index, item)")
 			}
 			i, err := indexInt(args[0])
 			if err != nil {
@@ -960,14 +960,14 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			list.Elements[i] = args[1]
 			return list, nil
 		}
-		return nil, fmt.Errorf("%s has no method insert", receiver.TypeName())
+		return nil, native.UnknownMethodError(receiver.TypeName(), "insert")
 	case "add":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("set.add expects one argument")
 		}
 		value, ok := receiver.(runtime.Set)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method add", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "add")
 		}
 		if value.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen set"}
@@ -979,7 +979,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		return value, nil
 	case "remove":
 		if len(args) != 1 {
-			return nil, fmt.Errorf("remove expects one argument")
+			return nil, fmt.Errorf("%s.remove expects one argument", receiver.TypeName())
 		}
 		switch v := receiver.(type) {
 		case runtime.Set:
@@ -995,11 +995,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			v.DelEntry(native.DictKey(args[0]))
 			return runtime.Null{}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method remove", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "remove")
 		}
 	case "toList":
 		if len(args) != 0 {
-			return nil, fmt.Errorf("toList expects no arguments")
+			return nil, fmt.Errorf("%s.toList expects no arguments", receiver.TypeName())
 		}
 		switch value := receiver.(type) {
 		case *runtime.List:
@@ -1022,7 +1022,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return &runtime.List{Elements: elements}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method toList", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "toList")
 		}
 	case "union":
 		if len(args) != 1 {
@@ -1030,7 +1030,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Set)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method union", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "union")
 		}
 		other, ok := args[0].(runtime.Set)
 		if !ok {
@@ -1047,7 +1047,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Set)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method intersection", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "intersection")
 		}
 		other, ok := args[0].(runtime.Set)
 		if !ok {
@@ -1066,7 +1066,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Set)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method difference", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "difference")
 		}
 		other, ok := args[0].(runtime.Set)
 		if !ok {
@@ -1085,7 +1085,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Dict)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method hasKey", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "hasKey")
 		}
 		_, exists := native.LookupDictEntry(value, args[0])
 		return runtime.Bool{Value: exists}, nil
@@ -1095,7 +1095,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Dict)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method keys", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "keys")
 		}
 		keys := make([]runtime.Value, 0, value.Len())
 		value.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
@@ -1109,7 +1109,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Dict)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method values", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "values")
 		}
 		values := make([]runtime.Value, 0, value.Len())
 		value.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
@@ -1133,7 +1133,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		return &runtime.List{Elements: items}, nil
 	case "first":
 		if len(args) != 0 {
-			return nil, fmt.Errorf("first expects no arguments")
+			return nil, fmt.Errorf("%s.first expects no arguments", receiver.TypeName())
 		}
 		switch value := receiver.(type) {
 		case *runtime.List:
@@ -1147,11 +1147,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.Int{Value: new(big.Int).Set(value.Start)}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method first", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "first")
 		}
 	case "last":
 		if len(args) != 0 {
-			return nil, fmt.Errorf("last expects no arguments")
+			return nil, fmt.Errorf("%s.last expects no arguments", receiver.TypeName())
 		}
 		switch value := receiver.(type) {
 		case *runtime.List:
@@ -1168,7 +1168,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			last.Add(last, value.Start)
 			return runtime.Int{Value: last}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method last", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "last")
 		}
 	case "push":
 		if len(args) != 1 {
@@ -1176,7 +1176,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		list, ok := receiver.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method push", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "push")
 		}
 		if list.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
@@ -1192,7 +1192,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		list, ok := receiver.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method fill", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "fill")
 		}
 		count, err := indexInt(args[1])
 		if err != nil {
@@ -1217,7 +1217,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		list, ok := receiver.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method append", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "append")
 		}
 		if list.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
@@ -1238,7 +1238,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		list, ok := receiver.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method extend", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "extend")
 		}
 		other, ok := args[0].(*runtime.List)
 		if !ok {
@@ -1268,18 +1268,21 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			v.Elements = v.Elements[:0]
 			return runtime.Null{}, nil
 		case runtime.Dict:
+			if len(args) != 0 {
+				return nil, fmt.Errorf("dict.clear expects no arguments")
+			}
 			if v.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen dict"}
 			}
 			v.Clear()
 			return runtime.Null{}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method clear", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "clear")
 		}
 	case "shift", "takeFirst", "takeLast", "takeAt":
 		list, ok := receiver.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
+			return nil, native.UnknownMethodError(receiver.TypeName(), name)
 		}
 		if name == "shift" {
 			return native.ListShift(list, args)
@@ -1291,7 +1294,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		list, ok := receiver.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method pop", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "pop")
 		}
 		if list.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
@@ -1306,7 +1309,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		list, ok := receiver.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method removeAt", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "removeAt")
 		}
 		i, err := indexInt(args[0])
 		if err != nil {
@@ -1329,7 +1332,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		list, ok := receiver.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method concat", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "concat")
 		}
 		other, ok := args[0].(*runtime.List)
 		if !ok {
@@ -1342,7 +1345,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 	case "join":
 		list, ok := receiver.(*runtime.List)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method join", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "join")
 		}
 		if len(args) != 1 {
 			return nil, fmt.Errorf("list.join expects one argument (separator)")
@@ -1359,7 +1362,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 	case "merge":
 		dict, ok := receiver.(runtime.Dict)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method merge", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "merge")
 		}
 		if len(args) != 1 {
 			return nil, fmt.Errorf("dict.merge expects one argument")
@@ -1398,7 +1401,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Float)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method isNaN", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "isNaN")
 		}
 		return runtime.Bool{Value: math.IsNaN(value.Value)}, nil
 	case "isInf":
@@ -1407,7 +1410,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Float)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method isInf", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "isInf")
 		}
 		return runtime.Bool{Value: math.IsInf(value.Value, 0)}, nil
 	case "isInt":
@@ -1460,7 +1463,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Bool)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method not", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "not")
 		}
 		return runtime.Bool{Value: !value.Value}, nil
 	case "toString":
@@ -1506,7 +1509,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Bytes)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method toHex", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "toHex")
 		}
 		return runtime.String{Value: hex.EncodeToString(value.Value)}, nil
 	case "toBase64":
@@ -1515,7 +1518,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Bytes)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method toBase64", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "toBase64")
 		}
 		return runtime.String{Value: base64.StdEncoding.EncodeToString(value.Value)}, nil
 	case "toBase64Url":
@@ -1524,7 +1527,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Bytes)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method toBase64Url", receiver.TypeName())
+			return nil, native.UnknownMethodError(receiver.TypeName(), "toBase64Url")
 		}
 		return runtime.String{Value: base64.RawURLEncoding.EncodeToString(value.Value)}, nil
 	default:
@@ -1547,7 +1550,7 @@ func primitiveLength(receiver runtime.Value) (runtime.Value, error) {
 	case runtime.Range:
 		return runtime.Int{Value: value.Length()}, nil
 	default:
-		return nil, fmt.Errorf("%s has no method length", receiver.TypeName())
+		return nil, native.UnknownMethodError(receiver.TypeName(), "length")
 	}
 }
 

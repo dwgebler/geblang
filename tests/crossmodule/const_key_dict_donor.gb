@@ -1,0 +1,8 @@
+module const_key_dict_donor;
+
+let shared = {"x": 1, "y": 2};
+
+export func make(int n): dict<string, int> { return {"n": n, "twice": n * 2}; }
+export func sharedKeys(): list<string> { return shared.keys(); }
+export func lengthOf(string s): int { return s.length(); }
+export func asInt(any v): int { return v as int; }

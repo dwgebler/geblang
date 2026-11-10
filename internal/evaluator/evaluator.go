@@ -1939,6 +1939,9 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		if err != nil {
 			return nil, err
 		}
+		if castIsIdentity(value, expr.Type, env) {
+			return value, nil
+		}
 		target := typealias.Qualified(typealias.Expand(e.resolveTypeRef(expr.Type, env), env.GetTypeBinding))
 		finish := func(converted runtime.Value) (runtime.Value, error) {
 			matches := func(value runtime.Value, typ *ast.TypeRef) bool { return matchValueToTypeRef(nil, value, typ) }
@@ -6455,11 +6458,23 @@ func (e *Evaluator) evalIncrement(expr ast.Expression, operator string, env *run
 	if !ok {
 		return nil, fmt.Errorf("%q is not declared", ident.Value)
 	}
-	intValue, ok := current.(runtime.Int)
+	if small, ok := int64Operand(current); ok {
+		delta := int64(1)
+		if operator == "--" {
+			delta = -1
+		}
+		if value, handled, err := evalSmallIntInfix("+", small, delta); handled && err == nil {
+			if err := env.Assign(ident.Value, value); err != nil {
+				return nil, err
+			}
+			return value, nil
+		}
+	}
+	currentInt, ok := native.IntValueToBigInt(current)
 	if !ok {
 		return nil, fmt.Errorf("%s currently supports int values only", operator)
 	}
-	next := new(big.Int).Set(intValue.Value)
+	next := new(big.Int).Set(currentInt)
 	if operator == "++" {
 		next.Add(next, big.NewInt(1))
 	} else {
@@ -6502,14 +6517,14 @@ func singleIntValue(call *ast.CallExpression, args []runtime.Value) (int64, erro
 	if len(args) != 1 {
 		return 0, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
 	}
-	arg, ok := args[0].(runtime.Int)
+	arg, ok := native.IntValueToBigInt(args[0])
 	if !ok {
 		return 0, fmt.Errorf("%s expects an integer argument", call.Callee.String())
 	}
-	if !arg.Value.IsInt64() {
+	if !arg.IsInt64() {
 		return 0, fmt.Errorf("%s integer argument is out of int64 range", call.Callee.String())
 	}
-	return arg.Value.Int64(), nil
+	return arg.Int64(), nil
 }
 
 func singleStringValue(call *ast.CallExpression, args []runtime.Value) (string, error) {
@@ -6536,6 +6551,11 @@ func (e *Evaluator) evalPrefix(operator string, right runtime.Value) (runtime.Va
 		return runtime.Bool{Value: !value.Value}, nil
 	case "-":
 		switch value := right.(type) {
+		case runtime.SmallInt:
+			if value.Value == math.MinInt64 {
+				return runtime.Int{Value: new(big.Int).Neg(big.NewInt(value.Value))}, nil
+			}
+			return runtime.SmallInt{Value: -value.Value}, nil
 		case runtime.Int:
 			return runtime.Int{Value: new(big.Int).Neg(value.Value)}, nil
 		case runtime.Decimal:
@@ -6552,11 +6572,11 @@ func (e *Evaluator) evalPrefix(operator string, right runtime.Value) (runtime.Va
 			return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("- expects numeric value, got %s", right.TypeName())}
 		}
 	case "~":
-		value, ok := right.(runtime.Int)
+		value, ok := native.IntValueToBigInt(right)
 		if !ok {
 			return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("~ expects int, got %s", right.TypeName())}
 		}
-		return runtime.Int{Value: new(big.Int).Not(value.Value)}, nil
+		return runtime.Int{Value: new(big.Int).Not(value)}, nil
 	default:
 		return nil, fmt.Errorf("unsupported prefix operator %q", operator)
 	}
@@ -7002,9 +7022,10 @@ func evalNumericInfix(operator string, left runtime.Value, right runtime.Value) 
 	// O(1) big.Int per arithmetic step; the storage benefit of
 	// SmallInt at parse-time pays for it as long as the loop body
 	// doesn't run arithmetic on every value.
-	if l, ok := left.(runtime.SmallInt); ok {
-		if r, ok := right.(runtime.SmallInt); ok {
-			if value, handled, err := evalSmallIntInfix(operator, l.Value, r.Value); handled {
+	// Literal ints evaluate as big Int; any operand pair that fits int64 takes the allocation-free path.
+	if l, ok := int64Operand(left); ok {
+		if r, ok := int64Operand(right); ok {
+			if value, handled, err := evalSmallIntInfix(operator, l, r); handled {
 				return value, err
 			}
 		}
@@ -7068,6 +7089,52 @@ func decimalFloatArithError(operator string, left, right runtime.Value) error {
 // the VM's smallIntBinary exactly: floor // and %, overflow promotion
 // to big Int. Operators it does not cover report handled=false and
 // fall through to the big-Int dispatcher.
+// castIsIdentity reports a cast to the primitive type the value already has, when no alias or generic binding renames that type here.
+func castIsIdentity(value runtime.Value, typ *ast.TypeRef, env *runtime.Environment) bool {
+	if typ == nil || typ.Operator != "" || typ.Nullable || typ.ListAlias || len(typ.Arguments) > 0 {
+		return false
+	}
+	switch typ.Name {
+	case "int":
+		switch value.(type) {
+		case runtime.SmallInt, runtime.Int:
+		default:
+			return false
+		}
+	case "string":
+		if _, ok := value.(runtime.String); !ok {
+			return false
+		}
+	case "bool":
+		if _, ok := value.(runtime.Bool); !ok {
+			return false
+		}
+	case "float":
+		if _, ok := value.(runtime.Float); !ok {
+			return false
+		}
+	default:
+		return false
+	}
+	if _, aliased := env.GetTypeAlias(typ.Name); aliased {
+		return false
+	}
+	_, bound := env.GetTypeBinding(typ.Name)
+	return !bound
+}
+
+func int64Operand(v runtime.Value) (int64, bool) {
+	switch n := v.(type) {
+	case runtime.SmallInt:
+		return n.Value, true
+	case runtime.Int:
+		if n.Value.IsInt64() {
+			return n.Value.Int64(), true
+		}
+	}
+	return 0, false
+}
+
 func evalSmallIntInfix(operator string, l int64, r int64) (runtime.Value, bool, error) {
 	switch operator {
 	case "+":
@@ -7083,8 +7150,8 @@ func evalSmallIntInfix(operator string, l int64, r int64) (runtime.Value, bool, 
 		}
 		return runtime.SmallInt{Value: result}, true, nil
 	case "*":
-		result := l * r
-		if l != 0 && result/l != r {
+		result, fits := runtime.MulInt64(l, r)
+		if !fits {
 			return runtime.Int{Value: new(big.Int).Mul(big.NewInt(l), big.NewInt(r))}, true, nil
 		}
 		return runtime.SmallInt{Value: result}, true, nil

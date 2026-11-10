@@ -163,6 +163,19 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		if dictHasSpread(expr.Entries) {
 			return c.compileExpression(desugarDictLiteralWithSpread(expr))
 		}
+		if dictHasOnlyStringLiteralKeys(expr.Entries) {
+			operands := make([]int64, 0, 1+2*len(expr.Entries))
+			operands = append(operands, int64(len(expr.Entries)))
+			for _, entry := range expr.Entries {
+				if err := c.compileExpression(entry.Value); err != nil {
+					return err
+				}
+				key := runtime.String{Value: entry.Key.(*ast.StringLiteral).Value}
+				operands = append(operands, c.addConstant(key), c.addConstant(runtime.String{Value: native.DictKey(key)}))
+			}
+			c.emitAt(OpBuildDictConstKeys, expr.Token.Line, expr.Token.Column, operands...)
+			return nil
+		}
 		for _, entry := range expr.Entries {
 			if err := c.compileExpression(entry.Key); err != nil {
 				return err
@@ -1107,7 +1120,11 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			}
 			c.emitPlantIntLiteralArgs(expr, false)
 			c.emitPlantCallTypeArgs(expr)
-			c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
+			if id := hotPrimitiveMethodID(selector.Name.Value, len(expr.Arguments)); id != 0 && len(expr.TypeArguments) == 0 {
+				c.emitAt(OpPrimMethod, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)), id)
+			} else {
+				c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
+			}
 			if selector.Optional {
 				c.patchJump(optionalJump)
 			}

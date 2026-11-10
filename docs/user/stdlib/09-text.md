@@ -12,7 +12,7 @@ value - the original is unchanged.
 | `length()` | `int` | Number of Unicode code points |
 | `isEmpty()` | `bool` | `true` when the string has no characters |
 | `isBlank()` | `bool` | `true` when empty or only whitespace |
-| `get(index)` | `string` | Single character at `index` (negative = from end) |
+| `get(index)` | `?string` | Single character at `index` (negative = from end), or `null` when out of range |
 | `chars()` | `list<string>` | All characters as a list |
 | `codePointAt(index)` | `int` | Unicode code point at `index`, or `null` if out of range (the "ord" of one character) |
 | `codePoints()` | `list<int>` | All Unicode code points as a list |

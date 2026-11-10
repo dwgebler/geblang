@@ -937,8 +937,8 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 						result = runtime.VMValueSmallInt(v)
 					}
 				case OpMulInt:
-					v := li * ri
-					if li != 0 && v/li != ri {
+					v, fits := runtime.MulInt64(li, ri)
+					if !fits {
 						result = runtime.VMValueFromValue(runtime.Int{Value: new(big.Int).Mul(big.NewInt(li), big.NewInt(ri))})
 					} else {
 						result = runtime.VMValueSmallInt(v)
@@ -1398,6 +1398,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			vm.truncateStack(base)
 			vm.push(d)
+		case OpBuildDictConstKeys:
+			if err := vm.buildDictConstKeys(instruction); err != nil {
+				return err
+			}
 		case OpBuildSet:
 			count := instruction.Operands[0]
 			if count < 0 {
@@ -1600,6 +1604,12 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			ip = nextIP
 		case OpMethodCall:
 			nextIP, err := vm.methodCall(*instruction, ip)
+			if err != nil {
+				return err
+			}
+			ip = nextIP
+		case OpPrimMethod:
+			nextIP, err := vm.primMethod(instruction, ip)
 			if err != nil {
 				return err
 			}
@@ -3860,9 +3870,8 @@ func (vm *VM) smallIntBinary(instruction Instruction, l int64, r int64) error {
 			vm.push(runtime.SmallInt{Value: result})
 		}
 	case OpMul:
-		result := l * r
-		// Overflow check: result/l != r (when l != 0).
-		if l != 0 && result/l != r {
+		result, fits := runtime.MulInt64(l, r)
+		if !fits {
 			vm.push(runtime.Int{Value: new(big.Int).Mul(big.NewInt(l), big.NewInt(r))})
 		} else {
 			vm.push(runtime.SmallInt{Value: result})
@@ -5001,6 +5010,29 @@ func (vm *VM) typeAssert(instruction Instruction) error {
 // tagCollectionWithSpec mirrors the evaluator's tagCollectionWithTypeRef
 // for the VM's vmTypeSpec form. Returns (tagged, true) when the value is
 // a List/Dict/Set whose tag should be set; otherwise (value, false).
+func (vm *VM) buildDictConstKeys(instruction *Instruction) error {
+	ops := instruction.Operands
+	count := int(ops[0])
+	if count < 0 || len(ops) != 1+2*count {
+		return vm.runtimeError(*instruction, "dict entry count out of range")
+	}
+	base := len(vm.stack) - count
+	if base < 0 {
+		return vm.runtimeError(*instruction, "stack underflow")
+	}
+	d := runtime.NewDictHint(count)
+	for i := 0; i < count; i++ {
+		internal, ok := vm.constantValue(ops[2+2*i]).(runtime.String)
+		if !ok {
+			return vm.runtimeError(*instruction, "dict key constant must be string")
+		}
+		d.PutEntry(internal.Value, runtime.DictEntry{Key: vm.constantValue(ops[1+2*i]), Value: vm.stack[base+i].ToValue()})
+	}
+	vm.truncateStack(base)
+	vm.push(d)
+	return nil
+}
+
 func (vm *VM) tagCollectionWithSpec(value runtime.Value, spec vmTypeSpec) (runtime.Value, bool) {
 	switch v := value.(type) {
 	case *runtime.List:

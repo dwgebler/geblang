@@ -1,0 +1,28 @@
+/**
+ * @title String-keyed dict literals across modules
+ * @summary Dict literals, no-argument methods and casts inside another module
+ * produce the same keys, order and values as in the calling module.
+ */
+import test;
+import const_key_dict_donor as donor;
+
+class ConstKeyDictCrossModuleTest extends test.Test {
+    @test
+    func donorBuiltDictsMatch(): void {
+        let d = donor.make(3);
+        this.assertEquals(["n", "twice"], d.keys());
+        this.assertEquals(6, d["twice"]);
+        this.assertEquals(8, donor.make(4)["twice"]);
+    }
+
+    @test
+    func donorModuleGlobalDict(): void {
+        this.assertEquals(["x", "y"], donor.sharedKeys());
+    }
+
+    @test
+    func donorMethodsAndCasts(): void {
+        this.assertEquals(4, donor.lengthOf("abcd"));
+        this.assertEquals(7, donor.asInt(7));
+    }
+}

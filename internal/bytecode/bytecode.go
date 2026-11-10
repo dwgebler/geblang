@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(92)
+	Version = uint16(94)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -347,7 +347,33 @@ const (
 	OpStoreDefaultArg
 	// OpCheckFieldDefault {classIndex, fieldIndex} type-checks a computed field default against local 0's instance.
 	OpCheckFieldDefault
+	// OpBuildDictConstKeys {count, key0, internal0, ...} builds a dict from count stack values whose keys are string constants, each paired with its precomputed internal key constant.
+	OpBuildDictConstKeys
+	// OpPrimMethod {nameIndex, argc, methodID} is OpMethodCall for a hot primitive method name; it runs inline on a matching string/list/dict/set/bytes receiver and otherwise behaves exactly as OpMethodCall.
+	OpPrimMethod
 )
+
+// Method IDs carried by OpPrimMethod.
+const (
+	primMethodLength int64 = iota + 1
+	primMethodIsEmpty
+	primMethodGet
+	primMethodContains
+)
+
+func hotPrimitiveMethodID(name string, argc int) int64 {
+	switch {
+	case name == "length" && argc == 0:
+		return primMethodLength
+	case name == "isEmpty" && argc == 0:
+		return primMethodIsEmpty
+	case name == "get" && argc == 1:
+		return primMethodGet
+	case name == "contains" && argc == 1:
+		return primMethodContains
+	}
+	return 0
+}
 
 type Instruction struct {
 	Operands []int64

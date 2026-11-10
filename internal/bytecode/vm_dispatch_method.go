@@ -396,6 +396,12 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 	if !ok {
 		return 0, vm.runtimeError(instruction, "method name constant must be string")
 	}
+	// A no-argument call on a string/list/dict/set/bytes needs no argument slice at all.
+	if top := len(vm.stack) - 1; argc == 0 && top >= 0 && isPrimitiveReceiverVM(vm.stack[top]) {
+		receiver := vm.stack[top].Boxed
+		vm.truncateStack(top)
+		return vm.primitiveMethodCall(instruction, ip, receiver, nameValue, nil)
+	}
 	// slots[0]=receiver, slots[1:]=args - one alloc instead of two.
 	slots := make([]runtime.Value, argc+1)
 	for i := argc - 1; i >= 0; i-- {
@@ -432,7 +438,7 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 	}
 	if function, ok := receiver.(runtime.Function); ok {
 		if nameValue.Value != "__invoke" {
-			return 0, vm.runtimeError(instruction, "func has no method %s", nameValue.Value)
+			return 0, vm.runtimeError(instruction, "%s", native.UnknownMethodError("func", nameValue.Value).Error())
 		}
 		result, err := vm.callCallable(function, args)
 		if err != nil {
@@ -443,7 +449,7 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 	}
 	if overloaded, ok := receiver.(runtime.OverloadedFunction); ok {
 		if nameValue.Value != "__invoke" {
-			return 0, vm.runtimeError(instruction, "func has no method %s", nameValue.Value)
+			return 0, vm.runtimeError(instruction, "%s", native.UnknownMethodError("func", nameValue.Value).Error())
 		}
 		result, err := vm.callCallable(overloaded, args)
 		if err != nil {
@@ -841,7 +847,7 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 	if function, ok := receiver.(runtime.BytecodeFunction); ok {
 		function = vm.bindCallTypeArgs(function, callTypeArgs)
 		if nameValue.Value != "__invoke" {
-			return 0, vm.runtimeError(instruction, "function has no method %s", nameValue.Value)
+			return 0, vm.runtimeError(instruction, "%s", native.UnknownMethodError("func", nameValue.Value).Error())
 		}
 		result, err := vm.callCallable(function, args)
 		if err != nil {
@@ -929,7 +935,7 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 	}
 	if closure, ok := receiver.(runtime.BytecodeClosure); ok {
 		if nameValue.Value != "__invoke" {
-			return 0, vm.runtimeError(instruction, "closure does not have method %s", nameValue.Value)
+			return 0, vm.runtimeError(instruction, "%s", native.UnknownMethodError("func", nameValue.Value).Error())
 		}
 		if closure.Module != vm.moduleName {
 			// Cross-chunk closure invocation - route through the
@@ -1015,6 +1021,99 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 }
 
 // primitiveMethodCall stamps the call site so a throwing callback attributes this method call's line to the caller frame.
+func (vm *VM) primMethod(instruction *Instruction, ip int) (int, error) {
+	ops := instruction.Operands
+	argc := int(ops[1])
+	if recv := len(vm.stack) - 1 - argc; recv >= 0 && len(vm.pendingCallTypeArgs) == 0 && vm.stack[recv].Kind == runtime.VMKindBoxed {
+		if result, ok := primMethodFast(ops[2], vm.stack[recv].Boxed, vm.stack[recv+1:]); ok {
+			vm.pendingLiteralArgs = nil
+			vm.truncateStack(recv)
+			vm.pushVM(result)
+			return ip, nil
+		}
+	}
+	call := *instruction
+	call.Op = OpMethodCall
+	call.Operands = ops[:2]
+	return vm.methodCall(call, ip)
+}
+
+// primMethodFast handles only the cases whose result it can produce exactly; anything else (missing key, negative index, other types) reports false so the general method call decides.
+func primMethodFast(id int64, receiver runtime.Value, args []runtime.VMValue) (runtime.VMValue, bool) {
+	switch id {
+	case primMethodLength, primMethodIsEmpty:
+		n := -1
+		switch r := receiver.(type) {
+		case runtime.String:
+			if id == primMethodIsEmpty {
+				n = len(r.Value)
+			} else {
+				n = runtime.StringRuneInfo(r.Value).RuneCount(r.Value)
+			}
+		case *runtime.List:
+			n = len(r.Elements)
+		case runtime.Dict:
+			n = r.Len()
+		case runtime.Set:
+			n = len(r.Elements)
+		case runtime.Bytes:
+			n = len(r.Value)
+		}
+		if n < 0 {
+			return runtime.VMValue{}, false
+		}
+		if id == primMethodIsEmpty {
+			return runtime.VMValueBool(n == 0), true
+		}
+		return runtime.VMValueSmallInt(int64(n)), true
+	case primMethodGet:
+		switch r := receiver.(type) {
+		case runtime.Dict:
+			if key, ok := vmStringArg(args[0]); ok {
+				if entry, found := r.GetStringEntry(key); found {
+					return runtime.VMValueFromValue(entry.Value), true
+				}
+			}
+		case *runtime.List:
+			if args[0].Kind == runtime.VMKindSmallInt && args[0].I64 >= 0 && args[0].I64 < int64(len(r.Elements)) {
+				return runtime.VMValueFromValue(r.Elements[args[0].I64]), true
+			}
+		}
+	case primMethodContains:
+		key, ok := vmStringArg(args[0])
+		if !ok {
+			return runtime.VMValue{}, false
+		}
+		switch r := receiver.(type) {
+		case runtime.Dict:
+			_, found := r.GetStringEntry(key)
+			return runtime.VMValueBool(found), true
+		case runtime.String:
+			return runtime.VMValueBool(strings.Contains(r.Value, key)), true
+		}
+	}
+	return runtime.VMValue{}, false
+}
+
+func vmStringArg(v runtime.VMValue) (string, bool) {
+	if v.Kind != runtime.VMKindBoxed {
+		return "", false
+	}
+	s, ok := v.Boxed.(runtime.String)
+	return s.Value, ok
+}
+
+func isPrimitiveReceiverVM(v runtime.VMValue) bool {
+	if v.Kind != runtime.VMKindBoxed {
+		return false
+	}
+	switch v.Boxed.(type) {
+	case runtime.String, *runtime.List, runtime.Dict, runtime.Set, runtime.Bytes:
+		return true
+	}
+	return false
+}
+
 func (vm *VM) primitiveMethodCall(instruction Instruction, ip int, receiver runtime.Value, nameValue runtime.String, args []runtime.Value) (int, error) {
 	savedHofLine := vm.hofCallLine
 	vm.hofCallLine = int(instruction.Line)
@@ -1024,8 +1123,9 @@ func (vm *VM) primitiveMethodCall(instruction Instruction, ip int, receiver runt
 }
 
 func (vm *VM) dispatchPrimitiveMethod(instruction Instruction, ip int, receiver runtime.Value, nameValue runtime.String, args []runtime.Value) (int, error) {
-	if list, ok := receiver.(*runtime.List); ok {
-		result, handled, err := vm.listHigherOrderMethod(instruction, list, nameValue.Value, args)
+	switch r := receiver.(type) {
+	case *runtime.List:
+		result, handled, err := vm.listHigherOrderMethod(instruction, r, nameValue.Value, args)
 		if err != nil {
 			return vm.propagateCallbackError(instruction, ip, err)
 		}
@@ -1033,9 +1133,8 @@ func (vm *VM) dispatchPrimitiveMethod(instruction Instruction, ip int, receiver 
 			vm.push(result)
 			return ip, nil
 		}
-	}
-	if dict, ok := receiver.(runtime.Dict); ok {
-		result, handled, err := vm.dictCollectionsMethod(dict, nameValue.Value, args)
+	case runtime.Dict:
+		result, handled, err := vm.dictCollectionsMethod(r, nameValue.Value, args)
 		if err != nil {
 			return vm.propagateCallbackError(instruction, ip, err)
 		}
@@ -1043,21 +1142,19 @@ func (vm *VM) dispatchPrimitiveMethod(instruction Instruction, ip int, receiver 
 			vm.push(result)
 			return ip, nil
 		}
-	}
-	if nativeObject, ok := receiver.(runtime.NativeObject); ok {
+	case runtime.NativeObject:
 		caller, ok := vm.statefulNative.(nativeObjectMethodCaller)
 		if !ok {
-			return 0, vm.runtimeError(instruction, "%s", native.UnknownMethodError(nativeObject.TypeName(), nameValue.Value).Error())
+			return 0, vm.runtimeError(instruction, "%s", native.UnknownMethodError(r.TypeName(), nameValue.Value).Error())
 		}
-		result, err := caller.NativeObjectMethod(nativeObject, nameValue.Value, args)
+		result, err := caller.NativeObjectMethod(r, nameValue.Value, args)
 		if err != nil {
 			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
-	}
-	if str, ok := receiver.(runtime.String); ok {
-		if handled, result, err := vm.stringSearchMethod(str, nameValue.Value, args); handled {
+	case runtime.String:
+		if handled, result, err := vm.stringSearchMethod(r, nameValue.Value, args); handled {
 			if err != nil {
 				return vm.propagateCallbackError(instruction, ip, err)
 			}
@@ -1228,7 +1325,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 	if bytecodeFunction, ok := receiver.(runtime.BytecodeFunction); ok {
 		bytecodeFunction = vm.bindCallTypeArgs(bytecodeFunction, callTypeArgs)
 		if methodName != "__invoke" {
-			return 0, vm.runtimeError(instruction, "function has no method %s", methodName)
+			return 0, vm.runtimeError(instruction, "%s", native.UnknownMethodError("func", methodName).Error())
 		}
 		if bytecodeFunction.Module != vm.moduleName && vm.moduleLoader != nil {
 			return vm.dispatchCrossModuleNamedFunction(instruction, ip, bytecodeFunction, args, names, callTypeArgs)
@@ -1250,7 +1347,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 	}
 	if closure, ok := receiver.(runtime.BytecodeClosure); ok {
 		if methodName != "__invoke" {
-			return 0, vm.runtimeError(instruction, "closure does not have method %s", methodName)
+			return 0, vm.runtimeError(instruction, "%s", native.UnknownMethodError("func", methodName).Error())
 		}
 		if closure.Module != vm.moduleName {
 			if vm.moduleLoader == nil {
