@@ -276,7 +276,7 @@ func DataFrameMethod(frame *runtime.DataFrame, name string, args []runtime.Value
 			entries[DictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.String{Value: c.Dtype}}
 			order = append(order, DictKey(key))
 		}
-		return runtime.Dict{Entries: entries, Order: &order}, nil
+		return runtime.DictFromEntries(entries, &order), nil
 	case "head", "tail":
 		n := 5
 		if len(args) == 1 {
@@ -677,7 +677,7 @@ func dfRowDict(frame *runtime.DataFrame, row int) runtime.Dict {
 		entries[DictKey(key)] = runtime.DictEntry{Key: key, Value: dfCellValue(c, row)}
 		order = append(order, DictKey(key))
 	}
-	return runtime.Dict{Entries: entries, Order: &order}
+	return runtime.DictFromEntries(entries, &order)
 }
 
 func dfToJson(frame *runtime.DataFrame) (runtime.Value, error) {

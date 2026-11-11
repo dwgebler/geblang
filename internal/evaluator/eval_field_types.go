@@ -80,7 +80,7 @@ func resolveFieldCheck(class *runtime.Class, name string) *fieldCheck {
 			if declared != nil && !(declared.Operator == "" && declared.Name == "any" && !declared.Nullable) {
 				check.declaring = c
 				check.declared = declared
-				if len(c.TypeParameters) > 0 && typeRefUsesTypeParameter(declared, lowerNameSet(c.TypeParameters)) {
+				if len(c.TypeParameters) > 0 && runtime.TypeRefUsesTypeParameter(declared, lowerNameSet(c.TypeParameters)) {
 					check.params = lowerNameSet(c.TypeParameters)
 				}
 				check.kind, check.tags = collectionTagsFor(declared)

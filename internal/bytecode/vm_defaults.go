@@ -29,6 +29,7 @@ func (vm *VM) paramMismatchMessage(function *FunctionInfo, i int, arg runtime.Va
 	if suffix != "" {
 		gotName = arg.TypeName()
 	}
+	declared = vm.paramMessageType(*function, i, declared)
 	if i < len(function.ParamNames) {
 		return fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, declared, function.displayParamName(i), gotName, suffix), false
 	}
@@ -59,7 +60,7 @@ func (vm *VM) storeDefaultArg(instruction Instruction) error {
 			}
 		}
 		inherited := mergedTypeBindings(vm.frames[len(vm.frames)-1].typeBindings, receiverTypeBindings(function, receiver))
-		if msg, ok := vm.paramMismatchMessage(function, paramIndex, value, function.typeParamSet, inherited); !ok {
+		if msg, ok := vm.paramMismatchMessage(function, paramIndex, value, function.matchTypeParams, inherited); !ok {
 			return vmTypedError{class: "TypeError", message: msg}
 		}
 	}

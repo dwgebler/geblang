@@ -752,7 +752,7 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 			continue
 		}
 		if param.Default != nil {
-			defaultVal, err := e.evalExpression(param.Default, runtime.NewEnclosedEnvironment(class.Env))
+			defaultVal, err := e.evalExpression(param.Default, runtime.NewLocalEnclosedEnvironment(class.Env))
 			if err != nil {
 				return nil, fmt.Errorf("deserialize %s: default for %s: %w", class.Name, paramName, err)
 			}
@@ -1367,42 +1367,32 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 			if exit, ok := value.(exitValue); ok {
 				return signal{exited: true, exitCode: exit.code}, nil
 			}
-			// Only enforce generic collection element types on declarations (e.g. list<int>, int[]).
-			// Scalar type coercions (float/decimal, int widening, etc.) are handled elsewhere.
-			if expectedType != nil && expectedType.Operator == "" {
-				isListAlias := expectedType.ListAlias && len(expectedType.Arguments) == 0
-				hasGenericArgs := len(expectedType.Arguments) > 0
-				if hasGenericArgs || isListAlias {
-					typeName := strings.ToLower(simpleTypeName(expectedType.Name))
-					if typeName == "list" || expectedType.ListAlias || typeName == "set" || typeName == "dict" {
-						if !matchValueToTypeRef(nil, value, expectedType) {
-							suffix := collectionMismatchSuffix(value, expectedType)
-							// When a suffix identifies the specific bad element, use the base type
-							// name to avoid a misleading "list<int> to list<int>" message.
-							gotName := descriptiveTypeName(value)
-							if suffix != "" {
-								gotName = value.TypeName()
-							}
-							return signal{}, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("type error: cannot assign %s to %s%s", gotName, expectedType.String(), suffix)}
-						}
-						// Attach the reified element-type tag so subsequent
-						// reflect.typeBindings() and `instanceof list<T>`
-						// checks see the declared bindings rather than a
-						// bare `list`. Untagged collections retain their
-						// nil ElementTypes.
-						value = tagCollectionWithTypeRef(value, expectedType)
-					}
-				}
+			checked, err := e.checkTypedVariable(expectedType, value)
+			if err != nil {
+				return signal{}, err
 			}
+			value = checked
 		}
-		return signal{}, env.Define(stmt.Name.Value, value, stmt.Kind == "const" || stmt.Kind == "static const")
+		constant := stmt.Kind == "const" || stmt.Kind == "static const"
+		if stmt.Type == nil {
+			return signal{}, env.Define(stmt.Name.Value, value, constant)
+		}
+		return signal{}, env.DefineTyped(stmt.Name.Value, value, constant, expectedType)
 	case *ast.DestructuringStatement:
 		return e.evalDestructuringStatement(stmt, env)
 	case *ast.FunctionStatement:
+		captured := snapshotEnvTypeBindings(env)
+		for name := range captured {
+			for _, param := range stmt.Generics {
+				if strings.EqualFold(name, param.Name.Value) {
+					delete(captured, name)
+				}
+			}
+		}
 		if stmt.Static {
 			return signal{}, fmt.Errorf("static functions are parsed but not evaluated yet")
 		}
-		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters, env), ReturnType: e.resolveTypeRef(stmt.ReturnType, env), Body: stmt.Body, Env: env, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: blockContainsYield(stmt.Body), DefinitionModule: e.currentModule, DefinitionLine: stmt.Token.Line, DefinitionColumn: stmt.Token.Column}
+		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), OuterTypeParameters: e.enclosingTypeParameters(), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters, env), ReturnType: e.resolveTypeRef(stmt.ReturnType, env), Body: stmt.Body, Env: env.MarkShared(), TypeBindings: captured, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: blockContainsYield(stmt.Body), DefinitionModule: e.currentModule, DefinitionLine: stmt.Token.Line, DefinitionColumn: stmt.Token.Column}
 		fn.DefinitionPath = e.currentDebugPath()
 		if e.callDepth > 0 {
 			fn.Identity = runtime.NewFunctionIdentity()
@@ -1596,7 +1586,7 @@ func (e *Evaluator) evalBlock(block *ast.BlockStatement, outer *runtime.Environm
 		// enclosed environment would only add an empty chain hop.
 		return e.evalStatements(block.Statements, outer)
 	}
-	return e.evalStatements(block.Statements, runtime.NewEnclosedEnvironment(outer))
+	return e.evalStatements(block.Statements, runtime.NewLocalEnclosedEnvironment(outer))
 }
 
 func (e *Evaluator) evalExpression(expr ast.Expression, env *runtime.Environment) (runtime.Value, error) {
@@ -1899,14 +1889,24 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			}
 			return value, nil
 		}
+		if ident, ok := expr.Left.(*ast.Identifier); ok {
+			declared := env.DeclaredType(ident.Value)
+			if _, err := evalTyped(declared); err != nil {
+				return nil, err
+			}
+			checked, err := e.checkTypedVariable(declared, value)
+			if err != nil {
+				return nil, err
+			}
+			if err := env.Assign(ident.Value, checked); err != nil {
+				return nil, err
+			}
+			return checked, nil
+		}
 		if _, err := evalValue(); err != nil {
 			return nil, err
 		}
 		switch left := expr.Left.(type) {
-		case *ast.Identifier:
-			if err := env.Assign(left.Value, value); err != nil {
-				return nil, err
-			}
 		case *ast.ListLiteral:
 			list, ok := value.(*runtime.List)
 			if !ok {
@@ -1998,7 +1998,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		// outer generic frame's concrete bindings. snapshotTypeBindings
 		// walks the env chain so all reachable bindings come along.
 		captured := snapshotEnvTypeBindings(env)
-		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: e.resolveParameters(expr.Parameters, env), ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env, Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured, DefinitionPath: e.currentDebugPath()}, nil
+		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: e.resolveParameters(expr.Parameters, env), ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env.MarkShared(), Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured, OuterTypeParameters: e.enclosingTypeParameters(), DefinitionPath: e.currentDebugPath()}, nil
 	case *ast.AwaitExpression:
 		value, err := e.evalExpression(expr.Value, env)
 		if err != nil {
@@ -2104,7 +2104,7 @@ func (e *Evaluator) evalSelectStatement(stmt *ast.SelectStatement, env *runtime.
 	if chosen == -1 {
 		return e.evalBlock(stmt.Default, env)
 	}
-	caseEnv := runtime.NewEnclosedEnvironment(env)
+	caseEnv := runtime.NewLocalEnclosedEnvironment(env)
 	c := stmt.Cases[chosen]
 	if c.Kind == "recv" && c.Binding != "" {
 		if err := caseEnv.Define(c.Binding, recvValue, true); err != nil {
@@ -2194,7 +2194,7 @@ func matchExhaustivenessHint(cases []ast.MatchCase) string {
 }
 
 func (e *Evaluator) matchCase(value runtime.Value, c ast.MatchCase, env *runtime.Environment) (*runtime.Environment, bool, error) {
-	caseEnv := runtime.NewEnclosedEnvironment(env)
+	caseEnv := runtime.NewLocalEnclosedEnvironment(env)
 	matched := false
 	switch {
 	case c.Default:
@@ -2395,7 +2395,7 @@ func statementContainsYield(stmt ast.Statement) bool {
 }
 
 func (e *Evaluator) evalForStatement(stmt *ast.ForStatement, env *runtime.Environment) (signal, error) {
-	loopEnv := runtime.NewEnclosedEnvironment(env)
+	loopEnv := runtime.NewLocalEnclosedEnvironment(env)
 	if stmt.Iterable != nil {
 		return e.evalForInStatement(stmt, loopEnv)
 	}
@@ -2450,7 +2450,7 @@ func (e *Evaluator) evalTryStatement(stmt *ast.TryStatement, env *runtime.Enviro
 			if !e.catchMatches(clause, *sig.thrown) {
 				continue
 			}
-			catchEnv := runtime.NewEnclosedEnvironment(env)
+			catchEnv := runtime.NewLocalEnclosedEnvironment(env)
 			if clause.Name != nil {
 				if err := catchEnv.Define(clause.Name.Value, *sig.thrown, false); err != nil {
 					return signal{}, err
@@ -2503,7 +2503,7 @@ func (e *Evaluator) evalWithStatement(stmt *ast.WithStatement, env *runtime.Envi
 			bound = value
 		}
 	}
-	scope := runtime.NewEnclosedEnvironment(env)
+	scope := runtime.NewLocalEnclosedEnvironment(env)
 	if stmt.Name != nil {
 		if err := scope.Define(stmt.Name.Value, bound, false); err != nil {
 			return signal{}, err
@@ -2700,8 +2700,12 @@ func (e *Evaluator) evalForInStatement(stmt *ast.ForStatement, loopEnv *runtime.
 	if len(names) == 0 {
 		return signal{}, fmt.Errorf("for-in loop has no loop variable")
 	}
+	var loopType *ast.TypeRef
+	if stmt.VarType != nil {
+		loopType = e.resolveTypeRef(stmt.VarType, loopEnv)
+	}
 	for _, name := range names {
-		if err := loopEnv.Define(name.Value, runtime.Null{}, false); err != nil {
+		if err := loopEnv.DefineTyped(name.Value, runtime.Null{}, false, loopType); err != nil {
 			return signal{}, err
 		}
 	}
@@ -2883,7 +2887,7 @@ dispatchPassthrough:
 
 func (e *Evaluator) evalForInIteration(stmt *ast.ForStatement, loopEnv *runtime.Environment, names []*ast.Identifier, value runtime.Value) (signal, error) {
 	if len(names) == 1 {
-		if err := loopEnv.Assign(names[0].Value, value); err != nil {
+		if err := e.assignLoopVar(stmt, loopEnv, names[0].Value, value); err != nil {
 			return signal{}, err
 		}
 	} else {
@@ -2892,12 +2896,23 @@ func (e *Evaluator) evalForInIteration(stmt *ast.ForStatement, loopEnv *runtime.
 			return signal{}, fmt.Errorf("cannot destructure %s into %d loop variables", value.TypeName(), len(names))
 		}
 		for i, name := range names {
-			if err := loopEnv.Assign(name.Value, list.Elements[i]); err != nil {
+			if err := e.assignLoopVar(stmt, loopEnv, name.Value, list.Elements[i]); err != nil {
 				return signal{}, err
 			}
 		}
 	}
 	return e.evalBlock(stmt.Body, loopEnv)
+}
+
+func (e *Evaluator) assignLoopVar(stmt *ast.ForStatement, loopEnv *runtime.Environment, name string, value runtime.Value) error {
+	if stmt.VarType != nil {
+		checked, err := e.checkTypedVariable(loopEnv.DeclaredType(name), value)
+		if err != nil {
+			return err
+		}
+		value = checked
+	}
+	return loopEnv.Assign(name, value)
 }
 
 func (e *Evaluator) walkComprehensionClauses(clauses []ast.ComprehensionClause, idx int, env *runtime.Environment, body func(*runtime.Environment) error) error {
@@ -2935,7 +2950,7 @@ func (e *Evaluator) iterateComprehensionFor(c *ast.ComprehensionFor, env *runtim
 		return fmt.Errorf("comprehension `for` has no loop variable")
 	}
 	step := func(value runtime.Value) error {
-		itEnv := runtime.NewEnclosedEnvironment(env)
+		itEnv := runtime.NewLocalEnclosedEnvironment(env)
 		if len(names) == 1 {
 			if err := itEnv.Define(names[0].Value, value, false); err != nil {
 				return err
@@ -3031,7 +3046,7 @@ func (e *Evaluator) iterateComprehensionFor(c *ast.ComprehensionFor, env *runtim
 }
 
 func envWithSingleBinding(parent *runtime.Environment, name string, value runtime.Value) *runtime.Environment {
-	itEnv := runtime.NewEnclosedEnvironment(parent)
+	itEnv := runtime.NewLocalEnclosedEnvironment(parent)
 	_ = itEnv.Define(name, value, false)
 	return itEnv
 }
@@ -3823,7 +3838,7 @@ func copyDict(value runtime.Dict) runtime.Dict {
 		entries[key] = entry
 		return true
 	})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func stringWithOptionalUTF8Encoding(call *ast.CallExpression, args []runtime.Value) (string, error) {
@@ -4069,7 +4084,7 @@ func jsonToValue(value any) (runtime.Value, error) {
 			keyValue := runtime.String{Value: key}
 			entries[dictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: converted}
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	default:
 		return nil, fmt.Errorf("unsupported JSON value %T", value)
 	}
@@ -4196,7 +4211,7 @@ func nativeToValue(value any) (runtime.Value, error) {
 			keyValue := runtime.String{Value: key}
 			entries[dictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: converted}
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	case map[any]any:
 		entries := map[string]runtime.DictEntry{}
 		for key, item := range value {
@@ -4211,7 +4226,7 @@ func nativeToValue(value any) (runtime.Value, error) {
 			keyValue := runtime.String{Value: keyText}
 			entries[dictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: converted}
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	case map[string]map[string]any:
 		entries := map[string]runtime.DictEntry{}
 		for key, item := range value {
@@ -4222,7 +4237,7 @@ func nativeToValue(value any) (runtime.Value, error) {
 			keyValue := runtime.String{Value: key}
 			entries[dictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: converted}
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	default:
 		return nil, fmt.Errorf("unsupported native value %T", value)
 	}
@@ -5021,6 +5036,69 @@ func (e *Evaluator) evalRangeLike(call *ast.CallExpression, env *runtime.Environ
 // covers list<T>, T[], set<T>, dict<K,V>. Untagged collections that
 // flow through this path gain a fresh tag; already-tagged ones are
 // rebound to the new annotation.
+// checkTypedVariable validates a value bound to a typed variable, tagging declared collections.
+func (e *Evaluator) checkTypedVariable(expected *ast.TypeRef, value runtime.Value) (runtime.Value, error) {
+	if expected == nil {
+		return value, nil
+	}
+	typeParams := e.declarationTypeParams()
+	if !isCollectionTypeRef(expected) {
+		if expected.Operator == "" && strings.EqualFold(expected.Name, "any") {
+			return value, nil
+		}
+		if runtime.TypeRefUsesTypeParameter(expected, typeParams) || matchValueToTypeRef(typeParams, value, expected) {
+			return value, nil
+		}
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("type error: cannot assign %s to %s", descriptiveTypeName(value), expected.String())}
+	}
+	if !matchValueToTypeRef(typeParams, value, expected) {
+		suffix := collectionMismatchSuffix(value, expected)
+		gotName := descriptiveTypeName(value)
+		if suffix != "" {
+			gotName = value.TypeName()
+		}
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("type error: cannot assign %s to %s%s", gotName, expected.String(), suffix)}
+	}
+	if runtime.TypeRefUsesTypeParameter(expected, typeParams) {
+		return value, nil
+	}
+	return tagCollectionWithTypeRef(value, expected), nil
+}
+
+// parameterDeclaredType is nil for variadic parameters, whose binding holds the packed list.
+func parameterDeclaredType(param ast.Parameter) *ast.TypeRef {
+	if param.Variadic {
+		return nil
+	}
+	return param.Type
+}
+
+func isCollectionTypeRef(ref *ast.TypeRef) bool {
+	if ref.Operator != "" {
+		return false
+	}
+	if ref.ListAlias && len(ref.Arguments) == 0 {
+		return true
+	}
+	if len(ref.Arguments) == 0 {
+		return false
+	}
+	switch strings.ToLower(simpleTypeName(ref.Name)) {
+	case "list", "set", "dict":
+		return true
+	}
+	return false
+}
+
+// declarationTypeParams leaves type parameters unchecked, matching the VM; generic declarations are validated statically.
+func (e *Evaluator) declarationTypeParams() map[string]bool {
+	fn := e.currentFunction()
+	if fn == nil {
+		return nil
+	}
+	return functionTypeParameterSetOrNil(*fn)
+}
+
 func tagCollectionWithTypeRef(value runtime.Value, typ *ast.TypeRef) runtime.Value {
 	if typ == nil || typ.Operator != "" {
 		return value
@@ -5052,7 +5130,7 @@ func tagCollectionWithTypeRef(value runtime.Value, typ *ast.TypeRef) runtime.Val
 		return v
 	case runtime.Dict:
 		if len(typ.Arguments) >= 2 && typ.Arguments[0] != nil && typ.Arguments[1] != nil {
-			v.ElementTypes = []string{elementTagName(typ.Arguments[0]), elementTagName(typ.Arguments[1])}
+			return v.WithElementTypes([]string{elementTagName(typ.Arguments[0]), elementTagName(typ.Arguments[1])})
 		}
 		return v
 	}
@@ -5951,7 +6029,7 @@ func (e *Evaluator) applyEnumMethod(fn runtime.Function, args []runtime.Value, r
 func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtime.Value, this *runtime.Instance) (runtime.Value, error) {
 	if fn.OriginalEnv != nil {
 		args = append([]runtime.Value(nil), args...)
-		env := runtime.NewEnclosedEnvironment(fn.OriginalEnv)
+		env := runtime.NewLocalEnclosedEnvironment(fn.OriginalEnv)
 		if this != nil {
 			_ = env.Define("this", this, false)
 		}
@@ -5970,7 +6048,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 				args[i] = value
 			}
 			if args[i] != nil && param.Name != nil {
-				_ = env.Define(param.Name.Value, args[i], false)
+				_ = env.DefineTyped(param.Name.Value, args[i], false, parameterDeclaredType(param))
 			}
 		}
 	}
@@ -6008,7 +6086,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	if err := functionArgumentsMatchError(fn, args, this); err != nil {
 		return nil, err
 	}
-	callEnv := runtime.NewEnclosedEnvironment(fn.Env)
+	callEnv := runtime.NewLocalEnclosedEnvironment(fn.Env)
 	enumThis := e.pendingEnumThis
 	e.pendingEnumThis = nil
 	if this != nil {
@@ -6084,7 +6162,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 		if param.Const {
 			value = runtime.FreezeShallowCopy(value)
 		}
-		if err := callEnv.Define(param.Name.Value, value, false); err != nil {
+		if err := callEnv.DefineTyped(param.Name.Value, value, false, parameterDeclaredType(param)); err != nil {
 			return nil, err
 		}
 	}
@@ -6121,7 +6199,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 		if name == "" {
 			name = "<closure>"
 		}
-		if this != nil && fn.OwnerClass != nil && fn.OwnerClass.Name != fn.Name {
+		if fn.OwnerClass != nil && fn.OwnerClass.Name != fn.Name {
 			name = fn.OwnerClass.Name + "." + fn.Name
 		}
 		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s expects %s return, got %s", name, fn.ReturnType.String(), descriptiveTypeName(result))}

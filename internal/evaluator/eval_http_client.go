@@ -461,7 +461,7 @@ func doHTTPRequestWithRetries(client *http.Client, req *http.Request, opts httpR
 		}
 		status := runtime.NewInt64(int64(resp.StatusCode))
 		body := runtime.String{Value: string(responseBody)}
-		headerDict := runtime.Dict{Entries: headers}
+		headerDict := runtime.DictFromEntries(headers, nil)
 		finalURL := req.URL.String()
 		if resp.Request != nil && resp.Request.URL != nil {
 			finalURL = resp.Request.URL.String()
@@ -475,7 +475,7 @@ func doHTTPRequestWithRetries(client *http.Client, req *http.Request, opts httpR
 		putDict(entries, "body", body)
 		putDict(entries, "headers", headerDict)
 		putDict(entries, "url", urlVal)
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	}
 	if lastErr != nil {
 		return nil, lastErr
@@ -588,7 +588,7 @@ func websocketUpgradeResponse(call *ast.CallExpression, args []runtime.Value) (r
 	}
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "websocket", handler)
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func httpStreamResponse(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -601,7 +601,7 @@ func httpStreamResponse(call *ast.CallExpression, args []runtime.Value) (runtime
 	}
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "stream", handler)
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 type wsHandle struct {
@@ -1021,7 +1021,7 @@ func httpErrorResult(err error) runtime.Value {
 	}
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "error", runtime.String{Value: err.Error()})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 // httpStreamResult annotates a fetchStream result with its input index and
@@ -1206,7 +1206,7 @@ func buildResponseInstance(class *runtime.Class, label string, args []runtime.Va
 	}
 	var status runtime.Value = runtime.NewInt64(http.StatusOK)
 	var body runtime.Value = runtime.String{}
-	var headers runtime.Value = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	var headers runtime.Value = runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	// Positional order is body-first (body, status, headers), matching
 	// http.jsonResponse(value, status) / http.redirect(url, status). The
 	// single-dict form above stays keyed.

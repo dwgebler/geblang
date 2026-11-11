@@ -1,0 +1,63 @@
+/**
+ * @title Built-in error classes in typed slots
+ * @summary A built-in error such as `RuntimeError` or `TimeoutError` satisfies
+ *          a parameter or variable typed with any of its built-in ancestors.
+ */
+import test;
+import builtin_error_donor as donor;
+
+class LocalError extends ValueError {
+    func LocalError(string m) { parent(m); }
+}
+
+func raw(any v): any { return v; }
+func asError(Error e): string { return e.message; }
+func asIO(IOError e): string { return e.message; }
+func asRuntime(RuntimeError e): string { return e.message; }
+
+func capture(callable f): any {
+    try {
+        f();
+    } catch (Error e) {
+        return e;
+    }
+    return null;
+}
+
+class BuiltinErrorTypesTest extends test.Test {
+    @test
+    func builtinErrorsMatchTheirAncestors(): void {
+        let rt = capture(func(): void { throw RuntimeError("r"); });
+        let tm = capture(func(): void { throw TimeoutError("t"); });
+        this.assertEquals("r", asError(raw(rt)));
+        this.assertEquals("t", asIO(raw(tm)));
+        this.assertEquals("t", asError(raw(tm)));
+    }
+
+    @test
+    func typedErrorVariablesAcceptSubclasses(): void {
+        ?Error last = null;
+        last = raw(capture(func(): void { throw RuntimeError("r"); }));
+        this.assertEquals("r", last.message);
+        last = raw(capture(func(): void { throw donor.AppError("a"); }));
+        this.assertEquals("a", last.message);
+    }
+
+    @test
+    func userSubclassesAcrossModules(): void {
+        this.assertEquals("a", asRuntime(raw(capture(func(): void { throw donor.AppError("a"); }))));
+        this.assertEquals("l", asError(raw(capture(func(): void { throw LocalError("l"); }))));
+    }
+
+    @test
+    func unrelatedErrorIsRejected(): void {
+        let threw = false;
+        try {
+            asRuntime(raw(capture(func(): void { throw LocalError("l"); })));
+        } catch (TypeError e) {
+            threw = true;
+            this.assertEquals("asRuntime expects RuntimeError for parameter 'e', got LocalError", e.message);
+        }
+        this.assertTrue(threw);
+    }
+}

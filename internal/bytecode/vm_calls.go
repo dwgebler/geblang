@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 )
 
 // tailCall replaces the top frame's function with a new one. Used by
@@ -42,7 +43,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	}
 	stackArgs := vm.stack[n-int(argc) : n]
 	if function.requiresParamValidation {
-		typeParams := function.typeParamSet
+		typeParams := function.matchTypeParams
 		inherited := vm.pendingTypeBindings
 		specs := function.paramTypeSpecs
 		for i := 0; i < paramCount; i++ {
@@ -459,7 +460,7 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	// Type validation, inline against VMValues. Skips the spec lookup
 	// when a typed-int param meets a SmallInt arg (the dominant case).
 	if function.requiresParamValidation {
-		typeParams := function.typeParamSet
+		typeParams := function.matchTypeParams
 		inherited := vm.pendingTypeBindings
 		if len(function.ParamNames) > 0 && function.ParamNames[0] == "this" && paramCount > 0 && stackArgs[0].Kind == runtime.VMKindBoxed && !function.isCompiledConstructor() {
 			if inst, ok := stackArgs[0].Boxed.(*runtime.Instance); ok {
@@ -576,6 +577,11 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 			return 0, err
 		}
 	}
+	if len(function.TypeParameters) > 0 && paramCount > 0 && len(function.ParamNames) > 0 && function.ParamNames[0] == "this" {
+		if instance, ok := stackArgs[0].ToValue().(*runtime.Instance); ok {
+			vm.inheritInstanceTypeBindings(instance)
+		}
+	}
 	if vm.forwardThis != nil {
 		vm.inheritInstanceTypeBindings(vm.forwardThis)
 	}
@@ -685,6 +691,11 @@ func (vm *VM) matchVMValueToTypeSpecWith(typeParams map[string]bool, inherited m
 			}
 			return vm.matchVMValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
 		}
+		if len(spec.args) > 0 {
+			if matched, substituted := vm.matchNestedBindingSpec(typeParams, inherited, value.ToValue(), spec); substituted {
+				return matched
+			}
+		}
 	}
 	return vm.matchVMValueToTypeSpec(typeParams, value, spec)
 }
@@ -693,16 +704,65 @@ func (vm *VM) matchVMValueToTypeSpecWith(typeParams map[string]bool, inherited m
 type frameMeta struct {
 	returnSpec    *vmTypeSpec
 	typeParams    map[string]bool
+	ownTypeParams map[string]bool
 	needsBindings bool
+}
+
+// Own parameters check against explicit or receiver bindings only; the frame contributes captured ones.
+func (frame *callFrame) returnCheckBindings() map[string]string {
+	if len(frame.typeBindings) == 0 {
+		return frame.returnBindings
+	}
+	return frame.mergedReturnBindings()
+}
+
+func (frame *callFrame) mergedReturnBindings() map[string]string {
+	captured := frame.typeBindings
+	own := frame.meta.ownTypeParams
+	if len(own) == 0 && len(frame.returnBindings) == 0 {
+		return captured
+	}
+	var merged map[string]string
+	for name, bound := range captured {
+		if own[strings.ToLower(name)] {
+			continue
+		}
+		if _, exists := frame.returnBindings[name]; exists {
+			continue
+		}
+		if merged == nil {
+			merged = make(map[string]string, len(frame.returnBindings)+len(captured))
+			for k, v := range frame.returnBindings {
+				merged[k] = v
+			}
+		}
+		merged[name] = bound
+	}
+	if merged == nil {
+		return frame.returnBindings
+	}
+	return merged
+}
+
+func specMentionsTypeParam(spec vmTypeSpec, params map[string]bool) bool {
+	if params[spec.baseLower] {
+		return true
+	}
+	for _, arg := range spec.args {
+		if specMentionsTypeParam(arg, params) {
+			return true
+		}
+	}
+	return false
 }
 
 func newFrameMeta(function FunctionInfo, spec func(string) vmTypeSpec) *frameMeta {
 	returnSpec := checkedReturnSpecFor(function, spec)
-	if returnSpec == nil && function.typeParamSet == nil {
+	if returnSpec == nil && function.matchTypeParams == nil {
 		return nil
 	}
-	meta := &frameMeta{returnSpec: returnSpec, typeParams: function.typeParamSet}
-	meta.needsBindings = returnSpec != nil && returnSpec.kind != vmTypeUnion && returnSpec.kind != vmTypeIntersection && function.typeParamSet[returnSpec.baseLower]
+	meta := &frameMeta{returnSpec: returnSpec, typeParams: function.matchTypeParams, ownTypeParams: function.typeParamSet}
+	meta.needsBindings = returnSpec != nil && specMentionsTypeParam(*returnSpec, function.matchTypeParams)
 	return meta
 }
 
@@ -961,7 +1021,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	}
 	if (validateTypes || len(receiverBindings) > 0) && function.requiresParamValidation {
 		// Variadic annotations describe each element, not the packed list.
-		typeParams := function.typeParamSet
+		typeParams := function.matchTypeParams
 		inherited := mergedTypeBindings(vm.pendingTypeBindings, receiverBindings)
 		for i, arg := range args {
 			if arg == nil || isPendingDefault(arg) || i >= len(function.ParamTypes) || function.ParamTypes[i] == "" {
@@ -1086,6 +1146,11 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 		}
 		if err := vm.checkTypeParamConstraints(instruction, function, typeBindings); err != nil {
 			return 0, err
+		}
+	}
+	if len(function.TypeParameters) > 0 && len(args) > 0 && len(function.ParamNames) > 0 && function.ParamNames[0] == "this" {
+		if instance, ok := args[0].(*runtime.Instance); ok {
+			vm.inheritInstanceTypeBindings(instance)
 		}
 	}
 	// If called with a forwarded receiver (e.g. via a callable decorator), inherit
@@ -1899,8 +1964,9 @@ func (vm *VM) wrapStatefulNativeArgs(module, function string, args []runtime.Val
 	}
 	share := serverShareHandler(module, function, args)
 	wrapped := make([]runtime.Value, len(args))
+	var seen visitedContainers
 	for i, arg := range args {
-		wrapped[i] = vm.wrapStatefulNativeValue(arg, serverHandlerArg(module, function, i) && !share)
+		wrapped[i] = vm.wrapStatefulNativeValue(arg, serverHandlerArg(module, function, i) && !share, &seen)
 	}
 	return wrapped
 }
@@ -1955,7 +2021,20 @@ func serverHandlerArg(module, function string, argIndex int) bool {
 	return false
 }
 
-func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtime.Value {
+type visitedContainers struct{ ids map[unsafe.Pointer]bool }
+
+func (v *visitedContainers) first(id unsafe.Pointer) bool {
+	if v.ids[id] {
+		return false
+	}
+	if v.ids == nil {
+		v.ids = map[unsafe.Pointer]bool{}
+	}
+	v.ids[id] = true
+	return true
+}
+
+func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool, seen *visitedContainers) runtime.Value {
 	switch callable := value.(type) {
 	case runtime.BytecodeFunction:
 		// The wrapped Native closure can be invoked later from another
@@ -2011,7 +2090,7 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 		}
 		callable.Overloads = append([]runtime.Function(nil), callable.Overloads...)
 		for i, bound := range callable.Callables {
-			bridged := vm.wrapStatefulNativeValue(bound, isolated).(runtime.Function)
+			bridged := vm.wrapStatefulNativeValue(bound, isolated, seen).(runtime.Function)
 			callable.Overloads[i].Native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				ordered, err := bindBoundArguments(callable, i, args, nil)
 				if err != nil {
@@ -2037,17 +2116,25 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 		return callable
 
 	case *runtime.List:
+		id, _ := runtime.ContainerIdentity(callable)
+		if !seen.first(id) {
+			return value
+		}
 		// Share the list (reference semantics like the evaluator); bridge nested closures in place.
 		for i := range callable.Elements {
 			switch callable.Elements[i].(type) {
 			case runtime.BytecodeFunction, runtime.BytecodeClosure, runtime.OverloadedFunction:
-				callable.Elements[i] = vm.wrapStatefulNativeValue(callable.Elements[i], false)
+				callable.Elements[i] = vm.wrapStatefulNativeValue(callable.Elements[i], false, seen)
 			case *runtime.List, runtime.Dict:
-				vm.wrapStatefulNativeValue(callable.Elements[i], false)
+				vm.wrapStatefulNativeValue(callable.Elements[i], false, seen)
 			}
 		}
 		return callable
 	case runtime.Dict:
+		id, _ := runtime.ContainerIdentity(callable)
+		if !seen.first(id) {
+			return value
+		}
 		// Share the dict; bridge nested closures in place so callee mutations stay visible.
 		var rewriteKeys []string
 		var rewriteVals []runtime.Value
@@ -2055,9 +2142,9 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 			switch entry.Value.(type) {
 			case runtime.BytecodeFunction, runtime.BytecodeClosure, runtime.OverloadedFunction:
 				rewriteKeys = append(rewriteKeys, key)
-				rewriteVals = append(rewriteVals, vm.wrapStatefulNativeValue(entry.Value, false))
+				rewriteVals = append(rewriteVals, vm.wrapStatefulNativeValue(entry.Value, false, seen))
 			case *runtime.List, runtime.Dict:
-				vm.wrapStatefulNativeValue(entry.Value, false)
+				vm.wrapStatefulNativeValue(entry.Value, false, seen)
 			}
 			return true
 		})
@@ -2437,15 +2524,15 @@ func (vm *VM) callCallableMode(fn runtime.Value, args []runtime.Value, allowInli
 }
 
 func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, allowInline bool, reentryHost *VM) (runtime.Value, error) {
+	if len(vm.pendingTypeBindings) > 0 {
+		fn = bindCallableBindings(fn, vm.pendingTypeBindings)
+		vm.pendingTypeBindings = nil
+	}
 	return vm.callCallableModeHostedSync(fn, args, allowInline, reentryHost, vm.syncMode)
 }
 
 // A bridged callback chooses its own mode without reading its running parent's state.
 func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value, allowInline bool, reentryHost *VM, syncMode bool) (runtime.Value, error) {
-	if len(vm.pendingTypeBindings) > 0 {
-		fn = bindCallableBindings(fn, vm.pendingTypeBindings)
-		vm.pendingTypeBindings = nil
-	}
 	switch f := fn.(type) {
 	case runtime.Function:
 		if f.BridgeInvoke != nil {
@@ -3749,7 +3836,9 @@ func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
 
 func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
 	switch instruction.Op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpCallStaticMethodSpread, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpCallSpread, OpConstructClassSpread, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpDeferMethodCallSpread, OpDeferNativeCallSpread, OpDeferFuncCallSpread, OpDeferCallableCallSpread, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt, OpBuildDictConstKeys, OpPrimMethod:
+	case OpCast:
+		instruction.Operands[0] += int64(constantShift)
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpCallStaticMethodSpread, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpCallSpread, OpConstructClassSpread, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpDeferMethodCallSpread, OpDeferNativeCallSpread, OpDeferFuncCallSpread, OpDeferCallableCallSpread, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt, OpBuildDictConstKeys, OpPrimMethod, OpLoadInterface, OpPrimMethodGlobal, OpPrimMethodLocal:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -3781,8 +3870,12 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 
 func isConstantOperand(op Op, index int) bool {
 	switch op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpGetField, OpSetField, OpMethodCall, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst, OpLoadModuleValue:
+	case OpCast:
 		return index == 0
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpGetField, OpSetField, OpMethodCall, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpAddStringConst, OpLoadModuleValue, OpLoadInterface:
+		return index == 0
+	case OpTypeAssert:
+		return index <= 1
 	case OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		return index == 1
 	case OpNativeCallNamed:
@@ -3795,6 +3888,8 @@ func isConstantOperand(op Op, index int) bool {
 		return index >= 1
 	case OpPrimMethod:
 		return index == 0
+	case OpPrimMethodGlobal, OpPrimMethodLocal:
+		return index == 1
 	case OpDeferNativeCallNamed:
 		return index == 0 || index >= 2
 	case OpDeferMethodCallNamed:

@@ -4,6 +4,10 @@
 
 ### Performance
 
+- Dictionaries avoid an extra allocation when passed, returned or stored
+  inside another collection. Typed and frozen views retain their existing
+  sharing behavior.
+
 - Dict literals whose keys are all string literals (`{"a": i, "b": i + 1}`)
   build about 25% faster and allocate about half as many objects: keys are
   prepared at compile time and small dicts take one allocation instead of
@@ -13,13 +17,100 @@
   with no arguments on those types no longer allocate, and a cast to the
   type a value already has (`x as int` on an int) skips the conversion. A
   loop of such calls runs about twice as fast.
+- On the bytecode VM, `length()`, `isEmpty()`, `get(key)` and `contains(x)`
+  called on a variable read the receiver directly instead of pushing it
+  first: about 8% faster on a loop of such calls.
+- Repeated casts to primitive types run faster on the bytecode VM while
+  preserving aliases and generic bindings.
 - The tree-walking evaluator does integer arithmetic, `++` and `--` without
   allocating while values fit in 64 bits, and skips re-resolving a cast's
   type when the value already has it: about twice as fast on method-heavy
   loops, 30% on dict literals and 20 to 30% on integer loops.
 - Bytecode caches from earlier versions are recompiled on first run.
 
+- Evaluator local scopes skip mutex operations until captured, reducing
+  method-call, dictionary-literal and numeric-loop overhead. Captured scopes
+  and shared module/session state retain synchronization.
+
 ### Fixes
+
+- Closures returning a captured generic type now use that binding on the VM,
+  including closures returned by inherited generic methods. Incorrect
+  return values still raise `TypeError`.
+- Named nested functions retain enclosing generic bindings on the evaluator.
+  Generic function bodies also keep their type parameters during analysis.
+- A captured generic type inside a collection or union in a closure's
+  signature (`func(): list<T>`, `func(list<T> xs)`, `dict<U, T>`, `T[]`,
+  `list<T> | string`) now uses the enclosing binding on both runtimes;
+  valid values were rejected before.
+- Function literal parameters now check collection element types on the
+  bytecode VM (`func(list<int> xs)` given `["x"]` raises `TypeError`), as
+  named functions and the tree-walking evaluator already did.
+- A generic function nested inside an imported module's function no longer
+  rejects arguments for its own type parameters on the bytecode VM.
+- On the tree-walking evaluator, a function declared `func f<T>(T c): T[]`
+  called with an explicit binding (`f<int>(1)`) no longer rejects its
+  return value.
+- A bound type parameter is now checked at every depth on both runtimes:
+  `func wrap<T>(any x): list<T>` called as `wrap<int>("x")`, or
+  `Box<int>.items()` returning `list<T>`, raises `TypeError`. Element types of
+  generic collections were previously unchecked. Bindings inferred only from
+  arguments are still not enforced.
+- `int n = id(5);` and `return id(5);` from a function returning `int` no
+  longer fail `geblang check` and startup with `no matching overload` when
+  `id` infers its type argument. Explicit type arguments that name a common
+  parent (`both<Animal>(dog, cat)`) are no longer reported as conflicting, and
+  an `any` argument in a typed context is left to the runtime check.
+- Function and class values print the same on both runtimes: `<func name>`,
+  `<func>` for a function literal and `<class Name>`. The bytecode VM printed
+  `<closure name>`, `<bytecode class module.Name>` and
+  `<overloaded func name>` for a single function from another module.
+- A return `TypeError` from a method called through a bound method value
+  names `Class.method` on the tree-walking evaluator, as on the VM.
+- An interface can be used as a value on the bytecode VM (`let s = Shape;`),
+  as on the tree-walking evaluator; interface values compare equal to the same
+  interface across modules.
+- On the bytecode VM, a function name used as a value must match the declared
+  case: `Helper` no longer resolves to a function `helper`.
+- Parameter `TypeError` messages and `reflect.parameters` types spell the
+  declared type the same way on both runtimes: aliases resolved, `int[]` kept
+  as written and `dict<string, int>` with its spacing. A union parameter no
+  longer reports an element detail on the bytecode VM.
+- Typed variables are checked at runtime when the compiler cannot prove the
+  value's type: `string s = raw(5)` where `raw` returns `any` raises
+  `TypeError` on both runtimes, as do reassignment (`s = raw(5)`, `i += x`),
+  reassigning a typed parameter and typed loop variables
+  (`for (string n in raw([1]))`). Previously only collection declarations
+  were checked. Values the compiler can prove are not re-checked.
+- A built-in error such as `RuntimeError` or `TimeoutError` is accepted by a
+  parameter or variable typed with a built-in ancestor (`Error`, `IOError`) on
+  both runtimes. It was rejected, which also broke `async.retry` and
+  `async.any` once typed variables were checked.
+- Reassigning an integer literal to a `float` or `decimal` variable
+  (`f = 5`) stores a `float` or `decimal`, as the declaration form does; it
+  stored an `int` before.
+- A declaration using a type parameter (`list<T> y = [x]` inside a generic
+  function or method) no longer raises `TypeError` for valid values. Type
+  parameters in variable declarations are not checked at runtime.
+- A closure or nested function inside a generic function or method no longer
+  rejects valid values when the enclosing type parameter is unbound, in
+  returns, parameters and declarations. Bound type parameters are still
+  enforced.
+- A failed `int[]` declaration names `int[]` on the bytecode VM, as on the
+  tree-walking evaluator; it said `list<int>`.
+- An expression inside `${...}` that fails to parse is reported as a
+  compile-time error on both runtimes. It previously failed at runtime,
+  printed a partial value (`${x )}`) or crashed the bytecode compiler (an
+  unparenthesised function literal, whose return-type `:` starts a format
+  spec).
+
+- Self-referential lists and dictionaries passed to stateful native
+  functions, including `store.Store.set`, no longer overflow the VM's stack.
+  Shared entries and callbacks nested inside cycles remain usable.
+- Socket and task callbacks no longer read or consume the parent VM's
+  pending generic bindings while it constructs another value.
+- Explicit generic calls such as `identity<int>(17)` are checked using the
+  bound signature when a declaration or callback expects an `int` result.
 
 - Calling a string, list, dict, set or bytes method with the wrong number of
   arguments gave a message without the receiver type on the bytecode VM

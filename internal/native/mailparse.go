@@ -321,5 +321,5 @@ func mailDict(values map[string]runtime.Value) runtime.Dict {
 		name := runtime.String{Value: key}
 		entries[DictKey(name)] = runtime.DictEntry{Key: name, Value: value}
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }

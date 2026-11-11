@@ -135,7 +135,7 @@ func LeafValuesEqual(left Value, right Value) (equal bool, handled bool) {
 		return false, true
 	case *Interface:
 		rightValue, ok := right.(*Interface)
-		return ok && leftValue == rightValue, true
+		return ok && sameInterface(leftValue, rightValue), true
 	case *Complex:
 		rightValue, ok := right.(*Complex)
 		return ok && leftValue.C == rightValue.C, true
@@ -143,7 +143,7 @@ func LeafValuesEqual(left Value, right Value) (equal bool, handled bool) {
 	return false, false
 }
 
-// nativeObjectsEqual compares native handles without panicking on an uncomparable payload (e.g. the serveFile marker's Dict holds a map).
+// Collection payloads need structural equality even when their handles are comparable.
 func nativeObjectsEqual(left NativeObject, right NativeObject) bool {
 	if left.Kind != right.Kind || left.ID != right.ID {
 		return false
@@ -151,8 +151,32 @@ func nativeObjectsEqual(left NativeObject, right NativeObject) bool {
 	if left.Payload == nil || right.Payload == nil {
 		return left.Payload == nil && right.Payload == nil
 	}
+	if l, dict := left.Payload.(Dict); dict {
+		r, ok := right.Payload.(Dict)
+		if !ok {
+			return false
+		}
+		if l.dictHeader == nil {
+			l = Dict{&dictHeader{}}
+		}
+		if r.dictHeader == nil {
+			r = Dict{&dictHeader{}}
+		}
+		return reflect.DeepEqual(l, r)
+	}
 	if reflect.TypeOf(left.Payload).Comparable() && reflect.TypeOf(right.Payload).Comparable() {
 		return left.Payload == right.Payload
 	}
 	return reflect.DeepEqual(left.Payload, right.Payload)
+}
+
+// sameInterface compares declarations, since the VM materialises an interface value per load.
+func sameInterface(left, right *Interface) bool {
+	if left == right {
+		return true
+	}
+	if left == nil || right == nil {
+		return false
+	}
+	return left.Module == right.Module && bareTypeName(left.Name) == bareTypeName(right.Name)
 }

@@ -121,6 +121,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		if declType == "any" && stmt.Type == nil && stmt.Value != nil {
 			declType = c.expressionStaticType(stmt.Value)
 		}
+		declRef := c.resolvedDeclarationType(stmt.Type)
 		if stmt.Value == nil {
 			c.emitConstant(runtime.Null{}, stmt.Token.Line, stmt.Token.Column)
 		} else {
@@ -135,19 +136,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 			if err := c.compileExpressionWithExpected(value, expected); err != nil {
 				return err
 			}
-		}
-		// For generic built-in collection declarations (e.g. list<int>, int[]), emit OpTypeAssert
-		// to enforce element types at runtime.
-		if declRef := c.resolvedDeclarationType(stmt.Type); declRef != nil && declRef.Operator == "" && stmt.Value != nil {
-			baseName := strings.ToLower(declRef.Name)
-			isListAlias := declRef.ListAlias && len(declRef.Arguments) == 0
-			isGenericCollection := len(declRef.Arguments) > 0 && (baseName == "list" || baseName == "set" || baseName == "dict")
-			if isListAlias || isGenericCollection {
-				fullTypeName := c.bytecodeTypeNameForParam(declRef, nil)
-				typeStrIdx := int64(len(c.chunk.Constants))
-				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: fullTypeName})
-				c.emitAt(OpTypeAssert, stmt.Token.Line, stmt.Token.Column, typeStrIdx)
-			}
+			c.emitTypedVariableCheck(declRef, value, stmt.Token.Line, stmt.Token.Column)
 		}
 		// When the declared type has explicit type arguments (e.g. Box<int>), emit
 		// OpSetTypeBindings so the constructed instance carries the declared bindings
@@ -185,10 +174,11 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		if c.inGlobalScope() {
 			slot := c.globalSlot(stmt.Name.Value)
 			c.globalTypes[stmt.Name.Value] = declType
+			c.globalDeclared[stmt.Name.Value] = declRef
 			c.emitAt(OpDefineGlobal, stmt.Token.Line, stmt.Token.Column, slot)
 			return nil
 		}
-		slot := c.defineLocalWithType(stmt.Name.Value, declType)
+		slot := c.defineTypedLocal(stmt.Name.Value, declType, declRef)
 		c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, slot)
 		return nil
 	case *ast.DestructuringStatement:
@@ -555,24 +545,34 @@ func (c *Compiler) compileForInStatement(stmt *ast.ForStatement) error {
 	iterSlot := c.allocateLocal()
 	c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, iterSlot)
 
+	loopRef := c.resolvedDeclarationType(stmt.VarType)
 	targetSlots := make([]int64, 0, len(names))
 	for _, name := range names {
 		c.emitConstant(runtime.Null{}, stmt.Token.Line, stmt.Token.Column)
-		slot := c.defineLocal(name.Value)
+		slot := c.defineTypedLocal(name.Value, c.loopVarStaticType(stmt.VarType), loopRef)
 		c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, slot)
 		targetSlots = append(targetSlots, slot)
 	}
+	elementProven := len(names) == 1 && loopRef != nil && c.provenLoopElementType(stmt.Iterable) != "" && c.staticTypeAssignable(c.bytecodeTypeNameForParam(loopRef, nil), c.provenLoopElementType(stmt.Iterable))
 
 	loopStart := len(c.chunk.Instructions)
 	nextJump := c.emitJump(OpIterNext, stmt.Token.Line, stmt.Token.Column)
 	c.chunk.Instructions[nextJump].Operands = append(c.chunk.Instructions[nextJump].Operands, iterSlot, valueSlot)
 	if len(targetSlots) == 1 {
 		c.emitAt(OpGetLocal, stmt.Token.Line, stmt.Token.Column, valueSlot)
+		c.emitTypedAssert(loopRef, elementProven, stmt.Token.Line, stmt.Token.Column)
 		c.emitAt(OpSetLocal, stmt.Token.Line, stmt.Token.Column, targetSlots[0])
 		c.emitAt(OpPop, stmt.Token.Line, stmt.Token.Column)
 	} else {
 		operands := append([]int64{valueSlot}, targetSlots...)
 		c.emitAt(OpUnpackList, stmt.Token.Line, stmt.Token.Column, operands...)
+		if loopRef != nil {
+			for _, slot := range targetSlots {
+				c.emitAt(OpGetLocal, stmt.Token.Line, stmt.Token.Column, slot)
+				c.emitTypedAssert(loopRef, false, stmt.Token.Line, stmt.Token.Column)
+				c.emitAt(OpPop, stmt.Token.Line, stmt.Token.Column)
+			}
+		}
 	}
 
 	c.loops = append(c.loops, &loopContext{continueTarget: loopStart, iterSlot: iterSlot, hasIterSlot: true, finalizerDepth: len(c.finalizers)})
@@ -624,6 +624,16 @@ func (c *Compiler) currentClassTypeParamConstraintExprs() []string {
 	return c.chunk.Classes[classIndex].TypeParamConstraintExprs
 }
 
+func (c *Compiler) enclosingTypeParameters() []string {
+	var names []string
+	if idx := c.currentFuncIndex; idx >= 0 && int(idx) < len(c.chunk.Functions) {
+		fn := c.chunk.Functions[idx]
+		names = append(names, fn.TypeParameters...)
+		names = append(names, fn.OuterTypeParameters...)
+	}
+	return append(names, c.currentClassTypeParams()...)
+}
+
 func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name string, receiverName string, prologue func() error) error {
 	/* Static methods compile through the same body pipeline as regular
 	 * methods - they just skip the implicit `this` receiver. The
@@ -640,8 +650,9 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		index = c.nextFunctionIndex(name)
 	}
 	var captures []struct {
-		name string
-		slot int64
+		name     string
+		slot     int64
+		declared *ast.TypeRef
 	}
 	var callableSlot int64
 	if nestedStatement {
@@ -660,9 +671,10 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		for free := range scanner.free {
 			if b, ok := c.resolveName(free); ok && b.kind == "local" {
 				captures = append(captures, struct {
-					name string
-					slot int64
-				}{free, b.slot})
+					name     string
+					slot     int64
+					declared *ast.TypeRef
+				}{free, b.slot, b.declared})
 			}
 		}
 		sort.Slice(captures, func(i, j int) bool { return captures[i].name < captures[j].name })
@@ -680,7 +692,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	paramDecorators := make([][]runtime.DecoratorMetadata, 0, len(stmt.Parameters))
 	defaultConstants := make([]int64, 0, len(stmt.Parameters))
 	for _, capture := range captures {
-		paramSlots = append(paramSlots, c.defineLocalWithType(capture.name, ""))
+		paramSlots = append(paramSlots, c.defineTypedLocal(capture.name, "", capture.declared))
 		paramNames = append(paramNames, capture.name)
 		paramDisplayNames = append(paramDisplayNames, capture.name)
 		paramTypes = append(paramTypes, "")
@@ -711,13 +723,13 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		paramNames = append(paramNames, strings.ToLower(param.Name.Value))
 		paramDisplayNames = append(paramDisplayNames, param.Name.Value)
 		paramType := c.bytecodeTypeNameForParam(param.Type, allTypeParams)
-		paramSlot := c.defineLocalWithType(param.Name.Value, c.bytecodeTypeName(param.Type))
+		paramSlot := c.defineTypedLocal(param.Name.Value, c.bytecodeTypeName(param.Type), c.parameterDeclaredType(param))
 		paramSlots = append(paramSlots, paramSlot)
 		if param.Const {
 			constSlots = append(constSlots, paramSlot)
 		}
 		paramTypes = append(paramTypes, paramType)
-		paramDisplayTypes = append(paramDisplayTypes, declaredTypeName(param.Type))
+		paramDisplayTypes = append(paramDisplayTypes, c.declaredTypeName(param.Type))
 		paramDecs, err := c.decoratorsMetadata(param.Decorators, "parameter", 0)
 		if err != nil {
 			c.popFunctionLocals()
@@ -766,6 +778,9 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		c.chunk.Functions[index].Variadic = true
 	}
 	c.chunk.Functions[index].Async = stmt.Async
+	if nestedStatement {
+		c.chunk.Functions[index].OuterTypeParameters = c.enclosingTypeParameters()
+	}
 	c.inFunc++
 	c.returnTypes = append(c.returnTypes, c.chunk.Functions[index].ReturnType)
 	// Isolate finalizers so a `return` here emits only this function's, not an

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"geblang/internal/ast"
 )
@@ -17,6 +18,8 @@ type Binding struct {
 	// is "module.symbol", so re-importing the same symbol is idempotent.
 	Imported     bool
 	ImportSource string
+	// Type is the declared annotation; nil for an untyped binding.
+	Type *ast.TypeRef
 }
 
 // Environment is the evaluator's lexical scope. The mutex guards
@@ -34,6 +37,7 @@ type Environment struct {
 	mu           sync.RWMutex
 	inline       [4]envEntry
 	inlineCount  uint8
+	local        atomic.Bool
 	store        map[string]Binding
 	typeBindings map[string]string
 	typeAliases  map[string]*ast.TypeRef
@@ -45,10 +49,60 @@ func NewEnvironment() *Environment {
 }
 
 func NewEnclosedEnvironment(outer *Environment) *Environment {
-	return &Environment{outer: outer}
+	return &Environment{outer: outer.MarkShared()}
 }
 
-// lookupLocked finds the binding in this scope only. Callers hold mu.
+func NewLocalEnvironment() *Environment {
+	env := &Environment{}
+	env.local.Store(true)
+	return env
+}
+
+func NewLocalEnclosedEnvironment(outer *Environment) *Environment {
+	env := NewLocalEnvironment()
+	env.outer = outer
+	return env
+}
+
+// The owner publishes the entire lexical chain before another goroutine can use it.
+func (e *Environment) MarkShared() *Environment {
+	for env := e; env != nil; env = env.outer {
+		if !env.local.Swap(false) {
+			break
+		}
+	}
+	return e
+}
+
+func (e *Environment) readLock() bool {
+	if e.local.Load() {
+		return false
+	}
+	e.mu.RLock()
+	return true
+}
+
+func (e *Environment) readUnlock(locked bool) {
+	if locked {
+		e.mu.RUnlock()
+	}
+}
+
+func (e *Environment) writeLock() bool {
+	if e.local.Load() {
+		return false
+	}
+	e.mu.Lock()
+	return true
+}
+
+func (e *Environment) writeUnlock(locked bool) {
+	if locked {
+		e.mu.Unlock()
+	}
+}
+
+// Callers synchronize shared scopes or own the scope exclusively.
 func (e *Environment) lookupLocked(name string) (Binding, bool) {
 	for i := uint8(0); i < e.inlineCount; i++ {
 		if e.inline[i].name == name {
@@ -62,8 +116,6 @@ func (e *Environment) lookupLocked(name string) (Binding, bool) {
 	return Binding{}, false
 }
 
-// setLocked inserts or overwrites the binding in this scope only.
-// Callers hold mu.
 func (e *Environment) setLocked(name string, b Binding) {
 	for i := uint8(0); i < e.inlineCount; i++ {
 		if e.inline[i].name == name {
@@ -88,8 +140,6 @@ func (e *Environment) setLocked(name string, b Binding) {
 	e.store[name] = b
 }
 
-// deleteLocked removes the binding from this scope only, reporting
-// whether it existed. Callers hold mu.
 func (e *Environment) deleteLocked(name string) bool {
 	for i := uint8(0); i < e.inlineCount; i++ {
 		if e.inline[i].name == name {
@@ -109,8 +159,7 @@ func (e *Environment) deleteLocked(name string) bool {
 	return false
 }
 
-// ForEachBinding visits every binding declared directly in this scope
-// under the read lock. Iteration order is unspecified.
+// The visitor may publish the scope before iteration completes.
 func (e *Environment) ForEachBinding(visit func(name string, b Binding)) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -127,8 +176,8 @@ func (e *Environment) bindingCountLocked() int {
 }
 
 func (e *Environment) Define(name string, value Value, constant bool) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	locked := e.writeLock()
+	defer e.writeUnlock(locked)
 	if _, exists := e.lookupLocked(name); exists {
 		return fmt.Errorf("%q is already declared in this scope", name)
 	}
@@ -139,11 +188,40 @@ func (e *Environment) Define(name string, value Value, constant bool) error {
 	return nil
 }
 
+// DefineTyped binds a name carrying its declared type for later reassignment checks.
+func (e *Environment) DefineTyped(name string, value Value, constant bool, typ *ast.TypeRef) error {
+	locked := e.writeLock()
+	defer e.writeUnlock(locked)
+	if _, exists := e.lookupLocked(name); exists {
+		return fmt.Errorf("%q is already declared in this scope", name)
+	}
+	if constant {
+		value = ShallowFreeze(value)
+	}
+	e.setLocked(name, Binding{Value: value, Constant: constant, Type: typ})
+	return nil
+}
+
+// DeclaredType returns the declared type of the nearest binding for name.
+func (e *Environment) DeclaredType(name string) *ast.TypeRef {
+	for env := e; env != nil; {
+		locked := env.readLock()
+		binding, ok := env.lookupLocked(name)
+		outer := env.outer
+		env.readUnlock(locked)
+		if ok {
+			return binding.Type
+		}
+		env = outer
+	}
+	return nil
+}
+
 // DefineImported binds a from-imported name. Re-importing the same symbol is
 // idempotent; any other existing binding (or a different import) is a clash.
 func (e *Environment) DefineImported(name string, value Value, source string) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	locked := e.writeLock()
+	defer e.writeUnlock(locked)
 	if existing, exists := e.lookupLocked(name); exists && !(existing.Imported && existing.ImportSource == source) {
 		return fmt.Errorf("%q is already declared in this scope", name)
 	}
@@ -152,8 +230,8 @@ func (e *Environment) DefineImported(name string, value Value, source string) er
 }
 
 func (e *Environment) DefineFunction(name string, fn Function) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	locked := e.writeLock()
+	defer e.writeUnlock(locked)
 	if binding, exists := e.lookupLocked(name); exists {
 		if binding.Imported {
 			return fmt.Errorf("%q is already declared in this scope", name)
@@ -175,19 +253,19 @@ func (e *Environment) DefineFunction(name string, fn Function) error {
 }
 
 func (e *Environment) Assign(name string, value Value) error {
-	e.mu.Lock()
+	locked := e.writeLock()
 	if binding, exists := e.lookupLocked(name); exists {
 		if binding.Constant {
-			e.mu.Unlock()
+			e.writeUnlock(locked)
 			return fmt.Errorf("cannot assign to constant %q", name)
 		}
 		binding.Value = value
 		e.setLocked(name, binding)
-		e.mu.Unlock()
+		e.writeUnlock(locked)
 		return nil
 	}
 	outer := e.outer
-	e.mu.Unlock()
+	e.writeUnlock(locked)
 	if outer != nil {
 		return outer.Assign(name, value)
 	}
@@ -195,13 +273,13 @@ func (e *Environment) Assign(name string, value Value) error {
 }
 
 func (e *Environment) Get(name string) (Value, bool) {
-	e.mu.RLock()
+	locked := e.readLock()
 	if binding, exists := e.lookupLocked(name); exists {
-		e.mu.RUnlock()
+		e.readUnlock(locked)
 		return binding.Value, true
 	}
 	outer := e.outer
-	e.mu.RUnlock()
+	e.readUnlock(locked)
 	if outer != nil {
 		return outer.Get(name)
 	}
@@ -213,16 +291,16 @@ func (e *Environment) Get(name string) (Value, bool) {
 // Used by `del x` to retire a binding after its destructor has
 // fired.
 func (e *Environment) Delete(name string) bool {
-	e.mu.Lock()
+	locked := e.writeLock()
 	if e.deleteLocked(name) {
 		if e.typeBindings != nil {
 			delete(e.typeBindings, name)
 		}
-		e.mu.Unlock()
+		e.writeUnlock(locked)
 		return true
 	}
 	outer := e.outer
-	e.mu.Unlock()
+	e.writeUnlock(locked)
 	if outer != nil {
 		return outer.Delete(name)
 	}
@@ -231,8 +309,8 @@ func (e *Environment) Delete(name string) bool {
 
 // DefineTypeAlias binds a `type` alias in this scope; names are case-insensitive.
 func (e *Environment) DefineTypeAlias(name string, target *ast.TypeRef) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	locked := e.writeLock()
+	defer e.writeUnlock(locked)
 	if e.typeAliases == nil {
 		e.typeAliases = map[string]*ast.TypeRef{}
 	}
@@ -243,10 +321,10 @@ func (e *Environment) DefineTypeAlias(name string, target *ast.TypeRef) {
 func (e *Environment) GetTypeAlias(name string) (*ast.TypeRef, bool) {
 	key := strings.ToLower(name)
 	for env := e; env != nil; {
-		env.mu.RLock()
+		locked := env.readLock()
 		target, ok := env.typeAliases[key]
 		outer := env.outer
-		env.mu.RUnlock()
+		env.readUnlock(locked)
 		if ok {
 			return target, true
 		}
@@ -256,8 +334,8 @@ func (e *Environment) GetTypeAlias(name string) (*ast.TypeRef, bool) {
 }
 
 func (e *Environment) DefineTypeBinding(name, typeName string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	locked := e.writeLock()
+	defer e.writeUnlock(locked)
 	if e.typeBindings == nil {
 		e.typeBindings = map[string]string{}
 	}
@@ -270,15 +348,15 @@ func (e *Environment) GetTypeBinding(name string) (string, bool) {
 	if e == nil {
 		return "", false
 	}
-	e.mu.RLock()
+	locked := e.readLock()
 	if e.typeBindings != nil {
 		if t, ok := e.typeBindings[name]; ok {
-			e.mu.RUnlock()
+			e.readUnlock(locked)
 			return t, true
 		}
 	}
 	outer := e.outer
-	e.mu.RUnlock()
+	e.readUnlock(locked)
 	if outer != nil {
 		return outer.GetTypeBinding(name)
 	}
@@ -295,7 +373,7 @@ func (e *Environment) TypeBindingNames() []string {
 	seen := map[string]struct{}{}
 	var names []string
 	for env := e; env != nil; env = env.outer {
-		env.mu.RLock()
+		locked := env.readLock()
 		for name := range env.typeBindings {
 			if _, dup := seen[name]; dup {
 				continue
@@ -303,14 +381,14 @@ func (e *Environment) TypeBindingNames() []string {
 			seen[name] = struct{}{}
 			names = append(names, name)
 		}
-		env.mu.RUnlock()
+		env.readUnlock(locked)
 	}
 	return names
 }
 
 func (e *Environment) Names() []string {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	locked := e.readLock()
+	defer e.readUnlock(locked)
 	names := make([]string, 0, e.bindingCountLocked())
 	for i := uint8(0); i < e.inlineCount; i++ {
 		names = append(names, e.inline[i].name)
@@ -326,7 +404,7 @@ func (e *Environment) VisibleNames() []string {
 	seen := map[string]bool{}
 	var names []string
 	for env := e; env != nil; env = env.outer {
-		env.mu.RLock()
+		locked := env.readLock()
 		for i := uint8(0); i < env.inlineCount; i++ {
 			name := env.inline[i].name
 			if seen[name] {
@@ -342,7 +420,7 @@ func (e *Environment) VisibleNames() []string {
 			seen[name] = true
 			names = append(names, name)
 		}
-		env.mu.RUnlock()
+		env.readUnlock(locked)
 	}
 	sort.Strings(names)
 	return names

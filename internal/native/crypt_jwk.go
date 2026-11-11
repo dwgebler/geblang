@@ -68,9 +68,9 @@ func registerCryptJWK(r *Registry) {
 			}
 		}
 		keysKey := runtime.String{Value: "keys"}
-		return runtime.Dict{Entries: map[string]runtime.DictEntry{
+		return runtime.DictFromEntries(map[string]runtime.DictEntry{
 			DictKey(keysKey): {Key: keysKey, Value: &runtime.List{Elements: keys}},
-		}}, nil
+		}, nil), nil
 	})
 }
 
@@ -157,7 +157,7 @@ func jwkFromPEM(pemStr string, opts runtime.Dict, label string) (runtime.Dict, e
 	for _, entry := range members {
 		entries[DictKey(entry.Key)] = entry
 	}
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func jwkCurveName(curve elliptic.Curve) (string, string, error) {

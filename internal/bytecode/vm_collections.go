@@ -772,7 +772,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			existing.Value = &runtime.List{Elements: append(existing.Value.(*runtime.List).Elements, el)}
 			entries[dk] = existing
 		}
-		return runtime.Dict{Entries: entries}, true, nil
+		return runtime.DictFromEntries(entries, nil), true, nil
 	case "chunk":
 		if len(args) != 1 {
 			return nil, true, fmt.Errorf("list.chunk expects one argument (size)")
@@ -1430,7 +1430,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		for _, c := range counts {
 			entries[native.DictKey(c.value)] = runtime.DictEntry{Key: c.value, Value: runtime.NewInt64(int64(c.count))}
 		}
-		return runtime.Dict{Entries: entries}, true, nil
+		return runtime.DictFromEntries(entries, nil), true, nil
 	case "mode":
 		if len(args) != 0 {
 			return nil, true, fmt.Errorf("list.mode expects no arguments")

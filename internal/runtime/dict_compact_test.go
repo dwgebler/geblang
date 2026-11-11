@@ -45,7 +45,7 @@ func TestDictionaryAliasesPreserveOrderAndKeyTypesThroughGrowth(t *testing.T) {
 }
 
 func TestDictionaryKeyTypeTrackingHandlesReplacementAndLegacyStorage(t *testing.T) {
-	for _, value := range []Dict{NewDictHint(1), {Entries: map[string]DictEntry{}}} {
+	for _, value := range []Dict{NewDictHint(1), DictFromEntries(map[string]DictEntry{}, nil)} {
 		value.PutEntry("key", DictEntry{Key: NewInt64(1), Value: Null{}})
 		if value.HasOnlyStringKeys() {
 			t.Fatal("non-string key accepted")

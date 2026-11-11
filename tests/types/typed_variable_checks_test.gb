@@ -1,0 +1,100 @@
+/**
+ * @title Runtime checks on typed variables
+ * @summary A value the compiler cannot prove (one arriving through `any`)
+ *          is checked against a typed variable's declared type when it is
+ *          declared, reassigned, or bound as a typed loop variable.
+ */
+import test;
+import typed_vars_donor as donor;
+
+func raw(any x): any { return x; }
+
+interface Named { func name(): string; }
+class Dog implements Named { func Dog() {} func name(): string { return "d"; } }
+class Puppy extends Dog { func Puppy() { parent(); } }
+class Child extends donor.Base { func Child() { parent(); } }
+
+func typedParam(int x): int {
+    x = raw("s");
+    return x;
+}
+
+class TypedVariableChecksTest extends test.Test {
+    func rejects(callable f): string {
+        try {
+            f();
+        } catch (TypeError e) {
+            return e.message;
+        }
+        return "accepted";
+    }
+
+    @test
+    func declarationRejectsMismatch(): void {
+        this.assertEquals("type error: cannot assign int to string", this.rejects(func(): void { string s = raw(5); }));
+        this.assertEquals("type error: cannot assign int to string", this.rejects(func(): void { string s = donor.ident(5); }));
+        this.assertEquals("type error: cannot assign int to float", this.rejects(func(): void { float f = raw(5); }));
+        this.assertEquals("type error: cannot assign null to string", this.rejects(func(): void { string s = raw(null); }));
+    }
+
+    @test
+    func declarationAcceptsMatchingValues(): void {
+        string s = raw("ok");
+        ?string n = raw(null);
+        Named named = raw(Puppy());
+        Dog dog = raw(Puppy());
+        this.assertEquals("ok", s);
+        this.assertEquals(null, n);
+        this.assertEquals("d", named.name());
+        this.assertEquals("d", dog.name());
+    }
+
+    @test
+    func reassignmentRejectsMismatch(): void {
+        this.assertEquals("type error: cannot assign int to string", this.rejects(func(): void {
+            string s = "a";
+            s = raw(5);
+        }));
+        this.assertEquals("type error: cannot assign float to int", this.rejects(func(): void {
+            int i = 0;
+            i += raw(2.5f);
+        }));
+        this.assertEquals("type error: cannot assign string to int", this.rejects(func(): void { typedParam(1); }));
+    }
+
+    @test
+    func reassignmentTypesIntegerLiterals(): void {
+        float f = 1.0f;
+        f = 5;
+        decimal d = 1.0;
+        d = true ? 2 : 3;
+        this.assertEquals("float", typeof(f) as string);
+        this.assertEquals("decimal", typeof(d) as string);
+    }
+
+    @test
+    func loopVariableRejectsMismatch(): void {
+        this.assertEquals("type error: cannot assign int to string", this.rejects(func(): void {
+            for (string n in raw([1])) {}
+        }));
+        int total = 0;
+        for (int n in raw([1, 2])) {
+            total += n;
+        }
+        this.assertEquals(3, total);
+    }
+
+    @test
+    func untypedVariablesAreUnchecked(): void {
+        let w = 1;
+        w = raw(2);
+        this.assertEquals(2, w);
+    }
+
+    @test
+    func crossModuleAndInheritedMethods(): void {
+        this.assertEquals("type error: cannot assign int to string", this.rejects(func(): void { donor.Base().pick(1); }));
+        this.assertEquals("type error: cannot assign string to int", this.rejects(func(): void { donor.Base().swap("s"); }));
+        this.assertEquals("type error: cannot assign int to string", this.rejects(func(): void { Child().pick(1); }));
+    }
+}

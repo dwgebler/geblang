@@ -226,7 +226,7 @@ func httpCookieToDict(cookie runtime.HTTPCookie) runtime.Dict {
 	put("secure", runtime.Bool{Value: cookie.Secure})
 	put("httpOnly", runtime.Bool{Value: cookie.HTTPOnly})
 	put("sameSite", runtime.String{Value: cookie.SameSite})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func validateSameSite(value string) error {

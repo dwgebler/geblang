@@ -285,7 +285,7 @@ async.run(func(): void {
     c.close();
 });
 let total = 0;
-for (var v in c) { total = total + v; }
+for (v in c) { total = total + v; }
 io.println(total);
 `, "110\n")
 }
@@ -525,7 +525,7 @@ import async.channel as ch;
 let c = ch.Channel<int>(4);
 c.send(10); c.send(20); c.send(30); c.close();
 let total = 0;
-for (var v in c) { total = total + v; }
+for (v in c) { total = total + v; }
 io.println(total);
 `, "60\n")
 }

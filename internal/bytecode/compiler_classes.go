@@ -10,11 +10,11 @@ import (
 )
 
 // declaredTypeName is a parameter type as written in source, matching the evaluator's reflection.
-func declaredTypeName(typ *ast.TypeRef) string {
+func (c *Compiler) declaredTypeName(typ *ast.TypeRef) string {
 	if typ == nil {
 		return "any"
 	}
-	return typ.String()
+	return c.expandRecordedTypeAlias(c.resolveTypeRef(typ).String())
 }
 
 func reflectFunctionMetadataFromStatement(c *Compiler, stmt *ast.FunctionStatement, target string, overload int64) (runtime.FunctionMetadata, error) {
@@ -30,7 +30,7 @@ func reflectFunctionMetadataFromStatement(c *Compiler, stmt *ast.FunctionStateme
 		}
 		parameters = append(parameters, runtime.ParameterMetadata{
 			Name:       name,
-			Type:       declaredTypeName(param.Type),
+			Type:       c.declaredTypeName(param.Type),
 			Variadic:   param.Variadic,
 			HasDefault: param.Default != nil,
 			Decorators: paramDecs,
@@ -64,7 +64,7 @@ func reflectFunctionMetadataFromSignature(c *Compiler, sig *ast.FunctionSignatur
 		paramDecs, _ := c.decoratorsMetadata(param.Decorators, "parameter", 0)
 		parameters = append(parameters, runtime.ParameterMetadata{
 			Name:       name,
-			Type:       declaredTypeName(param.Type),
+			Type:       c.declaredTypeName(param.Type),
 			Variadic:   param.Variadic,
 			HasDefault: param.Default != nil,
 			Decorators: paramDecs,
@@ -1050,7 +1050,7 @@ func (c *Compiler) decoratorConstantValue(expr ast.Expression) (runtime.Value, e
 			}
 			entries[native.DictKey(key)] = runtime.DictEntry{Key: key, Value: value}
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	case *ast.SetLiteral:
 		entries := map[string]runtime.SetEntry{}
 		for _, element := range expr.Elements {

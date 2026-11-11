@@ -560,6 +560,10 @@ class CachedUsers {
 }
 ```
 
+An interface name is also a value. It prints as `<interface CacheStore>`,
+compares equal to the same interface (including one reached through an import),
+and can be passed to reflection such as `reflect.interfaceMethods(CacheStore)`.
+
 ### Default method implementations
 
 An interface method with a body is a **default implementation**.

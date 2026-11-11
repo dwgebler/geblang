@@ -1,0 +1,46 @@
+module scope_capture_donor;
+
+import async;
+import async.channel as channel;
+
+export func capture<T>(T value): callable {
+    return func(): T { return value; };
+}
+
+export class Base<T> {
+    T value;
+    func Base(T value) { this.value = value; }
+    func reader(): callable { return func(): T { return this.value; }; }
+}
+
+export func readers(): generator<callable> {
+    for (int i = 0; i < 3; i++) {
+        int value = i;
+        yield func(): int { return value; };
+    }
+}
+
+export func transfer(): string {
+    let mailbox = channel.Channel<callable>(1);
+    let requests = channel.Channel<int>();
+    let completed = channel.Channel<int>();
+    let producer = async.run(func(): void {
+        int value = 0;
+        mailbox.send(func(): int { return value; });
+        mailbox.close();
+        for (int i = 0; i < 32; i++) {
+            value = requests.recv() as int;
+            completed.send(value);
+        }
+    });
+    let reader = mailbox.recv() as callable;
+    for (int i = 0; i < 32; i++) {
+        requests.send(i);
+        assert(completed.recv() == i);
+        assert(reader() == i);
+    }
+    async.await(producer);
+    requests.close();
+    completed.close();
+    return "transfer-ok";
+}

@@ -1614,6 +1614,12 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return err
 			}
 			ip = nextIP
+		case OpPrimMethodGlobal, OpPrimMethodLocal:
+			nextIP, err := vm.primMethodSlot(instruction, ip, instruction.Op == OpPrimMethodGlobal)
+			if err != nil {
+				return err
+			}
+			ip = nextIP
 		case OpCallResolvedMethod:
 			nextIP, err := vm.callResolvedMethod(*instruction, ip)
 			if err != nil {
@@ -2346,7 +2352,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			// generator channel.
 			frameIdx := len(vm.frames) - 1
 			slot := &vm.frames[frameIdx]
-			if meta := slot.meta; meta != nil && meta.returnSpec != nil && !(meta.returnSpec.kind == vmTypeInt && valueVM.Kind == runtime.VMKindSmallInt) && !vm.matchVMValueToTypeSpecWith(meta.typeParams, slot.returnBindings, valueVM, *meta.returnSpec) {
+			if meta := slot.meta; meta != nil && meta.returnSpec != nil && !(meta.returnSpec.kind == vmTypeInt && valueVM.Kind == runtime.VMKindSmallInt) && !vm.matchVMValueToTypeSpecWith(meta.typeParams, slot.returnCheckBindings(), valueVM, *meta.returnSpec) {
 				return vm.typedFault(*instruction, "TypeError", fmt.Sprintf("%s expects %s return, got %s", slot.functionName, vm.expandTypeAliases(meta.returnSpec.raw), vm.descriptiveRuntimeTypeName(valueVM.ToValue())))
 			}
 			returnIP := slot.returnIP
@@ -2694,7 +2700,13 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			vm.pendingCallTypeArgs = names
 		default:
-			return vm.fatalError(*instruction, "unknown opcode %d", instruction.Op)
+			// Rare opcodes stay out of the switch: adding hot-loop cases shifts code layout.
+			if instruction.Op != OpLoadInterface {
+				return vm.fatalError(*instruction, "unknown opcode %d", instruction.Op)
+			}
+			if err := vm.loadInterface(*instruction); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -4966,10 +4978,13 @@ func (vm *VM) iterClose(instruction Instruction) error {
 // typeAssert checks the top-of-stack value against the type string stored in the constant pool
 // at operand[0]. Leaves the value on the stack. Throws a runtime error on mismatch.
 func (vm *VM) typeAssert(instruction Instruction) error {
-	if len(instruction.Operands) != 1 {
+	if len(instruction.Operands) == 0 || len(instruction.Operands) > 2 {
 		return vm.fatalError(instruction, "type assert instruction has invalid operands")
 	}
 	constIdx := instruction.Operands[0]
+	if spec, ok := vm.typeAssertSpecs[constIdx]; ok && len(vm.stack) > 0 && scalarSpecMatchesVMValue(spec, vm.stack[len(vm.stack)-1]) {
+		return nil
+	}
 	if constIdx < 0 || int(constIdx) >= vm.constantsLen() {
 		return vm.runtimeError(instruction, "type assert: constant index out of range")
 	}
@@ -4985,19 +5000,24 @@ func (vm *VM) typeAssert(instruction Instruction) error {
 	if !ok {
 		spec = vm.typeSpec(typeStr.Value)
 	}
-	if !vm.matchValueToTypeSpec(nil, value, spec) {
+	typeParams := vm.declarationTypeParams()
+	if !vm.matchValueToTypeSpec(typeParams, value, spec) {
 		declared := vm.expandTypeAliases(typeStr.Value)
 		suffix := vm.collectionMismatchSuffixStr(value, declared)
+		if len(instruction.Operands) == 2 {
+			if display, ok := vm.constantValue(instruction.Operands[1]).(runtime.String); ok {
+				declared = display.Value
+			}
+		}
 		gotName := vm.descriptiveRuntimeTypeName(value)
 		if suffix != "" {
 			gotName = value.TypeName()
 		}
 		return vm.typedFault(instruction, "TypeError", fmt.Sprintf("type error: cannot assign %s to %s%s", gotName, declared, suffix))
 	}
-	// Attach the reified element-type tag so reflect.typeBindings() and
-	// `instanceof list<T>` see the declared bindings on the tagged value.
-	// Mutate the top of the stack in place: List/Dict/Set are value
-	// types, so we pop, tag the copy, and push the tagged version.
+	if spec.kind == vmTypeUnion || spec.kind == vmTypeIntersection || (len(typeParams) > 0 && specMentionsTypeParam(spec, typeParams)) {
+		return nil
+	}
 	if tagged, ok := vm.tagCollectionWithSpec(value, spec); ok {
 		if _, err := vm.pop(); err != nil {
 			return vm.callPropagate(instruction, err)
@@ -5007,9 +5027,32 @@ func (vm *VM) typeAssert(instruction Instruction) error {
 	return nil
 }
 
-// tagCollectionWithSpec mirrors the evaluator's tagCollectionWithTypeRef
-// for the VM's vmTypeSpec form. Returns (tagged, true) when the value is
-// a List/Dict/Set whose tag should be set; otherwise (value, false).
+func scalarSpecMatchesVMValue(spec vmTypeSpec, value runtime.VMValue) bool {
+	switch spec.kind {
+	case vmTypeInt:
+		return value.Kind == runtime.VMKindSmallInt
+	case vmTypeBool:
+		return value.Kind == runtime.VMKindBool
+	case vmTypeFloat:
+		return value.Kind == runtime.VMKindFloat
+	case vmTypeString:
+		_, ok := value.Boxed.(runtime.String)
+		return value.Kind == runtime.VMKindBoxed && ok
+	}
+	return false
+}
+
+// declarationTypeParams leaves type parameters unchecked; the compiler validates generic declarations.
+func (vm *VM) declarationTypeParams() map[string]bool {
+	if len(vm.frames) == 0 {
+		return nil
+	}
+	if meta := vm.frames[len(vm.frames)-1].meta; meta != nil {
+		return meta.typeParams
+	}
+	return nil
+}
+
 func (vm *VM) buildDictConstKeys(instruction *Instruction) error {
 	ops := instruction.Operands
 	count := int(ops[0])
@@ -5053,8 +5096,7 @@ func (vm *VM) tagCollectionWithSpec(value runtime.Value, spec vmTypeSpec) (runti
 		}
 	case runtime.Dict:
 		if len(spec.args) >= 2 {
-			v.ElementTypes = spec.elementTags(2)
-			return v, true
+			return v.WithElementTypes(spec.elementTags(2)), true
 		}
 	}
 	return value, false
@@ -5806,7 +5848,7 @@ func cloneContainerDefault(v runtime.Value) runtime.Value {
 			cloned[k] = entry
 			return true
 		})
-		return runtime.Dict{Entries: cloned}
+		return runtime.DictFromEntries(cloned, nil)
 	case runtime.Set:
 		cloned := make(map[string]runtime.SetEntry, len(val.Elements))
 		for k, entry := range val.Elements {
@@ -6595,4 +6637,13 @@ func (vm *VM) propagateModuleError(instruction Instruction, ip int, err error) (
 		return vm.jumpToExceptionHandler(instruction, ip)
 	}
 	return 0, vm.callPropagate(instruction, err)
+}
+
+func (vm *VM) loadInterface(instruction Instruction) error {
+	name, err := vm.constantString(instruction, "interface name must be string")
+	if err != nil {
+		return err
+	}
+	vm.push(vm.buildRuntimeInterface(name, map[string]bool{}))
+	return nil
 }

@@ -1038,6 +1038,39 @@ func (vm *VM) primMethod(instruction *Instruction, ip int) (int, error) {
 	return vm.methodCall(call, ip)
 }
 
+// primMethodSlot runs OpPrimMethod on a receiver read from a global or local slot, restoring the unfused stack shape for the general path.
+func (vm *VM) primMethodSlot(instruction *Instruction, ip int, global bool) (int, error) {
+	ops := instruction.Operands
+	var receiver runtime.VMValue
+	var err error
+	if global {
+		receiver, err = vm.getGlobalVM(ops[0])
+	} else {
+		receiver, err = vm.getLocalVM(ops[0])
+	}
+	if err != nil {
+		return 0, vm.runtimeError(*instruction, "%s", err.Error())
+	}
+	argc := int(ops[2])
+	base := len(vm.stack) - argc
+	if base < 0 {
+		return 0, vm.fatalError(*instruction, "stack underflow")
+	}
+	if receiver.Kind == runtime.VMKindBoxed && len(vm.pendingCallTypeArgs) == 0 {
+		if result, ok := primMethodFast(ops[3], receiver.Boxed, vm.stack[base:]); ok {
+			vm.pendingLiteralArgs = nil
+			vm.truncateStack(base)
+			vm.pushVM(result)
+			return ip, nil
+		}
+	}
+	vm.pushVM(receiver)
+	copy(vm.stack[base+1:], vm.stack[base:len(vm.stack)-1])
+	vm.stack[base] = receiver
+	call := Instruction{Op: OpPrimMethod, Operands: ops[1:4], Line: instruction.Line, Column: instruction.Column}
+	return vm.primMethod(&call, ip)
+}
+
 // primMethodFast handles only the cases whose result it can produce exactly; anything else (missing key, negative index, other types) reports false so the general method call decides.
 func primMethodFast(id int64, receiver runtime.Value, args []runtime.VMValue) (runtime.VMValue, bool) {
 	switch id {

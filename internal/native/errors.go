@@ -310,10 +310,10 @@ func errorStackFrameList(frames []runtime.ErrorStackFrame) *runtime.List {
 func errorStackFrameDict(frame runtime.ErrorStackFrame) runtime.Dict {
 	functionKey := runtime.String{Value: "function"}
 	lineKey := runtime.String{Value: "line"}
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		DictKey(functionKey): {Key: functionKey, Value: runtime.String{Value: frame.Function}},
 		DictKey(lineKey):     {Key: lineKey, Value: runtime.NewInt64(frame.Line)},
-	}}
+	}, nil)
 }
 
 func builtinErrorParent(class string) string {

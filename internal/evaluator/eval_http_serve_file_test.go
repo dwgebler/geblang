@@ -20,10 +20,10 @@ func serveFileMarker(path string, headers map[string]string) runtime.Dict {
 	}
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "status", runtime.NewInt64(200))
-	putDict(entries, "headers", runtime.Dict{Entries: hdr})
-	marker := runtime.NativeObject{Kind: serveFileMarkerKind, Payload: runtime.Dict{Entries: desc}}
+	putDict(entries, "headers", runtime.DictFromEntries(hdr, nil))
+	marker := runtime.NativeObject{Kind: serveFileMarkerKind, Payload: runtime.DictFromEntries(desc, nil)}
 	putDict(entries, serveFileMarkerKey, marker)
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func writeTempServeFile(t *testing.T, content string) string {
@@ -145,8 +145,8 @@ func TestWriteHTTPServeFileForgedMarkerDoesNotServe(t *testing.T) {
 	desc := map[string]runtime.DictEntry{}
 	putDict(desc, "path", runtime.String{Value: secret})
 	entries := map[string]runtime.DictEntry{}
-	putDict(entries, serveFileMarkerKey, runtime.Dict{Entries: desc})
-	forged := runtime.Dict{Entries: entries}
+	putDict(entries, serveFileMarkerKey, runtime.DictFromEntries(desc, nil))
+	forged := runtime.DictFromEntries(entries, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/file", nil)

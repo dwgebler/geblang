@@ -19,18 +19,27 @@ const dictTombstone = ""
 
 // Small dicts allocate their header and inline items together, one allocation instead of two.
 type dictDataWith2 struct {
-	d   dictData
-	buf [2]dictItem
+	header dictHeader
+	d      dictData
+	buf    [2]dictItem
 }
 
 type dictDataWith4 struct {
-	d   dictData
-	buf [4]dictItem
+	header dictHeader
+	d      dictData
+	buf    [4]dictItem
 }
 
 type dictDataWith8 struct {
-	d   dictData
-	buf [dictInlineMax]dictItem
+	header dictHeader
+	d      dictData
+	buf    [dictInlineMax]dictItem
+}
+
+// Keep header metadata outside the store for structural payload equality.
+type dictDataWithHeader struct {
+	header dictHeader
+	d      dictData
 }
 
 type dictData struct {

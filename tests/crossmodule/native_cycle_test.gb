@@ -1,0 +1,19 @@
+import test;
+import native_cycle_donor as donor;
+
+class NativeCycleTest extends test.Test {
+    @test
+    func dictionaryCycleCrossesNativeBoundary(): void {
+        this.assertEquals("dict-ok", donor.dictionaryCycle());
+    }
+
+    @test
+    func listCycleCrossesNativeBoundary(): void {
+        this.assertEquals("list-ok", donor.listCycle());
+    }
+
+    @test
+    func mixedCyclesKeepAliasesAndBridgeNestedCallbacks(): void {
+        this.assertEquals("mixed-ok", donor.mixedCycleAndCallbacks());
+    }
+}

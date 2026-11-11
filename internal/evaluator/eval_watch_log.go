@@ -80,14 +80,14 @@ func watchSnapshotValue(path string) runtime.Dict {
 		putDict(entries, "mode", runtime.NewInt64(0))
 		putDict(entries, "isDir", runtime.Bool{Value: false})
 		putDict(entries, "modUnixNano", runtime.NewInt64(0))
-		return runtime.Dict{Entries: entries}
+		return runtime.DictFromEntries(entries, nil)
 	}
 	putDict(entries, "exists", runtime.Bool{Value: true})
 	putDict(entries, "size", runtime.NewInt64(info.Size()))
 	putDict(entries, "mode", runtime.NewInt64(int64(info.Mode().Perm())))
 	putDict(entries, "isDir", runtime.Bool{Value: info.IsDir()})
 	putDict(entries, "modUnixNano", runtime.NewInt64(info.ModTime().UnixNano()))
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func watchResult(changed bool, before runtime.Dict, after runtime.Dict) runtime.Dict {
@@ -95,7 +95,7 @@ func watchResult(changed bool, before runtime.Dict, after runtime.Dict) runtime.
 	putDict(entries, "changed", runtime.Bool{Value: changed})
 	putDict(entries, "before", before)
 	putDict(entries, "after", after)
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func watchSnapshotsEqual(left runtime.Dict, right runtime.Dict) bool {
@@ -219,7 +219,7 @@ func (e *Evaluator) dispatchWatchEvents(handle *watchHandle, callback runtime.Fu
 			if !ok {
 				return
 			}
-			eventDict := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+			eventDict := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 			putDictV(eventDict, "path", runtime.String{Value: event.Name})
 			putDictV(eventDict, "type", runtime.String{Value: fsnotifyEventType(event.Op)})
 			_, _ = child.applyFunction(callback, []runtime.Value{eventDict})
@@ -376,7 +376,7 @@ func (e *Evaluator) logMessage(call *ast.CallExpression, args []runtime.Value, l
 	if !ok {
 		return nil, fmt.Errorf("%s message must be string", call.Callee.String())
 	}
-	fields := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	fields := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	if len(args) == 3 {
 		var ok bool
 		fields, ok = args[2].(runtime.Dict)
@@ -410,7 +410,7 @@ func (e *Evaluator) logShorthand(call *ast.CallExpression, args []runtime.Value,
 	if !ok {
 		return nil, fmt.Errorf("%s message must be string", call.Callee.String())
 	}
-	fields := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	fields := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	if len(args) == 2 {
 		var ok bool
 		fields, ok = args[1].(runtime.Dict)

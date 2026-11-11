@@ -233,9 +233,9 @@ func TestExtMarshalRejectsUnsupportedValues(t *testing.T) {
 		t.Fatalf("unsupported error: %v", err)
 	}
 
-	dict := runtime.Dict{Entries: map[string]runtime.DictEntry{
+	dict := runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey(runtime.NewInt64(1)): {Key: runtime.NewInt64(1), Value: runtime.String{Value: "one"}},
-	}}
+	}, nil)
 	_, err = extMarshalValue(dict, &slots)
 	if err == nil || !strings.Contains(err.Error(), "dict keys must be strings") {
 		t.Fatalf("dict key error: %v", err)
@@ -443,7 +443,7 @@ func TestExtCallWithOptionsPassesNamedArguments(t *testing.T) {
 	result, err := e.extCallWithOptions(call, []runtime.Value{
 		handle,
 		runtime.String{Value: "greet"},
-		runtime.Dict{Entries: map[string]runtime.DictEntry{}},
+		runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil),
 		runtime.String{Value: "Geblang"},
 	})
 	if err != nil {
@@ -474,7 +474,7 @@ func TestExtCallWithOptionsRejectsOversizedResponse(t *testing.T) {
 
 	e := New(io.Discard)
 	handle := e.registerExtHandle(&extHandle{conn: client, functions: map[string]bool{"large": true}})
-	options := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	options := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	putDict(options.Entries, "maxResponseBytes", runtime.NewInt64(16))
 	_, err := e.extCallWithOptions(nil, []runtime.Value{handle, runtime.String{Value: "large"}, options})
 	if err == nil || !strings.Contains(err.Error(), "frame too large") {
@@ -494,7 +494,7 @@ func TestExtCallWithOptionsTimesOut(t *testing.T) {
 
 	e := New(io.Discard)
 	handle := e.registerExtHandle(&extHandle{conn: client, functions: map[string]bool{"slow": true}})
-	options := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	options := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	putDict(options.Entries, "timeoutMs", runtime.NewInt64(10))
 	_, err := e.extCallWithOptions(nil, []runtime.Value{handle, runtime.String{Value: "slow"}, options})
 	if err == nil {

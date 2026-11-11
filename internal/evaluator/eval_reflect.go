@@ -534,7 +534,7 @@ func (e *Evaluator) reflectReturnClass(call *ast.CallExpression, args []runtime.
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "class", e.resolveScopedClass(className, scope))
 	putDict(entries, "elementClass", e.resolveScopedClass(elementName, scope))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func reflectReturnType(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -610,7 +610,7 @@ func docMetadataValue(doc string) runtime.Dict {
 	putDict(entries, "summary", runtime.String{Value: summary})
 	putDict(entries, "body", runtime.String{Value: body})
 	putDict(entries, "lines", &runtime.List{Elements: lineValues})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func reflectExports(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -643,7 +643,7 @@ func reflectLocation(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 		putDict(entries, "module", runtime.String{Value: module})
 		putDict(entries, "line", runtime.NewInt64(line))
 		putDict(entries, "column", runtime.NewInt64(column))
-		return runtime.Dict{Entries: entries}
+		return runtime.DictFromEntries(entries, nil)
 	}
 	switch v := args[0].(type) {
 	case runtime.DecoratorTarget:
@@ -739,7 +739,7 @@ func (e *Evaluator) reflectOwnFields(call *ast.CallExpression, args []runtime.Va
 			className, elementName := runtime.ParameterClassNames(typeRefToString(field.Type))
 			putDict(fd, "class", e.resolveScopedClass(className, cls.Env))
 			putDict(fd, "elementClass", e.resolveScopedClass(elementName, cls.Env))
-			entries = append(entries, runtime.Dict{Entries: fd})
+			entries = append(entries, runtime.DictFromEntries(fd, nil))
 		}
 		sort.SliceStable(entries, func(i, j int) bool {
 			a := entries[i].(runtime.Dict).EntryValue(native.DictKey(runtime.String{Value: "name"})).(runtime.String).Value
@@ -759,7 +759,7 @@ func (e *Evaluator) reflectOwnFields(call *ast.CallExpression, args []runtime.Va
 		putDict(fd, "type", runtime.String{Value: "any"})
 		putDict(fd, "nullable", runtime.Bool{Value: false})
 		putDict(fd, "hasDefault", runtime.Bool{Value: false})
-		entries = append(entries, runtime.Dict{Entries: fd})
+		entries = append(entries, runtime.DictFromEntries(fd, nil))
 	}
 	return &runtime.List{Elements: entries}, nil
 }
@@ -991,7 +991,7 @@ func reflectTypeBindings(call *ast.CallExpression, args []runtime.Value) (runtim
 	default:
 		return nil, fmt.Errorf("%s expects instance or generic collection, got %s", call.Callee.String(), args[0].TypeName())
 	}
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func reflectInterfaceMethods(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -1044,7 +1044,7 @@ func reflectInterfaceMethods(call *ast.CallExpression, args []runtime.Value) (ru
 		}
 		putDict(entries, "parameters", &runtime.List{Elements: params})
 		putDict(entries, "returnType", runtime.String{Value: rt})
-		methods = append(methods, methodEntry{name: strings.ToLower(name), val: runtime.Dict{Entries: entries}})
+		methods = append(methods, methodEntry{name: strings.ToLower(name), val: runtime.DictFromEntries(entries, nil)})
 	}
 	sort.Slice(methods, func(i, j int) bool { return methods[i].name < methods[j].name })
 	values := make([]runtime.Value, len(methods))
@@ -1524,10 +1524,10 @@ func decoratorValue(decorator ast.Decorator, target string, position int, overlo
 		}
 	}
 	putDict(entries, "args", &runtime.List{Elements: args})
-	putDict(entries, "namedArgs", runtime.Dict{Entries: namedArgs})
+	putDict(entries, "namedArgs", runtime.DictFromEntries(namedArgs, nil))
 	putDict(entries, "line", runtime.NewInt64(int64(decorator.Token.Line)))
 	putDict(entries, "column", runtime.NewInt64(int64(decorator.Token.Column)))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func parameterMetadataValue(parameter runtime.ParameterMetadata) runtime.Value {
@@ -1543,7 +1543,7 @@ func parameterMetadataValue(parameter runtime.ParameterMetadata) runtime.Value {
 		}
 		putDict(entries, "decorators", &runtime.List{Elements: decValues})
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func decoratorMetadataDictValue(metadata runtime.DecoratorMetadata) runtime.Value {
@@ -1559,10 +1559,10 @@ func decoratorMetadataDictValue(metadata runtime.DecoratorMetadata) runtime.Valu
 	for k, v := range metadata.NamedArgs {
 		putDict(namedArgs, k, v)
 	}
-	putDict(entries, "namedArgs", runtime.Dict{Entries: namedArgs})
+	putDict(entries, "namedArgs", runtime.DictFromEntries(namedArgs, nil))
 	putDict(entries, "line", runtime.NewInt64(metadata.Line))
 	putDict(entries, "column", runtime.NewInt64(metadata.Column))
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func decoratorsMetadataFromAST(decorators []ast.Decorator, target string) []runtime.DecoratorMetadata {
@@ -1649,7 +1649,7 @@ func decoratorMetadataValue(expr ast.Expression) (runtime.Value, error) {
 			}
 			entries[dictKey(key)] = runtime.DictEntry{Key: key, Value: value}
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	case *ast.SetLiteral:
 		entries := map[string]runtime.SetEntry{}
 		for _, element := range expr.Elements {

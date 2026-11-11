@@ -269,12 +269,16 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				return nil
 			}
 			// A named top-level function used as a value: one overload becomes a zero-upvalue closure; several become an OverloadedFunction so call-time selection sees every overload.
-			if indices, found := c.funcs[strings.ToLower(expr.Value)]; found && len(indices) > 0 {
+			if indices, found := c.funcs[strings.ToLower(expr.Value)]; found && len(indices) > 0 && int(indices[0]) < len(c.chunk.Functions) && c.chunk.Functions[indices[0]].Name == expr.Value {
 				if len(indices) > 1 {
 					c.emitAt(OpMakeOverloaded, expr.Token.Line, expr.Token.Column, indices...)
 				} else {
 					c.emitAt(OpMakeClosure, expr.Token.Line, expr.Token.Column, indices[0], 0)
 				}
+				return nil
+			}
+			if index, found := c.interfaces[strings.ToLower(expr.Value)]; found && int(index) < len(c.chunk.Interfaces) && c.chunk.Interfaces[index].Name == expr.Value {
+				c.emitAt(OpLoadInterface, expr.Token.Line, expr.Token.Column, c.addConstant(runtime.String{Value: expr.Value}))
 				return nil
 			}
 			if runtime.IsBuiltinTypeName(expr.Value) {
@@ -1070,9 +1074,11 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					return nil
 				}
 			}
+			receiverStart := len(c.chunk.Instructions)
 			if err := c.compileExpression(selector.Object); err != nil {
 				return err
 			}
+			argsStart := len(c.chunk.Instructions)
 			var optionalJump int
 			if selector.Optional {
 				optionalJump = c.emitJump(OpOptionalChain, expr.Token.Line, expr.Token.Column)
@@ -1121,7 +1127,12 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			c.emitPlantIntLiteralArgs(expr, false)
 			c.emitPlantCallTypeArgs(expr)
 			if id := hotPrimitiveMethodID(selector.Name.Value, len(expr.Arguments)); id != 0 && len(expr.TypeArguments) == 0 {
-				c.emitAt(OpPrimMethod, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)), id)
+				if fused, slot, ok := c.fusablePrimReceiver(receiverStart, argsStart, len(expr.Arguments)); ok {
+					c.chunk.Instructions = append(c.chunk.Instructions[:receiverStart], c.chunk.Instructions[receiverStart+1:]...)
+					c.emitAt(fused, expr.Token.Line, expr.Token.Column, slot, nameIndex, int64(len(expr.Arguments)), id)
+				} else {
+					c.emitAt(OpPrimMethod, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)), id)
+				}
 			} else {
 				c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 			}
@@ -1239,8 +1250,14 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		if err := c.compileExpression(expr.Value); err != nil {
 			return err
 		}
-		c.emitConstant(runtime.String{Value: c.bytecodeTypeNameForParam(expr.Type, nil)}, expr.Token.Line, expr.Token.Column)
-		c.emitAt(OpCast, expr.Token.Line, expr.Token.Column)
+		target := c.bytecodeTypeNameForParam(expr.Type, nil)
+		plainPrimitive := int64(0)
+		switch target {
+		case "int", "bool", "float", "string":
+			plainPrimitive = 1
+		}
+		index := c.addConstant(runtime.String{Value: target})
+		c.emitAt(OpCast, expr.Token.Line, expr.Token.Column, index, plainPrimitive)
 		return nil
 	case *ast.MatchExpression:
 		return c.compileMatchExpression(expr)
@@ -1606,6 +1623,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	type upvalueCapture struct {
 		name      string
 		outerSlot int64
+		declared  *ast.TypeRef
 	}
 	var captures []upvalueCapture
 	for name := range scanner.free {
@@ -1613,7 +1631,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 		if !ok || b.kind != "local" {
 			continue
 		}
-		captures = append(captures, upvalueCapture{name: name, outerSlot: b.slot})
+		captures = append(captures, upvalueCapture{name: name, outerSlot: b.slot, declared: b.declared})
 	}
 	// Sort for deterministic slot assignment.
 	for i := 1; i < len(captures); i++ {
@@ -1638,7 +1656,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	defaultConstants := make([]int64, 0, cap(paramSlots))
 
 	for _, cap := range captures {
-		slot := c.defineLocalWithType(cap.name, "")
+		slot := c.defineTypedLocal(cap.name, "", cap.declared)
 		paramSlots = append(paramSlots, slot)
 		paramNames = append(paramNames, cap.name)
 		paramDisplayNames = append(paramDisplayNames, cap.name)
@@ -1656,13 +1674,12 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 			c.popScope()
 			return fmt.Errorf("function literal parameter has no name")
 		}
-		paramType := c.bytecodeTypeName(param.Type)
-		slot := c.defineLocalWithType(param.Name.Value, paramType)
+		slot := c.defineTypedLocal(param.Name.Value, c.bytecodeTypeName(param.Type), c.parameterDeclaredType(param))
 		paramSlots = append(paramSlots, slot)
 		paramNames = append(paramNames, strings.ToLower(param.Name.Value))
 		paramDisplayNames = append(paramDisplayNames, param.Name.Value)
-		paramTypes = append(paramTypes, paramType)
-		paramDisplayTypes = append(paramDisplayTypes, declaredTypeName(param.Type))
+		paramTypes = append(paramTypes, c.bytecodeTypeNameForParam(param.Type, nil))
+		paramDisplayTypes = append(paramDisplayTypes, c.declaredTypeName(param.Type))
 		if param.Default == nil {
 			defaultConstants = append(defaultConstants, -1)
 			continue
@@ -1683,6 +1700,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	fn.ParamDisplayTypes = paramDisplayTypes
 	fn.ReturnType = c.bytecodeReturnType(expr.ReturnType)
 	fn.ReturnCheckType = c.bytecodeReturnCheckType(expr.ReturnType)
+	fn.OuterTypeParameters = c.enclosingTypeParameters()
 	fn.DefaultConstants = defaultConstants
 	fn.UpvalueCount = upvalueCount
 	fn.Variadic = len(expr.Parameters) > 0 && expr.Parameters[len(expr.Parameters)-1].Variadic
@@ -2506,9 +2524,16 @@ func (c *Compiler) compileAssignmentExpression(expr *ast.AssignmentExpression) e
 				return nil
 			}
 		}
-		if err := c.compileExpression(expr.Value); err != nil {
+		expected := ""
+		if resolved.declared != nil {
+			if expected = c.bytecodeTypeName(resolved.declared); expected == "any" {
+				expected = ""
+			}
+		}
+		if err := c.compileExpressionWithExpected(expr.Value, expected); err != nil {
 			return err
 		}
+		c.emitTypedVariableCheck(resolved.declared, expr.Value, expr.Token.Line, expr.Token.Column)
 		if resolved.kind == "local" {
 			c.emitAt(OpSetLocal, expr.Token.Line, expr.Token.Column, resolved.slot)
 		} else {
@@ -4029,4 +4054,26 @@ func (c *Compiler) compileRangeOperands(expr *ast.RangeExpression) error {
 		}
 	}
 	return nil
+}
+
+// fusablePrimReceiver reports a single-instruction slot receiver followed only by side-effect-free single-load arguments, so dropping the receiver load shifts no jump target.
+func (c *Compiler) fusablePrimReceiver(receiverStart, argsStart, argc int) (Op, int64, bool) {
+	if argsStart != receiverStart+1 || len(c.chunk.Instructions)-argsStart != argc {
+		return 0, 0, false
+	}
+	for _, arg := range c.chunk.Instructions[argsStart:] {
+		switch arg.Op {
+		case OpConstant, OpGetLocal, OpGetGlobal:
+		default:
+			return 0, 0, false
+		}
+	}
+	receiver := c.chunk.Instructions[receiverStart]
+	switch receiver.Op {
+	case OpGetGlobal:
+		return OpPrimMethodGlobal, receiver.Operands[0], true
+	case OpGetLocal:
+		return OpPrimMethodLocal, receiver.Operands[0], true
+	}
+	return 0, 0, false
 }

@@ -118,7 +118,7 @@ func schemaValidate(call *ast.CallExpression, args []runtime.Value) (runtime.Val
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "valid", runtime.Bool{Value: len(errors) == 0})
 	putDict(entries, "errors", &runtime.List{Elements: errors})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func validateValueAgainstSchema(value runtime.Value, schema runtime.Dict, path string, errors *[]runtime.Value) {
@@ -355,7 +355,7 @@ func dotenvParseText(text string) runtime.Dict {
 		kv := runtime.String{Value: key}
 		entries[dictKey(kv)] = runtime.DictEntry{Key: kv, Value: runtime.String{Value: value}}
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func dotenvParseValue(raw string) string {

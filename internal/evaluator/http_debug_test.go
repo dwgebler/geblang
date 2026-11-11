@@ -132,7 +132,7 @@ func TestStreamingHandlerGetsFreshThreadID(t *testing.T) {
 	outer := gruntime.Function{Native: func(this *gruntime.Instance, args []gruntime.Value) (gruntime.Value, error) {
 		entries := map[string]gruntime.DictEntry{}
 		putDict(entries, "stream", streamBody)
-		return gruntime.Dict{Entries: entries}, nil
+		return gruntime.DictFromEntries(entries, nil), nil
 	}}
 
 	server := httptest.NewServer(e.httpHandler(outer, nil, nil, 0, false, false))
@@ -163,12 +163,12 @@ func TestParseDebugFlag(t *testing.T) {
 	}
 	entries := map[string]gruntime.DictEntry{}
 	putDict(entries, "debug", gruntime.Bool{Value: true})
-	if got, err := parseDebugFlag(gruntime.Dict{Entries: entries}, "http.serve"); err != nil || !got {
+	if got, err := parseDebugFlag(gruntime.DictFromEntries(entries, nil), "http.serve"); err != nil || !got {
 		t.Fatalf("debug true: got %v err %v", got, err)
 	}
 	bad := map[string]gruntime.DictEntry{}
 	putDict(bad, "debug", gruntime.String{Value: "yes"})
-	if _, err := parseDebugFlag(gruntime.Dict{Entries: bad}, "http.serve"); err == nil {
+	if _, err := parseDebugFlag(gruntime.DictFromEntries(bad, nil), "http.serve"); err == nil {
 		t.Fatal("non-bool debug must error")
 	}
 }

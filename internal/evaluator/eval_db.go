@@ -82,7 +82,7 @@ func (e *Evaluator) dbExec(call *ast.CallExpression, args []runtime.Value) (runt
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "rowsAffected", runtime.NewInt64(rows))
 	putDict(entries, "lastInsertId", runtime.NewInt64(lastID))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) dbExecStandard(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -110,7 +110,7 @@ func (e *Evaluator) dbExecStandard(call *ast.CallExpression, args []runtime.Valu
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "rowsAffected", runtime.NewInt64(rows))
 	putDict(entries, "lastInsertId", runtime.NewInt64(lastID))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) dbQuery(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -218,7 +218,7 @@ func (e *Evaluator) dbTxExec(call *ast.CallExpression, args []runtime.Value) (ru
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "rowsAffected", runtime.NewInt64(rows))
 	putDict(entries, "lastInsertId", runtime.NewInt64(lastID))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) dbTxExecStandard(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -242,7 +242,7 @@ func (e *Evaluator) dbTxExecStandard(call *ast.CallExpression, args []runtime.Va
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "rowsAffected", runtime.NewInt64(rows))
 	putDict(entries, "lastInsertId", runtime.NewInt64(lastID))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) dbTxQuery(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -367,7 +367,7 @@ func (e *Evaluator) dbStmtExec(call *ast.CallExpression, args []runtime.Value) (
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "rowsAffected", runtime.NewInt64(rows))
 	putDict(entries, "lastInsertId", runtime.NewInt64(lastID))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) dbStmtExecStandard(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -391,7 +391,7 @@ func (e *Evaluator) dbStmtExecStandard(call *ast.CallExpression, args []runtime.
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "rowsAffected", runtime.NewInt64(rows))
 	putDict(entries, "lastInsertId", runtime.NewInt64(lastID))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) dbStmtQuery(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -591,7 +591,7 @@ func (e *Evaluator) dbStats(call *ast.CallExpression, args []runtime.Value) (run
 	putDict(entries, "maxIdleClosed", runtime.NewInt64(stats.MaxIdleClosed))
 	putDict(entries, "maxIdleTimeClosed", runtime.NewInt64(stats.MaxIdleTimeClosed))
 	putDict(entries, "maxLifetimeClosed", runtime.NewInt64(stats.MaxLifetimeClosed))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) dbMigrate(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -662,7 +662,7 @@ func (e *Evaluator) dbMigrate(call *ast.CallExpression, args []runtime.Value) (r
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "applied", &runtime.List{Elements: applied})
 	putDict(entries, "skipped", &runtime.List{Elements: skipped})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func intOption(call *ast.CallExpression, value runtime.Value, name string) (int, error) {
@@ -733,7 +733,7 @@ func scanSQLRow(rows *sql.Rows, columns []string, textCols []bool) (runtime.Valu
 		}
 		putDict(entries, column, value)
 	}
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) dbClose(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

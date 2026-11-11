@@ -1,0 +1,71 @@
+import test;
+import async;
+import reflect;
+import captured_nested_donor as donor;
+from captured_nested_donor import Scores;
+
+type Local = dict<string, int>;
+
+func arrOf<T>(T c): callable { return func(): T[] { return [c]; }; }
+func unionOf<T>(T c): callable { return func(): list<T> | string { return [c]; }; }
+func nestedOf<T>(T c): callable { return func(): dict<string, list<T>> { return {"k": [c]}; }; }
+func setOf<T>(T c): callable { return func(): set<T> { return {c}; }; }
+func ownArr<T>(T c): T[] { return [c]; }
+func aliased(Local s): int { return 1; }
+func imported(Scores s, donor.Scores t): int { return 1; }
+
+class Child extends donor.Base<int> {
+    func Child() { parent(5); }
+}
+
+class CapturedNestedTest extends test.Test {
+    @test
+    func capturedGenericsInsideCompositeReturns(): void {
+        this.assertEquals([1], arrOf<int>(1)());
+        this.assertEquals([1], unionOf<int>(1)());
+        this.assertEquals({"k": [1]}, nestedOf<int>(1)());
+        this.assertEquals({1}, setOf<int>(1)());
+        this.assertEquals([1], ownArr<int>(1));
+        this.assertEquals(["s"], donor.listOf<string>("s")());
+        this.assertEquals(1, donor.listOf<donor.Node>(donor.Node())().length());
+        this.assertEquals({"k": 1}, donor.mixed<int>(1)("k"));
+        this.assertEquals(["b"], donor.Base<string>("b").listReader()());
+        this.assertEquals([5], Child().listReader()());
+        this.assertEquals([[1], [2]], [1, 2].map(func(int n): any { return donor.listOf<int>(n)(); }));
+        this.assertEquals([7], async.await(async.run(donor.listOf<int>(7))));
+    }
+
+    @test
+    func capturedGenericsStillRejectWrongElements(): void {
+        this.assertThrowsOf(func(): void { donor.wrongList<int>(1)(); }, "TypeError", "expects list<T> return, got list<string>");
+        this.assertThrowsOf(func(): void { donor.acceptList<int>(1)(["x"]); }, "TypeError", "expects list<T> for parameter 'xs'");
+        this.assertEquals(2, donor.acceptList<int>(1)([1, 2]));
+    }
+
+    @test
+    func importedNestedGenericFunctionKeepsItsOwnParameter(): void {
+        this.assertEquals("u", donor.plain()("u"));
+    }
+
+    @test
+    func lambdaParametersCheckCollectionElements(): void {
+        any bad = ["x"];
+        let lambda = func(list<int> xs): int { return xs.length(); };
+        this.assertThrowsOf(func(): void { lambda(bad); }, "TypeError", "<closure> expects list<int> for parameter 'xs', got list (element at index 0 is string)");
+        this.assertThrowsOf(func(): void { [bad].map(lambda); }, "TypeError", "expects list<int> for parameter 'xs'");
+        this.assertEquals(2, lambda([1, 2]));
+    }
+
+    @test
+    func parameterMessagesSpellDeclaredTypes(): void {
+        any badDict = {"a": "x"};
+        any badList = ["x"];
+        this.assertThrowsOf(func(): void { aliased(badDict); }, "TypeError", "aliased expects dict<string, int> for parameter 's'");
+        this.assertThrowsOf(func(): void { imported({}, badDict); }, "TypeError", "imported expects dict<string, int> for parameter 't'");
+        this.assertThrowsOf(func(): void { donor.takeScores(badDict); }, "TypeError", "takeScores expects dict<string, int> for parameter 's'");
+        this.assertThrowsOf(func(): void { Child().take(badList); }, "TypeError", "Base.take expects int[] for parameter 'xs'");
+        list<string> types = [];
+        for (p in reflect.parameters(imported)) { types.push(p["type"]); }
+        this.assertEquals(["dict<string, int>", "dict<string, int>"], types);
+    }
+}

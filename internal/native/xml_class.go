@@ -168,12 +168,12 @@ func xmlScalar(text string, declared string, field string) (runtime.Value, error
 }
 
 func xmlElementDict(name string, text string, children []runtime.Value) runtime.Dict {
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey("name"):       {Key: runtime.String{Value: "name"}, Value: runtime.String{Value: name}},
-		dictKey("attributes"): {Key: runtime.String{Value: "attributes"}, Value: runtime.Dict{Entries: map[string]runtime.DictEntry{}}},
+		dictKey("attributes"): {Key: runtime.String{Value: "attributes"}, Value: runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)},
 		dictKey("children"):   {Key: runtime.String{Value: "children"}, Value: &runtime.List{Elements: children}},
 		dictKey("text"):       {Key: runtime.String{Value: "text"}, Value: runtime.String{Value: text}},
-	}}
+	}, nil)
 }
 
 func xmlInstanceElement(ctx ConversionContext, instance *runtime.Instance, name string, depth int) (runtime.Dict, error) {

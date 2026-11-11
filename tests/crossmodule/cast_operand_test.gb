@@ -1,0 +1,38 @@
+import test;
+import cast_operand_donor as donor;
+from cast_operand_donor import Flag as int;
+
+class CastChild extends donor.Base {
+    func CastChild(any value) { parent(value); }
+    func own(): any { return this.value as string; }
+}
+
+class CastOperandTest extends test.Test {
+    @test
+    func importedAliasOverridesPrimitiveName(): void {
+        this.assertEquals(true, 5 as int);
+        this.assertEquals(false, 0 as int);
+    }
+
+    @test
+    func genericTargetChangesBetweenCalls(): void {
+        this.assertEquals(true, donor.convert<bool>(5));
+        this.assertEquals("5", donor.convert<string>(5));
+        this.assertEquals(false, donor.convert<bool>(0));
+    }
+
+    @test
+    func constructorsAndInheritedMethodsKeepTheirCastScope(): void {
+        this.assertEquals(7, donor.Base(7).converted());
+        let child = CastChild(8);
+        this.assertEquals(8, child.converted());
+        this.assertEquals("8", child.own());
+        let bound = child.converted;
+        this.assertEquals(8, bound());
+    }
+
+    @test
+    func nativeCallbackKeepsCastTarget(): void {
+        this.assertEquals(["1", "2"], [1, 2].map(func(any n): any { return n as string; }));
+    }
+}

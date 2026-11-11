@@ -26,7 +26,7 @@ func TestJSONRejectsCyclesAndAllowsSiblingAliases(t *testing.T) {
 	dict.PutEntry("sself", runtime.DictEntry{Key: runtime.String{Value: "self"}, Value: dict})
 	instance := &runtime.Instance{Fields: map[string]runtime.Value{}}
 	instance.Fields["self"] = instance
-	literal := runtime.Dict{Entries: map[string]runtime.DictEntry{}, Order: &[]string{"sself"}}
+	literal := runtime.DictFromEntries(map[string]runtime.DictEntry{}, &[]string{"sself"})
 	literal.Entries["sself"] = runtime.DictEntry{Key: runtime.String{Value: "self"}, Value: literal}
 	for _, value := range []runtime.Value{list, dict, instance, literal} {
 		if _, err := EncodeJSONValue(value); err == nil || !strings.Contains(err.Error(), "cyclic") {

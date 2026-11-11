@@ -1,0 +1,24 @@
+import scope_capture_donor as donor;
+import async;
+import io;
+
+class ScopeProbeChild extends donor.Base<int> {
+    func ScopeProbeChild() { parent(9); }
+    func own(): callable {
+        int value = 3;
+        return func(): int { return value; };
+    }
+}
+
+func main(): void {
+    let number = donor.capture<int>(7);
+    let text = donor.capture<string>("text");
+    let child = ScopeProbeChild();
+    let method = child.reader;
+    let inherited = method();
+    let own = child.own();
+    io.println(number()); io.println(text()); io.println(inherited()); io.println(own());
+    io.println(async.await(async.run(inherited)));
+    for (read in donor.readers()) { io.println(read()); }
+    io.println(donor.transfer());
+}

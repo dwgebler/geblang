@@ -1,0 +1,9 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an interpolation that leaves tokens after
+ *          its expression.
+ */
+import io;
+
+let x = 3;
+io.println("${x )}");

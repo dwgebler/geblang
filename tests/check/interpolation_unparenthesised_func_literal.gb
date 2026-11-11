@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a function literal inside `${...}` whose
+ *          return-type `:` starts a format spec; it needs parentheses.
+ */
+import io;
+
+io.println("${func(int x): int { return x; }}");

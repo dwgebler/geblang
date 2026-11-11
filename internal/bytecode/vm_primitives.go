@@ -1833,7 +1833,7 @@ func vmHTTPHeadersToDict(headers runtime.HTTPHeaders) runtime.Dict {
 		}
 		entries[native.DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: value}
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func vmSingleHeaderName(method string, args []runtime.Value) (string, error) {

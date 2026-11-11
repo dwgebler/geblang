@@ -133,7 +133,7 @@ func registerCryptX509(r *Registry) {
 		} else if origin, ok := authzListInt(kd.SoftwareEnforced, 702); ok {
 			put("keyOrigin", runtime.NewInt64(origin.Int64()))
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	})
 }
 
@@ -248,7 +248,7 @@ func decodeASN1Value(raw asn1.RawValue) (runtime.Value, error) {
 		} else {
 			put("value", runtime.Bytes{Value: append([]byte(nil), raw.Bytes...)})
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	}
 	switch raw.Tag {
 	case asn1.TagInteger, asn1.TagEnum:

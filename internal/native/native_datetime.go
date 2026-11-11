@@ -644,7 +644,7 @@ func stringIntDict(values map[string]int64) runtime.Dict {
 		keyValue := runtime.String{Value: key}
 		entries[DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: runtime.NewInt64(value)}
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func timePartsDict(value time.Time) runtime.Dict {
@@ -681,5 +681,5 @@ func timePartsDictWithZone(value time.Time, zone string) runtime.Dict {
 	}
 	zoneKey := runtime.String{Value: "zone"}
 	entries[DictKey(zoneKey)] = runtime.DictEntry{Key: zoneKey, Value: runtime.String{Value: zone}}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }

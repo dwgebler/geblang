@@ -206,6 +206,12 @@ When the expression itself contains a ternary `?:`, the format-spec
 part of the ternary. To attach a spec to a ternary result, parenthesise
 the expression: `${(cond ? a : b):03d}`.
 
+Any other top-level `:` starts the spec, including the return-type `:` of a
+function literal, so wrap a function literal in parentheses:
+`${(func(int x): int { return x * 2; })(4)}`. An expression inside `${...}`
+that does not parse, or that leaves tokens over (`${x )}`), is a compile-time
+error.
+
 ## Numbers
 
 Three numeric types:

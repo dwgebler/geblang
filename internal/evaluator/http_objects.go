@@ -97,7 +97,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 			putDict(entries, "path", runtime.String{Value: c.Path})
 			putDict(entries, "secure", runtime.Bool{Value: c.Secure})
 			putDict(entries, "httpOnly", runtime.Bool{Value: c.HttpOnly})
-			elems = append(elems, runtime.Dict{Entries: entries})
+			elems = append(elems, runtime.DictFromEntries(entries, nil))
 		}
 		return &runtime.List{Elements: elems}, nil
 	}}}

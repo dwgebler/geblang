@@ -1,0 +1,21 @@
+import generic_values_donor as donor;
+import io;
+import reflect;
+
+interface Local { func area(): int; }
+
+func id<T>(T x): T { return x; }
+func nestedExplicit<T>(any x): list<T> { return [x]; }
+func top(int x): int { return x; }
+
+func main(): void {
+    int a = id(5);
+    io.println(a);
+    any s = "x";
+    try { nestedExplicit<int>(s); } catch (TypeError e) { io.println(e.message); }
+    try { donor.Box<int>(1).nested(s); } catch (TypeError e) { io.println(e.message); }
+    io.println([top, func(int x): int { return x; }, donor.Thing().m, donor.Thing.s, donor.named(), donor.Thing]);
+    let l = Local;
+    io.println([l, l == Local, donor.own() == donor.Shape, donor.hidden()]);
+    io.println(reflect.interfaceMethods(Local)[0]["name"]);
+}

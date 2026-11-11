@@ -306,7 +306,7 @@ while (current != null) {
 ### Parameter metadata
 
 `reflect.parameters(function)` returns one dict per parameter. Each entry has
-`name`, `type` (the type as written), `hasDefault`, `variadic`, `class` and
+`name`, `type` (the type as written, with `type` aliases resolved), `hasDefault`, `variadic`, `class` and
 `elementClass`, plus `decorators` when the parameter has any.
 `reflect.returnType(function)` returns the declared return type, including its
 type arguments (`list<int>`, `?Box<string>`):

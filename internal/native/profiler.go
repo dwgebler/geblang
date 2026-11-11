@@ -111,7 +111,7 @@ func profilerDict(fields map[string]runtime.Value) runtime.Dict {
 		key := runtime.String{Value: k}
 		entries[DictKey(key)] = runtime.DictEntry{Key: key, Value: v}
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func profilerInt64(d runtime.Dict, key string) int64 {

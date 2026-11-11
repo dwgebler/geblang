@@ -1,0 +1,57 @@
+import test;
+import async;
+import captured_return_donor as donor;
+
+class ReturnChild extends donor.Base<int> {
+    func ReturnChild() { parent(9); }
+    func own(): callable { return donor.capture<string>("child"); }
+}
+
+class CapturedReturnTest extends test.Test {
+    @test
+    func capturedScalarNullableAndCollectionBindings(): void {
+        let number = donor.capture<int>(7);
+        let text = donor.capture<string>("text");
+        let empty = donor.nullable<int>(null);
+        let list = donor.capture<list<int>>([1, 2]);
+        let dict = donor.capture<dict<string, int>>({"n": 3});
+        let node = donor.capture<donor.Node>(donor.Node());
+        this.assertEquals(7, number());
+        this.assertEquals("text", text());
+        this.assertNull(empty());
+        this.assertEquals([1, 2], list());
+        this.assertEquals({"n": 3}, dict());
+        this.assertTrue(node() instanceof donor.Node);
+    }
+
+    @test
+    func nestedNamedAndInheritedCaptures(): void {
+        let named = donor.named<int>(7);
+        let outer = donor.nested<string>("nested");
+        let inner = outer();
+        let base = donor.Base<string>("base");
+        let child = ReturnChild();
+        let baseRead = base.reader();
+        let readMethod = child.reader;
+        let childRead = readMethod();
+        let own = child.own();
+        this.assertEquals(7, named());
+        this.assertEquals("nested", inner());
+        this.assertEquals("base", baseRead());
+        this.assertEquals(9, childRead());
+        this.assertEquals("child", own());
+        this.assertEquals([7, 7], [1, 2].map(func(int n): int { return named() as int; }));
+        this.assertEquals(9, async.await(async.run(childRead)));
+    }
+
+    @test
+    func capturedBindingsStillRejectWrongReturnValues(): void {
+        let wrong = donor.capture<int>("bad");
+        let wrongList = donor.capture<list<int>>(["bad"]);
+        for (read in [wrong, wrongList]) {
+            bool rejected = false;
+            try { read(); } catch (TypeError error) { rejected = true; }
+            this.assertTrue(rejected);
+        }
+    }
+}

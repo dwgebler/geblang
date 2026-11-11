@@ -1,0 +1,95 @@
+/**
+ * @title Typed declarations using type parameters
+ * @summary A declaration typed with a type parameter (`list<T> y`) accepts
+ *          values inside generic functions, methods, closures and nested
+ *          functions, in the same module and across modules.
+ */
+import test;
+import reflect;
+import generic_decl_donor as donor;
+
+func raw(any v): any { return v; }
+func wrap<T>(T x): list<T> { list<T> y = [x]; return y; }
+func bindings<T>(T x): dict { list<T> y = [x]; return reflect.typeBindings(y); }
+func nested<T>(T x): int {
+    func inner(any v): list<T> { list<T> r = raw(v); return r; }
+    return inner([x]).length();
+}
+func closureRet<T>(any x): any {
+    let f = func(): list<T> { return raw(x); };
+    return f();
+}
+
+class Box<T> {
+    T v;
+    func Box(T v) { this.v = v; }
+    func all(): list<T> { list<T> r = [this.v]; return r; }
+}
+
+class StrBox extends Box<string> { func StrBox() { parent("s"); } }
+class IntBag extends donor.Bag<int> { func IntBag(int v) { parent(v); } }
+
+class GenericDeclarationsTest extends test.Test {
+    @test
+    func functionDeclarations(): void {
+        this.assertEquals([5], wrap<int>(5));
+        this.assertEquals(["a"], wrap("a"));
+        this.assertEquals(1, nested(1));
+    }
+
+    @test
+    func typeParameterDeclarationsAreUntagged(): void {
+        this.assertEquals({}, bindings<int>(1));
+    }
+
+    @test
+    func methodDeclarations(): void {
+        this.assertEquals([3], Box<int>(3).all());
+        this.assertEquals([3], Box(3).all());
+        this.assertEquals(["s"], StrBox().all());
+    }
+
+    @test
+    func crossModuleDeclarations(): void {
+        this.assertEquals([1], donor.wrap<int>(1));
+        this.assertEquals(["s"], donor.Bag<string>("s").items());
+        this.assertEquals([7], IntBag(7).items());
+    }
+
+    @test
+    func closureLeavesUnboundOuterTypeParameterOpen(): void {
+        this.assertEquals([1], closureRet([1]));
+        this.assertEquals(["s"], donor.Holder().closureRet(["s"]));
+    }
+
+    @test
+    func closureEnforcesBoundOuterTypeParameter(): void {
+        let threw = false;
+        try {
+            closureRet<string>([1]);
+        } catch (TypeError e) {
+            threw = true;
+            this.assertEquals("<closure> expects list<T> return, got list<int>", e.message);
+        }
+        this.assertTrue(threw);
+        threw = false;
+        try {
+            donor.Holder<int>().closureRet(["s"]);
+        } catch (TypeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func listAliasMismatchUsesDeclaredSpelling(): void {
+        let threw = false;
+        try {
+            int[] w = raw(["a"]);
+        } catch (TypeError e) {
+            threw = true;
+            this.assertEquals("type error: cannot assign list to int[] (element at index 0 is string)", e.message);
+        }
+        this.assertTrue(threw);
+    }
+}

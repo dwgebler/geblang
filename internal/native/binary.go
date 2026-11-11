@@ -522,7 +522,7 @@ func registerBinary(r *Registry) {
 			entries[DictKey(keyVal)] = runtime.DictEntry{Key: keyVal, Value: values[vi]}
 			vi++
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	})
 	r.Register("binary", "size", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {

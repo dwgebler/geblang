@@ -1,0 +1,48 @@
+module native_cycle_donor;
+
+import store;
+
+export func dictionaryCycle(): string {
+    let source = {};
+    source["self"] = source;
+    let state = store.Store();
+    state.set("data", source);
+    let copy = state.get("data") as dict<string, any>;
+    let self = copy["self"] as dict<string, any>;
+    self["n"] = 7;
+    assert(copy["n"] == 7);
+    assert(!source.contains("n"));
+    return "dict-ok";
+}
+
+export func listCycle(): string {
+    let source = [];
+    source.push(source);
+    let state = store.Store();
+    state.set("data", source);
+    let copy = state.get("data") as list<any>;
+    let self = copy[0] as list<any>;
+    self.push(7);
+    assert(copy.length() == 2);
+    assert(source.length() == 1);
+    return "list-ok";
+}
+
+export func mixedCycleAndCallbacks(): string {
+    let source = {};
+    let list = [source, source];
+    source["list"] = list;
+    source["callback"] = func(int value): int { return value + 1; };
+    let state = store.Store();
+    state.set("data", list);
+    let copy = state.get("data") as list<any>;
+    let first = copy[0] as dict<string, any>;
+    let second = copy[1] as dict<string, any>;
+    first["n"] = 7;
+    assert(second["n"] == 7);
+    assert((first["list"] as list<any>).length() == 2);
+    let callback = second["callback"];
+    assert(callback(9) == 10);
+    assert(!source.contains("n"));
+    return "mixed-ok";
+}

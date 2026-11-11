@@ -60,5 +60,5 @@ func (e *Evaluator) dbTimedOperation(handle runtime.Value, args []runtime.Value,
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "rowsAffected", runtime.NewInt64(rows))
 	putDict(entries, "lastInsertId", runtime.NewInt64(lastID))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }

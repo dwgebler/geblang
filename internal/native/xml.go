@@ -205,10 +205,10 @@ func xmlNodeValue(node *xmlNode) runtime.Value {
 	for _, child := range node.children {
 		children = append(children, xmlNodeValue(child))
 	}
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey("name"):       {Key: runtime.String{Value: "name"}, Value: runtime.String{Value: node.name}},
-		dictKey("attributes"): {Key: runtime.String{Value: "attributes"}, Value: runtime.Dict{Entries: attrs}},
+		dictKey("attributes"): {Key: runtime.String{Value: "attributes"}, Value: runtime.DictFromEntries(attrs, nil)},
 		dictKey("children"):   {Key: runtime.String{Value: "children"}, Value: &runtime.List{Elements: children}},
 		dictKey("text"):       {Key: runtime.String{Value: "text"}, Value: runtime.String{Value: strings.TrimSpace(node.text.String())}},
-	}}
+	}, nil)
 }

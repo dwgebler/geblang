@@ -1,0 +1,66 @@
+module dict_view_donor;
+
+import freeze;
+import reflect;
+import store;
+import async;
+
+export class Base {
+    dict<string, int> values = {"n": 1};
+    func Base() {}
+    func getValues(): dict<string, int> { return this.values; }
+}
+
+func constValue(const dict<string, int> value): int {
+    assert(freeze.isFrozen(value));
+    return value["n"];
+}
+
+export func verifyViews(): string {
+    dict source = {"n": 1};
+    dict<string, int> typed = source;
+    dict<string, any> wide = typed;
+    let frozen = freeze.shallow(typed);
+    let frozenWide = frozen as dict<string, any>;
+    assert(!freeze.isFrozen(source));
+    assert(!freeze.isFrozen(typed));
+    assert(freeze.isFrozen(frozenWide));
+    assert(reflect.typeBindings(typed)["V"] == "int");
+    assert(reflect.typeBindings(wide)["V"] == "any");
+    assert(reflect.typeBindings(frozen)["V"] == "int");
+    assert(constValue(typed) == 1);
+    bool rejected = false;
+    any invalid = "bad";
+    try { typed["bad"] = invalid; } catch (Error e) { rejected = true; }
+    assert(rejected);
+    source["n"] = 2;
+    for (int i = 0; i < 20; i++) { source["k${i}"] = i; }
+    assert(frozenWide["n"] == 2);
+    assert(frozenWide.length() == 21);
+    source.remove("k0");
+    source["k0"] = 100;
+    assert(frozenWide.keys().last() == "k0");
+    let snapshot = typed.deepCopy();
+    source.clear();
+    assert(frozenWide.isEmpty());
+    assert(snapshot.length() == 21);
+    assert(!freeze.isFrozen(typed));
+    let state = store.Store();
+    let deep = freeze.deep({"items": [1, 2]});
+    state.set("data", deep);
+    let restored = state.get("data") as dict<string, any>;
+    assert(freeze.isFrozen(restored));
+    assert(freeze.isFrozen(restored["items"]));
+    let cyclic = {};
+    cyclic["self"] = cyclic;
+    state.set("cycle", freeze.shallow(cyclic));
+    let restoredCycle = state.get("cycle") as dict<string, any>;
+    assert(freeze.isFrozen(restoredCycle));
+    assert(!freeze.isFrozen(restoredCycle["self"]));
+    assert(async.await(async.run(func(): int { return (restored["items"] as list<int>).length(); })) == 2);
+    let nested = {"items": [1]};
+    let copied = nested.deepCopy();
+    (nested["items"] as list<int>).push(2);
+    assert((copied["items"] as list<int>).length() == 1);
+    return "views-ok";
+}

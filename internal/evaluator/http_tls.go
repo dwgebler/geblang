@@ -240,7 +240,7 @@ func clientCertDict(cert *x509.Certificate) runtime.Dict {
 		dns[i] = runtime.String{Value: n}
 	}
 	putDict(entries, "dnsNames", &runtime.List{Elements: dns})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func mustField(opts runtime.Dict, key string) runtime.Value {

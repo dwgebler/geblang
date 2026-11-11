@@ -151,7 +151,7 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		entries := map[string]runtime.DictEntry{}
 		putBytecodeDict(entries, "class", vm.resolveScopedClass(className, metadata.Module))
 		putBytecodeDict(entries, "elementClass", vm.resolveScopedClass(elementName, metadata.Module))
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	case "returnType":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.returnType expects value")
@@ -331,7 +331,7 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		default:
 			return nil, fmt.Errorf("reflect.typeBindings expects instance or generic collection, got %s", args[0].TypeName())
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	case "interfaceMethods", "interfaceParents":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.%s expects interface", fn)
@@ -783,7 +783,7 @@ func makeLocationDict(module string, line, column int64) runtime.Dict {
 	putBytecodeDict(entries, "module", runtime.String{Value: module})
 	putBytecodeDict(entries, "line", runtime.NewInt64(line))
 	putBytecodeDict(entries, "column", runtime.NewInt64(column))
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 // reflectFunctionMetadataValue resolves a same-module BytecodeClosure (a free function passed by value through an `any` binding) to its populated function metadata before delegating.
@@ -1273,10 +1273,10 @@ func decoratorMetadataDict(decorator runtime.DecoratorMetadata) runtime.Dict {
 	for name, value := range decorator.NamedArgs {
 		putBytecodeDict(named, name, value)
 	}
-	putBytecodeDict(entries, "namedArgs", runtime.Dict{Entries: named})
+	putBytecodeDict(entries, "namedArgs", runtime.DictFromEntries(named, nil))
 	putBytecodeDict(entries, "line", runtime.NewInt64(decorator.Line))
 	putBytecodeDict(entries, "column", runtime.NewInt64(decorator.Column))
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func parameterMetadataDict(parameter runtime.ParameterMetadata) runtime.Dict {
@@ -1292,7 +1292,7 @@ func parameterMetadataDict(parameter runtime.ParameterMetadata) runtime.Dict {
 		}
 		putBytecodeDict(entries, "decorators", &runtime.List{Elements: decValues})
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func interfaceMethodMetadataDict(method runtime.FunctionMetadata) runtime.Dict {
@@ -1309,7 +1309,7 @@ func interfaceMethodMetadataDict(method runtime.FunctionMetadata) runtime.Dict {
 	}
 	putBytecodeDict(entries, "parameters", &runtime.List{Elements: params})
 	putBytecodeDict(entries, "returnType", runtime.String{Value: method.ReturnType})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func bytecodeDocMetadataDict(doc string) runtime.Dict {
@@ -1336,7 +1336,7 @@ func bytecodeDocMetadataDict(doc string) runtime.Dict {
 	putBytecodeDict(entries, "summary", runtime.String{Value: summary})
 	putBytecodeDict(entries, "body", runtime.String{Value: body})
 	putBytecodeDict(entries, "lines", &runtime.List{Elements: lineValues})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func putBytecodeDict(entries map[string]runtime.DictEntry, key string, value runtime.Value) {
@@ -1539,7 +1539,7 @@ func (vm *VM) reflectFieldsResult(target runtime.Value, metadata runtime.ClassMe
 					key := runtime.String{Value: "decorators"}
 					dictEntries[native.DictKey(key)] = runtime.DictEntry{Key: key, Value: &runtime.List{Elements: decValues}}
 				}
-				entries = append(entries, runtime.Dict{Entries: dictEntries})
+				entries = append(entries, runtime.DictFromEntries(dictEntries, nil))
 			}
 			return &runtime.List{Elements: entries}
 		}
@@ -1599,7 +1599,7 @@ func (vm *VM) reflectFieldsResult(target runtime.Value, metadata runtime.ClassMe
 				key := runtime.String{Value: "decorators"}
 				fieldDict[native.DictKey(key)] = runtime.DictEntry{Key: key, Value: &runtime.List{Elements: decValues}}
 			}
-			entries = append(entries, fieldEntry{name: name, dict: runtime.Dict{Entries: fieldDict}})
+			entries = append(entries, fieldEntry{name: name, dict: runtime.DictFromEntries(fieldDict, nil)})
 		}
 		// Sort alphabetically by name to match the evaluator's ordering.
 		sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
@@ -1612,12 +1612,12 @@ func (vm *VM) reflectFieldsResult(target runtime.Value, metadata runtime.ClassMe
 	// Last resort: name-only entries with type="any".
 	entries := make([]runtime.Value, 0, len(metadata.Fields))
 	for _, name := range metadata.Fields {
-		entries = append(entries, runtime.Dict{Entries: map[string]runtime.DictEntry{
+		entries = append(entries, runtime.DictFromEntries(map[string]runtime.DictEntry{
 			native.DictKey(runtime.String{Value: "name"}):       {Key: runtime.String{Value: "name"}, Value: runtime.String{Value: name}},
 			native.DictKey(runtime.String{Value: "type"}):       {Key: runtime.String{Value: "type"}, Value: runtime.String{Value: "any"}},
 			native.DictKey(runtime.String{Value: "nullable"}):   {Key: runtime.String{Value: "nullable"}, Value: runtime.Bool{Value: false}},
 			native.DictKey(runtime.String{Value: "hasDefault"}): {Key: runtime.String{Value: "hasDefault"}, Value: runtime.Bool{Value: false}},
-		}})
+		}, nil))
 	}
 	return &runtime.List{Elements: entries}
 }
@@ -1714,7 +1714,7 @@ func (vm *VM) reflectInheritedFields(target runtime.Value) (runtime.Value, error
 					continue
 				}
 				seen[name.Value] = true
-				tagged := runtime.Dict{Entries: make(map[string]runtime.DictEntry, len(dict.Entries)+1)}
+				tagged := runtime.DictFromEntries(make(map[string]runtime.DictEntry, len(dict.Entries)+1), nil)
 				for k, v := range dict.Entries {
 					tagged.Entries[k] = v
 				}
@@ -1774,7 +1774,7 @@ func (vm *VM) withFieldClasses(result runtime.Value, target runtime.Value) runti
 			out = append(out, entry)
 			continue
 		}
-		tagged := runtime.Dict{Entries: make(map[string]runtime.DictEntry, len(dict.Entries)+2)}
+		tagged := runtime.DictFromEntries(make(map[string]runtime.DictEntry, len(dict.Entries)+2), nil)
 		for k, v := range dict.Entries {
 			tagged.Entries[k] = v
 		}
@@ -1813,7 +1813,7 @@ func (vm *VM) withOverloadParameterClasses(result runtime.Value, module string) 
 				resolved = append(resolved, param)
 				continue
 			}
-			tagged := runtime.Dict{Entries: make(map[string]runtime.DictEntry, len(dict.Entries)+2)}
+			tagged := runtime.DictFromEntries(make(map[string]runtime.DictEntry, len(dict.Entries)+2), nil)
 			for k, v := range dict.Entries {
 				tagged.Entries[k] = v
 			}
@@ -1969,7 +1969,7 @@ func copyMetadataValue(value runtime.Value) runtime.Value {
 			entries[k] = runtime.DictEntry{Key: entry.Key, Value: copyMetadataValue(entry.Value)}
 			return true
 		})
-		return runtime.Dict{Entries: entries}
+		return runtime.DictFromEntries(entries, nil)
 	case *runtime.List:
 		elements := make([]runtime.Value, len(v.Elements))
 		for i, element := range v.Elements {

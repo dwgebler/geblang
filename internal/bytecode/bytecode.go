@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(94)
+	Version = uint16(99)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -351,6 +351,11 @@ const (
 	OpBuildDictConstKeys
 	// OpPrimMethod {nameIndex, argc, methodID} is OpMethodCall for a hot primitive method name; it runs inline on a matching string/list/dict/set/bytes receiver and otherwise behaves exactly as OpMethodCall.
 	OpPrimMethod
+	// OpLoadInterface {nameIndex} pushes the named same-module interface as a value.
+	OpLoadInterface
+	// OpPrimMethodGlobal / OpPrimMethodLocal {slot, nameIndex, argc, methodID} are OpGetGlobal / OpGetLocal fused with the following OpPrimMethod.
+	OpPrimMethodGlobal
+	OpPrimMethodLocal
 )
 
 // Method IDs carried by OpPrimMethod.
@@ -465,6 +470,7 @@ type FunctionInfo struct {
 	Doc                      string
 	TypeParameters           []string
 	TypeParamConstraintExprs []string // parallel to TypeParameters; "" if no constraint
+	OuterTypeParameters      []string // enclosing scopes' type parameters, unchecked when unbound
 	Entry                    int64
 	ParamNames               []string
 	ParamDisplayNames        []string // original-case names for reflection/error display; ParamNames stays lowercased for matching
@@ -488,12 +494,13 @@ type FunctionInfo struct {
 	SharesParentFrame bool
 	// DefLine / DefColumn capture the source position of the `func`
 	// keyword for this function, exposed by reflect.location.
-	DefLine        int64
-	DefColumn      int64
-	Decorators     []runtime.DecoratorMetadata
-	paramTypeSpecs []vmTypeSpec
-	frameMeta      *frameMeta
-	typeParamSet   map[string]bool
+	DefLine         int64
+	DefColumn       int64
+	Decorators      []runtime.DecoratorMetadata
+	paramTypeSpecs  []vmTypeSpec
+	frameMeta       *frameMeta
+	typeParamSet    map[string]bool
+	matchTypeParams map[string]bool
 	// False when every ParamTypes entry is "" or "any"; lets call
 	// entry skip the validation walk for dynamically-typed funcs.
 	requiresParamValidation bool
@@ -635,6 +642,11 @@ func Encode(chunk Chunk) ([]byte, error) {
 		for _, expr := range function.TypeParamConstraintExprs {
 			out = binary.BigEndian.AppendUint16(out, uint16(len(expr)))
 			out = append(out, []byte(expr)...)
+		}
+		out = binary.BigEndian.AppendUint16(out, uint16(len(function.OuterTypeParameters)))
+		for _, name := range function.OuterTypeParameters {
+			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
+			out = append(out, []byte(name)...)
 		}
 		out = binary.BigEndian.AppendUint64(out, uint64(function.Entry))
 		out = binary.BigEndian.AppendUint16(out, uint16(len(function.ParamNames)))
@@ -963,6 +975,12 @@ func Decode(data []byte) (Chunk, error) {
 		function.TypeParamConstraintExprs = make([]string, 0, constraintExprCount)
 		for j := 0; j < constraintExprCount; j++ {
 			function.TypeParamConstraintExprs = append(function.TypeParamConstraintExprs, string(reader.read(int(reader.u16()))))
+		}
+		if outerCount := int(reader.u16()); outerCount > 0 {
+			function.OuterTypeParameters = make([]string, 0, outerCount)
+			for j := 0; j < outerCount; j++ {
+				function.OuterTypeParameters = append(function.OuterTypeParameters, string(reader.read(int(reader.u16()))))
+			}
 		}
 		function.Entry = int64(reader.u64())
 		nameCount := int(reader.u16())
@@ -1693,7 +1711,7 @@ func (r *byteReader) constant() runtime.Value {
 			StaticDecorators: r.decoratorMetadataMap(),
 		}
 	case 10:
-		return runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+		return runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	case 11:
 		return &runtime.List{Elements: nil}
 	case 12:
@@ -1866,7 +1884,7 @@ func (r *byteReader) metadataValue() runtime.Value {
 			value := r.metadataValue()
 			entries[native.DictKey(key)] = runtime.DictEntry{Key: key, Value: value}
 		}
-		return runtime.Dict{Entries: entries}
+		return runtime.DictFromEntries(entries, nil)
 	case 9:
 		count := int(r.u16())
 		entries := map[string]runtime.SetEntry{}
@@ -1951,7 +1969,12 @@ func (c *Chunk) FunctionInfoAt(index int64) (FunctionInfo, error) {
 	if index < 0 || int(index) >= len(c.Functions) {
 		return FunctionInfo{}, fmt.Errorf("function index out of range")
 	}
-	return c.Functions[index], nil
+	info := c.Functions[index]
+	if info.typeParamSet == nil {
+		info.typeParamSet = functionTypeParameterSetOrNil(info)
+		info.matchTypeParams = functionMatchTypeParams(info)
+	}
+	return info, nil
 }
 
 func (c *Chunk) FunctionParamNames(index int64) ([]string, error) {

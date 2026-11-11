@@ -100,7 +100,7 @@ func registerSys(r *Registry) {
 			keyValue := runtime.String{Value: k}
 			entries[DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: runtime.String{Value: v}}
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	})
 }
 

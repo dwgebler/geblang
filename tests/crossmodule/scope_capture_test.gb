@@ -1,0 +1,44 @@
+import test;
+import async;
+import scope_capture_donor as donor;
+
+class ScopeChild extends donor.Base<int> {
+    func ScopeChild() { parent(9); }
+    func own(): callable {
+        int value = 3;
+        return func(): int { return value; };
+    }
+}
+
+class ScopeCaptureTest extends test.Test {
+    @test
+    func genericClosuresKeepTheirLocalBindings(): void {
+        let number = donor.capture<int>(7);
+        let text = donor.capture<string>("text");
+        this.assertEquals(7, number());
+        this.assertEquals("text", text());
+    }
+
+    @test
+    func inheritedAndOwnMethodsPublishCapturedScopes(): void {
+        let child = ScopeChild();
+        let inherited = child.reader;
+        let read = inherited();
+        let own = child.own();
+        this.assertEquals(9, read());
+        this.assertEquals(3, own());
+        this.assertEquals(9, async.await(async.run(read)));
+    }
+
+    @test
+    func generatorsKeepPerIterationClosures(): void {
+        list<int> values = [];
+        for (read in donor.readers()) { values.push(read() as int); }
+        this.assertEquals([0, 1, 2], values);
+    }
+
+    @test
+    func channelsPublishClosuresAndObserveProducerUpdates(): void {
+        this.assertEquals("transfer-ok", donor.transfer());
+    }
+}

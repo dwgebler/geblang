@@ -351,7 +351,7 @@ func JSONToValue(value any) (runtime.Value, error) {
 			keyValue := runtime.String{Value: key}
 			entries[DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: converted}
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	default:
 		return nil, fmt.Errorf("unsupported JSON value %T", value)
 	}

@@ -266,7 +266,7 @@ func urlPartsDict(parsed *url.URL) runtime.Dict {
 	keyValue := runtime.String{Value: "query"}
 	entries[DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: queryDict(parsed.Query())}
 	putString("fragment", parsed.Fragment)
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func queryDict(query url.Values) runtime.Dict {
@@ -285,7 +285,7 @@ func queryDict(query url.Values) runtime.Dict {
 		}
 		queryEntries[DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: value}
 	}
-	return runtime.Dict{Entries: queryEntries}
+	return runtime.DictFromEntries(queryEntries, nil)
 }
 
 func queryValues(value runtime.Value) (url.Values, error) {

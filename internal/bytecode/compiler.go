@@ -21,6 +21,7 @@ type Compiler struct {
 	loops           []*loopContext
 	globals         map[string]int64
 	globalTypes     map[string]string
+	globalDeclared  map[string]*ast.TypeRef
 	globalDeclKinds map[string]globalDecl
 	deletedGlobals  map[string]bool
 	declaredDecls   map[string]bool // case-sensitive class/func/enum/interface names
@@ -79,6 +80,8 @@ type binding struct {
 	kind string
 	slot int64
 	typ  string
+	// declared is the annotated type, nil for an untyped binding.
+	declared *ast.TypeRef
 }
 
 type loopContext struct {
@@ -137,6 +140,7 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 		currentFuncIndex:    -1,
 		globals:             map[string]int64{},
 		globalTypes:         map[string]string{},
+		globalDeclared:      map[string]*ast.TypeRef{},
 		globalDeclKinds:     map[string]globalDecl{},
 		deletedGlobals:      map[string]bool{},
 		declaredDecls:       map[string]bool{},
@@ -306,6 +310,15 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 	for _, p := range embedPaths {
 		c.chunk.Embeds = append(c.chunk.Embeds, EmbedRecord{Path: p, Hash: c.embeds[p]})
 	}
+	for i := range c.chunk.Instructions {
+		instruction := &c.chunk.Instructions[i]
+		if instruction.Op == OpCast && instruction.Operands[1] != 0 {
+			target := c.chunk.Constants[instruction.Operands[0]].(runtime.String).Value
+			if _, imported := c.chunk.FromImports[target]; imported {
+				instruction.Operands[1] = 0
+			}
+		}
+	}
 	c.chunk.consolidateOperands()
 	c.chunk.sharedMeta = newChunkSharedMeta()
 	return c.chunk, nil
@@ -410,6 +423,21 @@ func functionTypeParameterSet(function FunctionInfo) map[string]bool {
 	return params
 }
 
+// functionMatchTypeParams adds enclosing scopes' type parameters to the own set for value matching.
+func functionMatchTypeParams(function FunctionInfo) map[string]bool {
+	if len(function.OuterTypeParameters) == 0 {
+		return function.typeParamSet
+	}
+	params := make(map[string]bool, len(function.typeParamSet)+len(function.OuterTypeParameters))
+	for name := range function.typeParamSet {
+		params[name] = true
+	}
+	for _, name := range function.OuterTypeParameters {
+		params[strings.ToLower(name)] = true
+	}
+	return params
+}
+
 func functionTypeParameterSetOrNil(function FunctionInfo) map[string]bool {
 	if len(function.TypeParameters) == 0 {
 		return nil
@@ -507,6 +535,16 @@ func (c *Compiler) defineLocal(name string) int64 {
 func (c *Compiler) defineLocalWithType(name string, typ string) int64 {
 	slot := c.allocateLocal()
 	c.scopes[len(c.scopes)-1][name] = binding{kind: "local", slot: slot, typ: typ}
+	return slot
+}
+
+func (c *Compiler) defineTypedLocal(name string, typ string, declared *ast.TypeRef) int64 {
+	slot := c.defineLocalWithType(name, typ)
+	if declared != nil {
+		b := c.scopes[len(c.scopes)-1][name]
+		b.declared = declared
+		c.scopes[len(c.scopes)-1][name] = b
+	}
 	return slot
 }
 
@@ -885,7 +923,7 @@ func (c *Compiler) resolveName(name string) (binding, bool) {
 		}
 	}
 	if slot, ok := c.globals[name]; ok {
-		return binding{kind: "global", slot: slot, typ: c.globalTypes[name]}, true
+		return binding{kind: "global", slot: slot, typ: c.globalTypes[name], declared: c.globalDeclared[name]}, true
 	}
 	return binding{}, false
 }
@@ -1013,7 +1051,7 @@ func (c *Compiler) constantValueFromExpression(expr ast.Expression) (runtime.Val
 		}
 	case *ast.DictLiteral:
 		if len(expr.Entries) == 0 {
-			return runtime.Dict{Entries: map[string]runtime.DictEntry{}}, nil
+			return runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil), nil
 		}
 	}
 	return nil, fmt.Errorf("bytecode compiler only supports literal default function parameters")

@@ -236,7 +236,7 @@ func ParseArgvValidated(argv *runtime.List, schema runtime.Dict, validate func(r
 		errVal = runtime.Null{}
 	}
 	entries[DictKey(errKey)] = runtime.DictEntry{Key: errKey, Value: errVal}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 // HelpText generates a usage string for a program given its name and schema.

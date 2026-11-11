@@ -182,7 +182,7 @@ func registerCryptPKI(r *Registry) {
 			DictKey(certKey): {Key: certKey, Value: runtime.String{Value: certPEM}},
 			DictKey(keyKey):  {Key: keyKey, Value: runtime.String{Value: privKeyPEM}},
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	})
 
 	r.Register("crypt", "generateCsr", func(args []runtime.Value) (runtime.Value, error) {
@@ -289,11 +289,11 @@ func registerCryptPKI(r *Registry) {
 			extEntries[DictKey(critKey)] = runtime.DictEntry{Key: critKey, Value: runtime.Bool{Value: ext.Critical}}
 			valKey := runtime.String{Value: "value"}
 			extEntries[DictKey(valKey)] = runtime.DictEntry{Key: valKey, Value: runtime.Bytes{Value: append([]byte(nil), ext.Value...)}}
-			extElems = append(extElems, runtime.Dict{Entries: extEntries})
+			extElems = append(extElems, runtime.DictFromEntries(extEntries, nil))
 		}
 		setEntry("extensions", &runtime.List{Elements: extElems})
 
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	})
 
 	r.Register("crypt", "signCertificate", func(args []runtime.Value) (runtime.Value, error) {
@@ -431,7 +431,7 @@ func registerCryptPKI(r *Registry) {
 			setEntry("cert", runtime.Null{})
 		}
 		setEntry("caCerts", &runtime.List{Elements: caElems})
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	})
 
 	r.Register("crypt", "jweEncrypt", func(args []runtime.Value) (runtime.Value, error) {
@@ -823,7 +823,7 @@ func pkixNameToDict(name pkix.Name) runtime.Value {
 	if len(name.Locality) > 0 {
 		setStr("locality", name.Locality[0])
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func sha256Sum(input string) []byte {

@@ -15,7 +15,9 @@ func FreezeShallowCopy(v Value) Value {
 			return true
 		})
 		frozen.Frozen = true
-		frozen.ElementTypes = append([]string(nil), val.ElementTypes...)
+		if val.dictHeader != nil {
+			frozen.ElementTypes = append([]string(nil), val.ElementTypes...)
+		}
 		return frozen
 	case Set:
 		elements := make(map[string]SetEntry, len(val.Elements))
@@ -48,6 +50,7 @@ func ShallowFreeze(v Value) Value {
 		val.Frozen = true
 		return val
 	case Dict:
+		val = val.copyHeader()
 		val.Frozen = true
 		return val
 	case Set:
@@ -81,7 +84,9 @@ func DeepFreeze(v Value) Value {
 			return true
 		})
 		frozen.Frozen = true
-		frozen.ElementTypes = append([]string(nil), val.ElementTypes...)
+		if val.dictHeader != nil {
+			frozen.ElementTypes = append([]string(nil), val.ElementTypes...)
+		}
 		return frozen
 	case Set:
 		elements := make(map[string]SetEntry, len(val.Elements))
@@ -130,7 +135,7 @@ func isDeepFrozen(v Value, seen map[any]bool) bool {
 		}
 		return true
 	case Dict:
-		if !val.Frozen {
+		if val.dictHeader == nil || !val.Frozen {
 			return false
 		}
 		if id := dictIdentity(val); id != 0 {
@@ -180,7 +185,7 @@ func IsFrozen(v Value) bool {
 	case *List:
 		return val.Frozen
 	case Dict:
-		return val.Frozen
+		return val.dictHeader != nil && val.Frozen
 	case Set:
 		return val.Frozen
 	case *Instance:

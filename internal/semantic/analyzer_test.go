@@ -1646,3 +1646,15 @@ func TestAnalyzerAcceptsUnionParameterCalls(t *testing.T) {
 		})
 	}
 }
+
+func TestAnalyzerKeepsGenericScopeInNestedFunctionBodies(t *testing.T) {
+	diagnostics := analyzeInput(t, `func capture<T>(any value): callable {
+        func named(): T { return value; }
+        return func(): ?T { return value; };
+    }`)
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity == semantic.SeverityError {
+			t.Fatalf("unexpected diagnostic: %v", diagnostic)
+		}
+	}
+}

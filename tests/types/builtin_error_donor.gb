@@ -1,0 +1,5 @@
+module builtin_error_donor;
+
+export class AppError extends RuntimeError {
+    func AppError(string m) { parent(m); }
+}

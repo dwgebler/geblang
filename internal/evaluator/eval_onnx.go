@@ -119,7 +119,7 @@ func (e *Evaluator) onnxSessionClass() *runtime.Class {
 			key := runtime.String{Value: name}
 			entries[dictKey(key)] = runtime.DictEntry{Key: key, Value: nd}
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	}}}
 	cls.Methods["inputnames"] = []runtime.Function{{Name: "inputNames", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
 		s, err := get(this)

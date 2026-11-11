@@ -39,7 +39,7 @@ func (e *Evaluator) metricsInc(call *ast.CallExpression, args []runtime.Value) (
 		}
 		amount = value
 	}
-	labels := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	labels := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	if len(args) == 3 {
 		labels, ok = args[2].(runtime.Dict)
 		if !ok {
@@ -82,7 +82,7 @@ func (e *Evaluator) metricsSet(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
-	labels := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	labels := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	if len(args) == 3 {
 		labels, ok = args[2].(runtime.Dict)
 		if !ok {
@@ -129,7 +129,7 @@ func (e *Evaluator) metricsSnapshot(call *ast.CallExpression, args []runtime.Val
 	for key, value := range e.metrics {
 		putDict(entries, key, runtime.Float{Value: value})
 	}
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) metricsReset(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -322,7 +322,7 @@ func (e *Evaluator) metricsObserve(call *ast.CallExpression, args []runtime.Valu
 	if err != nil {
 		return nil, err
 	}
-	labels := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	labels := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	if len(args) == 3 {
 		labels, ok = args[2].(runtime.Dict)
 		if !ok {
@@ -711,7 +711,7 @@ func (e *Evaluator) traceExportOtlp(call *ast.CallExpression, args []runtime.Val
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "status", runtime.NewInt64(int64(resp.StatusCode)))
 	putDict(entries, "ok", runtime.Bool{Value: resp.StatusCode >= 200 && resp.StatusCode < 300})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 type otlpExportOpts struct {
@@ -964,7 +964,7 @@ func traceSpanValue(id int64, span *traceSpan) runtime.Dict {
 		events = append(events, traceEventValue(event))
 	}
 	putDict(entries, "events", &runtime.List{Elements: events})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func traceEventValue(event traceEvent) runtime.Dict {
@@ -972,7 +972,7 @@ func traceEventValue(event traceEvent) runtime.Dict {
 	putDict(entries, "name", runtime.String{Value: event.name})
 	putDict(entries, "unixNano", runtime.NewInt64(event.at.UnixNano()))
 	putDict(entries, "attrs", traceAttrsValue(event.attrs))
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func traceAttrsValue(attrs map[string]runtime.Value) runtime.Dict {
@@ -980,7 +980,7 @@ func traceAttrsValue(attrs map[string]runtime.Value) runtime.Dict {
 	for key, value := range attrs {
 		putDict(entries, key, value)
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func profileMemStats(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -998,7 +998,7 @@ func profileMemStats(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 	putDict(entries, "heapObjects", runtime.NewInt64(int64(stats.HeapObjects)))
 	putDict(entries, "numGC", runtime.NewInt64(int64(stats.NumGC)))
 	putDict(entries, "goroutines", runtime.NewInt64(int64(goruntime.NumGoroutine())))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func profileGC(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

@@ -1119,7 +1119,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				existing.Value = &runtime.List{Elements: append(existing.Value.(*runtime.List).Elements, el)}
 				entries[dk] = existing
 			}
-			return runtime.Dict{Entries: entries}, nil
+			return runtime.DictFromEntries(entries, nil), nil
 		case "chunk":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.chunk expects one argument (size)")
@@ -1779,7 +1779,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			for _, c := range counts {
 				entries[native.DictKey(c.value)] = runtime.DictEntry{Key: c.value, Value: runtime.NewInt64(int64(c.count))}
 			}
-			return runtime.Dict{Entries: entries}, nil
+			return runtime.DictFromEntries(entries, nil), nil
 		case "mode":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.mode expects no arguments")

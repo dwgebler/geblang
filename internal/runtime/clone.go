@@ -24,6 +24,9 @@ type cloneState struct {
 
 // dictIdentity returns a stable pointer key for a dict's shared backing (the data store, or the literal Entries map), so aliases clone once and self-referential dicts terminate.
 func dictIdentity(d Dict) uintptr {
+	if d.dictHeader == nil {
+		return 0
+	}
 	if d.data != nil {
 		return reflect.ValueOf(d.data).Pointer()
 	}
@@ -159,6 +162,9 @@ func (s *cloneState) cloneValue(value Value) Value {
 		}
 		return cloned
 	case Dict:
+		if value.dictHeader == nil {
+			return NewDict()
+		}
 		id := dictIdentity(value)
 		if id != 0 {
 			if cloned, ok := s.dicts[id]; ok {
@@ -175,6 +181,7 @@ func (s *cloneState) cloneValue(value Value) Value {
 			return true
 		})
 		if s.keepFrozen && value.Frozen {
+			cloned = cloned.copyHeader()
 			cloned.Frozen = true
 			if id != 0 {
 				s.dicts[id] = cloned

@@ -17,7 +17,155 @@ import (
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
 	"geblang/internal/parser"
+	"geblang/internal/runtime"
 )
+
+func TestCastTargetInManuallyAssembledChunkCallback(t *testing.T) {
+	const source = `func text(any value): any { return value as string; }`
+	p := parser.New(lexer.New(source))
+	chunk, err := bytecode.Compile(p.ParseProgram(), []byte(source), "cast-operands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual := bytecode.Chunk{
+		Instructions: chunk.Instructions,
+		Constants:    chunk.Constants,
+		Functions:    chunk.Functions,
+	}
+	vm := bytecode.NewVM(manual, &bytes.Buffer{})
+
+	result, err := vm.CallFunction(0, []runtime.Value{runtime.SmallInt{Value: 42}})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := result.(runtime.String); !ok || value.Value != "42" {
+		t.Fatalf("cast result = %#v, want string 42", result)
+	}
+}
+
+func TestParityDictionaryViewsKeepPrivateMetadataAndSharedEntries(t *testing.T) {
+	donor, err := os.ReadFile("../../tests/crossmodule/dict_view_donor.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := os.ReadFile("../../tests/crossmodule/dict_view_probe.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	writeModule(t, dir, "dict_view_donor", string(donor))
+	single := strings.TrimPrefix(string(donor), "module dict_view_donor;\n")
+	single = strings.ReplaceAll(single, "export ", "")
+
+	t.Run("single file", func(t *testing.T) {
+		runParityModulesDir(t, t.TempDir(), "import io;\n"+single+"\nio.println(verifyViews());", "views-ok\n")
+	})
+	t.Run("imported inheritance", func(t *testing.T) {
+		runParityModulesDir(t, dir, string(probe)+"\nmain();", "views-ok\nint\nany\n{}\n[1, 1]\n7\n1\n")
+	})
+}
+
+func TestParityNativeContainerCyclesAndCallbacks(t *testing.T) {
+	source, err := os.ReadFile("../../tests/crossmodule/native_cycle_donor.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	writeModule(t, dir, "native_cycle_donor", string(source))
+	t.Run("single file", func(t *testing.T) {
+		body := strings.TrimPrefix(string(source), "module native_cycle_donor;\n")
+		body = strings.ReplaceAll(body, "export ", "")
+		runParityModulesDir(t, t.TempDir(), "import io;\n"+body+`io.println(dictionaryCycle());
+io.println(listCycle());
+io.println(mixedCycleAndCallbacks());`, "dict-ok\nlist-ok\nmixed-ok\n")
+	})
+	t.Run("imported functions", func(t *testing.T) {
+		runParityModulesDir(t, dir, `import io;
+import native_cycle_donor as donor;
+io.println(donor.dictionaryCycle());
+io.println(donor.listCycle());
+io.println(donor.mixedCycleAndCallbacks());
+`, "dict-ok\nlist-ok\nmixed-ok\n")
+	})
+}
+
+func TestParityNativeCallbacksDuringGenericConstruction(t *testing.T) {
+	source, err := os.ReadFile("../../tests/crossmodule/native_callback_donor.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	writeModule(t, dir, "native_callback_donor", string(source))
+	t.Run("single file", func(t *testing.T) {
+		body := strings.TrimPrefix(string(source), "module native_callback_donor;\n")
+		body = strings.ReplaceAll(body, "export ", "")
+		runParityModulesDir(t, t.TempDir(), "import io;\n"+body+"\nio.println(verify());", "callbacks-ok\n")
+	})
+	t.Run("imported functions", func(t *testing.T) {
+		runParityModulesDir(t, dir, "import io; import native_callback_donor as donor; io.println(donor.verify());", "callbacks-ok\n")
+	})
+}
+
+func TestParityCastOperandsAcrossModulesAndWrappers(t *testing.T) {
+	dir := t.TempDir()
+	writeModule(t, dir, "castdonor", `module castdonor;
+export type Flag = bool;
+export func convert<int>(any value): any { return value as int; }
+export class Base {
+    any value;
+    func Base(any value) { this.value = value as int; }
+    func converted(): any { return this.value as int; }
+}
+`)
+	runParityModulesDir(t, dir, `import io;
+import castdonor;
+from castdonor import Flag as int;
+class Child extends castdonor.Base {
+    func Child(any value) { parent(value); }
+    func own(): any { return this.value as string; }
+}
+io.println(5 as int);
+io.println(castdonor.convert<bool>(5));
+io.println(castdonor.convert<string>(5));
+io.println(castdonor.convert<bool>(0));
+let base = castdonor.Base(7);
+let child = Child(8);
+io.println(base.converted());
+io.println(child.converted());
+io.println(child.own());
+let bound = child.converted;
+io.println(bound());
+io.println([1, 2].map(func(any n): any { return n as string; }));
+`, "true\ntrue\n5\nfalse\n7\n8\n8\n8\n[\"1\", \"2\"]\n")
+}
+
+func TestParityCastOperandsAcrossDispatchContexts(t *testing.T) {
+	runParity(t, `import io;
+import async;
+func castTo<int>(any value): any { return value as int; }
+func wrap(callable next): callable {
+    return func(any ...args): any { return next(...args) as string; };
+}
+@wrap
+func decorated(): any { return 12 as int; }
+func numbers(): generator<any> { yield 13 as int; yield 14 as string; }
+async func number(): any { return 15 as int; }
+io.println(castTo<bool>(3));
+io.println(castTo<string>(3));
+io.println(castTo<bool>(0));
+io.println(decorated());
+for (n in numbers()) { io.println(n); }
+io.println(async.await(number()));
+int sum = 0;
+sum += 16 as int;
+io.println(sum);
+io.println(1.25f as float);
+io.println(false as bool);
+io.println(9223372036854775808 as int);
+try { io.println("bad" as int); } catch (Error e) { io.println(e.class); }
+`, "true\n3\nfalse\n12\n13\n14\n15\n16\n1.25\nfalse\n9223372036854775808\nValueError\n")
+}
 
 func TestParityWorkspaceDependenciesAndImportedInheritance(t *testing.T) {
 	dir, err := filepath.Abs("../../tests/workspaces/app/src")
@@ -2072,7 +2220,7 @@ func TestParityIterAcrossStdlibBoundary(t *testing.T) {
 import deque;
 let d = deque.Deque<int>();
 d.pushBack(1); d.pushBack(2); d.pushBack(3);
-for (var x in d) {
+for (x in d) {
     io.println(x);
 }
 `, "1\n2\n3\n")
@@ -5736,4 +5884,52 @@ let fresh=Grandchild();io.println(fresh.own);io.println(fresh.shared);io.println
 let parameter=nested();parameter.push([9]);io.println(nested());
 let constructed=ConstructorChild();constructed.items.push([10]);io.println(ConstructorChild().items);
 `, strings.Repeat("7\ntrue\n", 4)+"9\nlocal\n[]\n0\n[]\n[[5], [9]]\n")
+}
+
+func TestParityCapturedGenericReturnBindings(t *testing.T) {
+	donor, err := os.ReadFile("../../tests/crossmodule/captured_return_donor.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := os.ReadFile("../../tests/crossmodule/captured_return_probe.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "7\ntext\nnull\n[1, 2]\n{\"n\": 3}\ntrue\n7\nnested\nbase\n9\nchild\n[7, 7]\n9\nrejected\nrejected\n"
+	t.Run("single file", func(t *testing.T) {
+		body := strings.TrimPrefix(string(donor), "module captured_return_donor;\n")
+		body = strings.ReplaceAll(body, "export ", "")
+		entry := strings.ReplaceAll(string(probe), "import captured_return_donor as donor;", "")
+		entry = strings.ReplaceAll(entry, "donor.", "")
+		runParityModulesDir(t, t.TempDir(), body+entry+"\nmain();", want)
+	})
+	t.Run("imported methods and callbacks", func(t *testing.T) {
+		dir := t.TempDir()
+		writeModule(t, dir, "captured_return_donor", string(donor))
+		runParityModulesDir(t, dir, string(probe)+"\nmain();", want)
+	})
+}
+
+func TestParityPublishedScopeCaptures(t *testing.T) {
+	donor, err := os.ReadFile("../../tests/crossmodule/scope_capture_donor.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := os.ReadFile("../../tests/crossmodule/scope_capture_probe.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "7\ntext\n9\n3\n9\n0\n1\n2\ntransfer-ok\n"
+	t.Run("single file", func(t *testing.T) {
+		body := strings.TrimPrefix(string(donor), "module scope_capture_donor;\n")
+		body = strings.ReplaceAll(body, "export ", "")
+		entry := strings.ReplaceAll(string(probe), "import scope_capture_donor as donor;", "")
+		entry = strings.ReplaceAll(entry, "donor.", "")
+		runParityModulesDir(t, t.TempDir(), body+entry+"\nmain();", want)
+	})
+	t.Run("imported methods generators and channels", func(t *testing.T) {
+		dir := t.TempDir()
+		writeModule(t, dir, "scope_capture_donor", string(donor))
+		runParityModulesDir(t, dir, string(probe)+"\nmain();", want)
+	})
 }

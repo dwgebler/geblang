@@ -216,7 +216,7 @@ func TestWriteHTTPResponseAcceptsResponseObject(t *testing.T) {
 		e.httpResponseClass,
 		gruntime.NewInt64(http.StatusCreated),
 		gruntime.String{Value: "created"},
-		gruntime.Dict{Entries: headers},
+		gruntime.DictFromEntries(headers, nil),
 		gruntime.String{},
 	)
 	recorder := httptest.NewRecorder()

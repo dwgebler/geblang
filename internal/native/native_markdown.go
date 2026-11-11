@@ -108,11 +108,11 @@ func goldmarkNodeToBlock(n goldast.Node, source []byte) (runtime.Dict, bool) {
 		putMarkdownDict(entries, "type", runtime.String{Value: "heading"})
 		putMarkdownDict(entries, "level", runtime.NewInt64(int64(heading.Level)))
 		putMarkdownDict(entries, "text", runtime.String{Value: goldmarkNodeText(n, source)})
-		return runtime.Dict{Entries: entries}, true
+		return runtime.DictFromEntries(entries, nil), true
 	case goldast.KindParagraph:
 		putMarkdownDict(entries, "type", runtime.String{Value: "paragraph"})
 		putMarkdownDict(entries, "text", runtime.String{Value: goldmarkNodeText(n, source)})
-		return runtime.Dict{Entries: entries}, true
+		return runtime.DictFromEntries(entries, nil), true
 	case goldast.KindFencedCodeBlock:
 		fcb := n.(*goldast.FencedCodeBlock)
 		lang := ""
@@ -122,12 +122,12 @@ func goldmarkNodeToBlock(n goldast.Node, source []byte) (runtime.Dict, bool) {
 		putMarkdownDict(entries, "type", runtime.String{Value: "code"})
 		putMarkdownDict(entries, "lang", runtime.String{Value: lang})
 		putMarkdownDict(entries, "code", runtime.String{Value: goldmarkCodeContent(n, source)})
-		return runtime.Dict{Entries: entries}, true
+		return runtime.DictFromEntries(entries, nil), true
 	case goldast.KindCodeBlock:
 		putMarkdownDict(entries, "type", runtime.String{Value: "code"})
 		putMarkdownDict(entries, "lang", runtime.String{Value: ""})
 		putMarkdownDict(entries, "code", runtime.String{Value: goldmarkCodeContent(n, source)})
-		return runtime.Dict{Entries: entries}, true
+		return runtime.DictFromEntries(entries, nil), true
 	case goldast.KindList:
 		return goldmarkListToBlock(n.(*goldast.List), source), true
 	case extast.KindTable:
@@ -135,14 +135,14 @@ func goldmarkNodeToBlock(n goldast.Node, source []byte) (runtime.Dict, bool) {
 	case goldast.KindBlockquote:
 		putMarkdownDict(entries, "type", runtime.String{Value: "blockquote"})
 		putMarkdownDict(entries, "text", runtime.String{Value: goldmarkNodeText(n, source)})
-		return runtime.Dict{Entries: entries}, true
+		return runtime.DictFromEntries(entries, nil), true
 	case goldast.KindThematicBreak:
 		putMarkdownDict(entries, "type", runtime.String{Value: "hr"})
-		return runtime.Dict{Entries: entries}, true
+		return runtime.DictFromEntries(entries, nil), true
 	case goldast.KindHTMLBlock:
 		putMarkdownDict(entries, "type", runtime.String{Value: "html"})
 		putMarkdownDict(entries, "html", runtime.String{Value: goldmarkCodeContent(n, source)})
-		return runtime.Dict{Entries: entries}, true
+		return runtime.DictFromEntries(entries, nil), true
 	}
 	return runtime.Dict{}, false
 }
@@ -214,7 +214,7 @@ func goldmarkListToBlock(list *goldast.List, source []byte) runtime.Dict {
 			itemEntries := map[string]runtime.DictEntry{}
 			putMarkdownDict(itemEntries, "text", runtime.String{Value: text})
 			putMarkdownDict(itemEntries, "checked", runtime.Bool{Value: checked})
-			items = append(items, runtime.Dict{Entries: itemEntries})
+			items = append(items, runtime.DictFromEntries(itemEntries, nil))
 		}
 		if items == nil {
 			items = []runtime.Value{}
@@ -248,7 +248,7 @@ func goldmarkListToBlock(list *goldast.List, source []byte) runtime.Dict {
 		putMarkdownDict(entries, "items", &runtime.List{Elements: items})
 	}
 
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func goldmarkTableToBlock(n goldast.Node, source []byte) runtime.Dict {
@@ -289,5 +289,5 @@ func goldmarkTableToBlock(n goldast.Node, source []byte) runtime.Dict {
 
 	putMarkdownDict(entries, "headers", &runtime.List{Elements: headers})
 	putMarkdownDict(entries, "rows", &runtime.List{Elements: rows})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }

@@ -1,0 +1,11 @@
+module cast_operand_donor;
+
+export type Flag = bool;
+
+export func convert<int>(any value): any { return value as int; }
+
+export class Base {
+    any value;
+    func Base(any value) { this.value = value as int; }
+    func converted(): any { return this.value as int; }
+}

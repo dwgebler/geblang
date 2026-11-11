@@ -13,7 +13,7 @@ func TestLookupDictEntry_StringKeysPreserveTypesAndStorage(t *testing.T) {
 			t.Run(fmt.Sprintf("size=%d/legacy=%t", size, legacy), func(t *testing.T) {
 				dict := runtime.NewDictHint(size)
 				if legacy {
-					dict = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+					dict = runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 				}
 				keys := []runtime.Value{runtime.String{Value: ""}, runtime.String{Value: "1"}, runtime.SmallInt{Value: 1}, runtime.String{Value: "s\x00\u65e5\u672c\u8a9e"}}
 				for i := 0; i < size; i++ {

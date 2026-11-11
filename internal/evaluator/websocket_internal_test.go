@@ -31,7 +31,7 @@ func TestHTTPHandlerUpgradesWebSocket(t *testing.T) {
 		}}
 		entries := map[string]gruntime.DictEntry{}
 		putDict(entries, "websocket", wsHandler)
-		return gruntime.Dict{Entries: entries}, nil
+		return gruntime.DictFromEntries(entries, nil), nil
 	}}
 
 	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil, nil, 0, false, false))
@@ -76,7 +76,7 @@ func TestWebSocketWritesAreSerialisedAcrossGoroutines(t *testing.T) {
 		}}
 		entries := map[string]gruntime.DictEntry{}
 		putDict(entries, "websocket", wsHandler)
-		return gruntime.Dict{Entries: entries}, nil
+		return gruntime.DictFromEntries(entries, nil), nil
 	}}
 
 	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil, nil, 0, false, false))

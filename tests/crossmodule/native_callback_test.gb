@@ -1,0 +1,10 @@
+import test;
+import native_callback_donor as donor;
+
+class NativeCallbackTest extends test.Test {
+    @tag("integration")
+    @test
+    func callbacksKeepOwnBindingsDuringGenericConstruction(): void {
+        this.assertEquals("callbacks-ok", donor.verify());
+    }
+}

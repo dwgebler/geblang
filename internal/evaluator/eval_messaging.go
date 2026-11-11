@@ -97,7 +97,7 @@ func (e *Evaluator) amqpDeclareQueue(call *ast.CallExpression, args []runtime.Va
 	entries["s"+"messages"] = runtime.DictEntry{Key: messagesKey, Value: runtime.NewInt64(int64(q.Messages))}
 	consumersKey := runtime.String{Value: "consumers"}
 	entries["s"+"consumers"] = runtime.DictEntry{Key: consumersKey, Value: runtime.NewInt64(int64(q.Consumers))}
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) amqpDeclareExchange(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -271,7 +271,7 @@ func (e *Evaluator) amqpGet(call *ast.CallExpression, args []runtime.Value) (run
 	entries["s"+"routingKey"] = runtime.DictEntry{Key: rkKey, Value: runtime.String{Value: msg.RoutingKey}}
 	exchKey := runtime.String{Value: "exchange"}
 	entries["s"+"exchange"] = runtime.DictEntry{Key: exchKey, Value: runtime.String{Value: msg.Exchange}}
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) amqpAck(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -529,7 +529,7 @@ func (e *Evaluator) kafkaRead(call *ast.CallExpression, args []runtime.Value) (r
 	put("topic", runtime.String{Value: msg.Topic})
 	put("partition", runtime.NewInt64(int64(msg.Partition)))
 	put("offset", runtime.NewInt64(msg.Offset))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) kafkaCommit(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

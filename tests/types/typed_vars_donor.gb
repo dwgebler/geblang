@@ -1,0 +1,13 @@
+module typed_vars_donor;
+
+export func ident(any x): any { return x; }
+
+export class Base {
+    func Base() {}
+    func pick(any x): string { string s = ident(x); return s; }
+    func swap(any x): int {
+        int n = 0;
+        n = ident(x);
+        return n;
+    }
+}

@@ -137,7 +137,7 @@ func (e *Evaluator) sshConnect(call *ast.CallExpression, args []runtime.Value) (
 			return nil, fmt.Errorf("%s options must be a dict", call.Callee.String())
 		}
 	} else {
-		opts = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+		opts = runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	}
 	user := os.Getenv("USER")
 	host := target.Value
@@ -190,7 +190,7 @@ func (e *Evaluator) sshConnect(call *ast.CallExpression, args []runtime.Value) (
 	putDict(entries, "handle", runtime.NewInt64(id))
 	putDict(entries, "user", runtime.String{Value: user})
 	putDict(entries, "remoteAddr", runtime.String{Value: addr})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) sshClient(value runtime.Value) (*sshClientHandle, error) {
@@ -245,7 +245,7 @@ func (e *Evaluator) sshExec(call *ast.CallExpression, args []runtime.Value) (run
 	putDict(entries, "stdout", runtime.String{Value: stdout.String()})
 	putDict(entries, "stderr", runtime.String{Value: stderr.String()})
 	putDict(entries, "exitCode", runtime.NewInt64(exitCode))
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) sshSpawn(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -297,7 +297,7 @@ func (e *Evaluator) sshSpawn(call *ast.CallExpression, args []runtime.Value) (ru
 	putDict(entries, "stdin", stdinStream)
 	putDict(entries, "stdout", stdoutStream)
 	putDict(entries, "stderr", stderrStream)
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) sshSession(value runtime.Value) (*sshSessionHandle, error) {
@@ -473,7 +473,7 @@ func (e *Evaluator) sshSftpList(call *ast.CallExpression, args []runtime.Value) 
 		putDict(entries, "mode", runtime.NewInt64(int64(info.Mode().Perm())))
 		putDict(entries, "isDir", runtime.Bool{Value: info.IsDir()})
 		putDict(entries, "modUnix", runtime.NewInt64(info.ModTime().Unix()))
-		out = append(out, runtime.Dict{Entries: entries})
+		out = append(out, runtime.DictFromEntries(entries, nil))
 	}
 	return &runtime.List{Elements: out}, nil
 }
@@ -624,7 +624,7 @@ func (e *Evaluator) sshForwardLocal(call *ast.CallExpression, args []runtime.Val
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "handle", runtime.NewInt64(tid))
 	putDict(entries, "localAddr", runtime.String{Value: listener.Addr().String()})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) sshForwardRemote(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -678,7 +678,7 @@ func (e *Evaluator) sshForwardRemote(call *ast.CallExpression, args []runtime.Va
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "handle", runtime.NewInt64(tid))
 	putDict(entries, "remoteAddr", runtime.String{Value: listener.Addr().String()})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) sshTunnelClose(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

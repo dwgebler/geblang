@@ -124,7 +124,7 @@ func archiveEntryDict(name string, data []byte, isDir bool, size int64) runtime.
 	put("data", runtime.Bytes{Value: data})
 	put("isDir", runtime.Bool{Value: isDir})
 	put("size", runtime.NewInt64(size))
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 // singleArchiveEntries pulls a list<dict<string, any>> from args[0]

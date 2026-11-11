@@ -73,12 +73,12 @@ io.println((-4).isEven());
 }
 
 func TestParityFloatArithmetic(t *testing.T) {
-	// Float + decimal operands produce decimal-formatted output in both paths.
 	runParity(t, `import io;
-float f = 2.5;
-io.println(f + 1.5);
-io.println(f * 2.0);
-`, "4.0000000000\n5.0000000000\n")
+float f = 2.5f;
+io.println(f + 1.5f);
+io.println(f * 2.0f);
+io.println(f + 1);
+`, "4\n5\n3.5\n")
 }
 
 func TestParityNumericLessEqualGreaterEqual(t *testing.T) {

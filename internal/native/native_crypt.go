@@ -402,7 +402,7 @@ func registerCrypt(r *Registry) {
 			DictKey(headerKey):  {Key: headerKey, Value: headerVal},
 			DictKey(payloadKey): {Key: payloadKey, Value: payloadVal},
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	})
 	r.Register("crypt", "aesEncrypt", aesEncryptFn)
 	r.Register("crypt", "aesDecrypt", aesDecryptFn)
@@ -432,7 +432,7 @@ func aeadResultDict(nonce, ciphertext []byte) runtime.Dict {
 		DictKey(nonceKey): {Key: nonceKey, Value: runtime.Bytes{Value: nonce}},
 		DictKey(ctKey):    {Key: ctKey, Value: runtime.Bytes{Value: ciphertext}},
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 // aeadOptionalAAD returns the AAD bytes from args[start] if present, else nil.

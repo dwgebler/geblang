@@ -13,8 +13,8 @@ func tlsOptsDict(tlsEntries map[string]gruntime.Value) gruntime.Dict {
 		putDict(inner, k, v)
 	}
 	outer := map[string]gruntime.DictEntry{}
-	putDict(outer, "tls", gruntime.Dict{Entries: inner})
-	return gruntime.Dict{Entries: outer}
+	putDict(outer, "tls", gruntime.DictFromEntries(inner, nil))
+	return gruntime.DictFromEntries(outer, nil)
 }
 
 // TestBuildServerTLSAutoCert verifies the ACME autocert path produces a

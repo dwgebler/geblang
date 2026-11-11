@@ -1,0 +1,69 @@
+/**
+ * @title Primitive methods on variable receivers
+ * @summary `length`, `isEmpty`, `get` and `contains` called on a global or
+ *          local variable give the same results as on any other receiver,
+ *          including user classes with methods of the same name.
+ */
+import test;
+import prim_fusion_donor as donor;
+
+class Sized {
+    func Sized() {}
+    func length(): int { return 42; }
+    func get(any k): any { return "custom ${k}"; }
+}
+
+let text = "héllo";
+let items = [1, 2, 3];
+let table = {"a": 1};
+let custom = Sized();
+let nothing = null;
+let key = "a";
+
+class PrimMethodReceiversTest extends test.Test {
+    @test
+    func globalReceivers(): void {
+        this.assertEquals(5, text.length());
+        this.assertEquals(3, items.length());
+        this.assertEquals(1, table.get("a"));
+        this.assertEquals(1, table.get(key));
+        this.assertEquals(null, table.get("missing"));
+        this.assertEquals(null, items.get(10));
+        this.assertTrue(items.contains(2));
+        this.assertFalse(text.isEmpty());
+    }
+
+    @test
+    func localReceivers(): void {
+        let ls = "ab";
+        let ld = {"x": 5};
+        this.assertEquals(2, ls.length());
+        this.assertEquals(5, ld.get("x"));
+    }
+
+    @test
+    func userClassMethodsWin(): void {
+        let lo = Sized();
+        this.assertEquals(42, custom.length());
+        this.assertEquals("custom k", custom.get("k"));
+        this.assertEquals(42, lo.length());
+    }
+
+    @test
+    func errorsMatchTheGeneralPath(): void {
+        let message = "";
+        try {
+            nothing.length();
+        } catch (Error e) {
+            message = e.message;
+        }
+        this.assertEquals("unknown method null.length", message);
+    }
+
+    @test
+    func moduleGlobals(): void {
+        this.assertEquals(3, donor.sizes());
+        this.assertEquals(7, donor.lookup("a"));
+        this.assertEquals(null, donor.lookup("zz"));
+    }
+}

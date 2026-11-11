@@ -93,7 +93,7 @@ func httpHeadersToDict(headers runtime.HTTPHeaders) runtime.Dict {
 		}
 		entries[dictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: value}
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func httpHeaderValue(value runtime.Value) (runtime.HTTPHeaders, bool) {
@@ -248,7 +248,7 @@ func httpObjectClasses(env *runtime.Environment) []*runtime.Class {
 			"routeparams": []runtime.Function{{Name: "routeParams", Native: nativeRequestRouteParams}},
 		},
 		Constructors: []runtime.Function{{Name: "Request", Native: nativeRequestConstructor}},
-		Env:          env,
+		Env:          env.MarkShared(),
 	}
 	responseClass := &runtime.Class{
 		Name: "Response",
@@ -282,7 +282,7 @@ func httpObjectClasses(env *runtime.Environment) []*runtime.Class {
 			"__index":       []runtime.Function{{Name: "__index", Native: nativeResponseIndex}},
 		},
 		Constructors: []runtime.Function{{Name: "Response", Native: nativeResponseConstructor}},
-		Env:          env,
+		Env:          env.MarkShared(),
 	}
 	return []*runtime.Class{requestClass, responseClass}
 }
@@ -398,7 +398,7 @@ func nativeRequestToDict(this *runtime.Instance, args []runtime.Value) (runtime.
 	if params, ok := this.Fields["params"].(runtime.Dict); ok {
 		putDict(entries, "params", params)
 	}
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func nativeRequestInspect(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -437,7 +437,7 @@ func nativeResponseWithHeader(this *runtime.Instance, args []runtime.Value) (run
 		})
 	}
 	putDict(headers, name.Value, value)
-	return newResponseInstance(this.Class, this.Fields["status"], this.Fields["body"], runtime.Dict{Entries: headers}, this.Fields["url"]), nil
+	return newResponseInstance(this.Class, this.Fields["status"], this.Fields["body"], runtime.DictFromEntries(headers, nil), this.Fields["url"]), nil
 }
 
 func nativeResponseWithBody(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -566,7 +566,7 @@ func nativeResponseHeaders(this *runtime.Instance, args []runtime.Value) (runtim
 	if headers := this.Fields["headers"]; headers != nil {
 		return headers, nil
 	}
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{}}, nil
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil), nil
 }
 
 func nativeResponseHeader(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -663,7 +663,7 @@ func newErrorResponseInstance(class *runtime.Class, message string) *runtime.Ins
 	return &runtime.Instance{Class: class, Fields: map[string]runtime.Value{
 		"status":  runtime.NewInt64(0),
 		"body":    runtime.String{},
-		"headers": runtime.Dict{Entries: map[string]runtime.DictEntry{}},
+		"headers": runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil),
 		"url":     runtime.String{},
 		"_error":  runtime.String{Value: message},
 	}}
@@ -717,7 +717,7 @@ func responseInstanceDict(instance *runtime.Instance) runtime.Dict {
 	}
 	headers, ok := instance.Fields["headers"]
 	if !ok {
-		headers = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+		headers = runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	}
 	if headerValue, ok := httpHeaderValue(headers); ok {
 		headers = httpHeadersToDict(headerValue)
@@ -728,7 +728,7 @@ func responseInstanceDict(instance *runtime.Instance) runtime.Dict {
 	if url, ok := instance.Fields["url"].(runtime.String); ok && url.Value != "" {
 		putDict(entries, "url", url)
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func newResponseInstance(class *runtime.Class, status runtime.Value, body runtime.Value, headers runtime.Value, url runtime.Value) *runtime.Instance {
@@ -742,7 +742,7 @@ func newResponseInstance(class *runtime.Class, status runtime.Value, body runtim
 		body = runtime.String{}
 	}
 	if headers == nil {
-		headers = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+		headers = runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	}
 	if url == nil {
 		url = runtime.String{}
@@ -782,7 +782,7 @@ func (e *Evaluator) httpJSONResponseObject(call *ast.CallExpression, args []runt
 	}
 	headers := map[string]runtime.DictEntry{}
 	putDict(headers, "Content-Type", runtime.String{Value: "application/json"})
-	return newResponseInstance(e.httpResponseClass, status, runtime.String{Value: body}, runtime.Dict{Entries: headers}, runtime.String{}), nil
+	return newResponseInstance(e.httpResponseClass, status, runtime.String{Value: body}, runtime.DictFromEntries(headers, nil), runtime.String{}), nil
 }
 
 func (e *Evaluator) httpRedirectObject(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -805,5 +805,5 @@ func (e *Evaluator) httpRedirectObject(call *ast.CallExpression, args []runtime.
 	}
 	headers := map[string]runtime.DictEntry{}
 	putDict(headers, "Location", runtime.String{Value: url.Value})
-	return newResponseInstance(e.httpResponseClass, status, runtime.String{}, runtime.Dict{Entries: headers}, runtime.String{}), nil
+	return newResponseInstance(e.httpResponseClass, status, runtime.String{}, runtime.DictFromEntries(headers, nil), runtime.String{}), nil
 }

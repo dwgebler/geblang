@@ -101,6 +101,19 @@ func TestCloneCyclicDictTerminates(t *testing.T) {
 	}
 }
 
+func TestFrozenDictionarySnapshotKeepsCycleViewFlags(t *testing.T) {
+	source := NewDict()
+	source.PutEntry("sself", DictEntry{Key: String{Value: "self"}, Value: source})
+	frozen := ShallowFreeze(source)
+
+	snapshot := CloneSnapshot(frozen).(Dict)
+	self, ok := snapshot.GetStringEntry("self")
+
+	if !ok || !ValuesIdentical(snapshot, self.Value) || !IsFrozen(snapshot) || IsFrozen(self.Value) || IsFrozen(source) {
+		t.Fatal("snapshot changed cycle identity or per-view frozen flags")
+	}
+}
+
 func TestCloneDictAliasClonedOnce(t *testing.T) {
 	d := NewDict()
 	d.PutEntry("k", DictEntry{Key: String{Value: "k"}, Value: NewInt64(1)})

@@ -1,0 +1,36 @@
+import captured_return_donor as donor;
+import async;
+import io;
+
+class ProbeChild extends donor.Base<int> {
+    func ProbeChild() { parent(9); }
+    func own(): callable { return donor.capture<string>("child"); }
+}
+
+func main(): void {
+    let number = donor.capture<int>(7);
+    let text = donor.capture<string>("text");
+    let empty = donor.nullable<int>(null);
+    let items = donor.capture<list<int>>([1, 2]);
+    let mapping = donor.capture<dict<string, int>>({"n": 3});
+    let node = donor.capture<donor.Node>(donor.Node());
+    io.println(number()); io.println(text()); io.println(empty());
+    io.println(items()); io.println(mapping()); io.println(node() instanceof donor.Node);
+    let named = donor.named<int>(7);
+    let outer = donor.nested<string>("nested");
+    let inner = outer();
+    let base = donor.Base<string>("base");
+    let child = ProbeChild();
+    let baseRead = base.reader();
+    let method = child.reader;
+    let childRead = method();
+    let own = child.own();
+    io.println(named()); io.println(inner()); io.println(baseRead());
+    io.println(childRead()); io.println(own());
+    io.println([1, 2].map(func(int n): int { return named() as int; }));
+    io.println(async.await(async.run(childRead)));
+    for (read in [donor.capture<int>("bad"), donor.capture<list<int>>(["bad"])]) {
+        try { read(); io.println("accepted"); }
+        catch (TypeError error) { io.println("rejected"); }
+    }
+}

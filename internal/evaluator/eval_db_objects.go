@@ -46,7 +46,7 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		Module:  "db",
 		Fields:  []runtime.Field{{Name: "handle"}},
 		Methods: map[string][]runtime.Function{},
-		Env:     env,
+		Env:     env.MarkShared(),
 	}
 	rowsClass.Methods["next"] = []runtime.Function{{Name: "next", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
@@ -171,7 +171,7 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		Module:  "db",
 		Fields:  []runtime.Field{{Name: "handle"}},
 		Methods: map[string][]runtime.Function{},
-		Env:     env,
+		Env:     env.MarkShared(),
 	}
 	transactionClass.Methods["exec"] = []runtime.Function{{Name: "exec", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		return e.dbTxExecStandard(syntheticCall("db.Transaction.exec"), append([]runtime.Value{this.Fields["handle"]}, args...))
@@ -197,7 +197,7 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		Module:  "db",
 		Fields:  []runtime.Field{{Name: "handle"}},
 		Methods: map[string][]runtime.Function{},
-		Env:     env,
+		Env:     env.MarkShared(),
 	}
 	statementClass.Methods["exec"] = []runtime.Function{{Name: "exec", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		return e.dbStmtExecStandard(syntheticCall("db.Statement.exec"), append([]runtime.Value{this.Fields["handle"]}, args...))
@@ -225,7 +225,7 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 			this.Fields["handle"] = handle
 			return runtime.Null{}, nil
 		}}},
-		Env: env,
+		Env: env.MarkShared(),
 	}
 	connectionClass.Methods["exec"] = []runtime.Function{{Name: "exec", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		return e.dbExecStandard(syntheticCall("db.Connection.exec"), append([]runtime.Value{this.Fields["handle"]}, args...))

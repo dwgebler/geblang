@@ -41,12 +41,12 @@ func NewParseError(message string, text string, offset int64) ParseError {
 }
 
 func ParseErrorValue(parseErr ParseError) runtime.Value {
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey("message"): {Key: runtime.String{Value: "message"}, Value: runtime.String{Value: parseErr.Message}},
 		dictKey("line"):    {Key: runtime.String{Value: "line"}, Value: runtime.NewInt64(parseErr.Line)},
 		dictKey("column"):  {Key: runtime.String{Value: "column"}, Value: runtime.NewInt64(parseErr.Column)},
 		dictKey("offset"):  {Key: runtime.String{Value: "offset"}, Value: runtime.NewInt64(parseErr.Offset)},
-	}}
+	}, nil)
 }
 
 func ParseResult(ok bool, value runtime.Value, parseErr *ParseError) runtime.Value {
@@ -54,11 +54,11 @@ func ParseResult(ok bool, value runtime.Value, parseErr *ParseError) runtime.Val
 	if parseErr != nil {
 		errorValue = ParseErrorValue(*parseErr)
 	}
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey("ok"):    {Key: runtime.String{Value: "ok"}, Value: runtime.Bool{Value: ok}},
 		dictKey("value"): {Key: runtime.String{Value: "value"}, Value: value},
 		dictKey("error"): {Key: runtime.String{Value: "error"}, Value: errorValue},
-	}}
+	}, nil)
 }
 
 func ValidationResult(valid bool, parseErr *ParseError) runtime.Value {
@@ -66,10 +66,10 @@ func ValidationResult(valid bool, parseErr *ParseError) runtime.Value {
 	if parseErr != nil {
 		errorValue = ParseErrorValue(*parseErr)
 	}
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey("valid"): {Key: runtime.String{Value: "valid"}, Value: runtime.Bool{Value: valid}},
 		dictKey("error"): {Key: runtime.String{Value: "error"}, Value: errorValue},
-	}}
+	}, nil)
 }
 
 func lineColumn(text string, offset int64) (int64, int64) {

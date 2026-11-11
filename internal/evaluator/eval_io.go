@@ -1207,7 +1207,7 @@ func fileInfoDict(name string, info os.FileInfo) runtime.Dict {
 	putDict(entries, "isSymlink", runtime.Bool{Value: info.Mode()&os.ModeSymlink != 0})
 	putDict(entries, "modUnix", runtime.NewInt64(info.ModTime().Unix()))
 	putDict(entries, "modUnixNano", runtime.NewInt64(info.ModTime().UnixNano()))
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func ioStat(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -1250,7 +1250,7 @@ func ioScanDir(call *ast.CallExpression, args []runtime.Value) (runtime.Value, e
 		putDict(d, "isDir", runtime.Bool{Value: entry.IsDir()})
 		putDict(d, "isFile", runtime.Bool{Value: entry.Type().IsRegular()})
 		putDict(d, "isSymlink", runtime.Bool{Value: entry.Type()&os.ModeSymlink != 0})
-		values = append(values, runtime.Dict{Entries: d})
+		values = append(values, runtime.DictFromEntries(d, nil))
 	}
 	return &runtime.List{Elements: values}, nil
 }
@@ -1548,7 +1548,7 @@ func ioWalkDir(call *ast.CallExpression, args []runtime.Value) (runtime.Value, e
 		putDict(entries, "isDir", runtime.Bool{Value: info.IsDir()})
 		putDict(entries, "size", runtime.NewInt64(info.Size()))
 		putDict(entries, "modUnix", runtime.NewInt64(info.ModTime().Unix()))
-		values = append(values, runtime.Dict{Entries: entries})
+		values = append(values, runtime.DictFromEntries(entries, nil))
 		return nil
 	})
 	if err != nil {

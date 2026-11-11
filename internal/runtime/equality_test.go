@@ -80,7 +80,7 @@ func TestLeafValuesEqualSymmetric(t *testing.T) {
 func TestLeafValuesEqualDelegatesContainers(t *testing.T) {
 	for _, v := range []Value{
 		&List{Elements: []Value{SmallInt{Value: 1}}},
-		Dict{Entries: map[string]DictEntry{}},
+		DictFromEntries(map[string]DictEntry{}, nil),
 		Set{Elements: map[string]SetEntry{}},
 	} {
 		if _, handled := LeafValuesEqual(v, v); handled {
@@ -117,9 +117,9 @@ func TestValuesEqualNestedInstances(t *testing.T) {
 // A NativeObject with an uncomparable payload (serveFile marker) must compare without panicking (finding 2.6).
 func TestNativeObjectsEqualUncomparablePayload(t *testing.T) {
 	marker := func(path string) NativeObject {
-		return NativeObject{Kind: "serveFile", Payload: Dict{Entries: map[string]DictEntry{
+		return NativeObject{Kind: "serveFile", Payload: DictFromEntries(map[string]DictEntry{
 			"path": {Key: String{Value: "path"}, Value: String{Value: path}},
-		}}}
+		}, nil)}
 	}
 	if eq, _ := LeafValuesEqual(marker("/a"), marker("/a")); !eq {
 		t.Fatal("equal serveFile markers should compare equal")

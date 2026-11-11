@@ -593,6 +593,7 @@ func (vm *VM) prepareFunctionTypeMetadata() {
 	for i := range vm.chunk.Functions {
 		function := &vm.chunk.Functions[i]
 		function.typeParamSet = functionTypeParameterSetOrNil(*function)
+		function.matchTypeParams = functionMatchTypeParams(*function)
 		function.requiresParamValidation = functionRequiresParamValidation(*function)
 		function.constructorFlag = constructorFlagFor(function.Name)
 		function.frameMeta = newFrameMeta(*function, vm.typeSpec)
@@ -619,7 +620,7 @@ func (vm *VM) prepareFunctionTypeMetadata() {
 	}
 	vm.requiresCallSitePolymorphism = hasCallSitePolymorphism
 	for _, instruction := range vm.chunk.Instructions {
-		if instruction.Op != OpTypeAssert || len(instruction.Operands) != 1 {
+		if instruction.Op != OpTypeAssert || len(instruction.Operands) == 0 {
 			continue
 		}
 		constIdx := instruction.Operands[0]

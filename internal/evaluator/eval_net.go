@@ -65,7 +65,7 @@ func netSplitHostPort(call *ast.CallExpression, args []runtime.Value) (runtime.V
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "host", runtime.String{Value: host})
 	putDict(entries, "port", runtime.String{Value: port})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func netLookupHost(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -316,7 +316,7 @@ func (e *Evaluator) netReadFrom(call *ast.CallExpression, args []runtime.Value) 
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "addr", runtime.String{Value: addr.String()})
 	putDict(entries, "data", runtime.Bytes{Value: buf[:read]})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) netWriteTo(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -441,7 +441,7 @@ func (e *Evaluator) netDial(call *ast.CallExpression, args []runtime.Value) (run
 	putDict(entries, "stream", streamValue)
 	putDict(entries, "localAddr", runtime.String{Value: conn.LocalAddr().String()})
 	putDict(entries, "remoteAddr", runtime.String{Value: conn.RemoteAddr().String()})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 // netServe binds a listener, spawns an accept-loop goroutine, and
@@ -520,7 +520,7 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 				putDict(entries, "stream", streamValue)
 				putDict(entries, "localAddr", runtime.String{Value: handlerConn.LocalAddr().String()})
 				putDict(entries, "remoteAddr", runtime.String{Value: handlerConn.RemoteAddr().String()})
-				socketDict := runtime.Dict{Entries: entries}
+				socketDict := runtime.DictFromEntries(entries, nil)
 				// Per-connection isolation unless shareHandler: clone the handler so concurrent connections don't share/race its captured state (parity with the bytecode VM).
 				callbackHandler := handler
 				if handler.Native == nil && !share {
@@ -533,7 +533,7 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "handle", runtime.NewInt64(id))
 	putDict(entries, "localAddr", runtime.String{Value: listener.Addr().String()})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 // netCloseListener stops an accept-loop and joins the goroutine so

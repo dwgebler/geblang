@@ -748,7 +748,7 @@ func matchValueToTypeRefWith(typeParams map[string]bool, inherited map[string]st
 	if typ == nil {
 		return true
 	}
-	if len(inherited) > 0 && typ.Operator == "" && len(typ.Arguments) == 0 {
+	if len(inherited) > 0 && typ.Operator == "" && len(typ.Arguments) == 0 && !typ.ListAlias {
 		if bound, ok := inherited[typ.Name]; ok && bound != "" {
 			// Substitute the concrete type and re-check via the
 			// existing path.
@@ -763,7 +763,17 @@ func matchValueToTypeRefWith(typeParams map[string]bool, inherited map[string]st
 			return runtime.MatchesCheckedCast(value, substituted, func(value runtime.Value, typ *ast.TypeRef) bool { return matchValueToTypeRef(typeParams, value, typ) })
 		}
 	}
+	if len(inherited) > 0 {
+		if substituted, ok := runtime.SubstituteNestedTypeBindings(typ, inherited, boundTypeRefOrNil); ok {
+			return runtime.MatchesCheckedCast(value, substituted, func(value runtime.Value, typ *ast.TypeRef) bool { return matchValueToTypeRef(typeParams, value, typ) })
+		}
+	}
 	return matchValueToTypeRef(typeParams, value, typ)
+}
+
+func boundTypeRefOrNil(bound string) *ast.TypeRef {
+	parsed, _ := parsedBoundTypeRef(bound)
+	return parsed
 }
 
 func returnTypeChecked(fn runtime.Function) bool {
@@ -878,13 +888,7 @@ func valueMatchesTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 	// *runtime.Instance. Walk the captured parent chain so a parameter
 	// typed `HttpException` accepts a `BadRequestError` value.
 	if errValue, ok := value.(runtime.Error); ok {
-		target := simpleTypeName(typ.Name)
-		for _, ancestor := range errValue.Parents {
-			if typeNamesEqual(ancestor, target) {
-				return true
-			}
-		}
-		return false
+		return runtime.ErrorValueIsA(errValue, simpleTypeName(typ.Name), typeNamesEqual)
 	}
 	if ev, ok := value.(runtime.EnumVariant); ok {
 		target := simpleTypeName(typ.Name)
@@ -1185,7 +1189,7 @@ func typeRefUsesFunctionTypeParameter(fn runtime.Function, typ *ast.TypeRef) boo
 	if params == nil {
 		return false
 	}
-	return typeRefUsesTypeParameter(typ, params)
+	return runtime.TypeRefUsesTypeParameter(typ, params)
 }
 
 func functionTypeParameterSet(fn runtime.Function) map[string]bool {
@@ -1193,29 +1197,29 @@ func functionTypeParameterSet(fn runtime.Function) map[string]bool {
 	for _, name := range fn.TypeParameters {
 		params[strings.ToLower(name)] = true
 	}
+	for _, name := range fn.OuterTypeParameters {
+		params[strings.ToLower(name)] = true
+	}
 	return params
 }
 
 func functionTypeParameterSetOrNil(fn runtime.Function) map[string]bool {
-	if len(fn.TypeParameters) == 0 {
+	if len(fn.TypeParameters) == 0 && len(fn.OuterTypeParameters) == 0 {
 		return nil
 	}
 	return functionTypeParameterSet(fn)
 }
 
-func typeRefUsesTypeParameter(typ *ast.TypeRef, params map[string]bool) bool {
-	if typ == nil {
-		return false
+func (e *Evaluator) enclosingTypeParameters() []string {
+	var names []string
+	if fn := e.currentFunction(); fn != nil {
+		names = append(names, fn.TypeParameters...)
+		names = append(names, fn.OuterTypeParameters...)
 	}
-	if params[strings.ToLower(typ.Name)] {
-		return true
+	if n := len(e.classStack); n > 0 {
+		names = append(names, e.classStack[n-1].TypeParameters...)
 	}
-	for _, arg := range typ.Arguments {
-		if typeRefUsesTypeParameter(arg, params) {
-			return true
-		}
-	}
-	return typeRefUsesTypeParameter(typ.Left, params) || typeRefUsesTypeParameter(typ.Right, params)
+	return names
 }
 
 func (e *Evaluator) typeParamInScope(name string) bool {

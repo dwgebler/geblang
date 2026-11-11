@@ -189,3 +189,96 @@ func castShowValue(v Value) string {
 	}
 	return v.Inspect()
 }
+
+// SubstituteNestedTypeBindings binds type-parameter names below the root; an unbound name stays open.
+func SubstituteNestedTypeBindings(typ *ast.TypeRef, bindings map[string]string, parse func(string) *ast.TypeRef) (*ast.TypeRef, bool) {
+	if typ == nil || len(bindings) == 0 {
+		return typ, false
+	}
+	if typ.Operator != "" {
+		return substituteBoundRef(typ, bindings, parse)
+	}
+	return substituteBoundArgs(typ, bindings, parse)
+}
+
+func substituteBoundRef(typ *ast.TypeRef, bindings map[string]string, parse func(string) *ast.TypeRef) (*ast.TypeRef, bool) {
+	if typ == nil {
+		return nil, false
+	}
+	if typ.Operator != "" {
+		left, l := substituteBoundRef(typ.Left, bindings, parse)
+		right, r := substituteBoundRef(typ.Right, bindings, parse)
+		if !l && !r {
+			return typ, false
+		}
+		out := *typ
+		out.Left, out.Right = left, right
+		return &out, true
+	}
+	if len(typ.Arguments) == 0 && !typ.ListAlias {
+		bound, ok := typeBinding(typ.Name, bindings)
+		if !ok {
+			return typ, false
+		}
+		out := ast.TypeRef{Token: typ.Token, Name: bound}
+		if parsed := parse(bound); parsed != nil {
+			out = *parsed
+		}
+		out.Nullable = out.Nullable || typ.Nullable
+		return &out, true
+	}
+	return substituteBoundArgs(typ, bindings, parse)
+}
+
+func substituteBoundArgs(typ *ast.TypeRef, bindings map[string]string, parse func(string) *ast.TypeRef) (*ast.TypeRef, bool) {
+	if typ.ListAlias && len(typ.Arguments) == 0 {
+		element, ok := substituteBoundRef(&ast.TypeRef{Token: typ.Token, Name: typ.Name}, bindings, parse)
+		if !ok {
+			return typ, false
+		}
+		return &ast.TypeRef{Token: typ.Token, Name: "list", Nullable: typ.Nullable, Arguments: []*ast.TypeRef{element}}, true
+	}
+	var args []*ast.TypeRef
+	for i, arg := range typ.Arguments {
+		sub, ok := substituteBoundRef(arg, bindings, parse)
+		if !ok {
+			continue
+		}
+		if args == nil {
+			args = append([]*ast.TypeRef(nil), typ.Arguments...)
+		}
+		args[i] = sub
+	}
+	if args == nil {
+		return typ, false
+	}
+	out := *typ
+	out.Arguments = args
+	return &out, true
+}
+
+func typeBinding(name string, bindings map[string]string) (string, bool) {
+	if bound, ok := bindings[name]; ok && bound != "" {
+		return bound, true
+	}
+	if bound, ok := bindings[strings.ToLower(name)]; ok && bound != "" {
+		return bound, true
+	}
+	return "", false
+}
+
+// TypeRefUsesTypeParameter reports whether typ names any of params (lower-cased keys).
+func TypeRefUsesTypeParameter(typ *ast.TypeRef, params map[string]bool) bool {
+	if typ == nil {
+		return false
+	}
+	if params[strings.ToLower(typ.Name)] {
+		return true
+	}
+	for _, arg := range typ.Arguments {
+		if TypeRefUsesTypeParameter(arg, params) {
+			return true
+		}
+	}
+	return TypeRefUsesTypeParameter(typ.Left, params) || TypeRefUsesTypeParameter(typ.Right, params)
+}

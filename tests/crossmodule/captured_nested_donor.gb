@@ -1,0 +1,25 @@
+module captured_nested_donor;
+
+export type Scores = dict<string, int>;
+
+export class Node { int v = 1; }
+
+export class Base<T> {
+    T value;
+    func Base(T value) { this.value = value; }
+    func listReader(): callable { return func(): list<T> { return [this.value]; }; }
+    func take(int[] xs): int { return xs.length(); }
+}
+
+export func listOf<T>(T c): callable { return func(): list<T> { return [c]; }; }
+export func wrongList<T>(T c): callable { return func(): list<T> { return ["bad"]; }; }
+export func acceptList<T>(T c): callable { return func(list<T> xs): int { return xs.length(); }; }
+export func mixed<T>(T c): callable {
+    func inner<U>(U own): dict<U, T> { return {own: c}; }
+    return inner;
+}
+export func plain(): callable {
+    func inner<U>(U own): U { return own; }
+    return inner;
+}
+export func takeScores(Scores s): int { return s.length(); }

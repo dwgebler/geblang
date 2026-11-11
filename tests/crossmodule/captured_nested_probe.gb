@@ -1,0 +1,29 @@
+import captured_nested_donor as donor;
+import async;
+import io;
+import reflect;
+
+class ProbeChild extends donor.Base<int> {
+    func ProbeChild() { parent(5); }
+}
+
+func report(callable f): void {
+    try { io.println(f()); } catch (TypeError e) { io.println(e.message); }
+}
+
+func main(): void {
+    any badList = ["x"];
+    any badDict = {"a": "x"};
+    let lambda = func(list<int> xs): int { return xs.length(); };
+    report(func(): any { return donor.listOf<string>("s")(); });
+    report(func(): any { return donor.mixed<int>(1)("k"); });
+    report(func(): any { return donor.plain()("u"); });
+    report(func(): any { return ProbeChild().listReader()(); });
+    report(func(): any { return async.await(async.run(donor.listOf<int>(7))); });
+    report(func(): any { return donor.wrongList<int>(1)(); });
+    report(func(): any { return donor.acceptList<int>(1)(badList); });
+    report(func(): any { return lambda(badList); });
+    report(func(): any { return donor.takeScores(badDict); });
+    report(func(): any { return ProbeChild().take(badList); });
+    for (p in reflect.parameters(donor.takeScores)) { io.println(p["type"]); }
+}

@@ -433,16 +433,14 @@ func vmCallableTypeName(name string) bool {
 }
 
 func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
-	// A value that already has the (unaliased) primitive target type stays on the stack untouched.
-	if n := len(vm.stack); n >= 2 && vm.stack[n-1].Kind == runtime.VMKindBoxed {
-		if t, ok := vm.stack[n-1].Boxed.(runtime.String); ok && vmValueHasPrimitiveType(vm.stack[n-2], t.Value) && !vm.castTargetRebound(t.Value) {
-			vm.truncateStack(n - 1)
-			return ip, nil
-		}
-	}
-	target, err := vm.popString(instruction, "cast target must be string")
+	target, err := vm.constantString(instruction, "cast target must be string")
 	if err != nil {
 		return 0, err
+	}
+	if n := len(vm.stack); n > 0 && instruction.Operands[1] != 0 && vmValueHasPrimitiveType(vm.stack[n-1], target) {
+		if len(vm.frames) == 0 || vm.frames[len(vm.frames)-1].typeBindings[target] == "" {
+			return ip, nil
+		}
 	}
 	target = vm.expandTypeAliases(target)
 	if len(vm.frames) > 0 {
@@ -648,7 +646,7 @@ func (vm *VM) runtimeArgumentsMatchWith(function FunctionInfo, args []runtime.Va
 	if len(function.ParamTypes) == 0 {
 		return true
 	}
-	typeParams := function.typeParamSet
+	typeParams := function.matchTypeParams
 	for i, arg := range args {
 		if isPendingDefault(arg) {
 			continue
@@ -824,11 +822,30 @@ func (vm *VM) matchValueToTypeSpecWith(typeParams map[string]bool, inherited map
 		if bound, ok := inherited[spec.baseLower]; ok && bound != "" {
 			return vm.matchBoundType(typeParams, value, bound)
 		}
+		if len(spec.args) > 0 {
+			if matched, substituted := vm.matchNestedBindingSpec(typeParams, inherited, value, spec); substituted {
+				return matched
+			}
+		}
 	}
 	if typeParams[spec.baseLower] {
 		return true
 	}
 	return vm.matchValueToTypeSpec(typeParams, value, spec)
+}
+
+func (vm *VM) matchNestedBindingSpec(typeParams map[string]bool, inherited map[string]string, value runtime.Value, spec vmTypeSpec) (bool, bool) {
+	ref := vm.castTypeRef(spec.raw)
+	if ref == nil {
+		return false, false
+	}
+	substituted, ok := runtime.SubstituteNestedTypeBindings(ref, inherited, vm.castTypeRef)
+	if !ok {
+		return false, false
+	}
+	return runtime.MatchesCheckedCast(value, substituted, func(value runtime.Value, typ *ast.TypeRef) bool {
+		return vm.matchValueToTypeSpec(typeParams, value, vm.typeSpec(typ.String()))
+	}), true
 }
 
 func (vm *VM) matchBoundType(typeParams map[string]bool, value runtime.Value, bound string) bool {
@@ -1117,7 +1134,7 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 // describing the first element that violates the type constraint, or "" when there is no mismatch.
 func (vm *VM) collectionMismatchSuffixStr(value runtime.Value, typ string) string {
 	spec := vm.typeSpec(typ)
-	if len(spec.args) == 0 {
+	if len(spec.args) == 0 || spec.kind == vmTypeUnion || spec.kind == vmTypeIntersection {
 		return ""
 	}
 	switch v := value.(type) {
@@ -1155,7 +1172,7 @@ func (vm *VM) collectionMismatchSuffixStr(value runtime.Value, typ string) strin
 }
 
 func (vm *VM) runtimeValueMatchesFunctionType(function FunctionInfo, value runtime.Value, typ string) bool {
-	typeParams := function.typeParamSet
+	typeParams := function.matchTypeParams
 	return vm.matchValueToTypeStr(typeParams, value, typ)
 }
 
@@ -1210,15 +1227,7 @@ func (vm *VM) runtimeValueMatchesTypeSpec(value runtime.Value, spec vmTypeSpec) 
 	// Error-derived values: walk the captured parent chain so a
 	// parameter typed `HttpException` accepts a `BadRequestError`.
 	if errValue, ok := value.(runtime.Error); ok {
-		if strings.EqualFold(errValue.Class, stripped) {
-			return true
-		}
-		for _, ancestor := range errValue.Parents {
-			if strings.EqualFold(ancestor, stripped) {
-				return true
-			}
-		}
-		return false
+		return runtime.ErrorValueIsA(errValue, stripped, strings.EqualFold)
 	}
 	if ev, ok := value.(runtime.EnumVariant); ok {
 		if strings.EqualFold(ev.Enum.Name, stripped) && vm.qualifierNamesModule(spec.base, ev.Enum.Module) {
@@ -1332,16 +1341,6 @@ func vmValueHasPrimitiveType(v runtime.VMValue, target string) bool {
 		}
 	}
 	return false
-}
-
-// castTargetRebound reports whether a generic binding or type alias gives target another meaning here.
-func (vm *VM) castTargetRebound(target string) bool {
-	if len(vm.frames) > 0 {
-		if _, ok := vm.frames[len(vm.frames)-1].typeBindings[target]; ok {
-			return true
-		}
-	}
-	return vm.expandTypeAliases(target) != target
 }
 
 func castValue(value runtime.Value, target string) (runtime.Value, error) {
@@ -1692,6 +1691,7 @@ func (vm *VM) argumentMismatchMessage(function FunctionInfo, args []runtime.Valu
 		if suffix != "" {
 			gotName = arg.TypeName()
 		}
+		declared = vm.paramMessageType(function, position, declared)
 		label := function.Name
 		if compiledConstructorName(label) {
 			label = label[:strings.IndexByte(label, '.')]
@@ -1717,4 +1717,12 @@ func (vm *VM) overloadLabel(name string, indices []int64) string {
 		return name
 	}
 	return label
+}
+
+// paramMessageType spells a declared parameter type as written, with aliases resolved, for diagnostics.
+func (vm *VM) paramMessageType(function FunctionInfo, position int, fallback string) string {
+	if position < len(function.ParamDisplayTypes) && function.ParamDisplayTypes[position] != "" {
+		return vm.expandTypeAliases(function.ParamDisplayTypes[position])
+	}
+	return fallback
 }

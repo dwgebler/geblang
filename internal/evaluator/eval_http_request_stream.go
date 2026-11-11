@@ -151,7 +151,7 @@ func (e *Evaluator) responseStreamClass() *runtime.Class {
 			key := runtime.String{Value: name}
 			entries[dictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.String{Value: strings.Join(values, ",")}}
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	}}}
 	cls.Methods["done"] = []runtime.Function{{Name: "done", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
 		h, err := get(this)

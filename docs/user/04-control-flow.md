@@ -48,8 +48,9 @@ for (key in data.keys()) {
 The loop variable may carry a type annotation, and it is checked the same way a
 typed declaration is: `for (int n in [1, 2, 3])` is fine, but `for (string n in
 [1, 2, 3])` is an error ("cannot assign int to string n"), and an unknown type
-name is rejected ("unknown type ..."). Omit the type to let it be inferred from
-the iterable.
+name is rejected ("unknown type ..."). When the elements arrive through `any`,
+each one is checked as it is bound and a mismatch raises a `TypeError`. Omit the
+type to let it be inferred from the iterable.
 
 Use `for-in` for collections and generators. Use C-style `for` loops when the
 index itself matters:

@@ -36,9 +36,9 @@ func leafEqualityMatrix() []runtime.Value {
 
 // markerObject mimics the serveFile marker: a NativeObject with an uncomparable Dict payload.
 func markerObject(path string) runtime.NativeObject {
-	return runtime.NativeObject{Kind: "serveFile", Payload: runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.NativeObject{Kind: "serveFile", Payload: runtime.DictFromEntries(map[string]runtime.DictEntry{
 		"path": {Key: runtime.String{Value: "path"}, Value: runtime.String{Value: path}},
-	}}}
+	}, nil)}
 }
 
 // The evaluator's == (valuesEqual) compares a container-nested instance structurally, matching top level and the VM, not by identity (finding 9.6).

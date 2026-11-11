@@ -164,6 +164,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 				if suffix != "" {
 					gotName = arg.TypeName()
 				}
+				declared = vm.paramMessageType(*fn, pi, declared)
 				msg := fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", classInfo.Name, declared, paramName, gotName, suffix)
 				return vm.throwTyped(instruction, ip, "TypeError", msg)
 			}

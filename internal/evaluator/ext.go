@@ -684,7 +684,7 @@ func extUnmarshalValue(v interface{}, binarySlots [][]byte) (runtime.Value, erro
 			}
 			putDict(entries, k, rv)
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return runtime.DictFromEntries(entries, nil), nil
 	default:
 		return runtime.String{Value: fmt.Sprintf("%v", v)}, nil
 	}
@@ -695,7 +695,7 @@ func extHandleVal(id int64) runtime.Value {
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "$ext_handle", runtime.Int{Value: big.NewInt(id)})
 	putDict(entries, "id", runtime.NewInt64(id))
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 // — response reading —

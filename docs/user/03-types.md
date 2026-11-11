@@ -339,11 +339,46 @@ first([Dog()]);   # TypeError: first expects Shape return, got Dog
 A function that falls off the end without returning returns `null`, which
 fails a non-nullable return annotation such as `Dog` or `int`.
 
-A return type that is a bare type parameter `T` is checked against the type
-bound for it: the receiver's binding (`Box<string>`) or an explicit call type
-argument (`first<string>(...)`). When `T` is unbound, any value is accepted.
-A type parameter nested inside a collection, such as `list<T>`, is not checked
-element by element. Generator functions are not checked.
+A type parameter in a return or parameter type is checked against the type
+bound for it: the receiver's binding (`Box<string>`), an explicit call type
+argument (`first<string>(...)`), or the enclosing function's binding for a
+closure. This applies at any depth, so `list<T>`, `dict<string, T>`, `T[]` and
+`list<T> | string` check each element against the binding. A binding inferred
+only from the arguments is not enforced, and when `T` is unbound any value is
+accepted. Generator functions are not checked.
+
+### Runtime checks on typed variables
+
+A typed variable is checked against its declared type whenever it is bound:
+at its declaration, on every reassignment (including compound assignment such
+as `+=`), and for a typed loop variable on each iteration. Parameters are
+typed variables too, so reassigning one inside the body is checked. A value
+the compiler can already prove (a literal, arithmetic on typed operands, a
+typed local, a constructor call, a call to a function with a declared return
+type, an `int` range in a loop) is not re-checked. A value arriving through
+`any` is checked, and a mismatch raises a `TypeError`:
+
+```gb
+func raw(any x): any { return x; }
+
+string s = raw(5);              # TypeError: type error: cannot assign int to string
+string t = "a";
+t = raw(5);                     # TypeError: type error: cannot assign int to string
+for (string n in raw([1])) {}   # TypeError: type error: cannot assign int to string
+```
+
+An integer literal takes a `float` or `decimal` variable's type on
+reassignment as it does on declaration, so `float f = 1.0f; f = 5;` stores a
+`float`. An `int` value is still not a `float`: `float f = raw(5)` raises a
+`TypeError`. Untyped variables (`let x = ...`) and variadic parameters are not
+checked.
+
+A type parameter in a variable's declared type (`T x`, `list<T> xs`) is not
+checked against its binding at runtime, and such a collection carries no
+element tag; the compiler validates values flowing into it. The rest of the
+type is still checked, so `list<T> xs` must hold a list. Inside a closure or nested
+function, an enclosing function's or class's type parameter that has no
+binding accepts any value, as it does in the enclosing body.
 
 ## Casts And Type Checks
 
@@ -500,7 +535,8 @@ Type annotations on parameters using generic collections are enforced at typed
 function/method call boundaries and typed declaration boundaries:
 `list<int>` on a parameter checks that the value is a list **and** that every
 element is an `int` when the call is made. The same boundary check applies when
-a typed variable declaration is initialized.
+a typed variable is declared or reassigned (see
+[Runtime checks on typed variables](#runtime-checks-on-typed-variables)).
 
 ```gb
 func sumInts(list<int> items): int {

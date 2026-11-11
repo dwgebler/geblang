@@ -1,0 +1,69 @@
+import test;
+import reflect;
+import generic_values_donor as donor;
+from generic_values_donor import ident;
+
+interface Local { func area(): int; }
+class IntBox extends donor.Box<int> { func IntBox() { parent(1); } }
+
+func id<T>(T x): T { return x; }
+func pair<K, V>(K k, V v): dict<K, V> { return {k: v}; }
+func both<T>(T a, T b): list<T> { return [a, b]; }
+func nestedExplicit<T>(any x): list<T> { return [x]; }
+func nestedInferred<T>(T seed, any x): list<T> { return [x]; }
+func top(int x): int { return x; }
+
+class Animal { int legs = 4; }
+class Dog extends Animal {}
+class Cat extends Animal {}
+
+class GenericValuesTest extends test.Test {
+    @test
+    func inferredCallsTypeCheckInTypedContexts(): void {
+        int a = id(5);
+        dict<string, int> d = pair("k", 1);
+        list<Animal> animals = both<Animal>(Dog(), Cat());
+        this.assertEquals(5, a);
+        this.assertEquals({"k": 1}, d);
+        this.assertEquals(2, animals.length());
+        this.assertEquals(8, ident(8));
+    }
+
+    @test
+    func boundOwnTypeParametersAreCheckedAtEveryDepth(): void {
+        any s = "x";
+        any bad = ["x"];
+        any one = 1;
+        this.assertThrowsOf(func(): void { nestedExplicit<int>(s); }, "TypeError", "nestedExplicit expects list<T> return, got list<string>");
+        this.assertThrowsOf(func(): void { donor.wrap<int>(s); }, "TypeError", "wrap expects list<T> return, got list<string>");
+        this.assertThrowsOf(func(): void { donor.Box<int>(1).nested(s); }, "TypeError", "Box.nested expects list<T> return");
+        this.assertThrowsOf(func(): void { IntBox().take(bad); }, "TypeError", "Box.take expects list<T> for parameter 'xs'");
+        this.assertEquals([1], nestedExplicit<int>(one));
+        this.assertEquals(["x"], nestedInferred(one, s));
+    }
+
+    @test
+    func functionAndClassValuesRenderAlike(): void {
+        this.assertEquals("<func top>", "${top}");
+        let lambda = func(int x): int { return x; };
+        this.assertEquals("<func>", "${lambda}");
+        this.assertEquals("<func m>", "${donor.Thing().m}");
+        this.assertEquals("<func s>", "${donor.Thing.s}");
+        this.assertEquals("<func inner>", "${donor.named()}");
+        this.assertEquals("<class Thing>", "${donor.Thing}");
+        this.assertEquals("<class IntBox>", "${IntBox}");
+    }
+
+    @test
+    func interfacesAreValues(): void {
+        let l = Local;
+        this.assertEquals("<interface Local>", "${l}");
+        this.assertTrue(l == Local);
+        this.assertFalse(Local == donor.Shape);
+        this.assertEquals("<interface Shape>", "${donor.own()}");
+        this.assertTrue(donor.own() == donor.Shape);
+        this.assertEquals("<interface Hidden>", "${donor.hidden()}");
+        this.assertEquals(["Shape"], reflect.interfaceParents(donor.Child));
+        this.assertEquals("area", reflect.interfaceMethods(Local)[0]["name"]);
+    }
+}

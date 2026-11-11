@@ -234,13 +234,13 @@ func (v List) Inspect() string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
+// One pointer lets interface values hold dictionaries without a separate box.
 type Dict struct {
-	// data is the adaptive shared store for dicts built through
-	// NewDict / NewDictHint. When nil, the dict is a literal-built
-	// map-state dict using Entries / Order directly. Accessors check
-	// data first; see dict_store.go.
-	data *dictData
-	// Entries / Order back literal-constructed dicts (Dict{Entries:...}).
+	*dictHeader
+}
+
+type dictHeader struct {
+	data    *dictData
 	Entries map[string]DictEntry
 	Order   *[]string
 	Frozen  bool
@@ -250,7 +250,31 @@ type Dict struct {
 }
 
 func NewDict() Dict {
-	return Dict{data: &dictData{}}
+	s := &dictDataWithHeader{}
+	return dictFromData(&s.header, &s.d)
+}
+
+func DictFromEntries(entries map[string]DictEntry, order *[]string) Dict {
+	return Dict{&dictHeader{Entries: entries, Order: order}}
+}
+
+func dictFromData(header *dictHeader, data *dictData) Dict {
+	header.data = data
+	return Dict{header}
+}
+
+func (v Dict) copyHeader() Dict {
+	header := dictHeader{}
+	if v.dictHeader != nil {
+		header = *v.dictHeader
+	}
+	return Dict{&header}
+}
+
+func (v Dict) WithElementTypes(types []string) Dict {
+	v = v.copyHeader()
+	v.ElementTypes = types
+	return v
 }
 
 // NewDictHint sizes ordered compact storage for small dicts and starts
@@ -258,25 +282,29 @@ func NewDict() Dict {
 func NewDictHint(n int) Dict {
 	switch {
 	case n <= 0:
-		return Dict{data: &dictData{}}
+		return NewDict()
 	case n <= 2:
 		s := &dictDataWith2{}
 		s.d.items = s.buf[:0]
-		return Dict{data: &s.d}
+		return dictFromData(&s.header, &s.d)
 	case n <= 4:
 		s := &dictDataWith4{}
 		s.d.items = s.buf[:0]
-		return Dict{data: &s.d}
+		return dictFromData(&s.header, &s.d)
 	case n <= dictInlineMax:
 		s := &dictDataWith8{}
 		s.d.items = s.buf[:0]
-		return Dict{data: &s.d}
+		return dictFromData(&s.header, &s.d)
 	}
-	return Dict{data: &dictData{m: make(map[string]dictSlot, n), order: make([]string, 0, n)}}
+	s := &dictDataWithHeader{d: dictData{m: make(map[string]dictSlot, n), order: make([]string, 0, n)}}
+	return dictFromData(&s.header, &s.d)
 }
 
 // HasOnlyStringKeys uses live store metadata; aliases and mutations share it.
 func (v Dict) HasOnlyStringKeys() bool {
+	if v.dictHeader == nil {
+		return true
+	}
 	if v.data != nil {
 		return v.data.nonStringKeys == 0
 	}
@@ -289,12 +317,15 @@ func (v Dict) HasOnlyStringKeys() bool {
 }
 
 func (v Dict) PutEntry(key string, entry DictEntry) {
+	if v.dictHeader == nil {
+		panic("runtime: write to zero Dict; construct with NewDict")
+	}
 	if v.data != nil {
 		v.data.set(key, entry)
 		return
 	}
 	if v.Entries == nil {
-		return
+		v.Entries = map[string]DictEntry{}
 	}
 	if _, hit := v.Entries[key]; !hit && v.Order != nil {
 		*v.Order = append(*v.Order, key)
@@ -303,6 +334,9 @@ func (v Dict) PutEntry(key string, entry DictEntry) {
 }
 
 func (v Dict) DelEntry(key string) {
+	if v.dictHeader == nil {
+		return
+	}
 	if v.data != nil {
 		v.data.del(key)
 		return
@@ -327,6 +361,9 @@ func (v Dict) DelEntry(key string) {
 
 // Clear removes all entries.
 func (v Dict) Clear() {
+	if v.dictHeader == nil {
+		return
+	}
 	if v.data != nil {
 		v.data.clear()
 		return
@@ -346,6 +383,9 @@ func (v Dict) Clear() {
 // stable surface that lets the storage representation change without
 // touching consumers.
 func (v Dict) GetEntry(key string) (DictEntry, bool) {
+	if v.dictHeader == nil {
+		return DictEntry{}, false
+	}
 	if v.data != nil {
 		return v.data.get(key)
 	}
@@ -361,6 +401,9 @@ const DictStringKeyPrefix = "s"
 
 // GetStringEntry avoids allocating an encoded key for read-only lookups.
 func (v Dict) GetStringEntry(key string) (DictEntry, bool) {
+	if v.dictHeader == nil {
+		return DictEntry{}, false
+	}
 	if v.data != nil {
 		if v.data.m != nil {
 			slot, ok := lookupStringSlot(v.data.m, key)
@@ -402,6 +445,9 @@ func lookupStringSlot(m map[string]dictSlot, key string) (dictSlot, bool) {
 
 // Len reports the number of entries.
 func (v Dict) Len() int {
+	if v.dictHeader == nil {
+		return 0
+	}
 	if v.data != nil {
 		return v.data.length()
 	}
@@ -411,6 +457,9 @@ func (v Dict) Len() int {
 // EntryValue returns the value for key, or nil when absent. For
 // call sites that index then take .Value and assume presence.
 func (v Dict) EntryValue(key string) Value {
+	if v.dictHeader == nil {
+		return nil
+	}
 	if v.data != nil {
 		e, _ := v.data.get(key)
 		return e.Value
@@ -425,6 +474,9 @@ func (v Dict) EntryValue(key string) Value {
 // false to stop early. Order falls back to sorted keys when the Order
 // list is unpopulated (legacy construction paths), matching OrderedKeys.
 func (v Dict) ForEachEntry(fn func(key string, entry DictEntry) bool) {
+	if v.dictHeader == nil {
+		return
+	}
 	if v.data != nil {
 		v.data.forEach(fn)
 		return
@@ -458,6 +510,9 @@ func (v Dict) EntryKeys() []string { return v.OrderedKeys() }
 // OrderedKeys returns keys in insertion order; falls back to a sort
 // when Order is unpopulated (legacy construction paths).
 func (v Dict) OrderedKeys() []string {
+	if v.dictHeader == nil {
+		return []string{}
+	}
 	if v.data != nil {
 		return v.data.orderedKeys()
 	}
@@ -790,10 +845,12 @@ type Function struct {
 	// Bound, when set, is the reflected method this function invokes on the calling evaluator.
 	Bound *BoundMethod
 	// Identity distinguishes separately created closures and method values for `is`.
-	Identity             *FunctionIdentity
-	Name                 string
-	Doc                  string
-	TypeParameters       []string
+	Identity       *FunctionIdentity
+	Name           string
+	Doc            string
+	TypeParameters []string
+	// OuterTypeParameters are enclosing scopes' type parameters, unchecked when unbound.
+	OuterTypeParameters  []string
 	TypeParamConstraints map[string]*ast.TypeRef
 	Parameters           []ast.Parameter
 	ReturnType           *ast.TypeRef
@@ -869,6 +926,9 @@ type OverloadedFunction struct {
 
 func (v OverloadedFunction) TypeName() string { return "func" }
 func (v OverloadedFunction) Inspect() string {
+	if len(v.Overloads) == 1 {
+		return functionDisplay(v.Name)
+	}
 	if v.Name != "" {
 		return "<overloaded func " + v.Name + ">"
 	}
@@ -972,11 +1032,17 @@ type BytecodeFunction struct {
 }
 
 func (v BytecodeFunction) TypeName() string { return "function" }
-func (v BytecodeFunction) Inspect() string {
-	if v.Module == "" {
-		return "<bytecode func " + v.Name + ">"
+func (v BytecodeFunction) Inspect() string  { return functionDisplay(v.Name) }
+
+// functionDisplay renders a compiled function name the way the evaluator does: bare name, no class or module prefix.
+func functionDisplay(name string) string {
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		name = name[dot+1:]
 	}
-	return "<bytecode func " + v.Module + "." + v.Name + ">"
+	if name == "" || name == "<closure>" {
+		return "<func>"
+	}
+	return "<func " + name + ">"
 }
 
 type BytecodeClosure struct {
@@ -998,15 +1064,7 @@ type BytecodeClosure struct {
 }
 
 func (v BytecodeClosure) TypeName() string { return "func" }
-func (v BytecodeClosure) Inspect() string {
-	if v.Name != "" {
-		if v.Module != "" {
-			return "<closure " + v.Module + "." + v.Name + ">"
-		}
-		return "<closure " + v.Name + ">"
-	}
-	return "<closure>"
-}
+func (v BytecodeClosure) Inspect() string  { return functionDisplay(v.Name) }
 
 type BytecodeCell struct {
 	Value Value
@@ -1053,12 +1111,7 @@ type BytecodeClass struct {
 }
 
 func (v BytecodeClass) TypeName() string { return "class" }
-func (v BytecodeClass) Inspect() string {
-	if v.Module == "" {
-		return "<bytecode class " + v.Name + ">"
-	}
-	return "<bytecode class " + v.Module + "." + v.Name + ">"
-}
+func (v BytecodeClass) Inspect() string  { return "<class " + v.Name + ">" }
 
 type NativeObject struct {
 	Kind string

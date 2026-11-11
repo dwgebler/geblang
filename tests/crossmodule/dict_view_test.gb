@@ -1,0 +1,32 @@
+import test;
+import reflect;
+import dict_view_donor as donor;
+
+class DictViewChild extends donor.Base {
+    func DictViewChild() { parent(); }
+    func wide(): dict<string, any> { return this.values; }
+}
+
+class DictViewTest extends test.Test {
+    @test
+    func viewsKeepFlagsAndShareGrowingEntries(): void {
+        this.assertEquals("views-ok", donor.verifyViews());
+    }
+
+    @test
+    func inheritedFieldsKeepTagsAcrossReturnsAndCallbacks(): void {
+        let base = donor.Base();
+        let child = DictViewChild();
+        dict<string, int> strict = child.getValues();
+        dict<string, any> wide = child.wide();
+        this.assertEquals({}, reflect.typeBindings(base.values));
+        this.assertEquals({}, reflect.typeBindings(child.values));
+        this.assertEquals("int", reflect.typeBindings(strict)["V"]);
+        this.assertEquals("any", reflect.typeBindings(wide)["V"]);
+        let bound = child.getValues;
+        this.assertEquals([1, 1], [0, 1].map(func(int n): int { return bound()["n"]; }));
+        wide["n"] = 7;
+        this.assertEquals(7, child.getValues()["n"]);
+        this.assertEquals(1, base.getValues()["n"]);
+    }
+}

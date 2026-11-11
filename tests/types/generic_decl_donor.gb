@@ -1,0 +1,23 @@
+module generic_decl_donor;
+
+func raw(any v): any { return v; }
+
+export func wrap<T>(T x): list<T> { list<T> y = [x]; return y; }
+
+export class Bag<T> {
+    T v;
+    func Bag(T v) { this.v = v; }
+    func items(): list<T> { list<T> r = [this.v]; return r; }
+    func closureRet(any x): any {
+        let f = func(): list<T> { return raw(x); };
+        return f();
+    }
+}
+
+export class Holder<T> {
+    func Holder() {}
+    func closureRet(any x): any {
+        let f = func(): list<T> { return raw(x); };
+        return f();
+    }
+}

@@ -145,6 +145,9 @@ func ContainerIdentity(value Value) (unsafe.Pointer, bool) {
 	case *Instance:
 		return unsafe.Pointer(v), true
 	case Dict:
+		if v.dictHeader == nil {
+			return nil, true
+		}
 		if v.data != nil {
 			return unsafe.Pointer(v.data), true
 		}
@@ -157,6 +160,12 @@ func ContainerIdentity(value Value) (unsafe.Pointer, bool) {
 }
 
 func sameDictStore(l, r Dict) bool {
+	if l.dictHeader == nil {
+		l = Dict{&dictHeader{}}
+	}
+	if r.dictHeader == nil {
+		r = Dict{&dictHeader{}}
+	}
 	if l.data != nil || r.data != nil {
 		return l.data == r.data
 	}

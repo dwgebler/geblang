@@ -1,0 +1,45 @@
+module native_callback_donor;
+
+import async;
+import net;
+import io;
+
+class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+}
+
+func identity<T>(T value): T { return value; }
+
+func socketCallbacks(): string {
+    let server = net.serve("127.0.0.1", 0, func(dict<string, any> socket): void {
+        io.write(socket["stream"], identity<int>(17) as string);
+        io.close(socket["stream"]);
+    }, {"shareHandler": true});
+    let port = ((server["localAddr"] as string).split(":").last() as string) as int;
+    for (int i = 0; i < 32; i++) {
+        let socket = net.dial("127.0.0.1", port);
+        let text = Box<string>("value");
+        let number = Box<int>(i);
+        assert(text.value == "value");
+        assert(number.value == i);
+        assert(io.readAll(socket["stream"]) == "17");
+        io.close(socket["stream"]);
+    }
+    net.closeListener(server["handle"]);
+    return "socket-ok";
+}
+
+export func verify(): string {
+    let tasks = [];
+    for (int i = 0; i < 128; i++) {
+        tasks.push(async.run(func(): int { return identity<int>(17); }));
+        let text = Box<string>("value");
+        let number = Box<int>(i);
+        assert(text.value == "value");
+        assert(number.value == i);
+    }
+    for (task in tasks) { assert(async.await(task) == 17); }
+    assert(socketCallbacks() == "socket-ok");
+    return "callbacks-ok";
+}

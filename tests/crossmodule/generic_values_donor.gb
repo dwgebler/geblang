@@ -1,0 +1,21 @@
+module generic_values_donor;
+
+export interface Shape { func area(): int; }
+interface Hidden { func x(): int; }
+export interface Child extends Shape { func more(): int; }
+
+export class Thing { func m(): int { return 1; } static func s(): int { return 2; } }
+
+export class Box<T> {
+    T v;
+    func Box(T v) { this.v = v; }
+    func nested(any x): list<T> { return [x]; }
+    func take(list<T> xs): int { return xs.length(); }
+}
+
+export func f(int x): int { return x; }
+export func ident<T>(T x): T { return x; }
+export func wrap<T>(any x): list<T> { return [x]; }
+export func named(): callable { func inner(): int { return 1; } return inner; }
+export func own(): any { return Shape; }
+export func hidden(): any { return Hidden; }

@@ -394,7 +394,7 @@ func (e *Evaluator) installBuiltinTypes(env *runtime.Environment) error {
 		Name:    "Test",
 		Fields:  []runtime.Field{},
 		Methods: map[string][]runtime.Function{},
-		Env:     env,
+		Env:     env.MarkShared(),
 	}
 	for _, methodName := range []string{
 		"equal",
@@ -554,7 +554,7 @@ func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment)
 			if err := checkEnumMethodCollision(enum, member.Name.Value); err != nil {
 				return nil, err
 			}
-			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: typeParameterNames(member.Generics), TypeParamConstraints: typeParamConstraints(member.Generics), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env, Decorators: member.Decorators, Target: "method", Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: true}
+			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: typeParameterNames(member.Generics), TypeParamConstraints: typeParamConstraints(member.Generics), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env.MarkShared(), Decorators: member.Decorators, Target: "method", Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: true}
 			fn.DefinitionPath = e.currentDebugPath()
 			if len(member.Decorators) > 0 {
 				e.currentLine = member.Token.Line
@@ -641,7 +641,7 @@ func (e *Evaluator) foldInterfaceDefaultsIntoEnum(enum *runtime.EnumDef, iface *
 		if err := checkEnumMethodCollision(enum, def.Name.Value); err != nil {
 			return err
 		}
-		fn := runtime.Function{Name: def.Name.Value, Doc: def.Doc, TypeParameters: typeParameterNames(def.Generics), TypeParamConstraints: typeParamConstraints(def.Generics), Parameters: e.resolveParameters(def.Parameters, env), ReturnType: e.resolveTypeRef(def.ReturnType, env), Body: def.Body, Env: env, Decorators: def.Decorators, Target: "method", Async: def.Async, IsGenerator: blockContainsYield(def.Body), ForwardThis: true}
+		fn := runtime.Function{Name: def.Name.Value, Doc: def.Doc, TypeParameters: typeParameterNames(def.Generics), TypeParamConstraints: typeParamConstraints(def.Generics), Parameters: e.resolveParameters(def.Parameters, env), ReturnType: e.resolveTypeRef(def.ReturnType, env), Body: def.Body, Env: env.MarkShared(), Decorators: def.Decorators, Target: "method", Async: def.Async, IsGenerator: blockContainsYield(def.Body), ForwardThis: true}
 		fn.DefinitionPath = e.currentDebugPath()
 		if iface.DefinitionPath != "" {
 			fn.DefinitionPath = iface.DefinitionPath
@@ -760,7 +760,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 		StaticMethods:        map[string][]runtime.Function{},
 		StaticValues:         map[string]runtime.Value{},
 		FieldChecks:          &sync.Map{},
-		Env:                  env,
+		Env:                  env.MarkShared(),
 		DefinitionModule:     e.currentModule,
 		DefinitionLine:       stmt.Token.Line,
 		DefinitionColumn:     stmt.Token.Column,
@@ -875,7 +875,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 				target = "staticMethod"
 			}
 			methodTypeParams := append(typeParameterNames(member.Generics), classTypeParams...)
-			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(member.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env, Decorators: member.Decorators, Target: target, Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: !member.Static}
+			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(member.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env.MarkShared(), Decorators: member.Decorators, Target: target, Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: !member.Static}
 			fn.DefinitionPath = e.currentDebugPath()
 			if path := defaultPaths[member]; path != "" {
 				fn.DefinitionPath = path
@@ -907,7 +907,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 	if stmt.Destructor != nil {
 		dtor := stmt.Destructor
 		methodTypeParams := append(typeParameterNames(dtor.Generics), classTypeParams...)
-		fn := runtime.Function{Name: "~" + dtor.Name.Value, Doc: dtor.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(dtor.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(dtor.Parameters, env), ReturnType: e.resolveTypeRef(dtor.ReturnType, env), Body: dtor.Body, Env: env, Decorators: dtor.Decorators, Target: "method", Async: dtor.Async, IsGenerator: false, ForwardThis: true}
+		fn := runtime.Function{Name: "~" + dtor.Name.Value, Doc: dtor.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(dtor.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(dtor.Parameters, env), ReturnType: e.resolveTypeRef(dtor.ReturnType, env), Body: dtor.Body, Env: env.MarkShared(), Decorators: dtor.Decorators, Target: "method", Async: dtor.Async, IsGenerator: false, ForwardThis: true}
 		fn.DefinitionPath = e.currentDebugPath()
 		if len(dtor.Decorators) > 0 {
 			e.currentLine = dtor.Token.Line
@@ -1600,7 +1600,7 @@ func (e *Evaluator) initializeFields(instance *runtime.Instance, class *runtime.
 			return err
 		}
 	}
-	fieldEnv := runtime.NewEnclosedEnvironment(class.Env)
+	fieldEnv := runtime.NewLocalEnclosedEnvironment(class.Env)
 	for _, field := range class.Fields {
 		value := runtime.Value(runtime.Null{})
 		if field.Default != nil {

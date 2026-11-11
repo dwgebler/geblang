@@ -284,7 +284,7 @@ func poolStatsDict(pool *concurrent.Pool) runtime.Value {
 	putDict(entries, "queued", runtime.NewInt64(stats.Queued))
 	putDict(entries, "rejected", runtime.NewInt64(stats.Rejected))
 	putDict(entries, "maxConcurrent", runtime.NewInt64(stats.MaxConcurrent))
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func (e *Evaluator) httpServerAddr(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -542,7 +542,7 @@ func httpRequestDict(request *http.Request, body []byte, tp *trustedProxies) run
 	if request.TLS != nil && len(request.TLS.PeerCertificates) > 0 {
 		put("_clientCert", clientCertDict(request.TLS.PeerCertificates[0]))
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 // Canonicalize the request path so a non-canonical form (leading //, dot segments) cannot slip past a path-prefix check that a trimmed route still matches.
@@ -576,7 +576,7 @@ func httpRequestEntries(request *http.Request, body []byte) map[string]runtime.D
 	put("query", runtime.String{Value: request.URL.RawQuery})
 	put("remoteAddr", runtime.String{Value: request.RemoteAddr})
 	put("body", runtime.String{Value: string(body)})
-	put("headers", runtime.Dict{Entries: headers})
+	put("headers", runtime.DictFromEntries(headers, nil))
 	return entries
 }
 
@@ -1024,7 +1024,7 @@ func nativeRequestRouteParams(this *runtime.Instance, args []runtime.Value) (run
 	if params, ok := this.Fields["params"].(runtime.Dict); ok {
 		return params, nil
 	}
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{}}, nil
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil), nil
 }
 
 func (e *Evaluator) httpRequestArgument(handler runtime.Function, request *http.Request, body []byte, tp *trustedProxies) (runtime.Value, error) {

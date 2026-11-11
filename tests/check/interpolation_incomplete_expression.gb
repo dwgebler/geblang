@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an interpolation whose expression does not
+ *          parse.
+ */
+import io;
+
+io.println("${1 +}");

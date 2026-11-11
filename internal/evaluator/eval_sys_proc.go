@@ -355,7 +355,7 @@ func runProcessSpec(spec processSpec) (runtime.Value, error) {
 	put("stdout", runtime.String{Value: stdout.String()})
 	put("stderr", runtime.String{Value: stderr.String()})
 	put("timedOut", runtime.Bool{Value: ctx.Err() == context.DeadlineExceeded})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func sysShell(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -920,7 +920,7 @@ func (e *Evaluator) procSpawn(call *ast.CallExpression, args []runtime.Value) (r
 	putDict(entries, "stdin", stdinVal)
 	putDict(entries, "stdout", stdoutVal)
 	putDict(entries, "stderr", stderrVal)
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func (e *Evaluator) procWait(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

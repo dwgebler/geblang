@@ -158,7 +158,7 @@ func (e *Evaluator) callDebugHook(stmt ast.Statement, env *runtime.Environment, 
 		Vars:      snapshotEnv(env),
 		FrameVars: frameVars,
 		FrameEnvs: frameEnvs,
-		Env:       env,
+		Env:       env.MarkShared(),
 		Reason:    reason,
 		ThreadID:  e.threadID,
 		Eval:      e,
@@ -175,7 +175,7 @@ func (e *Evaluator) snapshotFrames(currentPath string, currentLine int, currentE
 	// Current position as the innermost frame
 	frames = append(frames, DebugFrame{Name: "<top level>", Path: currentPath, Line: currentLine})
 	frameVars = append(frameVars, snapshotEnv(currentEnv))
-	frameEnvs = append(frameEnvs, currentEnv)
+	frameEnvs = append(frameEnvs, currentEnv.MarkShared())
 
 	for i := len(e.callStack) - 1; i >= 0; i-- {
 		f := e.callStack[i]
@@ -189,7 +189,7 @@ func (e *Evaluator) snapshotFrames(currentPath string, currentLine int, currentE
 		}
 		frames = append(frames, DebugFrame{Name: name, Path: path, Line: f.line})
 		frameVars = append(frameVars, snapshotEnv(f.env))
-		frameEnvs = append(frameEnvs, f.env)
+		frameEnvs = append(frameEnvs, f.env.MarkShared())
 	}
 	return frames, frameVars, frameEnvs
 }

@@ -190,7 +190,7 @@ func (e *Evaluator) webResponseArg(fn runtime.Value, index int, response runtime
 	}
 	headers, _ := dictField(dict, "headers")
 	if headers == nil {
-		headers = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+		headers = runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	}
 	return newResponseInstance(class, status, body, headers, runtime.String{})
 }
@@ -295,7 +295,7 @@ func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (r
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "status", runtime.NewInt64(404))
 	putDict(entries, "body", runtime.String{Value: "not found"})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 func normalizeWebResponse(response runtime.Value) runtime.Value {
@@ -309,12 +309,12 @@ func normalizeWebResponse(response runtime.Value) runtime.Value {
 		entries := map[string]runtime.DictEntry{}
 		putDict(entries, "status", runtime.NewInt64(204))
 		putDict(entries, "body", runtime.String{Value: ""})
-		return runtime.Dict{Entries: entries}
+		return runtime.DictFromEntries(entries, nil)
 	}
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "status", runtime.NewInt64(200))
 	putDict(entries, "body", runtime.String{Value: response.Inspect()})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func webWithHeader(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -335,7 +335,7 @@ func webWithHeader(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 	}
 	out := copyDict(response)
 	headersValue, ok := dictField(out, "headers")
-	headers := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	headers := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	if ok {
 		existing, ok := headersValue.(runtime.Dict)
 		if !ok {
@@ -472,13 +472,13 @@ func webParseMultipart(call *ast.CallExpression, args []runtime.Value) (runtime.
 		putDict(fileEntries, "filename", runtime.String{Value: filename})
 		putDict(fileEntries, "contentType", runtime.String{Value: partContentType})
 		putDict(fileEntries, "bytes", runtime.Bytes{Value: data})
-		putDict(filesEntries, name, runtime.Dict{Entries: fileEntries})
+		putDict(filesEntries, name, runtime.DictFromEntries(fileEntries, nil))
 	}
 
 	out := map[string]runtime.DictEntry{}
-	putDict(out, "fields", runtime.Dict{Entries: fieldsEntries})
-	putDict(out, "files", runtime.Dict{Entries: filesEntries})
-	return runtime.Dict{Entries: out}, nil
+	putDict(out, "fields", runtime.DictFromEntries(fieldsEntries, nil))
+	putDict(out, "files", runtime.DictFromEntries(filesEntries, nil))
+	return runtime.DictFromEntries(out, nil), nil
 }
 
 func (e *Evaluator) webApp(value runtime.Value) (*webApp, error) {
@@ -516,7 +516,7 @@ func matchWebRouteParts(route webRoute, method string, pathParts []string) (runt
 			return runtime.Dict{}, false
 		}
 	}
-	params := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	params := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	for i, routePart := range routeParts {
 		if strings.HasPrefix(routePart, ":") && len(routePart) > 1 {
 			putDictV(params, routePart[1:], runtime.String{Value: pathParts[i]})

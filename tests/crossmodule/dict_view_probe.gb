@@ -1,0 +1,26 @@
+module dict_view_probe;
+
+import io;
+import reflect;
+import dict_view_donor as donor;
+
+class Child extends donor.Base {
+    func Child() { parent(); }
+    func wide(): dict<string, any> { return this.values; }
+}
+
+export func main(): void {
+    io.println(donor.verifyViews());
+    let base = donor.Base();
+    let child = Child();
+    dict<string, int> strict = child.getValues();
+    dict<string, any> wide = child.wide();
+    io.println(reflect.typeBindings(strict)["V"]);
+    io.println(reflect.typeBindings(wide)["V"]);
+    io.println(reflect.typeBindings(child.values));
+    let bound = child.getValues;
+    io.println([0, 1].map(func(int n): int { return bound()["n"]; }));
+    wide["n"] = 7;
+    io.println(child.getValues()["n"]);
+    io.println(base.getValues()["n"]);
+}

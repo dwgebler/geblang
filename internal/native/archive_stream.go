@@ -263,7 +263,7 @@ func archiveStreamNext(args []runtime.Value) (runtime.Value, error) {
 	put("isDir", runtime.Bool{Value: entry.kind == 'd'})
 	put("kind", runtime.String{Value: string(entry.kind)})
 	put("handle", runtime.NativeObject{Kind: "ArchiveEntry", Payload: entry})
-	return runtime.Dict{Entries: fields}, nil
+	return runtime.DictFromEntries(fields, nil), nil
 }
 
 func archiveStreamReadBytes(args []runtime.Value) (runtime.Value, error) {

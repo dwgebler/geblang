@@ -829,6 +829,8 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		a.analyzeStatement(stmt.Statement, fn)
 	case *ast.FunctionStatement:
 		a.declare(stmt.Name.Value, typeInfo{name: "func", known: true})
+		popTypeParams := a.pushTypeParams(stmt.Generics)
+		defer popTypeParams()
 		a.pushScope()
 		for _, param := range stmt.Parameters {
 			if param.Default != nil {
@@ -1910,11 +1912,20 @@ func (a *Analyzer) validateCallExpression(expr ast.Expression, expected typeInfo
 			return
 		}
 		argType := a.expressionTypeName(arg.Value)
-		if !argType.known {
+		if !argType.known || strings.EqualFold(argType.name, "any") {
 			return
 		}
 		args = append(args, argType)
 	}
+	bound := make([]methodInfo, len(overloads))
+	for i, overload := range overloads {
+		if len(call.TypeArguments) > 0 {
+			bound[i] = a.bindCallOverload(overload, call.TypeArguments)
+		} else {
+			bound[i] = a.inferCallOverload(overload, args)
+		}
+	}
+	overloads = bound
 	matches := []methodInfo{}
 	for _, overload := range overloads {
 		if !a.callArgumentsCompatible(args, overload.parameters, overload.minArgs) {
@@ -1935,6 +1946,58 @@ func (a *Analyzer) validateCallExpression(expr ast.Expression, expected typeInfo
 	if len(matches) > 1 {
 		a.errorf("ambiguous overload for %s returning %s", ident.Value, expected.display())
 	}
+}
+
+func (a *Analyzer) bindCallOverload(overload methodInfo, typeArgs []*ast.TypeRef) methodInfo {
+	if len(overload.typeParams) == 0 || len(typeArgs) > len(overload.typeParams) {
+		return overload
+	}
+	params := map[string]bool{}
+	bindings := map[string]typeInfo{}
+	for i, param := range overload.typeParams {
+		name := strings.ToLower(param.name)
+		params[name] = true
+		if i < len(typeArgs) && typeArgs[i] != nil {
+			bindings[name] = a.typeInfoFromRef(typeArgs[i])
+		}
+	}
+	return applyOverloadBindings(overload, bindings, params)
+}
+
+// inferCallOverload binds type parameters from argument types; one that cannot be inferred stays open as any.
+func (a *Analyzer) inferCallOverload(overload methodInfo, args []typeInfo) methodInfo {
+	if len(overload.typeParams) == 0 {
+		return overload
+	}
+	params := map[string]bool{}
+	for _, param := range overload.typeParams {
+		params[strings.ToLower(param.name)] = true
+	}
+	bindings := map[string]typeInfo{}
+	for i, paramType := range overload.parameters {
+		if i < len(args) {
+			a.collectTypeBindings(paramType, args[i], params, bindings, nil)
+		}
+	}
+	for name := range params {
+		if _, ok := bindings[name]; !ok {
+			bindings[name] = typeInfo{name: "any", known: true}
+		}
+	}
+	return applyOverloadBindings(overload, bindings, params)
+}
+
+func applyOverloadBindings(overload methodInfo, bindings map[string]typeInfo, params map[string]bool) methodInfo {
+	overload.parameters = append([]typeInfo(nil), overload.parameters...)
+	for i, param := range overload.parameters {
+		if bound, ok := substituteTypeParam(param, bindings, params); ok {
+			overload.parameters[i] = bound
+		}
+	}
+	if bound, ok := substituteTypeParam(overload.returnType, bindings, params); ok {
+		overload.returnType = bound
+	}
+	return overload
 }
 
 // checkConstructorTypeArgs flags Box<string>(42): explicit bindings
@@ -2175,10 +2238,13 @@ func (a *Analyzer) checkGenericCallInference(call *ast.CallExpression, name stri
 		return
 	}
 	paramSet := map[string]bool{}
-	for _, tp := range generic.typeParams {
-		paramSet[strings.ToLower(tp.name)] = true
-	}
 	bindings := map[string]typeInfo{}
+	for i, tp := range generic.typeParams {
+		paramSet[strings.ToLower(tp.name)] = true
+		if i < len(call.TypeArguments) && call.TypeArguments[i] != nil {
+			bindings[strings.ToLower(tp.name)] = a.typeInfoFromRef(call.TypeArguments[i])
+		}
+	}
 	for i, paramType := range generic.parameters {
 		if i >= len(args) {
 			break
@@ -2212,15 +2278,20 @@ func (a *Analyzer) checkGenericCallInference(call *ast.CallExpression, name stri
 // argument lists are walked structurally so e.g. `list<T>` paired with
 // `list<int>` binds T -> int.
 func (a *Analyzer) inferTypeBinding(paramType, actual typeInfo, paramSet map[string]bool, bindings map[string]typeInfo, name string) {
-	if !paramType.known || !actual.known {
+	a.collectTypeBindings(paramType, actual, paramSet, bindings, func(param string, existing, actual typeInfo) {
+		a.errorf("type parameter %s of %s is bound to both %s and %s", param, name, existing.display(), actual.display())
+	})
+}
+
+func (a *Analyzer) collectTypeBindings(paramType, actual typeInfo, paramSet map[string]bool, bindings map[string]typeInfo, conflict func(param string, existing, actual typeInfo)) {
+	if !paramType.known || !actual.known || strings.EqualFold(actual.name, "any") {
 		return
 	}
 	key := strings.ToLower(paramType.name)
 	if paramSet[key] {
 		if existing, ok := bindings[key]; ok && existing.known {
-			if !sameTypeInfo(existing, actual) && !a.isAssignableType(existing.name, actual.name) && !a.isAssignableType(actual.name, existing.name) {
-				a.errorf("type parameter %s of %s is bound to both %s and %s",
-					paramType.name, name, existing.display(), actual.display())
+			if conflict != nil && !sameTypeInfo(existing, actual) && !a.isAssignableType(existing.name, actual.name) && !a.isAssignableType(actual.name, existing.name) {
+				conflict(paramType.name, existing, actual)
 			}
 			return
 		}
@@ -2230,7 +2301,7 @@ func (a *Analyzer) inferTypeBinding(paramType, actual typeInfo, paramSet map[str
 	// Structural walk for generic containers: list<T>, dict<K,V>, Box<T>, etc.
 	if len(paramType.args) > 0 && len(actual.args) == len(paramType.args) {
 		for i := range paramType.args {
-			a.inferTypeBinding(paramType.args[i], actual.args[i], paramSet, bindings, name)
+			a.collectTypeBindings(paramType.args[i], actual.args[i], paramSet, bindings, conflict)
 		}
 	}
 }

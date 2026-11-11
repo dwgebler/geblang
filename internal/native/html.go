@@ -169,7 +169,7 @@ func htmlNodeAttrs(n *html.Node) runtime.Value {
 		key := runtime.String{Value: a.Key}
 		entries[DictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.String{Value: a.Val}}
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func htmlNodeInner(n *html.Node) string {

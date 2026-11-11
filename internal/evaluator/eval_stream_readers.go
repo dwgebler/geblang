@@ -349,10 +349,10 @@ func yamlParseError(err error) native.ParseError {
 }
 
 func yamlEvent(kind string, value runtime.Value) runtime.Value {
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey(runtime.String{Value: "type"}):  {Key: runtime.String{Value: "type"}, Value: runtime.String{Value: kind}},
 		dictKey(runtime.String{Value: "value"}): {Key: runtime.String{Value: "value"}, Value: value},
-	}}
+	}, nil)
 }
 
 func (e *Evaluator) dispatchYAMLStreamEvent(handler *runtime.Instance, event runtime.Value) (bool, error) {
@@ -504,10 +504,10 @@ func csvParseError(err error) native.ParseError {
 }
 
 func csvEvent(kind string, value runtime.Value) runtime.Value {
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey(runtime.String{Value: "type"}):  {Key: runtime.String{Value: "type"}, Value: runtime.String{Value: kind}},
 		dictKey(runtime.String{Value: "value"}): {Key: runtime.String{Value: "value"}, Value: value},
-	}}
+	}, nil)
 }
 
 func stringListValue(values []string) runtime.Value {
@@ -780,17 +780,17 @@ func xmlStartElementValue(element xml.StartElement) runtime.Value {
 		key := runtime.String{Value: attr.Name.Local}
 		attrs[dictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.String{Value: attr.Value}}
 	}
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey(runtime.String{Value: "name"}):       {Key: runtime.String{Value: "name"}, Value: runtime.String{Value: element.Name.Local}},
-		dictKey(runtime.String{Value: "attributes"}): {Key: runtime.String{Value: "attributes"}, Value: runtime.Dict{Entries: attrs}},
-	}}
+		dictKey(runtime.String{Value: "attributes"}): {Key: runtime.String{Value: "attributes"}, Value: runtime.DictFromEntries(attrs, nil)},
+	}, nil)
 }
 
 func xmlEvent(kind string, value runtime.Value) runtime.Value {
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey(runtime.String{Value: "type"}):  {Key: runtime.String{Value: "type"}, Value: runtime.String{Value: kind}},
 		dictKey(runtime.String{Value: "value"}): {Key: runtime.String{Value: "value"}, Value: value},
-	}}
+	}, nil)
 }
 
 func (e *Evaluator) jsonReader(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -999,8 +999,8 @@ func markJSONValueComplete(reader *jsonStreamReader) {
 }
 
 func jsonEvent(kind string, value runtime.Value) runtime.Value {
-	return runtime.Dict{Entries: map[string]runtime.DictEntry{
+	return runtime.DictFromEntries(map[string]runtime.DictEntry{
 		dictKey(runtime.String{Value: "type"}):  {Key: runtime.String{Value: "type"}, Value: runtime.String{Value: kind}},
 		dictKey(runtime.String{Value: "value"}): {Key: runtime.String{Value: "value"}, Value: value},
-	}}
+	}, nil)
 }

@@ -1,0 +1,7 @@
+module prim_fusion_donor;
+
+let names = ["x", "y"];
+let table = {"a": 7};
+
+export func sizes(): int { return names.length() + table.length(); }
+export func lookup(string k): any { return table.get(k); }

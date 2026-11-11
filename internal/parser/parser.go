@@ -2721,6 +2721,16 @@ func (p *Parser) parseInterpolatedString(tok token.Token) *ast.InterpolatedStrin
 		subLexer := lexer.New(exprText)
 		subParser := New(subLexer)
 		expr := subParser.parseExpression(lowest)
+		if len(subParser.errors) == 0 && !subParser.peekTokenIs(token.EOF) {
+			subParser.errorf(subParser.peekToken, "unexpected %s after expression", subParser.peekToken.Type)
+		}
+		hint := ""
+		if hasSpec {
+			hint = " (a top-level ':' starts a format spec; parenthesize the expression)"
+		}
+		for _, msg := range subParser.errors {
+			p.errorf(tok, "invalid interpolation ${%s}: %s%s", exprText, stripErrorPosition(msg), hint)
+		}
 		if hasSpec {
 			node.Parts = append(node.Parts, &ast.FormattedInterpolation{
 				Token: tok,
@@ -2855,6 +2865,16 @@ func (p *Parser) synchronize() {
 
 func (p *Parser) errorf(tok token.Token, format string, args ...any) {
 	p.errors = append(p.errors, p.errorAt(tok, format, args...))
+}
+
+func stripErrorPosition(msg string) string {
+	var line, col int
+	if n, _ := fmt.Sscanf(msg, "%d:%d:", &line, &col); n == 2 {
+		if idx := strings.Index(msg, ": "); idx >= 0 {
+			return msg[idx+2:]
+		}
+	}
+	return msg
 }
 
 func (p *Parser) errorAt(tok token.Token, format string, args ...any) string {

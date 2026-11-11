@@ -1,0 +1,26 @@
+module captured_return_donor;
+
+export class Node { int value = 7; }
+
+export class Base<T> {
+    T value;
+    func Base(T value) { this.value = value; }
+    func reader(): callable { return func(): T { return this.value; }; }
+}
+
+export func capture<T>(any value): callable {
+    return func(): T { return value; };
+}
+
+export func nullable<T>(any value): callable {
+    return func(): ?T { return value; };
+}
+
+export func named<T>(T value): callable {
+    func read(): T { return value; }
+    return read;
+}
+
+export func nested<T>(T value): callable {
+    return func(): callable { return func(): T { return value; }; };
+}

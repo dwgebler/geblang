@@ -122,7 +122,7 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 	putDict(entries, "skipped", runtime.NewInt64(skipped))
 	putDict(entries, "failures", &runtime.List{Elements: failures})
 	putDict(entries, "tests", &runtime.List{Elements: tests})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }
 
 // failureWithTrace appends the thrown error's trace to a test-failure line so the default runner output shows where the failure happened.
@@ -257,7 +257,7 @@ func testCaseDict(name string, passed bool, message string) runtime.Value {
 	if !passed {
 		putDict(entries, "message", runtime.String{Value: message})
 	}
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 func testCaseSkipped(name string, reason string) runtime.Value {
@@ -266,7 +266,7 @@ func testCaseSkipped(name string, reason string) runtime.Value {
 	putDict(entries, "passed", runtime.Bool{Value: false})
 	putDict(entries, "skipped", runtime.Bool{Value: true})
 	putDict(entries, "message", runtime.String{Value: reason})
-	return runtime.Dict{Entries: entries}
+	return runtime.DictFromEntries(entries, nil)
 }
 
 type testRunOptions struct {

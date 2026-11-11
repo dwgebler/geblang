@@ -77,6 +77,7 @@ func (meta *chunkSharedMeta) prepare(chunk Chunk) {
 		for i := range functions {
 			f := &functions[i]
 			f.typeParamSet = functionTypeParameterSetOrNil(*f)
+			f.matchTypeParams = functionMatchTypeParams(*f)
 			f.requiresParamValidation = functionRequiresParamValidation(*f)
 			f.constructorFlag = constructorFlagFor(f.Name)
 			f.frameMeta = newFrameMeta(*f, spec)
@@ -107,7 +108,7 @@ func (meta *chunkSharedMeta) prepare(chunk Chunk) {
 		}
 		var asserts map[int64]vmTypeSpec
 		for _, instruction := range chunk.Instructions {
-			if instruction.Op != OpTypeAssert || len(instruction.Operands) != 1 {
+			if instruction.Op != OpTypeAssert || len(instruction.Operands) == 0 {
 				continue
 			}
 			constIdx := instruction.Operands[0]

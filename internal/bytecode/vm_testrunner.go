@@ -356,7 +356,7 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 			k = runtime.String{Value: "message"}
 			entries[native.DictKey(k)] = runtime.DictEntry{Key: k, Value: runtime.String{Value: message}}
 		}
-		return runtime.Dict{Entries: entries}
+		return runtime.DictFromEntries(entries, nil)
 	}
 
 	buildSkippedEntry := func(name string, reason string) runtime.Value {
@@ -369,7 +369,7 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 		entries[native.DictKey(k)] = runtime.DictEntry{Key: k, Value: runtime.Bool{Value: true}}
 		k = runtime.String{Value: "message"}
 		entries[native.DictKey(k)] = runtime.DictEntry{Key: k, Value: runtime.String{Value: reason}}
-		return runtime.Dict{Entries: entries}
+		return runtime.DictFromEntries(entries, nil)
 	}
 
 	setupFailed := false
@@ -461,5 +461,5 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 	setEntry(entries, "skipped", runtime.NewInt64(skipped))
 	setEntry(entries, "failures", &runtime.List{Elements: failures})
 	setEntry(entries, "tests", &runtime.List{Elements: tests})
-	return runtime.Dict{Entries: entries}, nil
+	return runtime.DictFromEntries(entries, nil), nil
 }

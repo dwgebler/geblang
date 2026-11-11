@@ -52,7 +52,7 @@ func registerCSV(r *Registry) {
 				}
 				entries[DictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.String{Value: val}}
 			}
-			elements = append(elements, runtime.Dict{Entries: entries})
+			elements = append(elements, runtime.DictFromEntries(entries, nil))
 		}
 		return &runtime.List{Elements: elements}, nil
 	})

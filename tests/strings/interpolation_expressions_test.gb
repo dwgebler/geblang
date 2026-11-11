@@ -1,0 +1,19 @@
+/**
+ * @title Interpolation expressions
+ * @summary A parenthesised function literal, a ternary and a format spec
+ *          interpolate on both runtimes.
+ */
+import test;
+
+class InterpolationExpressionsTest extends test.Test {
+    @test
+    func parenthesisedFunctionLiteral(): void {
+        this.assertEquals("8", "${(func(int x): int { return x * 2; })(4)}");
+    }
+
+    @test
+    func ternaryAndSpec(): void {
+        let n = 3;
+        this.assertEquals("a|   3|003", "${n > 1 ? "a" : "b"}|${n:>4}|${(n > 1 ? n : 0):03d}");
+    }
+}

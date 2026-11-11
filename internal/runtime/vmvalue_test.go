@@ -39,9 +39,9 @@ func TestVMValueRoundTripBoxed(t *testing.T) {
 	str := String{Value: "hello"}
 	bytes := Bytes{Value: []byte{1, 2, 3}}
 	list := &List{Elements: []Value{SmallInt{Value: 1}, SmallInt{Value: 2}}}
-	dict := Dict{Entries: map[string]DictEntry{
+	dict := DictFromEntries(map[string]DictEntry{
 		"a": {Key: String{Value: "a"}, Value: SmallInt{Value: 10}},
-	}}
+	}, nil)
 
 	cases := []struct {
 		name string
