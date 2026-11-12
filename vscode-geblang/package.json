@@ -2,7 +2,7 @@
   "name": "vscode-geblang",
   "displayName": "Geblang",
   "description": "Geblang language support: highlighting, diagnostics, completion, formatting, testing and debugging",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "publisher": "geblang",
   "license": "MIT",
   "icon": "images/icon.png",

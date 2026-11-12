@@ -1,5 +1,7 @@
 # Geblang for Visual Studio Code
 
+Extension version: 1.7.0.
+
 Language support for [Geblang](https://geblang.com), a typed scripting
 language with a bytecode VM, a batteries-included standard library and
 single-file release builds.
@@ -33,7 +35,8 @@ match the Geblang version on your machine.
   module resolver as `geblang run`.
 - **Snippets** for common declarations (`func`, `class`, `interface`, `enum`,
   `match`, `trycatch`, `testclass`, ...) and stdlib idioms (`asyncall`,
-  `httpsession`, `aesencrypt`, `moneysum`, `securerandomints`, ...).
+  `httpsession`, `aesencrypt`, `moneysum`, `securerandomints`, `imagedraw`,
+  `barcodeqr`, `jobs-worker`, ...).
 - **WSL**: on Windows, a Linux `geblang` inside WSL works for both local and
   `\\wsl.localhost\...` workspaces.
 
@@ -64,6 +67,11 @@ point `geblang.executablePath` at it. Download builds from
 [Getting started](https://geblang.com/getting-started) for setup.
 
 Check the toolchain the extension found with **Geblang: Run Doctor**.
+
+Use Geblang 1.42.0 or later for image drawing, text and fonts, barcode generation
+and durable jobs. Their completion, hover and signature help come from the
+installed toolchain. After upgrading Geblang, run **Geblang: Restart Language
+Server**. The extension version is independent of the toolchain version.
 
 The Gebweb commands also need the `gebweb` CLI on your `PATH` (or set
 `geblang.gebweb.executablePath`).

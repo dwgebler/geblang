@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.0
+
+- Geblang 1.42.0 support, including image drawing, text, fonts and barcode
+  completion, hover and signature help through the installed language server.
+- `imagedraw` snippet for creating a canvas, drawing shapes and text, and saving
+  the image; `barcodeqr` snippet for generating and saving a QR code.
+- `jobs-worker` snippet for a durable jobs worker entry point.
+- Use Geblang 1.42.0 or later for these standard library APIs.
+
 ## 1.6.0
 
 - Extension icon, matching the Geblang website.
