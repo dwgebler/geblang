@@ -169,7 +169,7 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 	transactionClass := &runtime.Class{
 		Name:    "Transaction",
 		Module:  "db",
-		Fields:  []runtime.Field{{Name: "handle"}},
+		Fields:  []runtime.Field{{Name: "handle"}, {Name: "_connection"}},
 		Methods: map[string][]runtime.Function{},
 		Env:     env.MarkShared(),
 	}
@@ -227,6 +227,19 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		}}},
 		Env: env.MarkShared(),
 	}
+	connectionClass.Methods["driver"] = []runtime.Function{{Name: "driver", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("Connection.driver expects no arguments")
+		}
+		driver, err := e.dbDriverFromValue(this.Fields["handle"])
+		if err != nil {
+			return nil, err
+		}
+		if driver == "pgx" {
+			driver = "postgres"
+		}
+		return runtime.String{Value: driver}, nil
+	}}}
 	connectionClass.Methods["exec"] = []runtime.Function{{Name: "exec", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		return e.dbExecStandard(syntheticCall("db.Connection.exec"), append([]runtime.Value{this.Fields["handle"]}, args...))
 	}}}
@@ -241,14 +254,14 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 	}}}
 
 	connectionClass.Methods["begin"] = []runtime.Function{{Name: "begin", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-		if len(args) > 1 {
-			return nil, fmt.Errorf("Connection.begin expects optional timeoutMs")
+		if len(args) > 2 {
+			return nil, fmt.Errorf("Connection.begin expects optional timeoutMs and transaction options")
 		}
 		handle, err := e.dbBegin(syntheticCall("db.Connection.begin"), append([]runtime.Value{this.Fields["handle"]}, args...))
 		if err != nil {
 			return nil, err
 		}
-		return &runtime.Instance{Class: transactionClass, Fields: map[string]runtime.Value{"handle": handle}}, nil
+		return &runtime.Instance{Class: transactionClass, Fields: map[string]runtime.Value{"handle": handle, "_connection": this}}, nil
 	}}}
 	connectionClass.Methods["prepare"] = []runtime.Function{{Name: "prepare", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		handle, err := e.dbPrepare(syntheticCall("db.Connection.prepare"), append([]runtime.Value{this.Fields["handle"]}, args...))

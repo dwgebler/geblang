@@ -44,8 +44,6 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pkg/sftp"
-	amqp091 "github.com/rabbitmq/amqp091-go"
-	kafkago "github.com/segmentio/kafka-go"
 	"golang.org/x/crypto/ssh"
 	yamllib "gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
@@ -193,16 +191,7 @@ type Evaluator struct {
 	wsMu                  sync.Mutex
 	nextWSID              int64
 	websockets            map[int64]*wsHandle
-	amqpMu                sync.Mutex
-	nextAmqpConnID        int64
-	amqpConns             map[int64]*amqp091.Connection
-	nextAmqpChanID        int64
-	amqpChans             map[int64]*amqp091.Channel
-	kafkaMu               sync.Mutex
-	nextKafkaWriterID     int64
-	kafkaWriters          map[int64]*kafkago.Writer
-	nextKafkaReaderID     int64
-	kafkaReaders          map[int64]*kafkaReaderHandle
+	messaging             *messagingState
 	netMu                 sync.Mutex
 	nextNetID             int64
 	netHandles            map[int64]*netHandle
@@ -591,7 +580,7 @@ func newEvaluatorCore(stdout io.Writer, args []string, modulePaths []string) *Ev
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, webApps: map[int64]*webApp{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, moduleClasses: map[string]*runtime.Class{}, classModulesByName: map[string][]string{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, webApps: map[int64]*webApp{}, ffi: newFFIState(), messaging: &messagingState{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, moduleClasses: map[string]*runtime.Class{}, classModulesByName: map[string][]string{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
 	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer, ClassFields: e.classFieldsForConversion, StreamWriter: e.writeJSONBytes})
 	return e
 }
@@ -856,11 +845,11 @@ func (e *Evaluator) CallBuiltin(module, name string, args []runtime.Value, argNa
 	}
 	functions, ok := e.builtins[module]
 	if !ok {
-		return nil, fmt.Errorf("unknown builtin module %s", module)
+		return nil, fmt.Errorf("%w module %s", runtime.ErrUnknownBuiltin, module)
 	}
 	function, ok := functions[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown builtin function %s.%s", module, name)
+		return nil, fmt.Errorf("%w function %s.%s", runtime.ErrUnknownBuiltin, module, name)
 	}
 	call := &ast.CallExpression{
 		Callee: &ast.SelectorExpression{
@@ -891,6 +880,7 @@ func (e *Evaluator) childForCallback() *Evaluator {
 	child.stderr = e.stderr
 	child.input = e.input
 	child.parent = e
+	child.messaging = e.messaging
 	child.maxCallDepth = e.maxCallDepth
 	child.imports = maps.Clone(e.imports)
 	child.importNames = maps.Clone(e.importNames)
@@ -2638,13 +2628,34 @@ func (e *Evaluator) errorTypeMatches(class string, target string) bool {
 	return false
 }
 
+func (e *Evaluator) errorValueMatches(value runtime.Error, target string) bool {
+	if target == "" || target == "Error" {
+		return !value.IsFatal()
+	}
+	if value.Class == target {
+		return true
+	}
+	for _, parent := range value.Parents {
+		if parent == target {
+			return true
+		}
+	}
+	if len(value.Parents) > 0 {
+		return false
+	}
+	if isBuiltinErrorClass(value.Class) {
+		return runtime.ErrorValueIsA(value, target, typeNamesEqual)
+	}
+	return e.errorTypeMatches(value.Class, target)
+}
+
 func (e *Evaluator) catchMatches(clause ast.CatchClause, err runtime.Error) bool {
 	if clause.Type == nil {
 		return true
 	}
 	// Strip an optional module prefix - `catch (errors.HttpException e)`
 	// matches the bare "HttpException" the parent chain records.
-	return e.errorTypeMatches(err.Class, simpleTypeName(clause.Type.Name))
+	return e.errorValueMatches(err, simpleTypeName(clause.Type.Name))
 }
 
 // evalSmallRangeLoop runs a for-in loop over a range whose bounds fit in
@@ -3697,6 +3708,18 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 			return value, nil
 		}
 		if method, ok := lookupMethod(instance.Class, expr.Name.Value); ok {
+			owner := instance.Class
+			for owner != nil {
+				if len(owner.Methods[strings.ToLower(expr.Name.Value)]) > 0 {
+					break
+				}
+				owner = owner.Parent
+			}
+			if method.Native != nil && owner != nil && native.IsNativeModule(owner.Module) {
+				bound := boundReflectMethodFunction(instance.Class.Name+"."+expr.Name.Value, []runtime.Function{method}, instance, e)
+				bound.Identity = runtime.NewFunctionIdentity()
+				return bound, nil
+			}
 			bound := method
 			bound.TypeBindings = functionCheckBindings(method, instance)
 			bound.Env = bindThis(method.Env, instance)

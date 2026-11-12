@@ -46,15 +46,25 @@ func imageFromHandle(v runtime.Value, label string) (image.Image, error) {
 
 func registerImage(r *Registry) {
 	r.Register("imagenative", "blank", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("image.blank expects (width, height)")
+		if len(args) < 2 || len(args) > 3 {
+			return nil, fmt.Errorf("image.blank expects (width, height, fill)")
 		}
 		w, ok1 := AsInt64(args[0])
 		h, ok2 := AsInt64(args[1])
 		if !ok1 || !ok2 || w <= 0 || h <= 0 {
 			return nil, fmt.Errorf("image.blank: width and height must be positive ints")
 		}
-		return putImage(image.NewRGBA(image.Rect(0, 0, int(w), int(h)))), nil
+		dst := image.NewNRGBA(image.Rect(0, 0, int(w), int(h)))
+		if len(args) == 3 {
+			if _, isNull := args[2].(runtime.Null); !isNull {
+				c, err := imageColorArg(args[2], "image.blank")
+				if err != nil {
+					return nil, err
+				}
+				fillRectNRGBA(dst, dst.Bounds(), c)
+			}
+		}
+		return putImage(dst), nil
 	})
 
 	r.Register("imagenative", "decode", func(args []runtime.Value) (runtime.Value, error) {

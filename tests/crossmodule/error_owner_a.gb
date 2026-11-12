@@ -1,0 +1,13 @@
+module error_owner_a;
+
+export class DomainError extends RuntimeError {
+    func DomainError(string message) {
+        parent(message);
+    }
+}
+
+export class SharedError extends DomainError {
+    func SharedError(string message) {
+        parent(message);
+    }
+}

@@ -2052,7 +2052,7 @@ func (a *Analyzer) checkConstructorCallBindings(call *ast.CallExpression, ident 
 	if len(bindings) == 0 {
 		return
 	}
-	ctors := cls.methods[strings.ToLower(ident.Value)]
+	ctors := cls.overloads(strings.ToLower(ident.Value), true)
 	if len(ctors) == 0 {
 		return
 	}
@@ -3373,10 +3373,21 @@ func (a *Analyzer) interfaceMethods(name string, seen map[string]bool) map[strin
 	return methods
 }
 
+// A member is a constructor only when its name matches the class name exactly.
+func (c classInfo) overloads(key string, constructors bool) []methodInfo {
+	var out []methodInfo
+	for _, m := range c.methods[key] {
+		if (m.name == c.name) == constructors {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 func (a *Analyzer) classMethods(className, methodName string) []methodInfo {
 	key := strings.ToLower(methodName)
 	for current, ok := a.classes[className]; ok; current, ok = a.classes[current.parent] {
-		if methods, ok := current.methods[key]; ok {
+		if methods := current.overloads(key, false); len(methods) > 0 {
 			return methods
 		}
 		if current.parent == "" {

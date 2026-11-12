@@ -1,0 +1,100 @@
+import test;
+import messaging;
+import secrets;
+import sys;
+import store;
+import time;
+import bytes;
+
+class ManagedBrokerLiveTest extends test.Test {
+    func exercise(dict<string, any> opts): void {
+        let producer = messaging.connect(opts);
+        producer.publish("managed-delivery");
+        producer.close();
+        let consumer = messaging.connect(opts) as messaging.ManagedMessageQueue;
+        let state = store.Store();
+        int deadline = time.monotonic() + 20000;
+
+        consumer.consumeUntil(func(any message): void {
+            any body = message["body"];
+            state.set("body", body instanceof bytes ? bytes.toString(body as bytes) : body);
+            state.set("stop", true);
+        }, func(): bool { return state.get("stop") == true || time.monotonic() > deadline; });
+
+        this.assertEquals("managed-delivery", state.get("body"));
+        let another = messaging.connect(opts);
+        another.publish("redelivery");
+        another.close();
+        let failing = messaging.connect(opts) as messaging.ManagedMessageQueue;
+        deadline = time.monotonic() + 20000;
+        bool failed = false;
+        try {
+            failing.consumeUntil(
+                func(any message): void { throw RuntimeError("handler failure"); },
+                func(): bool { return time.monotonic() > deadline; }
+            );
+        } catch (Error e) {
+            failed = true;
+        }
+        this.assertTrue(failed);
+        let retry = messaging.connect(opts) as messaging.ManagedMessageQueue;
+        state.clear();
+        deadline = time.monotonic() + 20000;
+        retry.consumeUntil(func(any message): void {
+            any body = message["body"];
+            state.set("body", body instanceof bytes ? bytes.toString(body as bytes) : body);
+            state.set("stop", true);
+        }, func(): bool { return state.get("stop") == true || time.monotonic() > deadline; });
+
+        this.assertEquals("redelivery", state.get("body"));
+    }
+
+    @test
+    func rabbitManagedConsumptionAcknowledgesAndRedelivers(): void {
+        string url = sys.getenv("GEBLANG_JOBS_AMQP_URL") ?? "";
+        if (url == "") {
+            this.skip("run make test-jobs-backends");
+            return;
+        }
+        this.exercise({
+            "driver": "rabbitmq",
+            "url": url,
+            "queue": "managed-" + secrets.randomHex(8),
+            "durable": false,
+        });
+    }
+
+    @test
+    func stompManagedConsumptionAcknowledgesAndRedelivers(): void {
+        string port = sys.getenv("GEBLANG_JOBS_STOMP_PORT") ?? "";
+        if (port == "") {
+            this.skip("run make test-jobs-backends");
+            return;
+        }
+        this.exercise({
+            "driver": "stomp",
+            "host": "127.0.0.1",
+            "port": port.toInt(),
+            "destination": "/queue/managed-" + secrets.randomHex(8),
+            "login": "geblang",
+            "passcode": "queue_test",
+        });
+    }
+
+    @test
+    func kafkaManagedConsumptionAcknowledgesAndRedelivers(): void {
+        string broker = sys.getenv("GEBLANG_JOBS_KAFKA") ?? "";
+        if (broker == "") {
+            this.skip("run make test-jobs-backends");
+            return;
+        }
+        string id = secrets.randomHex(8);
+        this.exercise({
+            "driver": "kafka",
+            "brokers": [broker],
+            "topic": "managed-" + id,
+            "groupId": "managed-" + id,
+            "autoCreateTopic": true,
+        });
+    }
+}

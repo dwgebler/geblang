@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/runtime"
@@ -35,7 +36,7 @@ func (e *Evaluator) dbOpen(call *ast.CallExpression, args []runtime.Value) (runt
 	if err != nil {
 		return nil, err
 	}
-	if err := db.Ping(); err != nil {
+	if err := dbPing(db, driverName); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -55,6 +56,19 @@ func (e *Evaluator) dbOpen(call *ast.CallExpression, args []runtime.Value) (runt
 	ensureMap(&e.dbs)[e.nextDBID] = db
 	ensureMap(&e.dbDrivers)[e.nextDBID] = driverName
 	return runtime.NewInt64(e.nextDBID), nil
+}
+
+// dbPing retries a busy first sqlite open: the WAL switch needs a lock that busy_timeout does not wait for.
+func dbPing(db *sql.DB, driverName string) error {
+	deadline := time.Now().Add(5 * time.Second)
+	for wait := 5 * time.Millisecond; ; wait = min(wait*2, 200*time.Millisecond) {
+		err := db.Ping()
+		var coded interface{ Code() int }
+		if err == nil || driverName != "sqlite" || !errors.As(err, &coded) || coded.Code()&0xff != 5 || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(wait)
+	}
 }
 
 func (e *Evaluator) dbExec(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -160,8 +174,8 @@ func (e *Evaluator) dbQueryRows(call *ast.CallExpression, args []runtime.Value) 
 }
 
 func (e *Evaluator) dbBegin(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) < 1 || len(args) > 2 {
-		return nil, fmt.Errorf("%s expects database handle and optional timeoutMs", call.Callee.String())
+	if len(args) < 1 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects database handle, optional timeoutMs and transaction options", call.Callee.String())
 	}
 	driver, err := e.dbDriverFromValue(args[0])
 	if err != nil {
@@ -171,15 +185,41 @@ func (e *Evaluator) dbBegin(call *ast.CallExpression, args []runtime.Value) (run
 	if err != nil {
 		return nil, err
 	}
+	var options *sql.TxOptions
+	if len(args) == 3 {
+		config, ok := args[2].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%s transaction options must be a dictionary", call.Callee.String())
+		}
+		level := sql.LevelDefault
+		if value, exists := dictField(config, "isolation"); exists {
+			name, ok := value.(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("%s isolation must be a string", call.Callee.String())
+			}
+			switch name.Value {
+			case "default":
+			case "readCommitted":
+				level = sql.LevelReadCommitted
+			case "repeatableRead":
+				level = sql.LevelRepeatableRead
+			case "serializable":
+				level = sql.LevelSerializable
+			default:
+				return nil, fmt.Errorf("%s unknown isolation level %q", call.Callee.String(), name.Value)
+			}
+		}
+		options = &sql.TxOptions{Isolation: level}
+	}
 	ctx := context.Background()
 	var cancel context.CancelFunc
-	if len(args) == 2 {
+	if len(args) >= 2 {
 		ctx, cancel, err = dbTimeoutContext(args[1])
 		if err != nil {
 			return nil, err
 		}
 	}
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := db.BeginTx(ctx, options)
 	if err != nil {
 		if cancel != nil {
 			cancel()

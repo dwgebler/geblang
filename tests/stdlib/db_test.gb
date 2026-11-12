@@ -13,6 +13,54 @@ import path;
 class DbTest extends test.Test {
 
     @test
+    func boundNativeDatabaseMethodsKeepTheirReceiver(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        let exec = conn.exec;
+        exec("CREATE TABLE items (n INTEGER)");
+        let begin = conn.begin;
+        let tx = begin();
+        let insert = tx.exec;
+        insert("INSERT INTO items VALUES (?)", 7);
+        let commit = tx.commit;
+        commit();
+
+        let query = conn.query;
+        let rows = query("SELECT n FROM items");
+        let all = rows.all;
+
+        this.assertEquals(7, all()[0]["n"]);
+        let close = conn.close;
+        close();
+    }
+
+    @test
+    func driverMetadataSurvivesBoundAndAsyncCalls(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        let driver = conn.driver;
+        this.assertEquals("sqlite", conn.driver());
+        this.assertEquals("sqlite", driver());
+        this.assertEquals("sqlite", async.await(async.run(func(): string { return conn.driver(); })));
+        conn.close();
+        this.assertThrows(func(): void { conn.driver(); });
+    }
+
+    @test
+    func concurrentFirstOpensOfANewFileAllSucceed(): void {
+        string file = path.join(io.tempDir("geb-db-open-"), "fresh.sqlite");
+        list<Task<any>> opens = [];
+        for (i in 0..<8) {
+            opens.push(async.run(func(): string {
+                let conn = db.Connection("sqlite", file);
+                defer conn.close();
+                return conn.query("PRAGMA journal_mode").toList()[0]["journal_mode"] as string;
+            }));
+        }
+        for (open in opens) {
+            this.assertEquals("wal", async.await(open));
+        }
+    }
+
+    @test
     func fileDatabaseDefaultsToWal(): void {
         let dir = io.tempDir("waltest-");
         let c = db.Connection("sqlite", dir + "/t.db");

@@ -114,7 +114,7 @@ func reflectClassMetadataFromStatement(stmt *ast.ClassStatement) *runtime.ClassM
 			// than reflect.methods. Matches the evaluator and avoids
 			// the previous divergence where the VM included the
 			// constructor in the methods list.
-			if strings.EqualFold(member.Name.Value, stmt.Name.Value) {
+			if member.Name.Value == stmt.Name.Value {
 				continue
 			}
 			key := strings.ToLower(member.Name.Value)
@@ -365,7 +365,7 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 				receiverName = "this"
 			}
 			crossModuleParent := class.ParentIndex < 0 && strings.Contains(class.ParentName, ".")
-			if !member.Static && strings.EqualFold(member.Name.Value, stmt.Name.Value) && (class.ParentIndex >= 0 || crossModuleParent) && !containsParentConstructorCall(member.Body) {
+			if !member.Static && member.Name.Value == stmt.Name.Value && (class.ParentIndex >= 0 || crossModuleParent) && !containsParentConstructorCall(member.Body) {
 				prologue = func() error {
 					if class.ParentIndex >= 0 {
 						parent := c.chunk.Classes[class.ParentIndex]
@@ -401,7 +401,7 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 					return c.withStatementLocation(member, err)
 				}
 				class.StaticDecorators[key] = append(class.StaticDecorators[key], staticDec...)
-			} else if strings.EqualFold(member.Name.Value, stmt.Name.Value) {
+			} else if member.Name.Value == stmt.Name.Value {
 				class.ConstructorIndices = append(class.ConstructorIndices, functionIndex)
 			} else {
 				key := strings.ToLower(member.Name.Value)

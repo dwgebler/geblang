@@ -3183,9 +3183,13 @@ func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name st
 	if !ok {
 		return nil, fmt.Errorf("unknown class %s", className)
 	}
-	indices, ok := vm.lookupMethod(classInfo, name)
-	if !ok {
-		if strings.EqualFold(name, className) {
+	isConstructor := name == className
+	var indices []int64
+	if !isConstructor {
+		indices, ok = vm.lookupMethod(classInfo, name)
+	}
+	if !ok || isConstructor {
+		if isConstructor {
 			indices = append([]int64(nil), classInfo.ConstructorIndices...)
 			if len(indices) == 0 {
 				if len(args) > 0 {

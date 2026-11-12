@@ -1,0 +1,272 @@
+/**
+ * @title image drawing
+ * @summary Creation, pixel access, shapes, compositing and text on the
+ * image module. Fixture-free: every image is built in memory and checked
+ * through getPixel so results are deterministic on both backends.
+ */
+import test;
+import image;
+import io;
+
+func stripe(image.Image img, string color): image.Image {
+    return img.rect(0, 0, img.width(), 2, {"fill": color});
+}
+
+class Poster {
+    image.Image canvas;
+
+    func Poster(int w, int h) {
+        this.canvas = image.blank(w, h, "white");
+        this.frame();
+    }
+
+    func frame(): void {
+        this.canvas.rect(0, 0, this.canvas.width(), this.canvas.height(), {"color": "black"});
+    }
+}
+
+class ImageDrawTest extends test.Test {
+    @test
+    func blankIsTransparentUnlessFilled(): void {
+        this.assertEquals("#00000000", image.blank(3, 3).getPixel(1, 1));
+        this.assertEquals("#ffffffff", image.blank(3, 3, "white").getPixel(1, 1));
+        this.assertEquals("#3366ffff", image.blank(3, 3, fill: "#36f").getPixel(2, 2));
+    }
+
+    @test
+    func pixelsRoundTripExactlyIncludingAlpha(): void {
+        let img = image.blank(4, 4);
+        img.setPixel(1, 2, "#11223344");
+        this.assertEquals("#11223344", img.getPixel(1, 2));
+        let back = image.loadBytes(img.encode("png"));
+        this.assertEquals("#11223344", back.getPixel(1, 2));
+        this.assertEquals("#00000000", back.getPixel(0, 0));
+    }
+
+    @test
+    func colorFormsAgree(): void {
+        let img = image.blank(5, 1);
+        img.setPixel(0, 0, "red").setPixel(1, 0, "#f00").setPixel(2, 0, "#ff0000")
+           .setPixel(3, 0, "#FF0000FF").setPixel(4, 0, image.rgba(255, 0, 0));
+        for (x in 0..4) {
+            this.assertEquals("#ff0000ff", img.getPixel(x, 0));
+        }
+        this.assertEquals("#0a0b0c80", image.rgba(10, 11, 12, 128));
+        this.assertEquals("#00000000", image.rgba(0, 0, 0, a: 0));
+    }
+
+    @test
+    func drawingMutatesInPlaceAndChains(): void {
+        let img = image.blank(20, 20, "white");
+        let same = img.fill("black").rect(2, 2, 6, 6, {"fill": "red"}).line(0, 19, 19, 19, {"color": "blue"});
+        this.assertEquals("#ff0000ff", img.getPixel(4, 4));
+        this.assertEquals("#000000ff", img.getPixel(10, 10));
+        this.assertEquals("#0000ffff", img.getPixel(10, 19));
+        same.setPixel(0, 0, "lime");
+        this.assertEquals("#00ff00ff", img.getPixel(0, 0));
+    }
+
+    @test
+    func transformsLeaveTheSourceUntouched(): void {
+        let img = image.blank(4, 2, "white").setPixel(0, 0, "red");
+        let snapshot = img.copy();
+        img.fill("black");
+        this.assertEquals("#ff0000ff", snapshot.getPixel(0, 0));
+        this.assertEquals("#ff0000ff", snapshot.flipH().getPixel(3, 0));
+        this.assertEquals("#ff0000ff", snapshot.flipV().getPixel(0, 1));
+        this.assertEquals("#ff0000ff", snapshot.getPixel(0, 0));
+    }
+
+    @test
+    func rectStrokeStaysInsideItsBounds(): void {
+        let img = image.blank(20, 20, "white");
+        img.rect(5, 5, 10, 10, {"color": "blue", "width": 2});
+        this.assertEquals("#0000ffff", img.getPixel(5, 5));
+        this.assertEquals("#0000ffff", img.getPixel(14, 14));
+        this.assertEquals("#ffffffff", img.getPixel(4, 5));
+        this.assertEquals("#ffffffff", img.getPixel(15, 14));
+        this.assertEquals("#ffffffff", img.getPixel(10, 10));
+    }
+
+    @test
+    func fillAndStrokeCombine(): void {
+        let img = image.blank(20, 20, "white");
+        img.rect(2, 2, 16, 16, {"fill": "yellow", "color": "black", "width": 3});
+        this.assertEquals("#000000ff", img.getPixel(3, 3));
+        this.assertEquals("#ffff00ff", img.getPixel(10, 10));
+    }
+
+    @test
+    func circleEllipsePolygonArc(): void {
+        let img = image.blank(60, 60, "white");
+        img.circle(15, 15, 8, {"fill": "red"});
+        this.assertEquals("#ff0000ff", img.getPixel(15, 15));
+        this.assertEquals("#ffffffff", img.getPixel(24, 24));
+
+        img.circle(45, 15, 8, {"color": "blue", "width": 2});
+        this.assertEquals("#ffffffff", img.getPixel(45, 15));
+        this.assertEquals("#0000ffff", img.getPixel(45, 7));
+
+        img.ellipse(15, 45, 12, 4, {"fill": "green"});
+        this.assertEquals("#008000ff", img.getPixel(5, 45));
+        this.assertEquals("#ffffffff", img.getPixel(15, 38));
+
+        img.polygon([[35, 35], [55, 35], [45.5, 55]], {"fill": "purple"});
+        this.assertEquals("#800080ff", img.getPixel(45, 40));
+        this.assertEquals("#ffffffff", img.getPixel(36, 54));
+
+        let pie = image.blank(40, 40, "white").arc(20, 20, 12, 0, 90, {"fill": "orange"});
+        this.assertEquals("#ffa500ff", pie.getPixel(25, 25));
+        this.assertEquals("#ffffffff", pie.getPixel(15, 15));
+    }
+
+    @test
+    func openPolylineDoesNotClose(): void {
+        let img = image.blank(30, 30, "white");
+        img.polygon([[5, 5], [25, 5], [25, 25]], {"color": "black", "width": 2, "closed": false});
+        this.assertEquals("#000000ff", img.getPixel(15, 5));
+        this.assertEquals("#000000ff", img.getPixel(25, 15));
+        this.assertEquals("#ffffffff", img.getPixel(15, 15));
+    }
+
+    @test
+    func translucentColorsBlendOverTheCanvas(): void {
+        let img = image.blank(10, 10, "white");
+        img.rect(0, 0, 10, 10, {"fill": "#00000080"});
+        this.assertEquals("#7f7f7fff", img.getPixel(5, 5));
+        let clear = image.blank(4, 4).rect(0, 0, 4, 4, {"fill": "#ff000080"});
+        this.assertEquals("#ff000080", clear.getPixel(1, 1));
+    }
+
+    @test
+    func geometryOutsideTheCanvasIsClipped(): void {
+        let img = image.blank(10, 10, "white");
+        img.line(-40, 5, 40, 5, {"color": "red"}).circle(200, 200, 5, {"fill": "red"})
+           .rect(-5, -5, 7, 7, {"fill": "blue"});
+        this.assertEquals("#ff0000ff", img.getPixel(9, 5));
+        this.assertEquals("#0000ffff", img.getPixel(1, 1));
+        this.assertEquals("#ffffffff", img.getPixel(9, 9));
+    }
+
+    @test
+    func pasteCompositesWithOpacityAndClipping(): void {
+        let dst = image.blank(8, 8, "white");
+        let stamp = image.blank(2, 2, "black");
+        dst.paste(stamp, 1, 1).paste(stamp, 7, 7).paste(stamp, 4, 4, {"opacity": 0});
+        this.assertEquals("#000000ff", dst.getPixel(2, 2));
+        this.assertEquals("#000000ff", dst.getPixel(7, 7));
+        this.assertEquals("#ffffffff", dst.getPixel(4, 4));
+        this.assertEquals("#ffffffff", dst.getPixel(3, 3));
+        dst.paste(dst, 4, 0);
+        this.assertEquals("#000000ff", dst.getPixel(6, 2));
+    }
+
+    @test
+    func textDrawsBelowItsAnchorAndMeasures(): void {
+        let size = image.measureText("Hello", {"size": 20});
+        this.assertTrue((size["width"] as int) > 20);
+        this.assertTrue((size["height"] as int) >= 20);
+        let two = image.measureText("Hello\nHello", {"size": 20});
+        this.assertTrue((two["height"] as int) > (size["height"] as int));
+        this.assertEquals(size["width"], two["width"]);
+        let mono = {"font": "mono", "size": 14};
+        this.assertEquals(image.measureText("iiii", mono)["width"], image.measureText("MMMM", mono)["width"]);
+
+        let w = (size["width"] as int) + 4;
+        let h = (size["height"] as int) + 4;
+        let img = image.blank(w, h, "white").text("Hello", 2, 2, {"size": 20, "color": "black"});
+        let solid = 0;
+        for (y in 0..(h - 1)) {
+            for (x in 0..(w - 1)) {
+                if (img.getPixel(x, y) == "#000000ff") {
+                    solid = solid + 1;
+                }
+            }
+        }
+        this.assertTrue(solid > 20);
+        for (x in 0..(w - 1)) {
+            this.assertEquals("#ffffffff", img.getPixel(x, 0));
+        }
+    }
+
+    @test
+    func builtInFontsDiffer(): void {
+        let regular = image.measureText("Geblang", {"size": 24})["width"] as int;
+        let bold = image.measureText("Geblang", {"size": 24, "font": "bold"})["width"] as int;
+        this.assertTrue(bold > regular);
+        this.assertTrue((image.measureText("Geblang", {"size": 24, "font": "italic"})["width"] as int) > 0);
+    }
+
+    @test
+    func callContextsAllReachTheSameImage(): void {
+        let img = image.blank(10, 10, "white");
+        stripe(img, "red");
+        this.assertEquals("#ff0000ff", img.getPixel(5, 1));
+        img.rect(...[0, 4, 10, 2], {"fill": "blue"});
+        this.assertEquals("#0000ffff", img.getPixel(5, 5));
+        img.rect(0, 8, 10, 2, opts: {"fill": "lime"});
+        this.assertEquals("#00ff00ff", img.getPixel(5, 9));
+        let poster = Poster(12, 12);
+        this.assertEquals("#000000ff", poster.canvas.getPixel(0, 6));
+        this.assertEquals("#ffffffff", poster.canvas.getPixel(6, 6));
+        let drawers = [func(image.Image i): image.Image { return i.fill("navy"); }];
+        this.assertEquals("#000080ff", drawers[0](img).getPixel(3, 3));
+    }
+
+    @test
+    func drawingOnADecodedImageKeepsItsPixels(): void {
+        let src = image.blank(6, 6, "white").setPixel(5, 5, "#10203040");
+        let loaded = image.loadBytes(src.encode("png"));
+        loaded.rect(0, 0, 2, 2, {"fill": "red"});
+        this.assertEquals("#ff0000ff", loaded.getPixel(1, 1));
+        this.assertEquals("#10203040", loaded.getPixel(5, 5));
+        let gif = image.loadBytes(src.fill("white").encode("gif"));
+        this.assertEquals("#12ab34ff", gif.setPixel(2, 2, "#12ab34").getPixel(2, 2));
+    }
+
+    @test
+    func savedFileReloadsWithTheDrawing(): void {
+        let path = io.tempDir() + "/geblang_image_draw_test.png";
+        image.blank(8, 8, "white").circle(4, 4, 3, {"fill": "teal"}).save(path, "png");
+        this.assertEquals("#008080ff", image.load(path).getPixel(4, 4));
+        io.remove(path);
+    }
+
+    @test
+    func invalidInputReportsTheRealReason(): void {
+        let img = image.blank(4, 4);
+        this.assertThrowsOf(func(): void { img.fill("nope"); }, "RuntimeError");
+        let cases = [
+            [func(): void { img.fill("nope"); }, "invalid color \"nope\""],
+            [func(): void { img.getPixel(4, 0); }, "outside the image"],
+            [func(): void { img.setPixel(0, -1, "red"); }, "outside the image"],
+            [func(): void { img.rect(0, 0, 0, 2); }, "width and height must be positive"],
+            [func(): void { img.rect(0, 0, 2, 2, {"width": 0}); }, "\"width\" must be positive"],
+            [func(): void { img.circle(1, 1, 0); }, "radii must be positive"],
+            [func(): void { img.polygon([[1, 1], [2, 2]]); }, "at least 3 points"],
+            [func(): void { img.polygon([1, 2, 3]); }, "list of [x, y] pairs"],
+            [func(): void { img.line("a", 0, 1, 1); }, "coordinates must be numbers"],
+            [func(): void { img.text("x", 0, 0, {"font": "comic"}); }, "unknown font \"comic\""],
+            [func(): void { img.text("x", 0, 0, {"size": -1}); }, "\"size\""],
+            [func(): void { img.paste(img, 0, 0, {"opacity": 2}); }, "between 0 and 1"],
+            [func(): void { image.blank(2, 2, "#12"); }, "invalid color"],
+            [func(): void { image.rgba(256, 0, 0); }, "between 0 and 255"],
+            [func(): void { image.loadFont("/nonexistent/font.ttf"); }, "no such file"],
+            [func(): void { img.rotate(45); }, "only multiples of 90"]
+        ];
+        for (c in cases) {
+            let message = "";
+            try { c[0](); } catch (Error e) { message = e.message; }
+            if (!message.contains(c[1] as string)) {
+                this.fail("expected '${c[1]}' in '${message}'");
+            }
+        }
+    }
+
+    @test
+    func closedImageRejectsDrawing(): void {
+        let img = image.blank(4, 4);
+        img.close();
+        this.assertThrowsOf(func(): void { img.fill("red"); }, "RuntimeError");
+    }
+}

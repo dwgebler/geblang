@@ -1,0 +1,25 @@
+module worker;
+import db;
+import jobs;
+import io;
+import sys;
+
+export func main(list<string> args): int {
+    let conn = db.Connection("sqlite", sys.getenv("JOBS_DB") ?? "./jobs.db");
+    defer conn.close();
+    if (args.length() > 0 && args[0] == "migrate") {
+        return jobs.migrationCli(
+            conn,
+            {"namespace": "example", "sourceTable": "legacy_jobs"},
+            args[1:]
+        );
+    }
+    let queue = jobs.Queue(conn, {"namespace": "example"});
+    queue.register("hello", func(jobs.Job job): void {
+        job.throwIfCancelled();
+        io.println("Hello " + (job.payload["name"] as string));
+    });
+    let scheduler = jobs.Scheduler(queue);
+    scheduler.add("hourly-hello", "@hourly", "hello", {"name": "scheduled world"});
+    return jobs.cli(jobs.Worker(queue), scheduler, args);
+}

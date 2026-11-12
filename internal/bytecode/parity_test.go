@@ -5183,6 +5183,60 @@ c.close();
 `, "7\nbegin expired\nquery expired\nexec expired\n3\n2\n")
 }
 
+func TestParityDatabaseDriverMetadata(t *testing.T) {
+	runParityStateful(t, `import db;
+import io;
+import async;
+class DatabaseOwner {
+    db.Connection conn;
+    func DatabaseOwner(db.Connection conn) { this.conn = conn; }
+    func driver(): string { return this.conn.driver(); }
+}
+
+class Child extends DatabaseOwner {
+    func Child(db.Connection conn) { parent(conn); }
+    func ownDriver(): string { return this.conn.driver(); }
+}
+let c = db.Connection("sqlite", ":memory:");
+let owner = Child(c);
+io.println(c.driver());
+io.println(owner.driver());
+io.println(owner.ownDriver());
+let bound = c.driver;
+io.println(bound());
+io.println(async.await(async.run(func(): string { return c.driver(); })));
+c.close();
+try { c.driver(); } catch (Error e) { io.println("closed"); }
+`, "sqlite\nsqlite\nsqlite\nsqlite\nsqlite\nclosed\n")
+}
+
+func TestParityBoundNativeDatabaseMethodsKeepReceiver(t *testing.T) {
+	runParityStateful(t, `import db;
+import io;
+let a = db.Connection("sqlite", ":memory:");
+let b = db.Connection("sqlite", ":memory:");
+let writeA = a.exec;
+let writeB = b.exec;
+writeA("CREATE TABLE a (n INTEGER)");
+writeB("CREATE TABLE b (n INTEGER)");
+writeA("INSERT INTO a VALUES (?)", 7);
+let read = a.query;
+let rows = read("SELECT n FROM a");
+let all = rows.all;
+io.println(all()[0]["n"]);
+let transaction = a.begin;
+let tx = transaction();
+let writeTx = tx.exec;
+writeTx("INSERT INTO a VALUES (8)");
+let commit = tx.commit;
+commit();
+io.println(read("SELECT COUNT(*) AS n FROM a").all()[0]["n"]);
+let close = a.close;
+close();
+b.close();
+`, "7\n2\n")
+}
+
 // sys.setGcPercent returns the previous setting, so a caller can restore it.
 func TestParitySysSetGcPercent(t *testing.T) {
 	runParityWithStdlib(t, `
@@ -5932,4 +5986,171 @@ func TestParityPublishedScopeCaptures(t *testing.T) {
 		writeModule(t, dir, "scope_capture_donor", string(donor))
 		runParityModulesDir(t, dir, string(probe)+"\nmain();", want)
 	})
+}
+
+func TestParityDurableJobsStoreWorkerAndScheduling(t *testing.T) {
+	runParityWithStdlib(t, `import db;
+import jobs;
+import io;
+import cron;
+let conn = db.Connection("sqlite", ":memory:");
+let queue = jobs.Queue(conn, {"namespace": "parity"});
+queue.register("work", func(jobs.Job job): void {
+    if (job.attempt < 2) { throw RuntimeError("retry"); }
+}, {"maxAttempts": 2, "backoffMs": [0]});
+let id = queue.enqueue("work", {"n": 7}, {"dedupeKey": "one"});
+io.println(id == queue.enqueue("work", {}, {"dedupeKey": "one"}));
+let result = jobs.Worker(queue, {"drainOnce": true}).run();
+io.println(result.started);
+io.println(queue.get(id).status);
+io.println(queue.stats().completed);
+let tx = conn.begin();
+let rolledBack = queue.enqueueIn(tx, "work", {});
+tx.rollback();
+io.println(queue.get(rolledBack) == null);
+io.println(cron.nextAfter("0 0 1 * 1", 1704067200));
+io.println(cron.nextAfter("0 0 1 * 1", 1704067200, {"dayMatch": "and"}));
+io.println(jobs.TimeoutError("cancel") instanceof IOError);
+conn.close();
+`, "true\n2\ncompleted\n1\ntrue\n1704672000\n1711929600\nfalse\n")
+}
+
+func TestParityCallableInstanceofAliasesAndInheritedInvoke(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import math;
+import reflect;
+class Base {
+    func __invoke(): int { return 7; }
+    func method(): int { return 8; }
+}
+class Child extends Base {}
+any callback = func(): int { return 9; };
+let child = Child();
+io.println(callback instanceof callable);
+io.println(callback instanceof function);
+io.println(callback instanceof func);
+io.println(child instanceof callable);
+io.println(child.method instanceof callable);
+io.println(reflect.method(child, "method") instanceof callable);
+io.println(reflect.method(child, "method")());
+io.println(math.abs instanceof callable);
+io.println(7 instanceof callable);
+`, "true\ntrue\ntrue\ntrue\ntrue\ntrue\n8\ntrue\nfalse\n")
+}
+
+func TestParityMutatingStoreUpdateAndAsyncBrokerOwnership(t *testing.T) {
+	runParityWithStdlib(t, `import store;
+import io;
+import kafka;
+import async;
+let state = store.Store();
+state.set("values", [1]);
+state.update("values", func(any old): any { (old as list<int>).push(2); return old; });
+io.println(state.get("values"));
+let reader = kafka.reader({"brokers": ["127.0.0.1:1"], "topic": "ownership", "groupId": "ownership"});
+async.await(async.run(func(): void { kafka.close(reader); }));
+try { kafka.read(reader, 1); }
+catch (Error e) { io.println(e.message.contains("unknown reader handle")); }
+`, "[1, 2]\ntrue\n")
+}
+
+func TestParitySameNamedErrorsKeepDeclaringParentChain(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"error_owner_a", "error_owner_b"} {
+		source, err := os.ReadFile("../../tests/crossmodule/" + name + ".gb")
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeModule(t, dir, name, string(source))
+	}
+	runParityModulesDir(t, dir, `import io;
+import error_owner_a as a;
+import error_owner_b as b;
+let first = a.SharedError("first");
+io.println(first instanceof a.DomainError);
+io.println(first instanceof b.OtherError);
+try { throw first; } catch (a.DomainError e) { io.println(e.message); }
+`, "true\nfalse\nfirst\n")
+}
+
+func TestParityWaitAnyPreservesPendingTasksAndResults(t *testing.T) {
+	runParityWithStdlib(t, `import async;
+import io;
+let pending = async.token();
+io.println(async.waitAny([pending], 1));
+io.println(async.done(pending));
+let ready = async.run(func(): int { return 7; });
+io.println(async.waitAny([pending, ready], 1000));
+io.println(async.await(ready));
+io.println(async.await(ready));
+io.println(async.done(pending));
+async.cancel(pending);
+`, "-1\nfalse\n1\n7\n7\nfalse\n")
+}
+
+func TestParityReflectedMethodsKeepClosestOverloadDeclaration(t *testing.T) {
+	runParityWithStdlib(t, `import reflect;
+import io;
+class Base {
+    func value(int n): string { return "base"; }
+    func inherited(): string { return "inherited"; }
+}
+class Child extends Base {
+    func value(string n): string { return "child"; }
+}
+let child = Child();
+let reflected = reflect.method(child, "value");
+io.println(reflected("x"));
+try { reflected(7); io.println("unexpected parent overload"); }
+catch (Error e) { io.println("closest declaration"); }
+io.println(reflect.method(child, "inherited")());
+`, "child\nclosest declaration\ninherited\n")
+}
+
+func TestParityNativeAndJobTimeoutsKeepDistinctParents(t *testing.T) {
+	runParityWithStdlib(t, `import jobs;
+import async;
+import errors;
+import io;
+func ioOnly(IOError error): void { io.println("unexpected IO parent"); }
+try { async.await(async.timeout(async.token(), 0)); }
+catch (IOError e) { io.println("native timeout"); }
+catch (Error e) { io.println("wrong native parent"); }
+io.println(errors.is(jobs.TimeoutError("job"), "JobError"));
+io.println(errors.is(jobs.TimeoutError("job"), "IOError"));
+any error = jobs.TimeoutError("job");
+try { ioOnly(error); } catch (TypeError e) { io.println("typed rejection"); }
+`, "native timeout\ntrue\nfalse\ntyped rejection\n")
+}
+
+func TestParityExplicitTransactionIsolationAcrossNativeDispatch(t *testing.T) {
+	runParityWithStdlib(t, `import db;
+import async;
+import reflect;
+import io;
+import http;
+class Reply extends http.Response {}
+class Child extends db.Connection {
+    func Child() { parent("sqlite", ":memory:"); }
+    func ownDriver(): string { return this.driver(); }
+}
+for (conn in [db.Connection("sqlite", ":memory:"), Child()]) {
+    conn.exec("CREATE TABLE values_table (n INTEGER)");
+    let begin = conn.begin;
+    let tx = begin(1000, {"isolation": "default"});
+    tx.exec("INSERT INTO values_table VALUES (7)");
+    tx.commit();
+    async.await(async.run(func(): void {
+        let inner = reflect.method(conn, "begin")(1000, {"isolation": "default"});
+        inner.exec("INSERT INTO values_table VALUES (8)");
+        inner.commit();
+    }));
+    io.println(conn.query("SELECT SUM(n) AS n FROM values_table").all()[0]["n"]);
+    try { conn.begin(1000, {"isolation": "unknown"}); }
+    catch (Error e) { io.println("invalid isolation"); }
+    if (conn instanceof Child) { io.println((conn as Child).ownDriver()); }
+    conn.close();
+}
+io.println(Reply().status);
+`, "15\ninvalid isolation\n15\ninvalid isolation\nsqlite\n200\n")
 }

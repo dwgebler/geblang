@@ -967,6 +967,26 @@
         ],
         "description": "cli.widgets.ProgressBar: progress bar (1.2.0)"
     },
+    "image.draw": {
+        "prefix": "imagedraw",
+        "body": [
+            "let ${1:img} = image.blank(${2:400}, ${3:300}, \"${4:white}\");",
+            "${1:img}.rect(${5:10}, ${6:10}, ${7:100}, ${8:60}, {\"fill\": \"${9:#3366ff}\"})",
+            "    .text(\"${10:Hello}\", ${11:20}, ${12:20}, {\"size\": ${13:18}});",
+            "${1:img}.save(\"${14:out.png}\", \"png\");",
+            "$0"
+        ],
+        "description": "image: create a canvas, draw and save (1.42.0)"
+    },
+    "barcode.qr": {
+        "prefix": "barcodeqr",
+        "body": [
+            "let ${1:qr} = barcode.qr(${2:data}, {\"scale\": ${3:8}, \"level\": \"${4:M}\"});",
+            "${1:qr}.save(\"${5:qr.png}\", \"png\");",
+            "$0"
+        ],
+        "description": "barcode.qr: generate and save a QR code (1.42.0)"
+    },
     "ffi.dlopen": {
         "prefix": "ffidlopen",
         "body": [
@@ -1196,5 +1216,22 @@
             "let ${3:rolls} = secureRandom.randomInts(${1:session}, ${4:10}, ${5:1}, ${6:6});"
         ],
         "description": "Draw many unbiased ints in [min, max] as one audited draw"
-    }
+    },
+  "Durable jobs worker": {
+    "prefix": "jobs-worker",
+    "body": [
+      "let queue = jobs.Queue(${1:conn}, {\"namespace\": \"${2:app}\"});",
+      "queue.register(\"${3:work}\", func(jobs.Job job): void {",
+      "    job.throwIfCancelled();",
+      "    $0",
+      "});",
+      "let worker = jobs.Worker(queue);"
+    ],
+    "description": "Register a durable job handler and create a bounded worker (import jobs)."
+  },
+  "Wait for owned tasks": {
+    "prefix": "async-wait-any",
+    "body": ["let ready = async.waitAny(${1:tasks}, ${2:1000});"],
+    "description": "Wait without cancelling tasks or consuming their results."
+  }
 }

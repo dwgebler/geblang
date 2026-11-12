@@ -400,7 +400,7 @@ chapter covers the full surface.
 
 ## Status
 
-Geblang is at version 1.41.4 and under active development, with
+Geblang is at version 1.42.0 and under active development, with
 regular minor releases since 1.0 (see the release notes chapter for
 the full history). The bytecode VM is the default execution path; the
 tree-walking evaluator backs the test runner and acts as a
@@ -426,3 +426,5 @@ lives at [AGENTS.md](AGENTS.md). It's denser than this manual,
 focused on syntax, idioms, and common pitfalls, and intended to
 be read once at the start of a session. Point your agent at that
 file before asking it to edit Geblang code.
+
+- [Durable jobs and workers](stdlib/40-jobs.md)

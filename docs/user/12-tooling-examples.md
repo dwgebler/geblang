@@ -419,3 +419,14 @@ cp -r .claude/skills/geblang ~/.claude/skills/geblang
 The skill directs Claude to confirm exact signatures with `geblang doc` and
 `geblang help` rather than guessing, so it stays accurate against your installed
 version.
+
+## Worker entry points
+
+`geblang worker --entry app.worker` resolves an application module and calls its
+exported `main(list<string> args): int`. Build its Queue/Worker/Scheduler there
+and return `jobs.cli(worker, scheduler, args)`. The same module can be bundled
+with `geblang build --entry app.worker --out worker-app .`. Worker arguments
+include `--once`, `--max-jobs N`, `--queue NAME`, `--job NAME`, `--concurrency N`,
+`--scheduler-only`, `stats --format json`, and `dlq list|retry|purge`. The bootstrap
+owns configuration; no database is inferred by the command. See the
+[jobs reference](stdlib/40-jobs.md) for migration and shutdown semantics.

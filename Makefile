@@ -179,3 +179,7 @@ clean:
 
 fmt:
 	gofmt -w cmd internal
+
+.PHONY: test-jobs-backends
+test-jobs-backends: build
+	bash tests/integration/jobs/run.sh

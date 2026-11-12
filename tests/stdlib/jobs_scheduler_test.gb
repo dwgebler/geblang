@@ -1,0 +1,124 @@
+import test;
+import db;
+import jobs;
+import cron;
+
+class FixedJobsQueue extends jobs.Queue {
+    int now;
+    func FixedJobsQueue(db.Connection conn, string namespace) {
+        parent(conn, {"namespace": namespace});
+        this.now = 1704067200000;
+    }
+    func _now(db.Transaction tx): int {
+        return this.now;
+    }
+}
+
+class JobsSchedulerTest extends test.Test {
+    @test
+    func restartedSchedulerPublishesOneJobPerOccurrence(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = FixedJobsQueue(conn, "schedule");
+        let a = jobs.Scheduler(queue);
+        let b = jobs.Scheduler(queue);
+        a.add("minute", "* * * * *", "work", {});
+        b.add("minute", "* * * * *", "work", {});
+
+        this.assertEquals(1, a.tick());
+        this.assertEquals(0, b.tick());
+        queue.now += 60000;
+        this.assertEquals(1, b.tick());
+
+        this.assertEquals(2, queue.stats().pending);
+        this.assertEquals(
+            2,
+            conn.query("SELECT COUNT(*) AS n FROM geblang_jobs_occurrences").all()[0]["n"]
+        );
+    }
+
+    @test
+    func boundedCatchUpAndOverlapPoliciesAreDurable(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = FixedJobsQueue(conn, "catchup");
+        let scheduler = jobs.Scheduler(queue);
+        scheduler.add(
+            "every",
+            "* * * * *",
+            "work",
+            {},
+            {"missed": "all", "batchSize": 2, "overlap": "skip"}
+        );
+        queue.now += 180000;
+
+        this.assertEquals(1, scheduler.tick());
+        this.assertEquals(0, scheduler.tick());
+
+        this.assertEquals(1, queue.stats().pending);
+        this.assertEquals(
+            4,
+            conn.query("SELECT COUNT(*) AS n FROM geblang_jobs_occurrences").all()[0]["n"]
+        );
+    }
+
+    @test
+    func scheduleConflictsAndUnsupportedZonesFailExplicitly(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = FixedJobsQueue(conn, "conflicts");
+        let scheduler = jobs.Scheduler(queue);
+        scheduler.add("one", "* * * * *", "work", {"n": 1});
+
+        this.assertThrows(func(): void { scheduler.add("one", "* * * * *", "work", {"n": 2}); });
+        this.assertThrows(func(): void { jobs.Scheduler(queue, {"timezone": "Europe/London"}); });
+
+        this.assertTrue(scheduler.disable("one"));
+        this.assertEquals(0, scheduler.tick());
+    }
+
+    @test
+    func cronDayCompatibilityModePreservesDefaultOr(): void {
+        int after = 1704067200;
+
+        let standard = cron.nextAfter("0 0 1 * 1", after);
+        let compatible = cron.nextAfter("0 0 1 * 1", after, {"dayMatch": "and"});
+
+        this.assertEquals(1704672000, standard);
+        this.assertTrue(compatible > standard);
+        this.assertThrows(
+            func(): void { cron.nextAfter("* * * * *", after, {"dayMatch": "invalid"}); }
+        );
+    }
+    @test
+    func latestCatchUpRecordsSkippedRangeAndCoalescedOccurrence(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = FixedJobsQueue(conn, "latest");
+        let scheduler = jobs.Scheduler(queue);
+        scheduler.add(
+            "minute",
+            "* * * * *",
+            "work",
+            {},
+            {"missed": "latest", "maxAgeMs": 120000, "dedupeKey": "shared"}
+        );
+        queue.now += 600000;
+
+        this.assertEquals(1, scheduler.tick());
+        let records = scheduler.occurrences("minute");
+
+        this.assertEquals(2, records.length());
+        this.assertEquals("skipped", records[0]["disposition"]);
+        this.assertEquals(queue.now, records[0]["skipped_until_ms"]);
+        this.assertEquals("queued", records[1]["disposition"]);
+        queue.now += 60000;
+        this.assertEquals(0, scheduler.tick());
+        this.assertEquals(
+            "coalesced",
+            scheduler.occurrences("minute", {"afterMs": queue.now - 1})[0]["disposition"]
+        );
+        this.assertEquals(1, queue.stats().pending);
+        this.assertEquals(0, scheduler.inspect()[0]["lagMs"]);
+    }
+}

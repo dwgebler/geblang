@@ -1,6 +1,7 @@
 module messaging.sqs;
 
 import messaging.contract;
+import messaging.managed as managed;
 import bytes;
 import crypt;
 import datetime;
@@ -14,7 +15,7 @@ import json;
  * V4. No long-lived connection: each call is an independent HTTPS
  * request to the queue URL.
  */
-export class SqsQueue implements contract.MessageQueue {
+export class SqsQueue implements contract.MessageQueue, contract.ManagedMessageQueue {
     string queueUrl;
     string region;
     string accessKey;
@@ -37,7 +38,7 @@ export class SqsQueue implements contract.MessageQueue {
         if (waitSec < 0) { waitSec = 0; }
         if (waitSec > 20) { waitSec = 20; }
         string params = "Action=ReceiveMessage&Version=2012-11-05&MaxNumberOfMessages=1&WaitTimeSeconds=" + (waitSec as string);
-        let resp = this.request("POST", params);
+        let resp = this.request("POST", params, timeoutMs + 1500);
         let status = resp["status"] as int;
         if (status >= 400) {
             throw RuntimeError("sqs.receive failed: " + (status as string) + " " + (resp["body"] as string));
@@ -97,7 +98,9 @@ export class SqsQueue implements contract.MessageQueue {
          * persistent connections (RabbitMQ, Kafka). */
     }
 
-    func request(string method, string params): http.Response {
+    func consumeUntil(callable handler, callable shouldStop): void { managed.consume(this, handler, shouldStop); }
+
+    func request(string method, string params, int timeoutMs = 30000): http.Response {
         string host = hostFromUrl(this.queueUrl);
         string path = pathFromUrl(this.queueUrl);
         let now = datetime.nowUnix();
@@ -128,7 +131,8 @@ export class SqsQueue implements contract.MessageQueue {
                 "X-Amz-Date":           amzDate,
                 "Authorization":        authHeader
             },
-            "body": params
+            "body": params,
+            "timeoutMs": timeoutMs
         });
     }
 }

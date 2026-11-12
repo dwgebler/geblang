@@ -18,6 +18,10 @@ class User {
 
 Constructors use the class name. Instance methods use `this`.
 
+A member is a constructor only when its name matches the class name
+exactly. A method whose name differs by case, such as `box()` on a class
+`Box`, is an ordinary method.
+
 Fields should be declared on the class so instances have a predictable shape:
 
 ```gb

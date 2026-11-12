@@ -1,0 +1,33 @@
+import test;
+import reflect;
+import math;
+
+class CallableBase {
+    func __invoke(): int {
+        return 7;
+    }
+    func method(): int {
+        return 8;
+    }
+}
+
+class CallableChild extends CallableBase {
+}
+
+class CallableInstanceofTest extends test.Test {
+    @test
+    func callableAliasesRecognizeFunctionsAndInheritedInvocation(): void {
+        any callback = func(): int { return 9; };
+        let child = CallableChild();
+
+        this.assertTrue(callback instanceof callable);
+        this.assertTrue(callback instanceof function);
+        this.assertTrue(callback instanceof func);
+        this.assertTrue(child instanceof callable);
+        this.assertTrue(child.method instanceof callable);
+        this.assertTrue(reflect.method(child, "method") instanceof callable);
+        this.assertEquals(8, reflect.method(child, "method")());
+        this.assertTrue(math.abs instanceof callable);
+        this.assertFalse(7 instanceof callable);
+    }
+}

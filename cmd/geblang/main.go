@@ -117,6 +117,14 @@ func main() {
 		profiling.Finish()
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "worker" {
+		code, err := runWorkerCommand(os.Args[2:], os.Stdout, os.Stderr)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		profiling.Exit(code)
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "test" {
 		runTests(os.Args[2:])
 		return
@@ -345,6 +353,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Running code:")
 	fmt.Fprintln(writer, "  geblang <script.gb> [args...]      run a script with the bytecode VM (fallback to evaluator on unsupported constructs)")
 	fmt.Fprintln(writer, "  geblang run <script.gb> [args...]  explicit alias for the bare script form")
+	fmt.Fprintln(writer, "  geblang worker --entry <module>   run a durable job worker or queue operator command")
 	fmt.Fprintln(writer, "  geblang --disable-vm <script.gb>   run a script with the tree-walking evaluator")
 	fmt.Fprintln(writer, "  geblang --vm-strict <script.gb>    run a script with the VM only, failing instead of falling back")
 	fmt.Fprintln(writer, "  geblang --trace-exec <script.gb>   print which engine handled the script")
@@ -426,6 +435,11 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang --vm-strict app.gb --port 8080")
 		fmt.Fprintln(writer, "  geblang --trace-exec app.gb")
 		fmt.Fprintln(writer, "  geblang --profile profile.txt app.gb")
+		return true
+	case "worker":
+		fmt.Fprintln(writer, "usage: geblang worker --entry module.name [--disable-vm|--vm-strict] [worker options]")
+		fmt.Fprintln(writer, "Run an ordinary worker module using jobs.cli. Options: --queue NAME, --job NAME, --concurrency N, --once, --max-jobs N, --scheduler-only.")
+		fmt.Fprintln(writer, "Operations: stats --format json; dlq list --limit N; dlq retry/purge ID... or --all.")
 		return true
 	case "build":
 		fmt.Fprintln(writer, "usage: geblang build --entry module.name --out <path> [--native] [--runtime <path>] [--resource <path>] [--allow-ffi <glob>] [--allow-onnx] [--allow-process-control] [--allow-browser] [--docker [--docker-port N] [--force]] [<package-dir>]")

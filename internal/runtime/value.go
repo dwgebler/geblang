@@ -18,6 +18,8 @@ import (
 // that holds the task value.
 var ErrTaskCancelled = errors.New("task cancelled")
 
+var ErrUnknownBuiltin = errors.New("unknown builtin")
+
 type Value interface {
 	TypeName() string
 	Inspect() string

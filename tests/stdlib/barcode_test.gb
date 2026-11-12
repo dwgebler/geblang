@@ -1,0 +1,140 @@
+/**
+ * @title barcode
+ * @summary QR codes and linear / 2D barcodes rendered to image.Image:
+ * every format, sizing and styling options, and input validation.
+ */
+import test;
+import barcode;
+import image;
+
+func widthOf(image.Image img): int {
+    return img.width();
+}
+
+class BarcodeTest extends test.Test {
+    @test
+    func formatsAreSortedAndComplete(): void {
+        this.assertEquals(
+            ["aztec", "codabar", "code128", "code39", "code93", "datamatrix", "ean13", "ean8", "itf", "pdf417", "qr", "upca"],
+            barcode.formats()
+        );
+    }
+
+    @test
+    func everyFormatEncodes(): void {
+        let samples = {
+            "aztec": "Hello", "codabar": "A1234B", "code128": "Hello-128", "code39": "HELLO 39",
+            "code93": "HELLO93", "datamatrix": "Hello", "ean13": "590123412345", "ean8": "9638507",
+            "itf": "12345678", "pdf417": "Hello", "qr": "Hello", "upca": "03600029145"
+        };
+        for (format in barcode.formats()) {
+            let img = barcode.encode(samples[format] as string, {"format": format});
+            this.assertTrue(img.width() >= 20);
+            this.assertTrue(img.height() >= 20);
+            this.assertEquals("#ffffffff", img.getPixel(0, 0));
+        }
+    }
+
+    @test
+    func qrGeometryFollowsScaleAndMargin(): void {
+        /* a version-1 QR code is 21 modules plus a 4-module quiet zone per side */
+        let qr = barcode.qr("HI", {"scale": 3});
+        this.assertEquals(87 as int, qr.width());
+        this.assertEquals(87 as int, qr.height());
+        this.assertEquals("#000000ff", qr.getPixel(12, 12));
+        this.assertEquals("#ffffffff", qr.getPixel(11, 11));
+        let tight = barcode.qr("HI", {"scale": 1, "margin": 0});
+        this.assertEquals(21 as int, tight.width());
+        this.assertEquals("#000000ff", tight.getPixel(0, 0));
+        this.assertEquals("#ffffffff", tight.getPixel(1, 1));
+    }
+
+    @test
+    func qrShortcutMatchesEncode(): void {
+        let a = barcode.qr("https://example.com", {"scale": 2});
+        let b = barcode.encode("https://example.com", {"format": "qr", "scale": 2});
+        this.assertEquals(a.encode("png"), b.encode("png"));
+        let overridden = barcode.qr("https://example.com", {"format": "code128", "scale": 2});
+        this.assertEquals(a.encode("png"), overridden.encode("png"));
+    }
+
+    @test
+    func encodingIsDeterministic(): void {
+        let opts = {"format": "code128", "scale": 2};
+        this.assertEquals(barcode.encode("ABC-123", opts).encode("png"), barcode.encode("ABC-123", opts).encode("png"));
+        this.assertFalse(barcode.encode("ABC-123", opts).encode("png") == barcode.encode("ABC-124", opts).encode("png"));
+    }
+
+    @test
+    func errorCorrectionLevelChangesDensity(): void {
+        let data = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let low = barcode.qr(data, {"level": "L", "scale": 1});
+        let high = barcode.qr(data, {"level": "h", "scale": 1});
+        this.assertTrue(high.width() > low.width());
+    }
+
+    @test
+    func explicitCanvasSizeIsExact(): void {
+        let qr = barcode.qr("HI", {"width": 200, "height": 120});
+        this.assertEquals(200 as int, qr.width());
+        this.assertEquals(120 as int, qr.height());
+        let ean = barcode.encode("5901234123457", {"format": "ean13", "width": 300, "height": 120});
+        this.assertEquals(300 as int, ean.width());
+        this.assertEquals(120 as int, ean.height());
+        this.assertEquals("#ffffffff", ean.getPixel(0, 60));
+    }
+
+    @test
+    func linearHeightAndCheckDigit(): void {
+        let withCheck = barcode.encode("5901234123457", {"format": "ean13"});
+        let computed = barcode.encode("590123412345", {"format": "ean13"});
+        this.assertEquals(withCheck.encode("png"), computed.encode("png"));
+        let upc = barcode.encode("036000291452", {"format": "upca"});
+        let asEan = barcode.encode("0036000291452", {"format": "ean13"});
+        this.assertEquals(asEan.encode("png"), upc.encode("png"));
+    }
+
+    @test
+    func colorsApply(): void {
+        let qr = barcode.qr("HI", {"scale": 1, "margin": 1, "color": "navy", "background": "#ffff00"});
+        this.assertEquals("#ffff00ff", qr.getPixel(0, 0));
+        this.assertEquals("#000080ff", qr.getPixel(1, 1));
+        let clear = barcode.qr("HI", {"background": "transparent"});
+        this.assertEquals("#00000000", clear.getPixel(0, 0));
+    }
+
+    @test
+    func resultIsAnOrdinaryImage(): void {
+        let qr = barcode.qr("HI", {"scale": 2});
+        this.assertTrue(qr instanceof image.Image);
+        this.assertEquals(58 as int, widthOf(qr));
+        qr.text("HI", 2, 0, {"size": 8, "color": "red"});
+        let label = image.blank(120, 80, "white").paste(qr, 4, 4).text("scan me", 64, 30, {"size": 10});
+        this.assertEquals(qr.getPixel(20, 20), label.getPixel(24, 24));
+        this.assertEquals(116 as int, qr.resize(116, 116).width());
+    }
+
+    @test
+    func invalidInputReportsTheRealReason(): void {
+        let cases = [
+            [func(): void { barcode.encode("x"); }, "\"format\" must be one of aztec, codabar"],
+            [func(): void { barcode.encode("x", {"format": "nope"}); }, "\"format\" must be one of"],
+            [func(): void { barcode.qr(""); }, "data must not be empty"],
+            [func(): void { barcode.encode("123", {"format": "ean13"}); }, "ean13 data must be 12 digits"],
+            [func(): void { barcode.encode("5901234123450", {"format": "ean13"}); }, "barcode.encode: ean13:"],
+            [func(): void { barcode.encode("1234567", {"format": "itf"}); }, "barcode.encode: itf:"],
+            [func(): void { barcode.qr("x", {"level": "Z"}); }, "\"level\" must be"],
+            [func(): void { barcode.qr("Hello", {"width": 10}); }, "too small"],
+            [func(): void { barcode.qr("x", {"scale": 0}); }, "\"scale\" must be an int"],
+            [func(): void { barcode.qr("x", {"color": "nope"}); }, "invalid color"]
+        ];
+        for (c in cases) {
+            let message = "";
+            try { c[0](); } catch (Error e) { message = e.message; }
+            if (!message.contains(c[1] as string)) {
+                this.fail("expected '${c[1]}' in '${message}'");
+            }
+        }
+        this.assertThrowsOf(func(): void { barcode.encode("x", {"format": "nope"}); }, "RuntimeError");
+    }
+}

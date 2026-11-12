@@ -1,0 +1,131 @@
+import test;
+import jobs;
+import db;
+import sys;
+import secrets;
+import store;
+import async;
+
+class BackendPublisherClock extends jobs.Queue {
+    func BackendPublisherClock(db.Connection conn, string namespace) {
+        parent(conn, {"namespace": namespace});
+    }
+    func _now(db.Transaction tx): int {
+        return 1704067200000;
+    }
+}
+
+class JobsBackendsLiveTest extends test.Test {
+    func exercise(string driver, string dsn): void {
+        let conn = db.Connection(driver, dsn);
+        defer conn.close();
+        let namespace = "contract-" + secrets.randomHex(8);
+        let queue = jobs.Queue(conn, {"namespace": namespace});
+        let events = store.Store();
+        queue.register("work", func(jobs.Job job): void {
+            if (job.attempt < 2) {
+                throw RuntimeError("retry");
+            }
+            events.incr("completed");
+        }, {"maxAttempts": 2, "backoffMs": [0]});
+
+        let first = queue.enqueue("work", {"n": 1}, {"dedupeKey": "one"});
+        this.assertEquals(first, queue.enqueue("work", {"n": 2}, {"dedupeKey": "one"}));
+        let result = jobs.Worker(queue, {"drainOnce": true, "maxConcurrency": 4}).run();
+
+        this.assertEquals(driver, conn.driver());
+        this.assertEquals(1, result.completed);
+        this.assertEquals(2, result.started);
+        this.assertEquals("completed", queue.get(first).status);
+        this.assertEquals(1, events.get("completed"));
+        this.assertTrue(queue.enqueue("work", {}, {"dedupeKey": "one"}) != first);
+        let publisherQueue = BackendPublisherClock(conn, namespace);
+        let scheduler = jobs.Scheduler(publisherQueue);
+        let otherScheduler = jobs.Scheduler(publisherQueue);
+        scheduler.add("minute", "* * * * *", "work", {});
+        otherScheduler.add("minute", "* * * * *", "work", {});
+        let firstTick = async.run(func(): int { return scheduler.tick(); });
+        let secondTick = async.run(func(): int { return otherScheduler.tick(); });
+        this.assertEquals(1, (async.await(firstTick) as int) + (async.await(secondTick) as int));
+        this.assertEquals(2, queue.stats().pending);
+        let racing = jobs.Queue(conn, {"namespace": namespace + "-race"});
+        list<Task<any>> producers = [];
+        for (i in 0..<8) {
+            producers.push(
+                async.run(
+                    func(): string { return racing.enqueue("work", {}, {"dedupeKey": "shared"}); }
+                )
+            );
+        }
+        string shared = async.await(producers[0]) as string;
+        for (producer in producers) {
+            this.assertEquals(shared, async.await(producer));
+        }
+        this.assertEquals(1, racing.stats().pending);
+        let upper = jobs.Queue(conn, {"namespace": namespace + "A"});
+        let lower = jobs.Queue(conn, {"namespace": namespace + "a"});
+        let upperId = upper.enqueue("Case", {}, {"dedupeKey": "key"});
+        this.assertEquals(null, lower.get(upperId));
+        this.assertTrue(upper.enqueue("case", {}, {"dedupeKey": "key"}) != upperId);
+        let tx = conn.begin();
+        let rolledBack = racing.enqueueIn(tx, "work", {});
+        tx.rollback();
+        this.assertEquals(null, racing.get(rolledBack));
+        for (i in 0..<32) {
+            queue.enqueue("work", {"n": i});
+        }
+        let workerA = jobs.Worker(queue, {"drainOnce": true, "maxConcurrency": 4}).start();
+        let workerB = jobs.Worker(queue, {"drainOnce": true, "maxConcurrency": 4}).start();
+        let resultA = workerA.wait(30000);
+        let resultB = workerB.wait(30000);
+        this.assertTrue(resultA.drained && resultB.drained);
+        this.assertEquals(34, resultA.completed + resultB.completed);
+        this.assertEquals(35, queue.stats().completed);
+        this.assertEquals(35, events.get("completed"));
+
+        string source = "legacy_" + secrets.randomHex(8);
+        string legacyId = secrets.randomHex(16);
+        conn.exec(
+            "CREATE TABLE " + source + " (id VARCHAR(64) PRIMARY KEY, name VARCHAR(128), payload_json TEXT, status VARCHAR(16), attempts INTEGER, run_at VARCHAR(32), created_at VARCHAR(32), priority VARCHAR(128), dedupe_key TEXT, last_error TEXT)"
+        );
+        conn.exec(
+            "INSERT INTO " + source + " VALUES (?, 'work', '{}', 'running', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', 'default', NULL, NULL)",
+            legacyId
+        );
+        let options = {"sourceTable": source, "namespace": namespace + "-legacy", "maxAttempts": 2};
+        this.assertEquals(0, jobs.migrateLegacy(conn, options).invalid);
+        options["dryRun"] = false;
+        options["stopped"] = true;
+        this.assertEquals(1, jobs.migrateLegacy(conn, options).migrated);
+        this.assertEquals(0, jobs.migrateLegacy(conn, options).migrated);
+        let migrated = jobs.Queue(conn, {"namespace": namespace + "-legacy"});
+        migrated.register("work", func(jobs.Job job): void {});
+        this.assertEquals(1, jobs.Worker(migrated, {"drainOnce": true}).run().completed);
+        this.assertEquals(2, migrated.get(legacyId).sequence);
+        this.assertEquals(1, migrated.attempts(legacyId).length());
+        this.assertEquals(
+            "running",
+            conn.query("SELECT status FROM " + source + " WHERE id = ?", legacyId).all()[0]["status"]
+        );
+    }
+
+    @test
+    func postgresSatisfiesDurableJobContract(): void {
+        let dsn = sys.getenv("GEBLANG_JOBS_PG_DSN") ?? "";
+        if (dsn == "") {
+            this.skip("run scripts/test-jobs-backends.sh");
+            return;
+        }
+        this.exercise("postgres", dsn);
+    }
+
+    @test
+    func mysqlSatisfiesDurableJobContract(): void {
+        let dsn = sys.getenv("GEBLANG_JOBS_MYSQL_DSN") ?? "";
+        if (dsn == "") {
+            this.skip("run scripts/test-jobs-backends.sh");
+            return;
+        }
+        this.exercise("mysql", dsn);
+    }
+}

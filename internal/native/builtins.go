@@ -42,6 +42,7 @@ func NewBuiltinRegistry() *Registry {
 // reuse it. Direct callers should not invoke this - go through
 // NewBuiltinRegistry.
 func registerAllBuiltins(r *Registry) {
+	registerAsyncWait(r)
 	registerMath(r)
 	registerMathAggregates(r)
 	registerVecmath(r)
@@ -72,6 +73,9 @@ func registerAllBuiltins(r *Registry) {
 	registerAsyncChannel(r)
 	registerStore(r)
 	registerImage(r)
+	registerImageDraw(r)
+	registerImageText(r)
+	registerImageBarcode(r)
 	registerTime(r)
 	registerBytes(r)
 	registerString(r)

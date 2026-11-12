@@ -894,7 +894,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 				class.StaticMethods[key] = append(class.StaticMethods[key], fn)
 				continue
 			}
-			if strings.EqualFold(member.Name.Value, stmt.Name.Value) {
+			if member.Name.Value == stmt.Name.Value {
 				class.Constructors = append(class.Constructors, fn)
 			} else {
 				key := strings.ToLower(member.Name.Value)
@@ -978,7 +978,7 @@ func (e *Evaluator) instantiateClass(class *runtime.Class, args []runtime.Value)
 				break
 			}
 		}
-		return runtime.Error{Class: class.Name, Message: msg, Parents: e.errorParentChain(class.Name)}, nil
+		return runtime.Error{Class: class.Name, Message: msg, Parents: declaredErrorParents(class)}, nil
 	}
 	instance := &runtime.Instance{Class: class, Fields: map[string]runtime.Value{}}
 	if err := e.initializeFields(instance, class); err != nil {
@@ -1052,7 +1052,7 @@ func (e *Evaluator) instantiateUserErrorClass(class *runtime.Class, args []runti
 	if len(instance.Fields) > 0 {
 		fields = instance.Fields
 	}
-	return runtime.Error{Class: class.Name, Message: msg, Fields: fields, Parents: e.errorParentChain(class.Name)}, nil
+	return runtime.Error{Class: class.Name, Message: msg, Fields: fields, Parents: declaredErrorParents(class)}, nil
 }
 
 // registerGlobalClass adds a class to the cross-module registry so
@@ -1111,6 +1111,14 @@ func (e *Evaluator) registerTopLevelFunction(stmt ast.Statement, env *runtime.En
 // first) for an error-derived class, used when constructing a
 // runtime.Error value so cross-module `instanceof` / typed-parameter
 // matching can walk the chain without re-reading the evaluator state.
+func declaredErrorParents(class *runtime.Class) []string {
+	var parents []string
+	for parent := class.Parent; parent != nil; parent = parent.Parent {
+		parents = append(parents, parent.Name)
+	}
+	return parents
+}
+
 func (e *Evaluator) errorParentChain(className string) []string {
 	var parents []string
 	visited := map[string]bool{className: true}
@@ -1165,7 +1173,7 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 				break
 			}
 		}
-		return runtime.Error{Class: class.Name, Message: msg, Parents: e.errorParentChain(class.Name)}, nil
+		return runtime.Error{Class: class.Name, Message: msg, Parents: declaredErrorParents(class)}, nil
 	}
 	instance := &runtime.Instance{Class: class, Fields: map[string]runtime.Value{}}
 	// Inherit type bindings from the parent class's declaration (e.g.

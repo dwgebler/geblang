@@ -6,11 +6,23 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
+	"sync"
 	"time"
 
 	amqp091 "github.com/rabbitmq/amqp091-go"
 	kafkago "github.com/segmentio/kafka-go"
 )
+
+type messagingState struct {
+	amqpMu       sync.Mutex
+	nextAmqpID   int64
+	amqpConns    map[int64]*amqp091.Connection
+	amqpChans    map[int64]*amqp091.Channel
+	kafkaMu      sync.Mutex
+	nextKafkaID  int64
+	kafkaWriters map[int64]*kafkago.Writer
+	kafkaReaders map[int64]*kafkaReaderHandle
+}
 
 func (e *Evaluator) amqpDial(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
@@ -24,11 +36,11 @@ func (e *Evaluator) amqpDial(call *ast.CallExpression, args []runtime.Value) (ru
 	if err != nil {
 		return nil, fmt.Errorf("amqp.dial: %w", err)
 	}
-	e.amqpMu.Lock()
-	defer e.amqpMu.Unlock()
-	e.nextAmqpConnID++
-	id := e.nextAmqpConnID
-	ensureMap(&e.amqpConns)[id] = conn
+	e.messaging.amqpMu.Lock()
+	defer e.messaging.amqpMu.Unlock()
+	e.messaging.nextAmqpID++
+	id := e.messaging.nextAmqpID
+	ensureMap(&e.messaging.amqpConns)[id] = conn
 	return runtime.NewInt64(id), nil
 }
 
@@ -40,9 +52,9 @@ func (e *Evaluator) amqpChannel(call *ast.CallExpression, args []runtime.Value) 
 	if err != nil {
 		return nil, err
 	}
-	e.amqpMu.Lock()
-	conn, ok := e.amqpConns[id]
-	e.amqpMu.Unlock()
+	e.messaging.amqpMu.Lock()
+	conn, ok := e.messaging.amqpConns[id]
+	e.messaging.amqpMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("amqp.channel: unknown connection handle %d", id)
 	}
@@ -50,11 +62,11 @@ func (e *Evaluator) amqpChannel(call *ast.CallExpression, args []runtime.Value) 
 	if err != nil {
 		return nil, fmt.Errorf("amqp.channel: %w", err)
 	}
-	e.amqpMu.Lock()
-	defer e.amqpMu.Unlock()
-	e.nextAmqpChanID++
-	chID := e.nextAmqpChanID
-	ensureMap(&e.amqpChans)[chID] = ch
+	e.messaging.amqpMu.Lock()
+	defer e.messaging.amqpMu.Unlock()
+	e.messaging.nextAmqpID++
+	chID := e.messaging.nextAmqpID
+	ensureMap(&e.messaging.amqpChans)[chID] = ch
 	return runtime.NewInt64(chID), nil
 }
 
@@ -80,9 +92,9 @@ func (e *Evaluator) amqpDeclareQueue(call *ast.CallExpression, args []runtime.Va
 		autoDelete = dictBoolDefault(opts, "autoDelete", false)
 		exclusive = dictBoolDefault(opts, "exclusive", false)
 	}
-	e.amqpMu.Lock()
-	ch, ok := e.amqpChans[id]
-	e.amqpMu.Unlock()
+	e.messaging.amqpMu.Lock()
+	ch, ok := e.messaging.amqpChans[id]
+	e.messaging.amqpMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("amqp.declareQueue: unknown channel handle %d", id)
 	}
@@ -125,9 +137,9 @@ func (e *Evaluator) amqpDeclareExchange(call *ast.CallExpression, args []runtime
 		durable = dictBoolDefault(opts, "durable", true)
 		autoDelete = dictBoolDefault(opts, "autoDelete", false)
 	}
-	e.amqpMu.Lock()
-	ch, ok := e.amqpChans[id]
-	e.amqpMu.Unlock()
+	e.messaging.amqpMu.Lock()
+	ch, ok := e.messaging.amqpChans[id]
+	e.messaging.amqpMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("amqp.declareExchange: unknown channel handle %d", id)
 	}
@@ -157,9 +169,9 @@ func (e *Evaluator) amqpQueueBind(call *ast.CallExpression, args []runtime.Value
 	if !ok {
 		return nil, fmt.Errorf("amqp.queueBind: routingKey must be string")
 	}
-	e.amqpMu.Lock()
-	ch, ok := e.amqpChans[id]
-	e.amqpMu.Unlock()
+	e.messaging.amqpMu.Lock()
+	ch, ok := e.messaging.amqpChans[id]
+	e.messaging.amqpMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("amqp.queueBind: unknown channel handle %d", id)
 	}
@@ -206,9 +218,9 @@ func (e *Evaluator) amqpPublish(call *ast.CallExpression, args []runtime.Value) 
 		}
 		persistent = dictBoolDefault(opts, "persistent", true)
 	}
-	e.amqpMu.Lock()
-	ch, ok := e.amqpChans[id]
-	e.amqpMu.Unlock()
+	e.messaging.amqpMu.Lock()
+	ch, ok := e.messaging.amqpChans[id]
+	e.messaging.amqpMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("amqp.publish: unknown channel handle %d", id)
 	}
@@ -247,9 +259,9 @@ func (e *Evaluator) amqpGet(call *ast.CallExpression, args []runtime.Value) (run
 		}
 		autoAck = b.Value
 	}
-	e.amqpMu.Lock()
-	ch, ok := e.amqpChans[id]
-	e.amqpMu.Unlock()
+	e.messaging.amqpMu.Lock()
+	ch, ok := e.messaging.amqpChans[id]
+	e.messaging.amqpMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("amqp.get: unknown channel handle %d", id)
 	}
@@ -286,9 +298,9 @@ func (e *Evaluator) amqpAck(call *ast.CallExpression, args []runtime.Value) (run
 	if !ok {
 		return nil, fmt.Errorf("amqp.ack: deliveryTag must be int")
 	}
-	e.amqpMu.Lock()
-	ch, ok := e.amqpChans[id]
-	e.amqpMu.Unlock()
+	e.messaging.amqpMu.Lock()
+	ch, ok := e.messaging.amqpChans[id]
+	e.messaging.amqpMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("amqp.ack: unknown channel handle %d", id)
 	}
@@ -306,15 +318,15 @@ func (e *Evaluator) amqpClose(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
-	e.amqpMu.Lock()
-	defer e.amqpMu.Unlock()
-	if ch, ok := e.amqpChans[id]; ok {
-		delete(e.amqpChans, id)
+	e.messaging.amqpMu.Lock()
+	defer e.messaging.amqpMu.Unlock()
+	if ch, ok := e.messaging.amqpChans[id]; ok {
+		delete(e.messaging.amqpChans, id)
 		_ = ch.Close()
 		return runtime.Null{}, nil
 	}
-	if conn, ok := e.amqpConns[id]; ok {
-		delete(e.amqpConns, id)
+	if conn, ok := e.messaging.amqpConns[id]; ok {
+		delete(e.messaging.amqpConns, id)
 		_ = conn.Close()
 		return runtime.Null{}, nil
 	}
@@ -402,11 +414,11 @@ func (e *Evaluator) kafkaWriter(call *ast.CallExpression, args []runtime.Value) 
 		Balancer:               &kafkago.Hash{},
 		AllowAutoTopicCreation: dictBoolDefault(opts, "autoCreateTopic", false),
 	}
-	e.kafkaMu.Lock()
-	defer e.kafkaMu.Unlock()
-	e.nextKafkaWriterID++
-	id := e.nextKafkaWriterID
-	ensureMap(&e.kafkaWriters)[id] = w
+	e.messaging.kafkaMu.Lock()
+	defer e.messaging.kafkaMu.Unlock()
+	e.messaging.nextKafkaID++
+	id := e.messaging.nextKafkaID
+	ensureMap(&e.messaging.kafkaWriters)[id] = w
 	return runtime.NewInt64(id), nil
 }
 
@@ -439,9 +451,9 @@ func (e *Evaluator) kafkaWrite(call *ast.CallExpression, args []runtime.Value) (
 			return nil, fmt.Errorf("kafka.write: key must be string, bytes, or null")
 		}
 	}
-	e.kafkaMu.Lock()
-	w, ok := e.kafkaWriters[id]
-	e.kafkaMu.Unlock()
+	e.messaging.kafkaMu.Lock()
+	w, ok := e.messaging.kafkaWriters[id]
+	e.messaging.kafkaMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("kafka.write: unknown writer handle %d", id)
 	}
@@ -478,11 +490,11 @@ func (e *Evaluator) kafkaReader(call *ast.CallExpression, args []runtime.Value) 
 		Topic:   topic,
 		GroupID: groupID,
 	})
-	e.kafkaMu.Lock()
-	defer e.kafkaMu.Unlock()
-	e.nextKafkaReaderID++
-	id := e.nextKafkaReaderID
-	ensureMap(&e.kafkaReaders)[id] = &kafkaReaderHandle{reader: r}
+	e.messaging.kafkaMu.Lock()
+	defer e.messaging.kafkaMu.Unlock()
+	e.messaging.nextKafkaID++
+	id := e.messaging.nextKafkaID
+	ensureMap(&e.messaging.kafkaReaders)[id] = &kafkaReaderHandle{reader: r}
 	return runtime.NewInt64(id), nil
 }
 
@@ -502,9 +514,9 @@ func (e *Evaluator) kafkaRead(call *ast.CallExpression, args []runtime.Value) (r
 		}
 		timeoutMs = n
 	}
-	e.kafkaMu.Lock()
-	handle, ok := e.kafkaReaders[id]
-	e.kafkaMu.Unlock()
+	e.messaging.kafkaMu.Lock()
+	handle, ok := e.messaging.kafkaReaders[id]
+	e.messaging.kafkaMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("kafka.read: unknown reader handle %d", id)
 	}
@@ -540,9 +552,9 @@ func (e *Evaluator) kafkaCommit(call *ast.CallExpression, args []runtime.Value) 
 	if err != nil {
 		return nil, err
 	}
-	e.kafkaMu.Lock()
-	handle, ok := e.kafkaReaders[id]
-	e.kafkaMu.Unlock()
+	e.messaging.kafkaMu.Lock()
+	handle, ok := e.messaging.kafkaReaders[id]
+	e.messaging.kafkaMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("kafka.commit: unknown reader handle %d", id)
 	}
@@ -566,15 +578,15 @@ func (e *Evaluator) kafkaClose(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
-	e.kafkaMu.Lock()
-	defer e.kafkaMu.Unlock()
-	if w, ok := e.kafkaWriters[id]; ok {
-		delete(e.kafkaWriters, id)
+	e.messaging.kafkaMu.Lock()
+	defer e.messaging.kafkaMu.Unlock()
+	if w, ok := e.messaging.kafkaWriters[id]; ok {
+		delete(e.messaging.kafkaWriters, id)
 		_ = w.Close()
 		return runtime.Null{}, nil
 	}
-	if r, ok := e.kafkaReaders[id]; ok {
-		delete(e.kafkaReaders, id)
+	if r, ok := e.messaging.kafkaReaders[id]; ok {
+		delete(e.messaging.kafkaReaders, id)
 		_ = r.reader.Close()
 		return runtime.Null{}, nil
 	}

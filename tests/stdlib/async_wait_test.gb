@@ -1,0 +1,17 @@
+import test;
+import async;
+
+class AsyncWaitTest extends test.Test {
+    @test
+    func waitingDoesNotCancelOrConsumeTasks(): void {
+        let pending = async.token();
+        this.assertEquals(-1, async.waitAny([pending], 1));
+        this.assertFalse(async.done(pending));
+        let completed = async.run(func(): int { return 7; });
+        this.assertEquals(1, async.waitAny([pending, completed], 1000));
+        this.assertEquals(7, async.await(completed));
+        this.assertEquals(7, async.await(completed));
+        this.assertFalse(async.done(pending));
+        async.cancel(pending);
+    }
+}

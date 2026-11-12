@@ -23,6 +23,10 @@ export interface MessageQueue {
     func close(): void;
 }
 
+export interface ManagedMessageQueue {
+    func consumeUntil(callable handler, callable shouldStop): void;
+}
+
 /**
  * Pub/sub topic. Multiple subscribers each see every published
  * message - in contrast to MessageQueue where each message is
@@ -38,4 +42,8 @@ export interface MessageTopic {
     func publish(any payload): void;
     func subscribe(callable handler): void;
     func close(): void;
+}
+
+export interface ManagedMessageTopic {
+    func subscribeUntil(callable handler, callable shouldStop): void;
 }

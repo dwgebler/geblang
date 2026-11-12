@@ -1940,8 +1940,12 @@ func (vm *VM) errorValueMatches(err runtime.Error, target string) bool {
 			return true
 		}
 	}
-	// Fall back to the chunk-local walk for built-in error classes
-	// whose parent chain isn't recorded in Parents.
+	if len(err.Parents) > 0 {
+		return false
+	}
+	if runtime.BuiltinErrorParent(err.Class) != "" {
+		return runtime.ErrorValueIsA(err, target, strings.EqualFold)
+	}
 	return vm.errorTypeMatches(err.Class, target)
 }
 

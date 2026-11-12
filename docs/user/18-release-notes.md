@@ -1,5 +1,75 @@
 # Release Notes
 
+## 1.42.0
+
+### Standard library
+
+- `async.waitAny(tasks, timeoutMs)` waits for a completion index without cancelling
+  tasks or consuming their results.
+- New `jobs` module supplies SQL queues, renewable fenced claims, bounded
+  workers, durable UTC schedules, attempt history and explicit migration.
+  `geblang worker --entry app.worker` runs an application-owned bootstrap.
+- Broker handles offer optional managed consumption with cooperative stop and
+  acknowledgement after successful handlers, while preserving existing APIs.
+- A job worker survives transient store errors with backoff
+  (`maxStoreFailures`, default 10), fails a job whose retry policy cannot be
+  evaluated instead of stopping, and records work that returns normally during
+  shutdown as completed. `Scheduler.revision(id)` returns the stored revision.
+- Opening a new SQLite file from several processes at once no longer fails
+  with `SQLITE_BUSY`; the first open waits for the journal-mode switch.
+- `Store.update` passes the callback a deep copy of the current value, so a
+  callback that mutates its argument no longer defeats the compare-and-set.
+- `cron.nextAfter` and `nextN` accept `dayMatch: "and"` in an options dictionary.
+- `db.Connection.driver()` reports the normalized SQL dialect, and transaction
+  `begin(timeoutMs, opts)` can select an explicit isolation level.
+
+- `image` gains drawing. `Image` has `line`, `rect`, `circle`, `ellipse`,
+  `arc`, `polygon`, `paste` and `text`, all anti-aliased, plus `getPixel`,
+  `setPixel` and `fill`. Drawing methods modify the image in place and
+  return it, so calls chain; styles are passed as an options dict
+  (`{"fill": "#3366ff", "color": "black", "width": 2}`).
+- Colors are strings: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa` or a color
+  name. `image.rgba(r, g, b, a)` builds one from channel values.
+- `image.blank(w, h, fill)` takes an optional fill color. New transforms
+  `flipH()`, `flipV()` and `copy()` return a new image.
+- Text rendering needs no font file: `regular`, `bold`, `italic` and
+  `mono` faces are built in. `image.loadFont(path)` and
+  `image.loadFontBytes(data)` load TrueType / OpenType fonts, and
+  `image.measureText(text, opts)` returns the size text would occupy.
+- New `barcode` module: `barcode.qr(data, opts)` and
+  `barcode.encode(data, {"format": ...})` return an `image.Image`.
+  Formats: `qr`, `datamatrix`, `aztec`, `pdf417`, `code128`, `code39`,
+  `code93`, `codabar`, `ean13`, `ean8`, `upca` and `itf`, with scale,
+  exact size, quiet-zone margin, color and error-correction options.
+  `barcode.formats()` lists them.
+- Drawing on a loaded image keeps the exact color of semi-transparent
+  pixels.
+
+### Language
+
+- A member is a constructor only when its name matches the class name
+  exactly. A method differing only by case (`box()` on class `Box`) is
+  now an ordinary method; previously it joined the constructor overloads
+  and calls failed with "ambiguous overload". A class that declared its
+  constructor in a different case from the class name must rename it to
+  match.
+
+### Fixes
+
+- Native class constructors and inherited methods work through module bridges.
+- Native bound methods retain their receiver in callbacks. Inherited reflected
+  methods and callable alias checks behave consistently across runtimes.
+- `store.Store.update` isolates mutable callback snapshots before compare-and-set,
+  preventing endless retries when callbacks mutate nested collections.
+- Evaluator async tasks share broker handle ownership with their parent.
+
+- On the bytecode VM, an error raised by a native function behind a
+  standard library class (for example `image.blank(4, 4).rotate(45)`)
+  now reports its real message instead of "module ... has no export ...".
+- A subclass calling `parent(...)` on a class from another module reaches
+  the constructor when that class also has a method named like the class
+  in a different case.
+
 ## 1.41.4
 
 ### Performance

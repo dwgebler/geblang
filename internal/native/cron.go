@@ -33,6 +33,7 @@ type cronSpec struct {
 	month      fieldSet
 	dayOfWeek  fieldSet
 	special    string
+	andDays    bool
 }
 
 type fieldSet struct {
@@ -62,14 +63,17 @@ func registerCron(r *Registry) {
 		return runtime.Bool{Value: true}, nil
 	})
 	r.Register("cron", "nextAfter", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("cron.nextAfter expects (spec, unixSeconds)")
+		if len(args) < 2 || len(args) > 3 {
+			return nil, fmt.Errorf("cron.nextAfter expects (spec, unixSeconds, opts?)")
 		}
 		spec, err := cronSpecFromValue(args[0], "cron.nextAfter")
 		if err != nil {
 			return nil, err
 		}
 		base, err := unixSecondsValue(args[1], "cron.nextAfter")
+		if err == nil {
+			err = cronDayMode(spec, args[2:])
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -80,14 +84,17 @@ func registerCron(r *Registry) {
 		return runtime.SmallInt{Value: next}, nil
 	})
 	r.Register("cron", "nextN", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 3 {
-			return nil, fmt.Errorf("cron.nextN expects (spec, unixSeconds, count)")
+		if len(args) < 3 || len(args) > 4 {
+			return nil, fmt.Errorf("cron.nextN expects (spec, unixSeconds, count, opts?)")
 		}
 		spec, err := cronSpecFromValue(args[0], "cron.nextN")
 		if err != nil {
 			return nil, err
 		}
 		base, err := unixSecondsValue(args[1], "cron.nextN")
+		if err == nil {
+			err = cronDayMode(spec, args[3:])
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -110,6 +117,26 @@ func registerCron(r *Registry) {
 		}
 		return &runtime.List{Elements: out}, nil
 	})
+}
+
+func cronDayMode(spec *cronSpec, args []runtime.Value) error {
+	if len(args) == 0 {
+		return nil
+	}
+	opts, ok := args[0].(runtime.Dict)
+	if !ok {
+		return fmt.Errorf("cron options must be a dict")
+	}
+	value, exists := LookupDictEntry(opts, runtime.String{Value: "dayMatch"})
+	if !exists {
+		return nil
+	}
+	mode, ok := value.Value.(runtime.String)
+	if !ok || (mode.Value != "or" && mode.Value != "and") {
+		return fmt.Errorf("cron dayMatch must be or or and")
+	}
+	spec.andDays = mode.Value == "and"
+	return nil
 }
 
 // ---- helpers ----
@@ -382,6 +409,9 @@ func cronMatches(spec *cronSpec, t time.Time) bool {
 	// If only one is restricted, that one decides.
 	switch {
 	case spec.dayOfMonth.restricted && spec.dayOfWeek.restricted:
+		if spec.andDays {
+			return spec.dayOfMonth.values[dom] && spec.dayOfWeek.values[dow]
+		}
 		return spec.dayOfMonth.values[dom] || spec.dayOfWeek.values[dow]
 	case spec.dayOfMonth.restricted:
 		return spec.dayOfMonth.values[dom]

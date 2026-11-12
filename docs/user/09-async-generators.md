@@ -798,3 +798,12 @@ The same rule covers whole-object operations: serialising
 object's fields while another task mutates it is a read-while-write race.
 Take the lock (or hand the object to a single owning task) around those
 reads too, not just around individual field writes.
+
+### Waiting without cancellation
+
+`async.waitAny(tasks, timeoutMs)` blocks until a task completes and returns its
+zero-based index, or -1 after a nonnegative millisecond timeout. A zero timeout
+checks immediately. At most 65535 tasks are accepted. An empty list waits only for the timeout. It neither cancels
+siblings nor consumes results: the owner must still await every task and handle
+its failure. This supports supervisors that wake on completion while retaining
+independent heartbeat or shutdown deadlines.

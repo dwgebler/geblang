@@ -1,0 +1,52 @@
+import test;
+import db;
+import async;
+import reflect;
+import http;
+
+class IsolationConnection extends db.Connection {
+    func IsolationConnection() {
+        parent("sqlite", ":memory:");
+    }
+    func ownDriver(): string {
+        return this.driver();
+    }
+}
+
+class ImplicitNativeReply extends http.Response {
+    func ownStatus(): int {
+        return this.status;
+    }
+}
+
+class DatabaseIsolationTest extends test.Test {
+    @test
+    func explicitDefaultIsolationWorksAcrossNativeDispatchContexts(): void {
+        for (conn in [db.Connection("sqlite", ":memory:"), IsolationConnection()]) {
+            conn.configure({"maxOpenConns": 1});
+            conn.exec("CREATE TABLE values_table (n INTEGER)");
+            let begin = conn.begin;
+            let tx = begin(1000, {"isolation": "default"});
+            tx.exec("INSERT INTO values_table VALUES (7)");
+            tx.commit();
+            async.await(async.run(func(): void {
+                let inner = reflect.method(conn, "begin")(1000, {"isolation": "default"});
+                inner.exec("INSERT INTO values_table VALUES (8)");
+                inner.commit();
+            }));
+
+            this.assertEquals(15, conn.query("SELECT SUM(n) AS n FROM values_table").all()[0]["n"]);
+            this.assertThrows(func(): void { conn.begin(1000, {"isolation": "unknown"}); });
+            this.assertThrows(func(): void { conn.begin(1000, {"isolation": 7}); });
+            let valid = conn.begin();
+            valid.rollback();
+            if (conn instanceof IsolationConnection) {
+                this.assertEquals("sqlite", (conn as IsolationConnection).ownDriver());
+            }
+            conn.close();
+        }
+        let reply = ImplicitNativeReply();
+        this.assertEquals(200, reply.ownStatus());
+        this.assertEquals("body", reply.withBody("body").body);
+    }
+}

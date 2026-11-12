@@ -1,0 +1,55 @@
+/**
+ * @title Constructor versus same-named method across modules
+ * @summary A method whose name differs from its class name only by case is
+ * an ordinary method, including when the class is imported, subclassed in
+ * another module, and constructed through parent(...).
+ */
+import test;
+import reflect;
+import ctor_case_donor as donor;
+
+class Nova extends donor.Star {
+    func Nova() {
+        parent(9);
+    }
+
+    func nova(): string {
+        return "nova/" + this.star();
+    }
+}
+
+class DefaultNova extends donor.Star {
+    func describe(): string {
+        return parent.star() + "!";
+    }
+}
+
+class CtorCaseCrossModuleTest extends test.Test {
+    @test
+    func importedClassKeepsConstructorAndMethodApart(): void {
+        this.assertEquals("star:5", donor.Star().star());
+        this.assertEquals("star:8", donor.Star(8).star());
+        this.assertEquals("star:3", donor.Star(points: 3).star());
+        this.assertEquals("static", donor.Star.STAR());
+    }
+
+    @test
+    func subclassParentCallReachesTheConstructor(): void {
+        let n = Nova();
+        this.assertEquals(9 as int, n.points);
+        this.assertEquals("nova/star:9", n.nova());
+        this.assertEquals("star:9", n.star());
+    }
+
+    @test
+    func defaultConstructionAndParentMethodCall(): void {
+        this.assertEquals("star:5!", DefaultNova().describe());
+        this.assertEquals("star:6", donor.Star(...[6]).star());
+    }
+
+    @test
+    func reflectionListsTheMethodNotTheConstructor(): void {
+        this.assertEquals(["star"], reflect.methods(donor.Star));
+        this.assertEquals(1 as int, reflect.constructors(donor.Star).length());
+    }
+}

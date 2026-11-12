@@ -1081,8 +1081,8 @@ if (cron.isValid(userSpec)) {
 |----------|---------|-------------|
 | `cron.parse(spec)` | `dict<string, any>` | `{spec, special, minute, hour, dayOfMonth, month, dayOfWeek}`. Each field is a sorted list of valid integers. `special` is the shortcut name (e.g. `"@daily"`) or `null`. Throws on malformed input. |
 | `cron.isValid(spec)` | `bool` | Cheap parse check; returns `false` instead of throwing. |
-| `cron.nextAfter(spec, t)` | `int` | The next firing time **strictly after** unix-seconds `t`. Throws if no firing falls within 5 years (a guard against pathological specs like Feb 30). |
-| `cron.nextN(spec, t, n)` | `list<int>` | The next `n` firing times in ascending order. |
+| `cron.nextAfter(spec, t, opts = {})` | `int` | The next firing time **strictly after** unix-seconds `t`. Throws if no firing falls within 5 years (a guard against pathological specs like Feb 30). |
+| `cron.nextN(spec, t, n, opts = {})` | `list<int>` | The next `n` firing times in ascending order. |
 
 ### Field syntax
 
@@ -1119,3 +1119,6 @@ month and on every Monday).
 | `@monthly` | `0 0 1 * *` |
 | `@yearly` (or `@annually`) | `0 0 1 1 *` |
 | `@reboot` | **rejected** - it has no scheduled firing time |
+
+Cron options accept `dayMatch: "or"` (default) or `"and"` when day-of-month
+and day-of-week are both restricted. All next-fire calculations use UTC.

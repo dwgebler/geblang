@@ -10,6 +10,8 @@ import messaging.kafka as kafka;
 /** Queue and topic interfaces every backend implements; see `messaging.contract`. */
 export type MessageQueue = contract.MessageQueue;
 export type MessageTopic = contract.MessageTopic;
+export type ManagedMessageQueue = contract.ManagedMessageQueue;
+export type ManagedMessageTopic = contract.ManagedMessageTopic;
 
 /**
  * Build a queue handle from a backend-agnostic options dict. The

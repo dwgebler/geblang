@@ -1,0 +1,107 @@
+/**
+ * @title Constructor versus same-named method
+ * @summary Only a member whose name matches the class name exactly is a
+ * constructor. A method differing by case (class Box, method box) is an
+ * ordinary method and never joins the constructor overload set.
+ */
+import test;
+import reflect;
+
+class Box {
+    int n;
+
+    func Box() {
+        this.n = 1;
+    }
+
+    func Box(int n) {
+        this.n = n;
+    }
+
+    func box(): string {
+        return "box:${this.n}";
+    }
+
+    func box(string label): string {
+        return label + ":${this.n}";
+    }
+}
+
+class Crate extends Box {
+    func Crate() {
+        parent(7);
+    }
+
+    func crate(): string {
+        return "crate/" + this.box();
+    }
+}
+
+class Plain {
+    func plain(): string {
+        return "no constructor";
+    }
+}
+
+class Wrap<T> {
+    T value;
+
+    func Wrap(T value) {
+        this.value = value;
+    }
+
+    func wrap(): list<T> {
+        return [this.value];
+    }
+}
+
+func build(int n): Box {
+    return Box(n);
+}
+
+class ConstructorMethodCaseTest extends test.Test {
+    @test
+    func constructorOverloadsStayUnambiguous(): void {
+        this.assertEquals("box:1", Box().box());
+        this.assertEquals("box:3", Box(3).box());
+        this.assertEquals("box:5", Box(n: 5).box());
+        this.assertEquals("box:2", build(2).box());
+    }
+
+    @test
+    func methodOverloadsDispatchNormally(): void {
+        let b = Box(4);
+        this.assertEquals("b:4", b.box("b"));
+        this.assertEquals("b:4", b.box(label: "b"));
+        let bound = b.box;
+        this.assertEquals("box:4", bound());
+    }
+
+    @test
+    func subclassSeesInheritedMethodAndOwnMethod(): void {
+        let c = Crate();
+        this.assertEquals("crate/box:7", c.crate());
+        this.assertEquals("c:7", c.box("c"));
+        this.assertEquals(7 as int, c.n);
+    }
+
+    @test
+    func classWithoutConstructorKeepsItsMethod(): void {
+        this.assertEquals("no constructor", Plain().plain());
+        this.assertThrowsOf(func(): void { Plain(1); }, "Error");
+    }
+
+    @test
+    func genericClass(): void {
+        this.assertEquals([3], Wrap<int>(3).wrap());
+        this.assertEquals(["a"], Wrap("a").wrap());
+        this.assertEquals(["s"], Wrap(...["s"]).wrap());
+    }
+
+    @test
+    func reflectionSeparatesThem(): void {
+        this.assertEquals(["box"], reflect.methods(Box));
+        this.assertEquals(2 as int, reflect.constructors(Box).length());
+        this.assertEquals(["plain"], reflect.methods(Plain));
+    }
+}

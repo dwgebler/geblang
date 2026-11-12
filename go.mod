@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/andybalholm/cascadia v1.3.4
+	github.com/boombuler/barcode v1.1.0
 	github.com/coder/hnsw v0.6.1
 	github.com/creack/pty v1.1.24
 	github.com/dlclark/regexp2 v1.12.0

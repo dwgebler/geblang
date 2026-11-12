@@ -38,7 +38,7 @@ func (e *Evaluator) valueMatchesType(value runtime.Value, typeName string) bool 
 	}
 	stripped := simpleTypeName(typeName)
 	if errValue, ok := value.(runtime.Error); ok {
-		return e.errorTypeMatches(errValue.Class, stripped)
+		return e.errorValueMatches(errValue, stripped)
 	}
 	return valueMatchesType(value, typeName)
 }
@@ -111,7 +111,7 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 		return false
 	}
 	if errValue, ok := value.(runtime.Error); ok {
-		return errorTypeMatches(errValue.Class, typeName)
+		return runtime.ErrorValueIsA(errValue, simpleTypeName(typeName), typeNamesEqual)
 	}
 	if instance, ok := value.(*runtime.Instance); ok {
 		for class := instance.Class; class != nil; class = class.Parent {

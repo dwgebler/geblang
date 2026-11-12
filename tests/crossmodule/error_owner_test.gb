@@ -1,0 +1,22 @@
+import test;
+import error_owner_a as a;
+import error_owner_b as b;
+
+class ErrorOwnerTest extends test.Test {
+    @test
+    func sameNamedErrorsKeepTheirOwnParentChain(): void {
+        let first = a.SharedError("first");
+        let second = b.SharedError("second");
+
+        this.assertTrue(first instanceof a.DomainError);
+        this.assertFalse(first instanceof b.OtherError);
+        this.assertTrue(second instanceof b.OtherError);
+        bool caught = false;
+        try {
+            throw first;
+        } catch (a.DomainError e) {
+            caught = true;
+        }
+        this.assertTrue(caught);
+    }
+}

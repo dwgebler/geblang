@@ -218,7 +218,8 @@ SQL connection pool and returns a connection object.
 |--------|---------|-------------|
 | `exec(sql, args...)` | `dict` | Execute a statement; returns `rowsAffected` and `lastInsertId` |
 | `query(sql, args...)` | `db.Rows` | Run a query and return a streaming cursor |
-| `begin(timeoutMs?)` | `db.Transaction` | Start a transaction with an optional lifetime deadline |
+| `driver()` | `string` | Normalized driver name: `sqlite`, `postgres` or `mysql`; no credentials or connection URL |
+| `begin(timeoutMs?, opts?)` | `db.Transaction` | Start a transaction with an optional lifetime deadline |
 | `execWithTimeout(timeoutMs, sql, args...)` | `dict` | Execute with a deadline, including pool wait |
 | `queryWithTimeout(timeoutMs, sql, args...)` | `db.Rows` | Query with a deadline, including pool wait and streaming |
 | `prepare(sql)` | `db.Statement` | Prepare a reusable statement |
@@ -383,3 +384,11 @@ Use these when writing adapters or working with raw handles:
 | `stats(handle)` | Return pool stats |
 | `migrate(handle, migrations)` | Apply idempotent migrations |
 | `close(handle)` | Close the database handle |
+
+### Transaction isolation
+
+`conn.begin(5000, {"isolation": "readCommitted"})` sets isolation for that
+transaction without changing connection-pool or session defaults. Options accept
+`default`, `readCommitted`, `repeatableRead` and `serializable`; the SQL driver
+may reject unsupported levels. Existing `begin()` and `begin(timeoutMs)` retain
+their behavior. Supply a positive lifetime timeout when passing options.

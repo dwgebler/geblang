@@ -1,0 +1,101 @@
+import test;
+import db;
+import jobs;
+import store;
+import async;
+import errors;
+
+class JobsWorkerTest extends test.Test {
+    @test
+    func cancellationErrorKeepsItsDeclaredRuntimeParent(): void {
+        let error = jobs.TimeoutError("cancel");
+        this.assertTrue(error instanceof jobs.JobError);
+        this.assertTrue(error instanceof RuntimeError);
+        this.assertFalse(error instanceof IOError);
+    }
+
+    @test
+    func workerRunsHandlersAndImmediateRetries(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "worker"});
+        let events = store.Store();
+        queue.register("mail", func(jobs.Job job): void {
+            events.incr("runs");
+            if (job.attempt < 3) {
+                throw RuntimeError("temporary");
+            }
+            events.set("payload", job.payload);
+        }, {"maxAttempts": 3, "backoffMs": [0]});
+        let id = queue.enqueue("mail", {"to": "test"});
+
+        let result = jobs.Worker(queue, {"drainOnce": true}).run();
+
+        this.assertTrue(result.drained);
+        this.assertEquals(3, result.started);
+        this.assertEquals(1, result.completed);
+        this.assertEquals(3, events.get("runs"));
+        this.assertEquals("completed", queue.get(id).status);
+        this.assertEquals(3, queue.get(id).attempts);
+    }
+
+    @test
+    func workerLeavesUnselectedAndFutureJobsPending(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "filters"});
+        queue.register("work", func(jobs.Job job): void {});
+        let future = queue.enqueue("work", {}, {"runAtMs": 253402300799000});
+        let report = queue.enqueue("work", {}, {"queue": "reports"});
+        let ready = queue.enqueue("work", {});
+
+        let result = jobs.Worker(queue, {"drainOnce": true}).run();
+
+        this.assertEquals(1, result.completed);
+        this.assertEquals("completed", queue.get(ready).status);
+        this.assertEquals("pending", queue.get(future).status);
+        this.assertEquals("pending", queue.get(report).status);
+    }
+
+    @test
+    func manualRetryPreservesHistoryAndRejectsActiveDuplicate(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "retry"});
+        queue.register(
+            "work",
+            func(jobs.Job job): void { throw RuntimeError("failure"); },
+            {"maxAttempts": 1}
+        );
+        let id = queue.enqueue("work", {}, {"dedupeKey": "one"});
+        jobs.Worker(queue, {"drainOnce": true}).run();
+        let active = queue.enqueue("work", {}, {"dedupeKey": "one"});
+
+        this.assertThrows(func(): void { queue.retry(id); });
+        jobs.Worker(queue, {"drainOnce": true}).run();
+        this.assertTrue(queue.retry(id));
+        jobs.Worker(queue, {"drainOnce": true}).run();
+
+        this.assertEquals("failed", queue.get(id).status);
+        this.assertEquals(1, queue.get(id).attempts);
+        this.assertEquals(2, queue.get(id).sequence);
+        this.assertEquals("failed", queue.get(active).status);
+        this.assertEquals(
+            3,
+            conn.query("SELECT COUNT(*) AS n FROM geblang_jobs_attempts").all()[0]["n"]
+        );
+    }
+    @test
+    func nativeTimeoutKeepsBuiltinParentWhenJobsAreImported(): void {
+        bool nativeCaught = false;
+        try {
+            async.await(async.timeout(async.token(), 0));
+        } catch (IOError e) {
+            nativeCaught = true;
+        } catch (Error e) {}
+
+        this.assertTrue(nativeCaught);
+        this.assertTrue(errors.is(jobs.TimeoutError("job"), "JobError"));
+        this.assertFalse(errors.is(jobs.TimeoutError("job"), "IOError"));
+    }
+}

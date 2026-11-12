@@ -15,6 +15,8 @@ The following components are licensed under the MIT license or an
 Expat-style MIT license:
 
 - `github.com/aymerick/douceur` v0.2.0 - Copyright (c) 2015 Aymerick JEHANNE.
+- `github.com/boombuler/barcode` v1.1.0 - Copyright (c) 2014 Florian
+  Sundermann.
 - `github.com/BurntSushi/toml` v1.6.0 - Copyright (c) 2013 TOML authors.
 - `github.com/creack/pty` v1.1.24 - Copyright (c) 2011 Keith Rarick.
 - `github.com/dlclark/regexp2` v1.12.0 - Copyright (c) Doug Clark.
@@ -124,6 +126,8 @@ The following components are licensed under the BSD 3-Clause License:
 - `golang.org/x/exp` v0.0.0-20250305212735-054e65f0b394 - Copyright 2009 The
   Go Authors. All rights reserved.
 - `golang.org/x/image` v0.41.0 - Copyright 2009 The Go Authors.
+- Go font family, embedded from `golang.org/x/image/font/gofont` v0.41.0 -
+  Copyright (c) 2016 Bigelow & Holmes Inc. All rights reserved.
 - `golang.org/x/mod` v0.35.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/net` v0.55.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/sync` v0.20.0 - Copyright 2009 The Go Authors.

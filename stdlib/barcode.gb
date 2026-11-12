@@ -1,0 +1,28 @@
+module barcode;
+
+import image;
+import imagenative;
+
+/**
+ * Encode `data` as a barcode and return it as an image.Image.
+ * Required option: format (see formats()). Sizing options: scale
+ * (pixels per module), width, height, margin (quiet zone in modules).
+ * Styling options: color, background. Format options: level (qr
+ * "L"/"M"/"Q"/"H"; pdf417 0-8; aztec error-correction percent),
+ * checksum and fullAscii (code39, code93).
+ */
+export func encode(string data, dict<string, any> opts = {}): image.Image {
+    return image.Image(imagenative.barcode(data, opts));
+}
+
+/** Encode `data` as a QR code; takes the same options as encode. */
+export func qr(string data, dict<string, any> opts = {}): image.Image {
+    let merged = {...opts};
+    merged["format"] = "qr";
+    return image.Image(imagenative.barcode(data, merged));
+}
+
+/** The supported format names, sorted. */
+export func formats(): list<string> {
+    return imagenative.barcodeFormats();
+}

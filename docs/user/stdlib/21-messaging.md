@@ -340,3 +340,25 @@ name in `messaging.gb`, and write tests under
 `tests/stdlib/messaging_*_test.gb`. The interface is small by
 design - one method per logical operation, no broker-specific
 features leak into the facade.
+
+## Managed consumption
+
+Built-in queue handles also implement the optional `ManagedMessageQueue`
+interface with `consumeUntil(handler, shouldStop)`. Topic handles implement
+`ManagedMessageTopic.subscribeUntil(handler, shouldStop)`. Existing queue/topic
+interfaces and blocking methods remain unchanged.
+
+A managed consumer admits serial deliveries while its stop predicate is false.
+It acknowledges only after a successful handler, waits for dispatch and
+acknowledgement before closing, and joins its reader task. Failures propagate to
+the owner; unacknowledged work follows the backend's redelivery rules. Different
+handles may be supervised concurrently; never concurrently read or acknowledge
+through one handle. Topic subscribers remain subject to their backend's
+ephemeral subscription and retention rules.
+
+RabbitMQ and STOMP can interrupt idle transport reads on stop. Kafka uses bounded
+reads; SQS uses bounded HTTP deadlines. SQS visibility renewal is not provided:
+choose a visibility timeout longer than expected handlers. Handlers must return
+for cooperative drain to complete; use a supervised process for hard deadlines.
+A custom handle must implement the optional interface to promise these lifecycle
+semantics. No application payload is serialized as executable handler code.

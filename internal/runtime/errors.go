@@ -53,12 +53,20 @@ func BuiltinErrorParent(class string) string {
 
 // ErrorValueIsA reports whether an error value's class, recorded ancestors or built-in ancestors include target.
 func ErrorValueIsA(err Error, target string, equal func(a, b string) bool) bool {
-	names := append([]string{err.Class}, err.Parents...)
-	for _, name := range names {
-		for current := name; current != ""; current = BuiltinErrorParent(current) {
-			if equal(current, target) {
+	if equal(err.Class, target) {
+		return true
+	}
+	if len(err.Parents) > 0 {
+		for _, parent := range err.Parents {
+			if equal(parent, target) {
 				return true
 			}
+		}
+		return false
+	}
+	for current := BuiltinErrorParent(err.Class); current != ""; current = BuiltinErrorParent(current) {
+		if equal(current, target) {
+			return true
 		}
 	}
 	return false

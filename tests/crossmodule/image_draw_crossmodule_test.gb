@@ -1,0 +1,79 @@
+/**
+ * @title image drawing across modules
+ * @summary An Image subclass declared in another module, and a local
+ * subclass of it, keep the inherited in-place drawing methods; images and
+ * barcodes built in one module are drawn on in another.
+ */
+import test;
+import image;
+import barcode;
+import image_badge_donor as donor;
+
+class StarBadge extends donor.Badge {
+    func StarBadge(int size) {
+        parent(size, size, "star");
+    }
+
+    func star(): StarBadge {
+        this.polygon([[10, 10], [18, 10], [14, 18]], {"fill": "orange"});
+        return this;
+    }
+}
+
+class ImageDrawCrossModuleTest extends test.Test {
+    @test
+    func importedSubclassDrawsDuringConstruction(): void {
+        let badge = donor.Badge(12, 12, "plain");
+        this.assertEquals("#000000ff", badge.getPixel(0, 5));
+        this.assertEquals("#ffffffff", badge.getPixel(8, 8));
+        this.assertEquals("plain", badge.label);
+    }
+
+    @test
+    func importedSubclassOwnAndInheritedMethods(): void {
+        let badge = donor.Badge(12, 12, "plain");
+        badge.mark("red").circle(9, 9, 2, {"fill": "blue"});
+        this.assertEquals("#ff0000ff", badge.getPixel(3, 3));
+        this.assertEquals("#0000ffff", badge.getPixel(9, 9));
+        this.assertEquals(12 as int, badge.width());
+    }
+
+    @test
+    func localSubclassOfImportedSubclass(): void {
+        let badge = StarBadge(24);
+        badge.star().mark("lime").setPixel(23, 23, "navy");
+        this.assertEquals("#ffa500ff", badge.getPixel(14, 12));
+        this.assertEquals("#00ff00ff", badge.getPixel(3, 3));
+        this.assertEquals("#000080ff", badge.getPixel(23, 23));
+        this.assertEquals("#000000ff", badge.getPixel(0, 12));
+        this.assertEquals("star", badge.label);
+        this.assertTrue(badge instanceof image.Image);
+    }
+
+    @test
+    func subclassSurvivesTransformsAsPlainImage(): void {
+        let copy = StarBadge(24).star().copy();
+        this.assertEquals("#ffa500ff", copy.getPixel(14, 12));
+        this.assertEquals(48 as int, copy.resize(48, 48).width());
+    }
+
+    @test
+    func helperInAnotherModuleMutatesTheCallersImage(): void {
+        let img = image.blank(10, 6, "white");
+        let same = donor.underline(img, "red");
+        this.assertEquals("#ff0000ff", img.getPixel(4, 5));
+        same.fill("black");
+        this.assertEquals("#000000ff", img.getPixel(0, 0));
+        donor.underline(StarBadge(24), "teal");
+    }
+
+    @test
+    func barcodeBuiltInAnotherModuleComposites(): void {
+        let ticket = donor.ticket("HI");
+        let code = barcode.qr("HI", {"scale": 2});
+        this.assertEquals(code.width() + 10, ticket.width());
+        this.assertEquals("#ffffffff", ticket.getPixel(0, 0));
+        this.assertEquals(code.getPixel(9, 9), ticket.getPixel(14, 14));
+        this.assertEquals("#000000ff", ticket.getPixel(14, 14));
+    }
+}

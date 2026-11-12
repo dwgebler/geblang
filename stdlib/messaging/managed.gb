@@ -1,0 +1,75 @@
+module messaging.managed;
+import async;
+import async.sync as sync;
+import store;
+
+export func consume(any queue, callable handler, callable shouldStop, ?callable interrupt = null): void {
+    let state = store.Store();
+    let gate = sync.Mutex();
+    let reader = async.run(func(): void {
+        try {
+            while (state.get("stop") != true && !(shouldStop() as bool)) {
+                let message = queue.receive(250);
+                if (message == null) {
+                    continue;
+                }
+                gate.lock();
+                if (state.get("stop") == true || (shouldStop() as bool)) {
+                    gate.unlock();
+                    break;
+                }
+                state.set("processing", true);
+                gate.unlock();
+                try {
+                    handler(message);
+                    queue.ack(message["handle"]);
+                } catch (Error e) {
+                    state.set("failure", true);
+                    throw e;
+                } finally {
+                    gate.lock();
+                    state.set("processing", false);
+                    gate.unlock();
+                }
+            }
+        } catch (Error e) {
+            if (state.get("interrupted") != true || state.get("failure") == true) {
+                throw e;
+            }
+        }
+    });
+    try {
+        while (!async.done(reader)) {
+            if (shouldStop() as bool) {
+                gate.lock();
+                try {
+                    state.set("stop", true);
+                    if (state.get("processing") != true && interrupt != null && state.get("interrupted") != true) {
+                        state.set("interrupted", true);
+                        (interrupt as callable)();
+                    }
+                } finally {
+                    gate.unlock();
+                }
+            }
+            async.await(async.sleep(5));
+        }
+        async.await(reader);
+    } finally {
+        state.set("stop", true);
+        gate.lock();
+        try {
+            if (!async.done(reader) && state.get("processing") != true && interrupt != null && state.get("interrupted") != true) {
+                state.set("interrupted", true);
+                (interrupt as callable)();
+            }
+        } finally {
+            gate.unlock();
+        }
+        try {
+            async.await(reader);
+        } finally {
+            queue.close();
+        }
+    }
+}

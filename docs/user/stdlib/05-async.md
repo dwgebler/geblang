@@ -472,3 +472,10 @@ container across concurrent tasks.
 
 There is also a lower-level functional API (`store.new()`, `store.get(h, key)`,
 ...) that the `Store` class wraps; prefer the class.
+
+## Non-cancelling completion waits
+
+`async.waitAny(tasks, timeoutMs)` waits for any task and returns its index, or -1
+on timeout. It does not cancel pending tasks or consume successes/failures;
+callers still own and must await each task. Zero timeout checks immediately;
+an empty list waits only for the timeout. At most 65535 tasks are accepted.

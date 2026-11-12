@@ -777,6 +777,9 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 					vm.push(result)
 					return ip, nil
 				}
+				if !errors.Is(err, runtime.ErrUnknownBuiltin) {
+					return 0, vm.callPropagate(instruction, err)
+				}
 			}
 			return 0, vm.runtimeError(instruction, "module %s has no export %s", module.Name, nameValue.Value)
 		}

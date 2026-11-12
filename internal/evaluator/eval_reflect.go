@@ -1249,6 +1249,15 @@ func reflectLookupRequiresEvaluator(call *ast.CallExpression, _ []runtime.Value)
 	return nil, fmt.Errorf("%s requires evaluator context", call.Callee.String())
 }
 
+func reflectedMethodOverloads(class *runtime.Class, name string) []runtime.Function {
+	for current := class; current != nil; current = current.Parent {
+		if methods := current.Methods[strings.ToLower(name)]; len(methods) > 0 {
+			return methods
+		}
+	}
+	return nil
+}
+
 func reflectMethod(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("%s expects class or instance and method name", call.Callee.String())
@@ -1262,8 +1271,8 @@ func reflectMethod(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 	if !ok {
 		return nil, fmt.Errorf("%s method name must be string", call.Callee.String())
 	}
-	overloads, ok := class.Methods[strings.ToLower(name.Value)]
-	if !ok {
+	overloads := reflectedMethodOverloads(class, name.Value)
+	if len(overloads) == 0 {
 		return runtime.Null{}, nil
 	}
 	if bound {
@@ -1289,8 +1298,8 @@ func (e *Evaluator) reflectMethodBound(call *ast.CallExpression, args []runtime.
 	if !ok {
 		return nil, fmt.Errorf("%s method name must be string", call.Callee.String())
 	}
-	overloads, ok := class.Methods[strings.ToLower(name.Value)]
-	if !ok {
+	overloads := reflectedMethodOverloads(class, name.Value)
+	if len(overloads) == 0 {
 		return runtime.Null{}, nil
 	}
 	if bound {

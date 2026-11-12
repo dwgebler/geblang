@@ -1,6 +1,7 @@
 module store;
 
 import store;
+import clone;
 
 /**
  * Thread-safe shared key-value store: the sanctioned way to share
@@ -99,7 +100,8 @@ export class Store {
     func update(any key, callable fn): any {
         while (true) {
             let old = store.get(this._handle, key);
-            let next = fn(old);
+            /* Preserve the CAS snapshot when the callback mutates its input. */
+            let next = fn(clone.deep(old));
             if (store.compareAndSet(this._handle, key, old, next)) {
                 return next;
             }

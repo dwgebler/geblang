@@ -3,6 +3,7 @@ package bytecode
 import (
 	"errors"
 	"fmt"
+	"geblang/internal/native"
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"geblang/internal/typealias"
@@ -527,6 +528,23 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 		vm.cacheFieldShape(instance.Class, name, true)
 		vm.push(value)
 		return ip, nil
+	}
+	for class := instance.Class; class != nil; class = class.Parent {
+		methods := class.Methods[strings.ToLower(name)]
+		if len(methods) == 0 {
+			continue
+		}
+		if native.IsNativeModule(class.Module) && methods[0].Native != nil {
+			method := methods[0]
+			bound := method
+			bound.Identity = runtime.NewFunctionIdentity()
+			bound.Native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				return method.Native(instance, args)
+			}
+			vm.push(bound)
+			return ip, nil
+		}
+		break
 	}
 	classInfo, classOk := vm.classInfo(instance.Class.Name)
 	if !classOk {

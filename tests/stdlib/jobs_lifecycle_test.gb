@@ -1,0 +1,144 @@
+import test;
+import jobs;
+import db;
+import async;
+import async.channel as channel;
+import store;
+import time;
+
+class LifecycleQueue extends jobs.Queue {
+    store.Store clock;
+    func LifecycleQueue(db.Connection conn, store.Store clock) {
+        parent(conn, {"namespace": "lifecycle", "operationTimeoutMs": 50});
+        this.clock = clock;
+    }
+    func _now(db.Transaction tx): int {
+        return this.clock.get("now") as int;
+    }
+}
+
+class JobsLifecycleTest extends test.Test {
+    func event(channel.Channel<string> events): string {
+        int deadline = time.monotonic() + 5000;
+        while (time.monotonic() < deadline) {
+            let next = events.tryRecv();
+            if (next != null) {
+                return next as string;
+            }
+            async.await(async.sleep(1));
+        }
+        throw RuntimeError("job event deadline exceeded");
+    }
+
+    @test
+    func timeoutRetainsSlotUntilCancelledHandlerReturns(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "timeout"});
+        let events = channel.Channel<string>(4);
+        let release = channel.Channel<bool>(1);
+        defer release.close();
+        let effects = store.Store();
+        queue.register("slow", func(jobs.Job job): void {
+            events.send("started");
+            while (!job.isCancellationRequested()) {
+                async.await(async.sleep(1));
+            }
+            events.send("cancelled");
+            release.recv();
+        }, {"timeoutMs": 10, "maxAttempts": 1});
+        queue.register("next", func(jobs.Job job): void { effects.set("next", true); });
+        let slow = queue.enqueue("slow", {}, {"queue": "high"});
+        queue.enqueue("next", {});
+
+        let handle = jobs.Worker(queue, {"drainOnce": true}).start();
+        this.assertEquals("started", this.event(events));
+        this.assertEquals("cancelled", this.event(events));
+        this.assertEquals(1, queue.stats().running);
+        this.assertEquals(1, queue.stats().pending);
+        this.assertEquals(null, effects.get("next"));
+        this.assertFalse(handle.wait(0).drained);
+        release.send(true);
+        let result = handle.wait(5000);
+
+        this.assertTrue(result.drained);
+        this.assertEquals(1, result.failed);
+        this.assertEquals(1, result.completed);
+        this.assertEquals("failed", queue.get(slow).status);
+    }
+
+    @test
+    func expiredOwnerCannotOverwriteRecoveredCompletion(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let clock = store.Store();
+        clock.set("now", 1704067200000);
+        let queue = LifecycleQueue(conn, clock);
+        let effects = store.Store();
+        let events = channel.Channel<string>(2);
+        let release = channel.Channel<bool>(1);
+        defer release.close();
+        queue.register("work", func(jobs.Job job): void {
+            if (effects.incr("attempts") == 1) {
+                events.send("started");
+                release.recv();
+            }
+        }, {"maxAttempts": 3, "backoffMs": [0]});
+        let id = queue.enqueue("work", {});
+
+        let old = jobs.Worker(queue, {"drainOnce": true, "heartbeatMs": 10000}).start();
+        this.assertEquals("started", this.event(events));
+        clock.incr("now", 60001);
+        let recovered = jobs.Worker(queue, {"drainOnce": true}).run();
+        this.assertEquals(1, recovered.completed);
+        release.send(true);
+        let stale = old.wait(5000);
+
+        this.assertTrue(stale.drained);
+        this.assertEquals(1, stale.lost);
+        this.assertEquals(2, queue.get(id).sequence);
+        this.assertEquals("completed", queue.get(id).status);
+        this.assertEquals(2, effects.get("attempts"));
+    }
+
+    @test
+    func renewedLeasePreventsRecoveryAfterOriginalExpiry(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let clock = store.Store();
+        clock.set("now", 1704067200000);
+        let queue = LifecycleQueue(conn, clock);
+        let events = channel.Channel<string>(2);
+        let release = channel.Channel<bool>(1);
+        defer release.close();
+        queue.register("work", func(jobs.Job job): void {
+            events.send("started");
+            release.recv();
+        });
+        let id = queue.enqueue("work", {});
+
+        let handle = jobs.Worker(queue, {"drainOnce": true, "leaseMs": 1000, "heartbeatMs": 10}).start(
+        );
+        this.assertEquals("started", this.event(events));
+        clock.incr("now", 500);
+        int deadline = time.monotonic() + 5000;
+        int lease = 0;
+        while (time.monotonic() < deadline) {
+            lease = conn.query("SELECT lease_until_ms FROM geblang_jobs_items WHERE id = ?", id).all()[0]["lease_until_ms"] as int;
+            if (lease >= 1704067201500) {
+                break;
+            }
+            async.await(async.sleep(1));
+        }
+        this.assertTrue(lease >= 1704067201500);
+        clock.incr("now", 700);
+        let other = jobs.Worker(queue, {"drainOnce": true, "leaseMs": 1000, "heartbeatMs": 10}).run(
+        );
+        this.assertEquals(0, other.started);
+        release.send(true);
+
+        this.assertTrue(handle.wait(5000).drained);
+        this.assertEquals("completed", queue.get(id).status);
+        this.assertEquals(1, queue.get(id).sequence);
+    }
+}

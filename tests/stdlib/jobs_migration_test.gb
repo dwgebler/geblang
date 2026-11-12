@@ -1,0 +1,116 @@
+import test;
+import jobs;
+import db;
+
+class JobsMigrationTest extends test.Test {
+    func legacy(db.Connection conn): void {
+        conn.exec(
+            "CREATE TABLE legacy_jobs (id TEXT PRIMARY KEY, name TEXT, payload_json TEXT, status TEXT, attempts INTEGER, run_at TEXT, created_at TEXT, priority TEXT, dedupe_key TEXT, last_error TEXT)"
+        );
+        conn.exec(
+            "INSERT INTO legacy_jobs VALUES ('one', 'work', '{\"n\":1}', 'running', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', 'default', 'key', NULL)"
+        );
+    }
+
+    @test
+    func migrationDryRunLeavesDatabaseUntouchedAndApplyResumesSafely(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        this.legacy(conn);
+
+        let dry = jobs.migrateLegacy(conn, {"sourceTable": "legacy_jobs", "namespace": "legacy"});
+
+        this.assertEquals(1, dry.total);
+        this.assertEquals(0, dry.invalid);
+        this.assertEquals(
+            0,
+            conn.query("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'geblang_jobs_meta'").all()[0]["n"]
+        );
+
+        let applied = jobs.migrateLegacy(
+            conn,
+            {"sourceTable": "legacy_jobs", "namespace": "legacy", "dryRun": false, "stopped": true}
+        );
+        let repeated = jobs.migrateLegacy(
+            conn,
+            {"sourceTable": "legacy_jobs", "namespace": "legacy", "dryRun": false, "stopped": true}
+        );
+        let queue = jobs.Queue(conn, {"namespace": "legacy"});
+
+        this.assertEquals(1, applied.migrated);
+        this.assertEquals(0, repeated.migrated);
+        this.assertEquals("pending", queue.get("one").status);
+        this.assertEquals(1, queue.get("one").attempts);
+        this.assertEquals(1, queue.get("one").sequence);
+        this.assertEquals(1704067200000, queue.get("one").createdAtMs);
+        this.assertEquals("one", queue.enqueue("work", {"n": 2}, {"dedupeKey": "key"}));
+        this.assertEquals(
+            "running",
+            conn.query("SELECT status FROM legacy_jobs WHERE id = 'one'").all()[0]["status"]
+        );
+        this.assertEquals(
+            0,
+            conn.query("SELECT COUNT(*) AS n FROM geblang_jobs_attempts").all()[0]["n"]
+        );
+    }
+
+    @test
+    func invalidLegacyRowsAndActiveDuplicatesBlockApply(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        this.legacy(conn);
+        conn.exec(
+            "INSERT INTO legacy_jobs SELECT 'two', name, payload_json, status, attempts, run_at, created_at, priority, dedupe_key, last_error FROM legacy_jobs WHERE id = 'one'"
+        );
+        conn.exec(
+            "INSERT INTO legacy_jobs VALUES ('bad', 'work', 'invalid', 'pending', 0, 'bad date', 'bad date', 'default', NULL, NULL)"
+        );
+
+        let report = jobs.migrateLegacy(
+            conn,
+            {"sourceTable": "legacy_jobs", "namespace": "legacy", "dryRun": false, "stopped": true}
+        );
+
+        this.assertEquals(3, report.total);
+        this.assertEquals(2, report.invalid);
+        this.assertEquals(0, report.migrated);
+        this.assertEquals(
+            0,
+            conn.query("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'geblang_jobs_meta'").all()[0]["n"]
+        );
+    }
+    @test
+    func migrationCliRejectsConflictingModesBeforeWriting(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        this.legacy(conn);
+
+        let code = jobs.migrationCli(
+            conn,
+            {"sourceTable": "legacy_jobs", "namespace": "legacy"},
+            ["--apply", "--dry-run", "--stopped"]
+        );
+
+        this.assertEquals(2, code);
+        this.assertEquals(
+            0,
+            conn.query("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'geblang_jobs_meta'").all()[0]["n"]
+        );
+    }
+    @test
+    func migrationReportsIdsExcludedByKeysetPagination(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        this.legacy(conn);
+        conn.exec("INSERT INTO legacy_jobs (id) VALUES (''), (NULL)");
+
+        let report = jobs.migrateLegacy(conn, {"sourceTable": "legacy_jobs", "namespace": "legacy"});
+
+        this.assertEquals(3, report.total);
+        this.assertEquals(2, report.invalid);
+        this.assertEquals(
+            0,
+            conn.query("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'geblang_jobs_meta'").all()[0]["n"]
+        );
+    }
+}

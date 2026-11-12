@@ -1,0 +1,28 @@
+import test;
+import reflect;
+
+class ReflectedBase {
+    func value(int n): string {
+        return "base";
+    }
+    func inherited(): string {
+        return "inherited";
+    }
+}
+
+class ReflectedChild extends ReflectedBase {
+    func value(string n): string {
+        return "child";
+    }
+}
+
+class ReflectedMethodOwnershipTest extends test.Test {
+    @test
+    func ownOverloadsRemainLocalAndMissingMethodsReachTheParent(): void {
+        let child = ReflectedChild();
+        let method = reflect.method(child, "value");
+        this.assertEquals("child", method("x"));
+        this.assertThrows(func(): void { method(7); });
+        this.assertEquals("inherited", reflect.method(child, "inherited")());
+    }
+}

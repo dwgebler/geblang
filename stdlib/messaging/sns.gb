@@ -17,7 +17,7 @@ import messaging.sqs as sqs;
  * one-time `aws sns subscribe ... --protocol sqs --endpoint
  * <queue-arn>` call.
  */
-export class SnsTopic implements contract.MessageTopic {
+export class SnsTopic implements contract.MessageTopic, contract.ManagedMessageTopic {
     string region;
     string topicArn;
     string accessKey;
@@ -41,6 +41,11 @@ export class SnsTopic implements contract.MessageTopic {
             throw RuntimeError("sns.subscribe: opts.queueUrl is required to pair the SNS topic with an SQS subscription queue");
         }
         (this.subQueue as sqs.SqsQueue).consume(handler);
+    }
+
+    func subscribeUntil(callable handler, callable shouldStop): void {
+        if (this.subQueue == null) { throw ValueError("sns.subscribeUntil: queueUrl is required"); }
+        (this.subQueue as sqs.SqsQueue).consumeUntil(handler, shouldStop);
     }
 
     func close(): void {

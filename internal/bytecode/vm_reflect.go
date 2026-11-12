@@ -505,7 +505,7 @@ func (vm *VM) reflectLookupNativeCall(fn string, args []runtime.Value) (runtime.
 			return runtime.Null{}, nil
 		case *runtime.Instance:
 			// A cross-module instance's class lives in its home chunk, not this VM's; resolve module-exactly so the value equals the declaring module's own class value (two same-named classes in different modules must stay distinct).
-			if value.Class != nil && value.Class.Module != "" && value.Class.Module != vm.moduleName && vm.moduleLoader != nil {
+			if value.Class != nil && value.Class.Module != vm.moduleName && vm.moduleLoader != nil {
 				if found, ok := vm.moduleLoader.ClassValueInModule(value.Class.Module, value.Class.Name); ok {
 					return found, nil
 				}
@@ -555,6 +555,11 @@ func (vm *VM) reflectMethodNativeCall(fn string, args []runtime.Value) (runtime.
 		class = vm.canonicalClassValue(value)
 	case *runtime.Instance:
 		instance = value
+		if len(value.Class.Methods[key]) == 0 && len(value.Class.MethodMetadata[key]) == 0 {
+			if target, ok := vm.reflectedRuntimeInstanceMethod(fn, key, value); ok {
+				return target, nil
+			}
+		}
 		classIndex, ok := vm.classIndex[strings.ToLower(value.Class.Name)]
 		if !ok {
 			if target, ok := vm.reflectedRuntimeInstanceMethod(fn, key, value); ok {
@@ -636,10 +641,17 @@ func (vm *VM) reflectedRuntimeInstanceMethod(fn, key string, instance *runtime.I
 		return runtime.Null{}, false
 	}
 	metadata := runtime.FunctionMetadata{}
-	if overloads := instance.Class.MethodMetadata[key]; len(overloads) > 0 {
-		metadata = overloads[0]
+	var methods []runtime.Function
+	for class := instance.Class; class != nil; class = class.Parent {
+		methods = class.Methods[key]
+		overloads := class.MethodMetadata[key]
+		if len(methods) > 0 || len(overloads) > 0 {
+			if len(overloads) > 0 {
+				metadata = overloads[0]
+			}
+			break
+		}
 	}
-	methods := instance.Class.Methods[key]
 	if len(methods) == 0 && metadata.Name == "" {
 		return runtime.Null{}, false
 	}

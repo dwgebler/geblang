@@ -1,6 +1,7 @@
 module messaging.rabbitmq;
 
 import messaging.contract;
+import messaging.managed as managed;
 import amqp;
 import async;
 import bytes;
@@ -12,7 +13,7 @@ import json;
  * queue durably on construction, and routes publish / receive / ack
  * through the channel.
  */
-export class RabbitQueue implements contract.MessageQueue {
+export class RabbitQueue implements contract.MessageQueue, contract.ManagedMessageQueue {
     int conn;
     int ch;
     string queue;
@@ -71,6 +72,11 @@ export class RabbitQueue implements contract.MessageQueue {
             handler(msg);
             this.ack(msg["handle"]);
         }
+    }
+
+    func consumeUntil(callable handler, callable shouldStop): void {
+        let queue = this;
+        managed.consume(this, handler, shouldStop, func(): void { amqp.close(queue.conn); });
     }
 
     func close(): void {
@@ -145,7 +151,7 @@ func payloadToBytes(any payload): bytes {
  * the exchange; the queue lives only while the subscription is
  * active.
  */
-export class RabbitTopic implements contract.MessageTopic {
+export class RabbitTopic implements contract.MessageTopic, contract.ManagedMessageTopic {
     int conn;
     int ch;
     string exchange;
@@ -157,6 +163,17 @@ export class RabbitTopic implements contract.MessageTopic {
             "contentType": contentTypeOf(payload),
             "persistent":  false
         });
+    }
+
+    func subscribeUntil(callable handler, callable shouldStop): void {
+        let declared = amqp.declareQueue(this.ch, "", {"durable": false, "autoDelete": true, "exclusive": true});
+        let queue = RabbitQueue();
+        queue.conn = this.conn; queue.ch = this.ch;
+        queue.queue = declared["name"] as string;
+        queue.exchange = this.exchange; queue.routingKey = ""; queue._closed = false;
+        amqp.queueBind(this.ch, queue.queue, this.exchange, "");
+        try { queue.consumeUntil(handler, shouldStop); }
+        finally { this._closed = true; }
     }
 
     func subscribe(callable handler): void {

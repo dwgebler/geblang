@@ -1,0 +1,13 @@
+module producer;
+import db;
+import jobs;
+import io;
+import sys;
+
+export func main(list<string> args): int {
+    let conn = db.Connection("sqlite", sys.getenv("JOBS_DB") ?? "./jobs.db");
+    defer conn.close();
+    let queue = jobs.Queue(conn, {"namespace": "example"});
+    io.println(queue.enqueue("hello", {"name": args.length() > 0 ? args[0] : "world"}));
+    return 0;
+}

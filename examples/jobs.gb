@@ -1,0 +1,13 @@
+import db;
+import jobs;
+import io;
+let conn = db.Connection("sqlite", ":memory:");
+defer conn.close();
+let queue = jobs.Queue(conn, {"namespace": "example"});
+queue.register(
+    "hello",
+    func(jobs.Job job): void { io.println("Hello " + (job.payload["name"] as string)); }
+);
+queue.enqueue("hello", {"name": "world"}, {"dedupeKey": "greeting"});
+let result = jobs.Worker(queue, {"drainOnce": true}).run();
+io.println(result.completed);

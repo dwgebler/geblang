@@ -1,0 +1,24 @@
+import test;
+import kafka;
+import async;
+
+class BrokerOwnershipTest extends test.Test {
+    @test
+    func asyncChildClosesParentReader(): void {
+        let reader = kafka.reader({
+            "brokers": ["127.0.0.1:1"],
+            "topic": "ownership",
+            "groupId": "ownership",
+        });
+
+        async.await(async.run(func(): void { kafka.close(reader); }));
+
+        bool closed = false;
+        try {
+            kafka.read(reader, 1);
+        } catch (Error e) {
+            closed = e.message.contains("unknown reader handle");
+        }
+        this.assertTrue(closed);
+    }
+}

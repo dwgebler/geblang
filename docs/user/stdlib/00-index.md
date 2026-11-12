@@ -139,8 +139,10 @@ Operations, introspection, and extension:
 - [Terminal UI](clib-curses.html): full-screen terminal UI via libncurses -
   window init, cursor movement, keyboard input, and colour/attribute control.
 - [Image](image.html): portable native raster-image module (PNG, JPEG, GIF,
-  WebP decode; PNG/JPEG/GIF encode); load, blank, resize, crop, rotate, and
-  encode with no system library required.
+  WebP decode; PNG/JPEG/GIF encode); load, create, resize, crop, rotate, draw
+  shapes and text, composite, and encode with no system library required.
+- [Barcodes and QR Codes](barcode.html): QR, Data Matrix, Aztec, PDF417,
+  Code 128/39/93, EAN, UPC-A, ITF and Codabar rendered as images.
 - [ndarray](ndarray.html): N-dimensional numeric arrays - elementwise
   arithmetic with broadcasting, zero-copy views, reductions, linear algebra,
   and seeded random generation.
@@ -195,3 +197,5 @@ modules avoid side effects except where the module is explicitly about host
 integration, such as environment or extension loading. Application modules
 should follow the same rule: export functions/classes for reusable behavior and
 keep executable startup code in scripts or command entry points.
+
+For persistent background work, see [Durable jobs and workers](40-jobs.md).

@@ -55,6 +55,10 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 		}
 		target = name
 	}
+	if vmCallableTypeName(target) {
+		vm.push(runtime.Bool{Value: runtime.IsCallableValue(value)})
+		return nil
+	}
 	if arms, ok := vmSplitTopLevelUnion(target); ok {
 		for _, arm := range arms {
 			vm.push(value)

@@ -1,0 +1,214 @@
+import test;
+import db;
+import jobs;
+import store;
+import async;
+import time;
+import io;
+
+class JobsResilienceTest extends test.Test {
+    func until(callable ready): void {
+        int deadline = time.monotonic() + 10000;
+        while (!(ready() as bool)) {
+            if (time.monotonic() >= deadline) {
+                throw RuntimeError("condition deadline exceeded");
+            }
+            async.await(async.sleep(2));
+        }
+    }
+
+    @test
+    func invalidRetryPolicyFailsOnlyThatJob(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "policy"});
+        let events = store.Store();
+        queue.register("bad", func(jobs.Job job): void { events.incr("bad"); }, {"backoffMs": func(int attempt): int { throw ValueError("unknown retry backoff"); }});
+        queue.register("negative", func(jobs.Job job): void { events.incr("negative"); }, {"backoffMs": func(int attempt): int { return -1; }});
+        queue.register("good", func(jobs.Job job): void { events.incr("good"); });
+        let bad = queue.enqueue("bad", {}, {"queue": "high", "dedupeKey": "one"});
+        let negative = queue.enqueue("negative", {}, {"queue": "high"});
+        let good = queue.enqueue("good", {});
+
+        let result = jobs.Worker(queue, {"drainOnce": true}).run();
+
+        this.assertEquals(1, result.completed);
+        this.assertEquals(2, result.failed);
+        this.assertEquals(null, events.get("bad"));
+        this.assertEquals(null, events.get("negative"));
+        this.assertEquals("completed", queue.get(good).status);
+        this.assertEquals("failed", queue.get(bad).status);
+        this.assertEquals("failed", queue.get(negative).status);
+        this.assertTrue((queue.get(bad).lastError as string).contains("invalid retry policy: unknown retry backoff"));
+        this.assertEquals("failed", queue.attempts(bad)[0]["outcome"]);
+        this.assertFalse(queue.enqueue("bad", {}, {"dedupeKey": "one"}) == bad);
+    }
+
+    @test
+    func workFinishedDuringShutdownIsRecordedAsCompleted(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "shutdown"});
+        let events = store.Store();
+        queue.register("slow", func(jobs.Job job): void {
+            events.set("running", true);
+            while (!job.isCancellationRequested()) {
+                async.await(async.sleep(1));
+            }
+            events.incr("effects");
+        }, {"maxAttempts": 3, "backoffMs": [0]});
+        let id = queue.enqueue("slow", {});
+        let handle = jobs.Worker(queue, {"shutdownTimeoutMs": 1, "pollIntervalMs": 1}).start();
+        this.until(func(): bool { return events.get("running") == true; });
+
+        handle.requestStop();
+        let result = handle.wait(10000);
+
+        this.assertTrue(result.drained);
+        this.assertEquals(1, result.completed);
+        this.assertEquals(0, result.retry);
+        this.assertEquals(1, events.get("effects"));
+        this.assertEquals("completed", queue.get(id).status);
+    }
+
+    @test
+    func handlerErrorDuringShutdownStillRetries(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "shutdown-error"});
+        let events = store.Store();
+        queue.register("slow", func(jobs.Job job): void {
+            events.set("running", true);
+            while (true) {
+                job.throwIfCancelled();
+                async.await(async.sleep(1));
+            }
+        }, {"maxAttempts": 3, "backoffMs": [60000]});
+        let id = queue.enqueue("slow", {});
+        let handle = jobs.Worker(queue, {"shutdownTimeoutMs": 1, "pollIntervalMs": 1}).start();
+        this.until(func(): bool { return events.get("running") == true; });
+
+        handle.requestStop();
+        let result = handle.wait(10000);
+
+        this.assertEquals(1, result.retry);
+        this.assertEquals("pending", queue.get(id).status);
+        this.assertEquals("jobs: cancellation requested", queue.get(id).lastError);
+    }
+
+    @test
+    func timeoutStillRecordsFailureAfterSuccessfulReturn(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "timeout"});
+        queue.register("slow", func(jobs.Job job): void {
+            while (!job.isCancellationRequested()) {
+                async.await(async.sleep(1));
+            }
+        }, {"maxAttempts": 1, "timeoutMs": 1});
+        let id = queue.enqueue("slow", {});
+
+        let result = jobs.Worker(queue, {"drainOnce": true}).run();
+
+        this.assertEquals(1, result.failed);
+        this.assertEquals("jobs: execution cancelled after timeout", queue.get(id).lastError);
+    }
+
+    @test
+    func transientStoreErrorsBackOffWithoutStoppingTheWorker(): void {
+        string path = io.tempDir("jobs-resilience-") + "/jobs.db";
+        let conn = db.Connection("sqlite", path);
+        defer conn.close();
+        let events = store.Store();
+        let queue = jobs.Queue(conn, {"namespace": "outage", "onEvent": func(dict<string, any> event): void {
+            if (event["event"] == "worker.store_error") {
+                events.incr("errors");
+            }
+        }});
+        queue.register("work", func(jobs.Job job): void { events.incr("runs"); });
+        let id = queue.enqueue("work", {});
+        conn.exec("ALTER TABLE geblang_jobs_items RENAME TO geblang_jobs_away");
+        let handle = jobs.Worker(queue, {"pollIntervalMs": 1, "maxStoreFailures": 1000000}).start();
+        this.until(func(): bool { return ((events.get("errors") ?? 0) as int) >= 2; });
+        this.assertFalse(async.done(handle.task));
+
+        conn.exec("ALTER TABLE geblang_jobs_away RENAME TO geblang_jobs_items");
+        this.until(func(): bool { return events.get("runs") == 1; });
+        handle.requestStop();
+        let result = handle.wait(10000);
+
+        this.assertTrue(result.drained);
+        this.assertEquals(1, result.completed);
+        this.assertEquals("completed", queue.get(id).status);
+    }
+
+    @test
+    func persistentStoreErrorsStopTheWorkerAtTheConfiguredLimit(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let events = store.Store();
+        let queue = jobs.Queue(conn, {"namespace": "down", "onEvent": func(dict<string, any> event): void {
+            if (event["event"] == "worker.store_error") {
+                events.incr("errors");
+            }
+        }});
+        conn.exec("DROP TABLE geblang_jobs_items");
+
+        this.assertThrows(func(): void { jobs.Worker(queue, {"pollIntervalMs": 20, "maxStoreFailures": 3}).run(); });
+        this.assertEquals(3, events.get("errors"));
+        this.assertThrows(func(): void { jobs.Worker(queue, {"maxStoreFailures": 0}); });
+    }
+
+    @test
+    func cliQueueSelectionDropsCapsForUnselectedQueues(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "caps"});
+        let events = store.Store();
+        queue.register("work", func(jobs.Job job): void { events.incr(job.queue); });
+        queue.enqueue("work", {}, {"queue": "simulation"});
+        queue.enqueue("work", {});
+        let worker = jobs.Worker(queue, {"queues": ["simulation", "default"], "queueConcurrency": {"simulation": 1, "default": 1}});
+
+        this.assertEquals(0, jobs.cli(worker, null, ["--queue", "default", "--once"]));
+
+        this.assertEquals(1, events.get("default"));
+        this.assertEquals(null, events.get("simulation"));
+    }
+
+    @test
+    func schedulerReportsStoredRevision(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "revision"});
+        let scheduler = jobs.Scheduler(queue);
+        this.assertEquals(null, scheduler.revision("nightly"));
+        scheduler.add("nightly", "0 3 * * *", "work", {});
+        let first = scheduler.revision("nightly") as string;
+        this.assertEquals(64, first.length());
+
+        scheduler.update("nightly", "0 4 * * *", "work", {}, {"expectedRevision": first});
+
+        this.assertFalse(scheduler.revision("nightly") == first);
+        this.assertEquals(null, jobs.Scheduler(jobs.Queue(conn, {"namespace": "other"})).revision("nightly"));
+    }
+
+    @test
+    func statisticsDoNotWaitForTheSqliteWriterLock(): void {
+        string path = io.tempDir("jobs-readers-") + "/jobs.db";
+        let conn = db.Connection("sqlite", path);
+        defer conn.close();
+        conn.exec("PRAGMA journal_mode=WAL");
+        let queue = jobs.Queue(conn, {"namespace": "readers", "operationTimeoutMs": 200});
+        queue.enqueue("work", {});
+        let writer = conn.begin(5000);
+        writer.exec("UPDATE geblang_jobs_meta SET version = version WHERE component = 'jobs'");
+
+        let stats = queue.stats();
+        let schedules = jobs.Scheduler(queue).inspect();
+        writer.rollback();
+
+        this.assertEquals(1, stats.pending);
+        this.assertEquals(0, schedules.length());
+    }
+}

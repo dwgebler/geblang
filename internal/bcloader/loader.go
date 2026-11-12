@@ -715,7 +715,33 @@ func (l *Loader) CallModuleStaticMethodNamed(class runtime.BytecodeClass, method
 	return result, err
 }
 
+func (l *Loader) nativeClassFor(module, name string) (*runtime.Class, bool) {
+	if !native.IsNativeModule(module) {
+		return nil, false
+	}
+	var value *runtime.Module
+	if record, ok := l.recordFor(module); ok {
+		value = record.module
+	} else {
+		value = l.lookupBuiltin(module, module)
+	}
+	if value == nil {
+		return nil, false
+	}
+	class, ok := value.Exports[name].(*runtime.Class)
+	return class, ok
+}
+
 func (l *Loader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+	if class, ok := l.nativeClassFor(module, className); ok {
+		methods := class.Methods[strings.ToLower(methodName)]
+		if methodName == className {
+			methods = class.Constructors
+		}
+		if len(methods) == 1 && methods[0].Native != nil {
+			return methods[0].Native(instance, args)
+		}
+	}
 	var chunk bytecode.Chunk
 	if module == "" {
 		if !l.hasMainChunk {
@@ -738,6 +764,10 @@ func (l *Loader) CallParentInModule(module string, className string, methodName 
 
 // CallInheritedConstructorInModule runs the zero-argument constructor a class inherits, on its home module's worker.
 func (l *Loader) CallInheritedConstructorInModule(module string, className string, instance *runtime.Instance, caller *bytecode.VM) error {
+	if class, ok := l.nativeClassFor(module, className); ok && len(class.Constructors) == 1 && class.Constructors[0].Native != nil {
+		_, err := class.Constructors[0].Native(instance, nil)
+		return err
+	}
 	chunk, ok := l.chunkValue(module)
 	if !ok {
 		return fmt.Errorf("module %s is not loaded", module)
@@ -1316,6 +1346,9 @@ func (l *Loader) moduleNamesSorted() []string {
 }
 
 func (l *Loader) ClassValueInModule(module, className string) (runtime.Value, bool) {
+	if class, ok := l.nativeClassFor(module, className); ok {
+		return class, true
+	}
 	chunk, ok := l.chunkFor(module)
 	if !ok {
 		return nil, false
@@ -1334,6 +1367,9 @@ func (l *Loader) PersistModuleGlobals(vm *bytecode.VM) {
 }
 
 func (l *Loader) RuntimeClassFor(module string, className string) (*runtime.Class, bool) {
+	if class, ok := l.nativeClassFor(module, className); ok {
+		return class, true
+	}
 	cacheKey := module + "." + className
 	if v, ok := l.runtimeClasses.Load(cacheKey); ok {
 		rc, _ := v.(*runtime.Class)

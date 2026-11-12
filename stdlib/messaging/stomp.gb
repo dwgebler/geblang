@@ -1,6 +1,8 @@
 module messaging.stomp;
 
 import messaging.contract;
+import messaging.managed as managed;
+import net;
 import bytes;
 import json;
 import sockets;
@@ -15,7 +17,7 @@ import sockets;
  * from MESSAGE frames delivered against the subscription id this
  * queue installed at connect().
  */
-export class StompQueue implements contract.MessageQueue {
+export class StompQueue implements contract.MessageQueue, contract.ManagedMessageQueue {
     sockets.Socket sock;
     string destination;
     string subId;
@@ -91,6 +93,11 @@ export class StompQueue implements contract.MessageQueue {
             handler(msg);
             this.ack(msg["handle"]);
         }
+    }
+
+    func consumeUntil(callable handler, callable shouldStop): void {
+        let socket = this.sock;
+        managed.consume(this, handler, shouldStop, func(): void { net.close(socket.handle); });
     }
 
     func close(): void {
@@ -184,7 +191,7 @@ export func connect(dict<string, any> opts): StompQueue {
  * e.g. ActiveMQ uses `/topic/...`). publish / subscribe / close
  * map onto SEND / MESSAGE-loop / DISCONNECT.
  */
-export class StompTopic implements contract.MessageTopic {
+export class StompTopic implements contract.MessageTopic, contract.ManagedMessageTopic {
     StompQueue inner;
 
     func publish(any payload): void { this.inner.publish(payload); }
@@ -199,6 +206,8 @@ export class StompTopic implements contract.MessageTopic {
     }
 
     func close(): void { this.inner.close(); }
+
+    func subscribeUntil(callable handler, callable shouldStop): void { this.inner.consumeUntil(handler, shouldStop); }
 }
 
 /**

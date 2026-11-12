@@ -1,0 +1,18 @@
+module ctor_case_donor;
+
+/** A class with a method whose name differs from the class name only by case. */
+export class Star {
+    int points;
+
+    func Star(int points = 5) {
+        this.points = points;
+    }
+
+    func star(): string {
+        return "star:${this.points}";
+    }
+
+    static func STAR(): string {
+        return "static";
+    }
+}

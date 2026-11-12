@@ -3,11 +3,30 @@ module image;
 import imagenative;
 import io;
 
+/** A TrueType / OpenType font for Image.text and measureText. */
+export class Font {
+    any _handle;
+
+    func Font(any handle) {
+        this._handle = handle;
+    }
+}
+
+func nativeOptions(dict<string, any> opts): dict<string, any> {
+    if (opts.hasKey("font") && opts["font"] instanceof Font) {
+        let out = {...opts};
+        out["font"] = (opts["font"] as Font)._handle;
+        return out;
+    }
+    return opts;
+}
+
 /**
- * Raster image handle: load, transform, and re-encode PNG / JPEG / GIF
- * (and decode WebP). Each transform returns a NEW Image; the source
- * stays valid. Call close() to release a handle, or let the process
- * exit reclaim everything.
+ * Raster image handle: load, create, draw on, transform, and re-encode
+ * PNG / JPEG / GIF (and decode WebP). Transforms (resize, crop, rotate,
+ * flipH, flipV, copy) return a NEW Image and leave the source untouched.
+ * Drawing methods modify the image in place and return it for chaining.
+ * Colors are strings: "#rgb", "#rgba", "#rrggbb", "#rrggbbaa", or a name.
  */
 export class Image {
     any _handle;
@@ -41,6 +60,96 @@ export class Image {
         return Image(imagenative.rotate(this._handle, degrees));
     }
 
+    /** A new Image mirrored left-to-right. */
+    func flipH(): Image {
+        return Image(imagenative.flip(this._handle, "h"));
+    }
+
+    /** A new Image mirrored top-to-bottom. */
+    func flipV(): Image {
+        return Image(imagenative.flip(this._handle, "v"));
+    }
+
+    /** An independent copy of this Image. */
+    func copy(): Image {
+        return Image(imagenative.copy(this._handle));
+    }
+
+    /** The pixel at (x, y) as "#rrggbbaa". */
+    func getPixel(int x, int y): string {
+        return imagenative.getPixel(this._handle, x, y) as string;
+    }
+
+    /** Replace the pixel at (x, y) with `color`. */
+    func setPixel(int x, int y, string color): Image {
+        imagenative.setPixel(this._handle, x, y, color);
+        return this;
+    }
+
+    /** Replace every pixel with `color`. */
+    func fill(string color): Image {
+        imagenative.fill(this._handle, color);
+        return this;
+    }
+
+    /** Draw a line between two pixels. Options: color, width. */
+    func line(any x1, any y1, any x2, any y2, dict<string, any> opts = {}): Image {
+        imagenative.line(this._handle, x1, y1, x2, y2, opts);
+        return this;
+    }
+
+    /** Draw a w x h rectangle at (x, y). Options: color, fill, width. */
+    func rect(any x, any y, any w, any h, dict<string, any> opts = {}): Image {
+        imagenative.rect(this._handle, x, y, w, h, opts);
+        return this;
+    }
+
+    /** Draw a circle centred on (cx, cy). Options: color, fill, width. */
+    func circle(any cx, any cy, any radius, dict<string, any> opts = {}): Image {
+        imagenative.ellipse(this._handle, cx, cy, radius, radius, opts);
+        return this;
+    }
+
+    /** Draw an ellipse centred on (cx, cy). Options: color, fill, width. */
+    func ellipse(any cx, any cy, any rx, any ry, dict<string, any> opts = {}): Image {
+        imagenative.ellipse(this._handle, cx, cy, rx, ry, opts);
+        return this;
+    }
+
+    /**
+     * Draw an arc from startDegrees to endDegrees, measured clockwise
+     * from 3 o'clock. Options: color, width, fill (a pie slice).
+     */
+    func arc(any cx, any cy, any radius, any startDegrees, any endDegrees, dict<string, any> opts = {}): Image {
+        imagenative.arc(this._handle, cx, cy, radius, startDegrees, endDegrees, opts);
+        return this;
+    }
+
+    /**
+     * Draw a polygon through a list of [x, y] points. Options: color,
+     * fill, width, closed (false draws an open polyline).
+     */
+    func polygon(list<any> points, dict<string, any> opts = {}): Image {
+        imagenative.polygon(this._handle, points, opts);
+        return this;
+    }
+
+    /** Composite `source` with its top-left at (x, y). Options: opacity (0 to 1). */
+    func paste(Image source, int x, int y, dict<string, any> opts = {}): Image {
+        imagenative.paste(this._handle, source._handle, x, y, opts);
+        return this;
+    }
+
+    /**
+     * Draw text with its top-left at (x, y); "\n" starts a new line.
+     * Options: font ("regular", "bold", "italic", "mono", or a Font),
+     * size (points, default 16), color.
+     */
+    func text(string content, any x, any y, dict<string, any> opts = {}): Image {
+        imagenative.text(this._handle, content, x, y, nativeOptions(opts));
+        return this;
+    }
+
     /** Encode to bytes in the given format ("png", "jpeg", "gif"). */
     func encode(string format): bytes {
         return imagenative.encode(this._handle, format);
@@ -67,7 +176,38 @@ export func load(string path): Image {
     return Image(imagenative.decode(io.readBytes(path)));
 }
 
-/** A new blank (transparent) Image of w x h. */
-export func blank(int w, int h): Image {
-    return Image(imagenative.blank(w, h));
+/** A new Image of w x h, transparent unless a `fill` color is given. */
+export func blank(int w, int h, ?string fill = null): Image {
+    return Image(imagenative.blank(w, h, fill));
+}
+
+/** Load a TrueType / OpenType font file for use as the `font` option. */
+export func loadFont(string path): Font {
+    return Font(imagenative.loadFont(io.readBytes(path)));
+}
+
+/** Load a TrueType / OpenType font from bytes already in memory. */
+export func loadFontBytes(bytes data): Font {
+    return Font(imagenative.loadFont(data));
+}
+
+/**
+ * The pixel size text would occupy, as {"width": int, "height": int}.
+ * Takes the same font and size options as Image.text.
+ */
+export func measureText(string content, dict<string, any> opts = {}): dict<string, any> {
+    return imagenative.measureText(content, nativeOptions(opts));
+}
+
+/** A "#rrggbbaa" color string from 0-255 channel values. */
+export func rgba(int r, int g, int b, int a = 255): string {
+    let out = "#";
+    for (channel in [r, g, b, a]) {
+        if (channel < 0 || channel > 255) {
+            throw RuntimeError("image.rgba: channels must be between 0 and 255");
+        }
+        let hex = channel.toString(16);
+        out = out + (hex.length() == 1 ? "0" + hex : hex);
+    }
+    return out;
 }

@@ -1,0 +1,13 @@
+module error_owner_b;
+
+export class OtherError extends RuntimeError {
+    func OtherError(string message) {
+        parent(message);
+    }
+}
+
+export class SharedError extends OtherError {
+    func SharedError(string message) {
+        parent(message);
+    }
+}

@@ -1,0 +1,29 @@
+module image_badge_donor;
+
+import image;
+import barcode;
+
+/** A white canvas with a border, used to exercise Image inheritance across modules. */
+export class Badge extends image.Image {
+    string label;
+
+    func Badge(int w, int h, string label) {
+        parent(image.blank(w, h, "white")._handle);
+        this.label = label;
+        this.rect(0, 0, w, h, {"color": "black"});
+    }
+
+    func mark(string color): Badge {
+        this.rect(2, 2, 4, 4, {"fill": color});
+        return this;
+    }
+}
+
+export func underline(image.Image img, string color): image.Image {
+    return img.line(0, img.height() - 1, img.width() - 1, img.height() - 1, {"color": color});
+}
+
+export func ticket(string data): image.Image {
+    let code = barcode.qr(data, {"scale": 2});
+    return image.blank(code.width() + 10, code.height() + 10, "white").paste(code, 5, 5);
+}

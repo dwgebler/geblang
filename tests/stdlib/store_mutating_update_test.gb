@@ -1,0 +1,25 @@
+import test;
+import store;
+import time;
+
+class StoreMutatingUpdateTest extends test.Test {
+    @test
+    func callbackCanMutateAnIsolatedNestedSnapshot(): void {
+        let values = store.Store();
+        values.set("items", {"list": [1]});
+        int deadline = time.monotonic() + 5000;
+
+        let updated = values.update("items", func(any old): any {
+            if (time.monotonic() > deadline) {
+                throw RuntimeError("mutable update failed to make progress");
+            }
+            (old["list"] as list<int>).push(2);
+            return old;
+        });
+
+        this.assertEquals([1, 2], updated["list"]);
+        this.assertEquals([1, 2], values.get("items")["list"]);
+        (updated["list"] as list<int>).push(3);
+        this.assertEquals([1, 2], values.get("items")["list"]);
+    }
+}

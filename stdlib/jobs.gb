@@ -1,0 +1,2054 @@
+module jobs;
+import db;
+import json;
+import crypt;
+import secrets;
+import time;
+import async;
+import async.atomic as atomic;
+import async.sync as sync;
+import store;
+import io;
+import sys;
+import cron;
+import random;
+import bytes;
+import datetime;
+
+export class JobError extends RuntimeError {
+    func JobError(string message) {
+        parent(message);
+    }
+}
+
+export class ConflictError extends JobError {
+    func ConflictError(string message) {
+        parent(message);
+    }
+}
+
+export class TimeoutError extends JobError {
+    func TimeoutError(string message) {
+        parent(message);
+    }
+}
+
+func identifier(string value): string {
+    if (value.length() == 0 || value.length() > 48) {
+        throw ValueError("jobs: invalid table prefix");
+    }
+    for (c in value) {
+        if (!"abcdefghijklmnopqrstuvwxyz0123456789_".contains(c as string)) {
+            throw ValueError("jobs: invalid table prefix");
+        }
+    }
+    return value;
+}
+
+func label(string value): string {
+    if (value.length() == 0 || value.length() > 128) {
+        throw ValueError("jobs: names must contain 1 to 128 characters");
+    }
+    return value;
+}
+
+func integer(dict<string, any> options, string key, int fallback, int minimum = 0): int {
+    any value = options[key] ?? fallback;
+    if (!(value instanceof int) || (value as int) < minimum || (value as int) > 2147483647) {
+        throw ValueError("jobs: invalid " + key);
+    }
+    return value as int;
+}
+
+func affected(any result): int {
+    return (result as dict<string, any>)["rowsAffected"] as int;
+}
+
+export class JobSnapshot {
+    string id;
+    string name;
+    string queue;
+    string status;
+    dict<string, any> payload;
+    int attempts;
+    int sequence;
+    int runAtMs;
+    int createdAtMs;
+    ?string lastError;
+    ?int leaseUntilMs;
+    ?string owner;
+    ?string scheduleId;
+    ?int occurrenceAtMs;
+
+    func JobSnapshot(dict<string, any> row) {
+        this.id = row["id"] as string;
+        this.name = row["name"] as string;
+        this.queue = row["queue_name"] as string;
+        this.status = row["status"] as string;
+        this.payload = json.parse(row["payload_json"] as string) as dict<string, any>;
+        this.attempts = row["attempts"] as int;
+        this.sequence = row["sequence"] as int;
+        this.runAtMs = row["run_at_ms"] as int;
+        this.createdAtMs = row["created_at_ms"] as int;
+        this.lastError = row["last_error"] as ?string;
+        this.leaseUntilMs = row["lease_until_ms"] as ?int;
+        this.owner = row["owner"] as ?string;
+        this.scheduleId = row["schedule_id"] as ?string;
+        this.occurrenceAtMs = row["occurrence_at_ms"] as ?int;
+    }
+}
+
+export class QueueStats {
+    int pending;
+    int running;
+    int completed;
+    int failed;
+    int cancelled;
+    int ready;
+    int delayed;
+    int oldestReadyAgeMs;
+
+    func QueueStats() {
+        this.pending = 0;
+        this.running = 0;
+        this.completed = 0;
+        this.failed = 0;
+        this.cancelled = 0;
+        this.ready = 0;
+        this.delayed = 0;
+        this.oldestReadyAgeMs = 0;
+    }
+}
+
+export class Job {
+    string id;
+    string name;
+    string queue;
+    dict<string, any> payload;
+    int attempt;
+    int createdAtMs;
+    int scheduledAtMs;
+    ?int deadlineAtMs;
+    ?string scheduleId;
+    ?int occurrenceAtMs;
+    store.Store _state;
+
+    func Job(dict<string, any> row, store.Store state) {
+        this.id = row["id"] as string;
+        this.name = row["name"] as string;
+        this.queue = row["queue_name"] as string;
+        this.payload = json.parse(row["payload_json"] as string) as dict<string, any>;
+        this.attempt = row["attempts"] as int;
+        this.createdAtMs = row["created_at_ms"] as int;
+        this.scheduledAtMs = row["run_at_ms"] as int;
+        this.deadlineAtMs = (row["timeout_ms"] as int) > 0 ? time.now() + (row["timeout_ms"] as int) : null;
+        this.scheduleId = row["schedule_id"] as ?string;
+        this.occurrenceAtMs = row["occurrence_at_ms"] as ?int;
+        this._state = state;
+    }
+
+    func isCancellationRequested(): bool {
+        return this._state.get("cancel") == true;
+    }
+    func throwIfCancelled(): void {
+        if (this.isCancellationRequested()) {
+            throw TimeoutError("jobs: cancellation requested");
+        }
+    }
+}
+
+export class Queue {
+    db.Connection conn;
+    string namespace;
+    string prefix;
+    string dialect;
+    int maxPayloadBytes;
+    int operationTimeoutMs;
+    dict<string, dict<string, any>> _handlers;
+    atomic.AtomicBool _started;
+    sync.Mutex _registrationMutex;
+    ?callable _onEvent;
+    bool _logEvents;
+
+    func Queue(db.Connection conn, dict<string, any> opts) {
+        this.conn = conn;
+        this.namespace = label(opts["namespace"] as string);
+        this.prefix = identifier((opts["tablePrefix"] ?? "geblang_jobs") as string);
+        this.dialect = conn.driver();
+        this.maxPayloadBytes = integer(opts, "maxPayloadBytes", 1048576);
+        this.operationTimeoutMs = integer(opts, "operationTimeoutMs", 5000, 1);
+        this._handlers = {};
+        this._started = atomic.AtomicBool(false);
+        this._registrationMutex = sync.Mutex();
+        this._onEvent = opts["onEvent"] as ?callable;
+        this._logEvents = (opts["logEvents"] ?? false) as bool;
+        bool autoCreate = (opts["autoCreate"] ?? true) as bool;
+        for (int attempt = 1; true; attempt += 1) {
+            try {
+                this._schema(autoCreate);
+                break;
+            } catch (JobError e) {
+                throw e;
+            } catch (Error e) {
+                if (!autoCreate || attempt >= 8) {
+                    throw e;
+                }
+                time.sleep(25 * attempt);
+            }
+        }
+        if ((opts["_migration"] ?? false) != true) {
+            string marker = "migration_" + crypt.sha256(this.namespace).substring(0, 40);
+            let migration = conn.query("SELECT version FROM " + this.prefix + "_meta WHERE component = ?", marker).all(
+            );
+            if (migration.length() > 0 && migration[0]["version"] != 1) {
+                throw JobError("jobs: migration is incomplete; resume it before starting producers or workers");
+            }
+        }
+    }
+
+    func _emit(string kind, dict<string, any> details = {}): void {
+        let event = details.copy();
+        event["event"] = kind;
+        event["namespace"] = this.namespace;
+        event["atMs"] = time.now();
+        if (this._logEvents) {
+            io.stderrPrintln(json.stringify(event));
+        }
+        if (this._onEvent != null) {
+            try {
+                (this._onEvent as callable)(event);
+            } catch (Error e) {
+                io.stderrPrintln(
+                    "jobs: event hook failed: " + e.message.substring(0, e.message.length() > 4096 ? 4096 : e.message.length())
+                );
+            }
+        }
+    }
+
+    func attempts(string id, dict<string, any> opts = {}): list<dict<string, any>> {
+        int limit = integer(opts, "limit", 100, 1);
+        if (limit > 1000) {
+            throw ValueError("jobs: attempt page limit exceeds 1000");
+        }
+        int after = integer(opts, "afterSequence", 0);
+        return this.conn.queryWithTimeout(this.operationTimeoutMs, "SELECT a.sequence, a.owner, a.started_at_ms, a.finished_at_ms, a.outcome, a.error FROM " + this.prefix + "_attempts a JOIN " + this.prefix + "_items j ON j.id = a.job_id WHERE j.namespace = ? AND j.id = ? AND a.sequence > ? ORDER BY a.sequence LIMIT ?", this.namespace, id, after, limit).all(
+        );
+    }
+
+    func register(string name, callable handler, dict<string, any> opts = {}): void {
+        this._registrationMutex.lock();
+        defer this._registrationMutex.unlock();
+        label(name);
+        if (this._started.load()) {
+            throw JobError("jobs: registration is closed after worker start");
+        }
+        if (this._handlers.contains(name)) {
+            throw ConflictError("jobs: duplicate handler " + name);
+        }
+        let policy = opts.copy();
+        if (policy["backoffMs"] instanceof list) {
+            policy["backoffMs"] = (policy["backoffMs"] as list<int>).copy();
+        }
+        let checked = policy.copy();
+        if (checked["backoffMs"] instanceof callable) {
+            checked["backoffMs"] = [0];
+        }
+        this._delay(checked, 1);
+        this._handlers[name] = {"handler": handler, "options": policy};
+    }
+
+    func _create(string sql): void {
+        if (this.dialect == "mysql") {
+            sql = sql.replace(" TEXT", " LONGTEXT") + " DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin";
+        }
+        this.conn.execWithTimeout(this.operationTimeoutMs, sql);
+    }
+
+    func _exists(string table): bool {
+        string sql = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?";
+        if (this.dialect == "postgres") {
+            sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?";
+        }
+        if (this.dialect == "mysql") {
+            sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?";
+        }
+        return this.conn.queryWithTimeout(this.operationTimeoutMs, sql, table).all().length() > 0;
+    }
+
+    func _schema(bool autoCreate): void {
+        string meta = this.prefix + "_meta";
+        if (!this._exists(meta)) {
+            if (!autoCreate) {
+                throw JobError("jobs: schema is missing; initialize it explicitly");
+            }
+            for (suffix in ["_items", "_attempts", "_dedupe", "_schedules", "_occurrences"]) {
+                if (this._exists(this.prefix + suffix) && !this._exists(meta)) {
+                    throw JobError("jobs: unversioned schema requires migration");
+                }
+            }
+            this._create(
+                "CREATE TABLE IF NOT EXISTS " + meta + " (component VARCHAR(64) PRIMARY KEY, version BIGINT NOT NULL)"
+            );
+            this.conn.exec(
+                this._insertIgnore(meta, "component, version", "?, ?", "component"),
+                "jobs",
+                0
+            );
+        }
+        let versions = this.conn.query("SELECT version FROM " + meta + " WHERE component = ?", "jobs").all(
+        );
+        if (versions.length() == 0 && autoCreate) {
+            /* A concurrent initializer has created the table but not yet its row. */
+            this.conn.exec(
+                this._insertIgnore(meta, "component, version", "?, ?", "component"),
+                "jobs",
+                0
+            );
+            versions = this.conn.query("SELECT version FROM " + meta + " WHERE component = ?", "jobs").all();
+        }
+        if (versions.length() != 1) {
+            throw JobError("jobs: invalid schema metadata");
+        }
+        int version = versions[0]["version"] as int;
+        if (version == 1) {
+            return;
+        }
+        if (version != 0 || !autoCreate) {
+            throw JobError("jobs: unsupported schema version");
+        }
+        this._create("CREATE TABLE IF NOT EXISTS "
+            + this.prefix
+            + "_items ("
+            + "id VARCHAR(64) PRIMARY KEY, namespace VARCHAR(128) NOT NULL, name VARCHAR(128) NOT NULL, queue_name VARCHAR(128) NOT NULL, "
+            + "payload_json TEXT NOT NULL, status VARCHAR(16) NOT NULL, run_at_ms BIGINT NOT NULL, created_at_ms BIGINT NOT NULL, completed_at_ms BIGINT, "
+            + "attempts BIGINT NOT NULL, sequence BIGINT NOT NULL, max_attempts BIGINT NOT NULL, retry_json TEXT NOT NULL, next_delay_ms BIGINT NOT NULL, timeout_ms BIGINT NOT NULL, "
+            + "dedupe_hash VARCHAR(64), dedupe_key TEXT, claim_token VARCHAR(64), owner VARCHAR(128), lease_until_ms BIGINT, last_error TEXT, schedule_id VARCHAR(128), occurrence_at_ms BIGINT)");
+        this._create(
+            "CREATE TABLE IF NOT EXISTS " + this.prefix + "_attempts (job_id VARCHAR(64) NOT NULL, sequence BIGINT NOT NULL, token VARCHAR(64) NOT NULL, owner VARCHAR(128) NOT NULL, started_at_ms BIGINT NOT NULL, finished_at_ms BIGINT, outcome VARCHAR(32) NOT NULL, error TEXT, PRIMARY KEY (job_id, sequence))"
+        );
+        this._create(
+            "CREATE TABLE IF NOT EXISTS " + this.prefix + "_dedupe (namespace VARCHAR(128) NOT NULL, name VARCHAR(128) NOT NULL, key_hash VARCHAR(64) NOT NULL, original_key TEXT NOT NULL, job_id VARCHAR(64) NOT NULL, PRIMARY KEY (namespace, name, key_hash))"
+        );
+        this._create(
+            "CREATE TABLE IF NOT EXISTS " + this.prefix + "_schedules (namespace VARCHAR(128) NOT NULL, id VARCHAR(128) NOT NULL, definition_json TEXT NOT NULL, revision VARCHAR(64) NOT NULL, enabled BIGINT NOT NULL, next_due_ms BIGINT NOT NULL, replay_floor_ms BIGINT NOT NULL, PRIMARY KEY (namespace, id))"
+        );
+        this._create(
+            "CREATE TABLE IF NOT EXISTS " + this.prefix + "_occurrences (namespace VARCHAR(128) NOT NULL, schedule_id VARCHAR(128) NOT NULL, due_ms BIGINT NOT NULL, revision VARCHAR(64) NOT NULL, job_id VARCHAR(64), skipped_until_ms BIGINT, disposition VARCHAR(16) NOT NULL, PRIMARY KEY (namespace, schedule_id, due_ms))"
+        );
+        for (spec in [["_ready", "namespace, status, queue_name, run_at_ms"], ["_expired", "namespace, status, lease_until_ms"], ["_terminal", "namespace, status, completed_at_ms"]]) {
+            string indexName = this.prefix + (spec[0] as string);
+            bool exists = false;
+            if (this.dialect == "mysql") {
+                exists = this.conn.query("SELECT index_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", this.prefix + "_items", indexName).all().length() > 0;
+            }
+            if (!exists) {
+                string conditional = this.dialect == "mysql" ? "" : "IF NOT EXISTS ";
+                try {
+                    this.conn.exec(
+                        "CREATE INDEX " + conditional + indexName + " ON " + this.prefix + "_items (" + (spec[1] as string) + ")"
+                    );
+                } catch (Error e) {
+                    /* A concurrent initializer may have created the MySQL index first. */
+                    if (this.dialect != "mysql" || this.conn.query("SELECT index_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", this.prefix + "_items", indexName).all().length() == 0) {
+                        throw e;
+                    }
+                }
+            }
+        }
+        this.conn.exec(
+            "UPDATE " + meta + " SET version = 1 WHERE component = ? AND version = 0",
+            "jobs"
+        );
+    }
+
+    func _insertIgnore(string table, string columns, string values, string conflictColumn): string {
+        string sql = "INSERT INTO " + table + " (" + columns + ") VALUES (" + values + ")";
+        if (this.dialect == "mysql") {
+            return sql + " ON DUPLICATE KEY UPDATE " + conflictColumn + " = " + conflictColumn;
+        }
+        return sql + " ON CONFLICT DO NOTHING";
+    }
+
+    func _begin(bool write = true): db.Transaction {
+        let tx = this.dialect == "sqlite" ? this.conn.begin(this.operationTimeoutMs) : this.conn.begin(this.operationTimeoutMs, {"isolation": "readCommitted"});
+        if (write && this.dialect == "sqlite") {
+            try {
+                tx.exec(
+                    "UPDATE " + this.prefix + "_meta SET version = version WHERE component = ?",
+                    "jobs"
+                );
+            } catch (Error e) {
+                tx.rollback();
+                throw e;
+            }
+        }
+        return tx;
+    }
+
+    func _lock(bool skip = false): string {
+        if (this.dialect == "sqlite") {
+            return "";
+        }
+        return skip ? " FOR UPDATE SKIP LOCKED" : " FOR UPDATE";
+    }
+
+    func _now(db.Transaction tx): int {
+        string expression = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)";
+        if (this.dialect == "postgres") {
+            expression = "CAST(EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS BIGINT)";
+        }
+        if (this.dialect == "mysql") {
+            expression = "CAST(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000 AS SIGNED)";
+        }
+        return tx.query("SELECT " + expression + " AS ms").all()[0]["ms"] as int;
+    }
+
+    func _delay(dict<string, any> opts, int attempt): int {
+        integer(opts, "maxAttempts", 5, 1);
+        integer(opts, "timeoutMs", 0);
+        any policy = opts["backoffMs"] ?? [1000, 5000, 30000, 120000, 600000];
+        int delay = 0;
+        if (policy instanceof callable) {
+            delay = policy(attempt) as int;
+        } else {
+            let delays = policy as list<int>;
+            if (delays.length() == 0) {
+                throw ValueError("jobs: backoffMs must not be empty");
+            }
+            for (value in delays) {
+                if (value < 0) {
+                    throw ValueError("jobs: negative retry delay");
+                }
+            }
+            int index = attempt < delays.length() ? attempt - 1 : delays.length() - 1;
+            delay = delays[index];
+        }
+        if (delay < 0 || delay > 2147483647) {
+            throw ValueError("jobs: invalid retry delay");
+        }
+        if ((opts["jitter"] ?? false) as bool && delay > 0) {
+            delay = random.intRange(0, delay);
+        }
+        return delay;
+    }
+
+    func _reserve(db.Transaction tx, string name, string hash, any key, string id): string {
+        for (attempt in 0..<5) {
+            tx.exec(
+                this._insertIgnore(
+                    this.prefix + "_dedupe",
+                    "namespace, name, key_hash, original_key, job_id",
+                    "?, ?, ?, ?, ?",
+                    "key_hash"
+                ),
+                this.namespace,
+                name,
+                hash,
+                key,
+                id
+            );
+            let rows = tx.query("SELECT original_key, job_id FROM " + this.prefix + "_dedupe WHERE namespace = ? AND name = ? AND key_hash = ?" + this._lock(), this.namespace, name, hash).all(
+            );
+            /* The previous holder can finish between the insert and the locking read. */
+            if (rows.length() == 0) {
+                continue;
+            }
+            if (rows[0]["original_key"] != key) {
+                throw ConflictError("jobs: dedupe hash collision");
+            }
+            return rows[0]["job_id"] as string;
+        }
+        throw ConflictError("jobs: dedupe reservation contention");
+    }
+
+    func enqueue(string name, dict<string, any> payload, dict<string, any> opts = {}): string {
+        let tx = this._begin();
+        try {
+            let id = this._enqueue(tx, name, payload, opts);
+            tx.commit();
+            return id;
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func enqueueIn(db.Transaction tx, string name, dict<string, any> payload, dict<string, any> opts = {}): string {
+        if (!(tx._connection is this.conn)) {
+            throw ValueError("jobs: transaction belongs to another connection");
+        }
+        return this._enqueue(tx, name, payload, opts);
+    }
+
+    func _enqueue(db.Transaction tx, string name, dict<string, any> payload, dict<string, any> opts): string {
+        label(name);
+        string queue = label((opts["queue"] ?? "default") as string);
+        if (opts.contains("runAtMs") && opts.contains("delayMs")) {
+            throw ValueError("jobs: runAtMs and delayMs conflict");
+        }
+        int now = this._now(tx);
+        int runAt = opts.contains("runAtMs") ? (opts["runAtMs"] as int) : now + integer(opts, "delayMs", 0);
+        if (runAt < 0 || runAt > 253402300799999) {
+            throw ValueError("jobs: invalid runAtMs");
+        }
+        string encoded = json.stringify(payload);
+        if (this.maxPayloadBytes > 0 && bytes.fromString(encoded).length() > this.maxPayloadBytes) {
+            throw ValueError("jobs: payload exceeds maxPayloadBytes");
+        }
+        string id = secrets.randomHex(16);
+        ?string hash = null;
+        if (opts["dedupeKey"] != null) {
+            string key = opts["dedupeKey"] as string;
+            hash = crypt.sha256(key);
+            string holder = this._reserve(tx, name, hash as string, key, id);
+            if (holder != id) {
+                return holder;
+            }
+        }
+        tx.exec(
+            "INSERT INTO " + this.prefix + "_items (id, namespace, name, queue_name, payload_json, status, run_at_ms, created_at_ms, attempts, sequence, max_attempts, retry_json, next_delay_ms, timeout_ms, dedupe_hash, dedupe_key, schedule_id, occurrence_at_ms) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, 0, 0, 0, '[]', 0, 0, ?, ?, ?, ?)",
+            id,
+            this.namespace,
+            name,
+            queue,
+            encoded,
+            runAt,
+            now,
+            hash,
+            opts["dedupeKey"],
+            opts["scheduleId"],
+            opts["occurrenceAtMs"]
+        );
+        return id;
+    }
+
+    func _claim(list<string> queues, list<string> names, string owner, int leaseMs): ?dict<string, any> {
+        let tx = this._begin();
+        try {
+            int now = this._now(tx);
+            for (queue in queues) {
+                string sql = "SELECT * FROM " + this.prefix + "_items WHERE namespace = ? AND status = 'pending' AND queue_name = ? AND run_at_ms <= ?";
+                list<any> args = [this.namespace, queue, now];
+                if (names.length() > 0) {
+                    sql += " AND name IN (";
+                    for (i in 0..<names.length()) {
+                        sql += i == 0 ? "?" : ",?";
+                        args.push(names[i]);
+                    }
+                    sql += ")";
+                }
+                let rows = tx.query(sql + " ORDER BY run_at_ms, created_at_ms, id LIMIT 1" + this._lock(true), ...args).all(
+                );
+                if (rows.length() == 0) {
+                    continue;
+                }
+                let row = rows[0];
+                string name = row["name"] as string;
+                int attempt = (row["attempts"] as int) + 1;
+                int sequence = (row["sequence"] as int) + 1;
+                int maximum = attempt;
+                int timeout = 0;
+                int delay = 0;
+                string retryJson = "{\"maxAttempts\":" + (attempt as string) + ",\"backoffMs\":[0]}";
+                ?string policyError = null;
+                try {
+                    dict<string, any> policy = this._handlers.contains(name) ? (this._handlers[name]["options"] as dict<string, any>) : {};
+                    if ((row["max_attempts"] as int) > 0) {
+                        let saved = json.parse(row["retry_json"] as string) as dict<string, any>;
+                        if ((saved["backoffCallable"] ?? false) == true && this._handlers.contains(name)) {
+                            saved["backoffMs"] = policy["backoffMs"];
+                        }
+                        policy = saved;
+                    }
+                    int resolvedMaximum = (row["max_attempts"] as int) > 0 ? (row["max_attempts"] as int) : integer(policy, "maxAttempts", 5, 1);
+                    int resolvedTimeout = (row["max_attempts"] as int) > 0 ? (row["timeout_ms"] as int) : integer(policy, "timeoutMs", 0);
+                    int resolvedDelay = this._delay(policy, attempt);
+                    any backoff = policy["backoffMs"] ?? [1000, 5000, 30000, 120000, 600000];
+                    bool callableBackoff = backoff instanceof callable;
+                    retryJson = json.stringify({"maxAttempts": resolvedMaximum, "timeoutMs": resolvedTimeout, "backoffMs": callableBackoff ? [resolvedDelay] : backoff, "backoffCallable": callableBackoff, "jitter": policy["jitter"] ?? false});
+                    maximum = resolvedMaximum;
+                    timeout = resolvedTimeout;
+                    delay = resolvedDelay;
+                } catch (Error e) {
+                    policyError = "jobs: invalid retry policy: " + e.message;
+                }
+                string token = secrets.randomHex(16);
+                tx.exec(
+                    "UPDATE " + this.prefix + "_items SET status = 'running', attempts = ?, sequence = ?, max_attempts = ?, timeout_ms = ?, next_delay_ms = ?, retry_json = ?, claim_token = ?, owner = ?, lease_until_ms = ? WHERE id = ? AND namespace = ? AND status = 'pending'",
+                    attempt,
+                    sequence,
+                    maximum,
+                    timeout,
+                    delay,
+                    retryJson,
+                    token,
+                    owner,
+                    now + leaseMs,
+                    row["id"],
+                    this.namespace
+                );
+                tx.exec(
+                    "INSERT INTO " + this.prefix + "_attempts (job_id, sequence, token, owner, started_at_ms, outcome) VALUES (?, ?, ?, ?, ?, 'running')",
+                    row["id"],
+                    sequence,
+                    token,
+                    owner,
+                    now
+                );
+                row["attempts"] = attempt;
+                row["sequence"] = sequence;
+                row["claim_token"] = token;
+                row["max_attempts"] = maximum;
+                row["timeout_ms"] = timeout;
+                row["next_delay_ms"] = delay;
+                row["policy_error"] = policyError;
+                tx.commit();
+                return row;
+            }
+            tx.commit();
+            return null;
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func _renew(dict<string, any> row, int leaseMs): bool {
+        let tx = this._begin();
+        try {
+            int now = this._now(tx);
+            bool owned = affected(tx.exec("UPDATE " + this.prefix + "_items SET lease_until_ms = ? WHERE id = ? AND namespace = ? AND status = 'running' AND claim_token = ? AND lease_until_ms > ?", now + leaseMs, row["id"], this.namespace, row["claim_token"], now)) == 1;
+            tx.commit();
+            return owned;
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func _finish(dict<string, any> claim, ?string error, bool permanent = false): bool {
+        if (error != null && (error as string).length() > 4096) {
+            error = (error as string).substring(0, 4096);
+        }
+        let tx = this._begin();
+        try {
+            int now = this._now(tx);
+            let rows = tx.query("SELECT * FROM " + this.prefix + "_items WHERE id = ? AND namespace = ? AND status = 'running' AND claim_token = ? AND lease_until_ms > ?" + this._lock(), claim["id"], this.namespace, claim["claim_token"], now).all(
+            );
+            if (rows.length() == 0) {
+                tx.commit();
+                return false;
+            }
+            let row = rows[0];
+            string status = error == null ? "completed" : (permanent || (row["attempts"] as int) >= (row["max_attempts"] as int) ? "failed" : "pending");
+            this._transition(tx, row, status, error, now);
+            tx.commit();
+            return true;
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func _transition(db.Transaction tx, dict<string, any> row, string status, ?string error, int now): void {
+        tx.exec(
+            "UPDATE " + this.prefix + "_items SET status = ?, run_at_ms = ?, completed_at_ms = ?, claim_token = NULL, owner = NULL, lease_until_ms = NULL, last_error = ? WHERE id = ? AND namespace = ?",
+            status,
+            status == "pending" ? now + (row["next_delay_ms"] as int) : row["run_at_ms"],
+            status == "pending" ? null : now,
+            error,
+            row["id"],
+            this.namespace
+        );
+        tx.exec(
+            "UPDATE " + this.prefix + "_attempts SET finished_at_ms = ?, outcome = ?, error = ? WHERE job_id = ? AND sequence = ? AND token = ?",
+            now,
+            status == "pending" ? "retry" : status,
+            error,
+            row["id"],
+            row["sequence"],
+            row["claim_token"]
+        );
+        if (status != "pending") {
+            tx.exec(
+                "DELETE FROM " + this.prefix + "_dedupe WHERE namespace = ? AND job_id = ?",
+                this.namespace,
+                row["id"]
+            );
+        }
+    }
+
+    func _recover(): int {
+        let tx = this._begin();
+        try {
+            int now = this._now(tx);
+            let rows = tx.query("SELECT * FROM " + this.prefix + "_items WHERE namespace = ? AND status = 'running' AND lease_until_ms <= ? ORDER BY lease_until_ms LIMIT 100" + this._lock(true), this.namespace, now).all(
+            );
+            for (row in rows) {
+                string status = (row["attempts"] as int) >= (row["max_attempts"] as int) ? "failed" : "pending";
+                this._transition(tx, row, status, "worker lost: claim lease expired", now);
+            }
+            tx.commit();
+            return rows.length();
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func get(string id): ?JobSnapshot {
+        let rows = this.conn.queryWithTimeout(this.operationTimeoutMs, "SELECT * FROM " + this.prefix + "_items WHERE id = ? AND namespace = ?", id, this.namespace).all(
+        );
+        return rows.length() == 0 ? null : JobSnapshot(rows[0]);
+    }
+
+    func stats(): QueueStats {
+        let tx = this._begin(false);
+        try {
+            int now = this._now(tx);
+            let result = QueueStats();
+            let rows = tx.query("SELECT status, COUNT(*) AS n FROM " + this.prefix + "_items WHERE namespace = ? GROUP BY status", this.namespace).all(
+            );
+            for (row in rows) {
+                int n = row["n"] as int;
+                if (row["status"] == "pending") {
+                    result.pending = n;
+                }
+                if (row["status"] == "running") {
+                    result.running = n;
+                }
+                if (row["status"] == "completed") {
+                    result.completed = n;
+                }
+                if (row["status"] == "failed") {
+                    result.failed = n;
+                }
+                if (row["status"] == "cancelled") {
+                    result.cancelled = n;
+                }
+            }
+            let ready = tx.query("SELECT COUNT(*) AS n, MIN(run_at_ms) AS oldest FROM " + this.prefix + "_items WHERE namespace = ? AND status = 'pending' AND run_at_ms <= ?", this.namespace, now).all()[0];
+            result.ready = ready["n"] as int;
+            result.delayed = result.pending - result.ready;
+            result.oldestReadyAgeMs = ready["oldest"] == null ? 0 : now - (ready["oldest"] as int);
+            tx.commit();
+            return result;
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func failed(dict<string, any> opts = {}): list<JobSnapshot> {
+        int limit = integer(opts, "limit", 100, 1);
+        if (limit > 1000) {
+            throw ValueError("jobs: limit exceeds 1000");
+        }
+        string after = (opts["afterId"] ?? opts["after"] ?? "") as string;
+        let rows = this.conn.queryWithTimeout(this.operationTimeoutMs, "SELECT * FROM " + this.prefix + "_items WHERE namespace = ? AND status = 'failed' AND id > ? ORDER BY id LIMIT ?", this.namespace, after, limit).all(
+        );
+        list<JobSnapshot> result = [];
+        for (row in rows) {
+            result.push(JobSnapshot(row));
+        }
+        return result;
+    }
+
+    func retry(string id): bool {
+        let tx = this._begin();
+        try {
+            let rows = tx.query("SELECT * FROM " + this.prefix + "_items WHERE id = ? AND namespace = ? AND status = 'failed'" + this._lock(), id, this.namespace).all(
+            );
+            if (rows.length() == 0) {
+                tx.commit();
+                return false;
+            }
+            let row = rows[0];
+            if (row["dedupe_hash"] != null) {
+                string hash = row["dedupe_hash"] as string;
+                if (this._reserve(tx, row["name"] as string, hash, row["dedupe_key"], id) != id) {
+                    throw ConflictError("jobs: equivalent job is already active");
+                }
+            }
+            tx.exec(
+                "UPDATE " + this.prefix + "_items SET status = 'pending', attempts = 0, max_attempts = 0, run_at_ms = ?, completed_at_ms = NULL, last_error = NULL WHERE id = ? AND namespace = ?",
+                this._now(tx),
+                id,
+                this.namespace
+            );
+            tx.commit();
+            return true;
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func purge(string id): bool {
+        let tx = this._begin();
+        try {
+            let rows = tx.query("SELECT id FROM " + this.prefix + "_items WHERE namespace = ? AND id = ? AND status IN ('completed', 'failed', 'cancelled')" + this._lock(), this.namespace, id).all(
+            );
+            if (rows.length() == 0) {
+                tx.commit();
+                return false;
+            }
+            tx.exec("DELETE FROM " + this.prefix + "_attempts WHERE job_id = ?", id);
+            tx.exec(
+                "DELETE FROM " + this.prefix + "_items WHERE namespace = ? AND id = ?",
+                this.namespace,
+                id
+            );
+            tx.commit();
+            return true;
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func prune(dict<string, any> opts): int {
+        int before = opts["beforeMs"] as int;
+        int limit = integer(opts, "limit", 100, 1);
+        if (before < 0 || limit > 1000) {
+            throw ValueError("jobs: invalid pruning bounds");
+        }
+        let tx = this._begin();
+        try {
+            let rows = tx.query("SELECT id FROM " + this.prefix + "_items WHERE namespace = ? AND status IN ('completed', 'failed', 'cancelled') AND completed_at_ms < ? ORDER BY completed_at_ms, id LIMIT ?" + this._lock(true), this.namespace, before, limit).all(
+            );
+            for (row in rows) {
+                tx.exec("DELETE FROM " + this.prefix + "_attempts WHERE job_id = ?", row["id"]);
+                tx.exec(
+                    "DELETE FROM " + this.prefix + "_items WHERE id = ? AND namespace = ?",
+                    row["id"],
+                    this.namespace
+                );
+            }
+            tx.commit();
+            return rows.length();
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+}
+
+export class WorkerResult {
+    bool drained;
+    int started;
+    int completed;
+    int failed;
+    int retry;
+    int lost;
+
+    func WorkerResult(store.Store state, bool drained = true) {
+        this.drained = drained;
+        this.started = (state.get("started") ?? 0) as int;
+        this.completed = (state.get("completed") ?? 0) as int;
+        this.failed = (state.get("failed") ?? 0) as int;
+        this.retry = (state.get("retry") ?? 0) as int;
+        this.lost = (state.get("lost") ?? 0) as int;
+    }
+}
+
+export class WorkerHandle {
+    Task<any> task;
+    store.Store _state;
+
+    func WorkerHandle(Task<any> task, store.Store state) {
+        this.task = task;
+        this._state = state;
+    }
+
+    func status(): dict<string, any> {
+        return {
+            "health": this._state.get("health") ?? "starting",
+            "started": this._state.get("started") ?? 0,
+            "completed": this._state.get("completed") ?? 0,
+            "failed": this._state.get("failed") ?? 0,
+            "retry": this._state.get("retry") ?? 0,
+            "lost": this._state.get("lost") ?? 0,
+        };
+    }
+
+    func requestStop(): void {
+        this._state.set("stop", true);
+    }
+    func wait(int timeoutMs): WorkerResult {
+        if (timeoutMs < 0) {
+            throw ValueError("jobs: negative wait timeout");
+        }
+        int deadline = time.monotonic() + timeoutMs;
+        while (!async.done(this.task)) {
+            if (time.monotonic() >= deadline) {
+                return WorkerResult(this._state, false);
+            }
+            async.await(async.sleep(5));
+        }
+        return async.await(this.task) as WorkerResult;
+    }
+}
+
+export class Worker {
+    Queue queue;
+    list<string> queues;
+    list<string> names;
+    int maxConcurrency;
+    int pollIntervalMs;
+    int leaseMs;
+    int heartbeatMs;
+    int shutdownTimeoutMs;
+    int maxJobs;
+    bool drainOnce;
+    bool recoveryEnabled;
+    int maxStoreFailures;
+    dict<string, int> queueConcurrency;
+    string workerId;
+    ?callable _drainCheck;
+
+    func Worker(Queue queue, dict<string, any> opts = {}) {
+        this.queue = queue;
+        this.queues = ((opts["queues"] ?? ["high", "default", "low"]) as list<string>).copy();
+        this.names = ((opts["names"] ?? []) as list<string>).copy();
+        if (this.queues.length() == 0) {
+            throw ValueError("jobs: worker must select a queue");
+        }
+        for (q in this.queues) {
+            label(q);
+        }
+        for (name in this.names) {
+            label(name);
+        }
+        this.maxConcurrency = integer(opts, "maxConcurrency", 1, 1);
+        this.pollIntervalMs = integer(opts, "pollIntervalMs", 1000, 1);
+        this.leaseMs = integer(opts, "leaseMs", 60000, 1);
+        this.heartbeatMs = integer(opts, "heartbeatMs", 10000, 1);
+        if (this.heartbeatMs + queue.operationTimeoutMs >= this.leaseMs) {
+            throw ValueError("jobs: heartbeat and database timeout must fit inside the lease");
+        }
+        this.shutdownTimeoutMs = integer(opts, "shutdownTimeoutMs", 30000, 1);
+        this.maxJobs = opts.contains("maxJobs") ? integer(opts, "maxJobs", 0) : -1;
+        this.drainOnce = (opts["drainOnce"] ?? opts.contains("maxJobs")) as bool;
+        this.recoveryEnabled = (opts["recoveryEnabled"] ?? true) as bool;
+        this.maxStoreFailures = integer(opts, "maxStoreFailures", 10, 1);
+        this.queueConcurrency = {};
+        for (q, cap in (opts["queueConcurrency"] ?? {}) as dict<string, int>) {
+            if (cap <= 0 || !this.queues.contains(q)) {
+                throw ValueError("jobs: queue concurrency requires a selected queue and positive cap");
+            }
+            this.queueConcurrency[q] = cap;
+        }
+        this.workerId = label((opts["workerId"] ?? (sys.hostname() + ":" + (sys.pid() as string))) as string);
+        this._drainCheck = opts["drainCheck"] as ?callable;
+    }
+
+    func start(): WorkerHandle {
+        this.queue._registrationMutex.lock();
+        this.queue._started.store(true);
+        this.queue._registrationMutex.unlock();
+        let state = store.Store();
+        let worker = this;
+        let task = async.run(func(): WorkerResult { return worker._loop(state); });
+        return WorkerHandle(task, state);
+    }
+
+    func run(): WorkerResult {
+        let handle = this.start();
+        return async.await(handle.task) as WorkerResult;
+    }
+
+    func _finalize(dict<string, any> row, store.Store state, sync.Mutex gate, ?string error, bool permanent): string {
+        gate.lock();
+        defer gate.unlock();
+        if (state.get("lost") == true) {
+            return "lost";
+        }
+        bool owned = this.queue._finish(row, error, permanent);
+        state.set("finalized", true);
+        if (!owned) {
+            return "lost";
+        }
+        if (error == null) {
+            return "completed";
+        }
+        return permanent || (row["attempts"] as int) >= (row["max_attempts"] as int) ? "failed" : "retry";
+    }
+
+    func _attempt(dict<string, any> row, store.Store state, sync.Mutex gate): string {
+        ?string error = null;
+        bool permanent = false;
+        string name = row["name"] as string;
+        try {
+            permanent = true;
+            if (row["policy_error"] != null) {
+                throw JobError(row["policy_error"] as string);
+            }
+            let job = Job(row, state);
+            if (!this.queue._handlers.contains(name)) {
+                throw JobError("jobs: no handler registered for " + name);
+            }
+            permanent = false;
+            let handler = this.queue._handlers[name]["handler"] as callable;
+            handler(job);
+        } catch (Error e) {
+            error = e.message;
+        }
+        if (state.get("timedOut") == true) {
+            error = "jobs: execution cancelled after timeout";
+        }
+        state.set(
+            "error",
+            error == null ? null : (error as string).substring(0, (error as string).length() > 4096 ? 4096 : (error as string).length())
+        );
+        for (int tries = 1; true; tries += 1) {
+            try {
+                return this._finalize(row, state, gate, error, permanent);
+            } catch (Error e) {
+                if (tries >= 3) {
+                    /* The unfinished claim expires and recovery applies the retry policy. */
+                    state.set("lost", true);
+                    this.queue._emit(
+                        "job.finish_failed",
+                        {"workerId": this.workerId, "jobId": row["id"], "error": e.message}
+                    );
+                    return "lost";
+                }
+                async.await(async.sleep(100 * tries));
+            }
+        }
+        return "lost";
+    }
+
+    func _loop(store.Store state): WorkerResult {
+        list<dict<string, any>> inflight = [];
+        int nextRecovery = 0;
+        int nextPoll = 0;
+        int stopAt = 0;
+        int storeFailures = 0;
+        int storeBackoffUntil = 0;
+        ?string failure = null;
+        this.queue._emit("worker.started", {"workerId": this.workerId});
+        try {
+            while (true) {
+                int now = time.monotonic();
+                if (this._drainCheck != null && ((this._drainCheck as callable)() as bool)) {
+                    state.set("stop", true);
+                }
+                bool stopping = state.get("stop") == true;
+                state.set(
+                    "health",
+                    state.get("uncertain") == true ? "lease-uncertain" : (stopping ? "draining" : (inflight.length() > 0 ? "working" : "idle"))
+                );
+                if (stopping && stopAt == 0) {
+                    stopAt = now + this.shutdownTimeoutMs;
+                }
+                list<dict<string, any>> remaining = [];
+                for (entry in inflight) {
+                    let task = entry["task"];
+                    let jobState = entry["state"] as store.Store;
+                    if (async.done(task)) {
+                        string outcome = async.await(task) as string;
+                        state.incr(outcome);
+                        let claim = entry["claim"] as dict<string, any>;
+                        this.queue._emit(
+                            "job." + outcome,
+                            {
+                                "workerId": this.workerId,
+                                "jobId": claim["id"],
+                                "name": claim["name"],
+                                "queue": claim["queue_name"],
+                                "sequence": claim["sequence"],
+                                "durationMs": now - (entry["startedAt"] as int),
+                                "error": jobState.get("error"),
+                                "scheduleId": claim["schedule_id"],
+                                "occurrenceAtMs": claim["occurrence_at_ms"],
+                            }
+                        );
+                        continue;
+                    }
+                    int deadline = entry["deadline"] as int;
+                    if (deadline > 0 && now >= deadline) {
+                        jobState.set("timedOut", true);
+                        jobState.set("cancel", true);
+                    }
+                    if (stopAt > 0 && now >= stopAt) {
+                        jobState.set("cancel", true);
+                    }
+                    if (now >= (entry["renewAt"] as int)) {
+                        let gate = entry["gate"] as sync.Mutex;
+                        int nextRenewal = now + this.heartbeatMs;
+                        gate.lock();
+                        try {
+                            bool owned = true;
+                            if (jobState.get("finalized") != true && jobState.get("lost") != true) {
+                                try {
+                                    owned = this.queue._renew(entry["claim"] as dict<string, any>, this.leaseMs);
+                                    if (owned) {
+                                        entry["leaseUntil"] = now + this.leaseMs;
+                                    }
+                                } catch (Error e) {
+                                    owned = now < (entry["leaseUntil"] as int) - this.queue.operationTimeoutMs;
+                                    nextRenewal = now + (this.heartbeatMs < 1000 ? this.heartbeatMs : 1000);
+                                    this.queue._emit(
+                                        "worker.store_error",
+                                        {
+                                            "workerId": this.workerId,
+                                            "operation": "renew",
+                                            "error": e.message,
+                                        }
+                                    );
+                                }
+                            }
+                            if (!owned) {
+                                jobState.set("lost", true);
+                                state.set("uncertain", true);
+                                jobState.set("cancel", true);
+                                state.set("stop", true);
+                                this.queue._emit(
+                                    "claim.lost",
+                                    {
+                                        "workerId": this.workerId,
+                                        "jobId": (entry["claim"] as dict<string, any>)["id"],
+                                    }
+                                );
+                            }
+                        } finally {
+                            gate.unlock();
+                        }
+                        entry["renewAt"] = nextRenewal;
+                    }
+                    remaining.push(entry);
+                }
+                inflight = remaining;
+                if (this._drainCheck != null && ((this._drainCheck as callable)() as bool)) {
+                    state.set("stop", true);
+                }
+                stopping = state.get("stop") == true;
+                if (stopping && inflight.length() == 0) {
+                    break;
+                }
+                bool claimed = false;
+                bool readyEmpty = false;
+                bool storeUsed = false;
+                try {
+                    if (!stopping && this.recoveryEnabled && now >= nextRecovery) {
+                        storeUsed = true;
+                        int recovered = this.queue._recover();
+                        if (recovered > 0) {
+                            this.queue._emit(
+                                "claims.recovered",
+                                {"workerId": this.workerId, "count": recovered}
+                            );
+                        }
+                        nextRecovery = now + this.heartbeatMs;
+                    }
+                    if (!stopping && now >= nextPoll) {
+                        storeUsed = true;
+                        while (inflight.length() < this.maxConcurrency && (this.maxJobs < 0 || ((state.get("started") ?? 0) as int) < this.maxJobs)) {
+                            list<string> open = [];
+                            for (q in this.queues) {
+                                int running = 0;
+                                for (entry in inflight) {
+                                    if (entry["queue"] == q) {
+                                        running += 1;
+                                    }
+                                }
+                                if (!this.queueConcurrency.contains(q) || running < this.queueConcurrency[q]) {
+                                    open.push(q);
+                                }
+                            }
+                            if (open.length() == 0) {
+                                break;
+                            }
+                            let claim = this.queue._claim(
+                                open,
+                                this.names,
+                                this.workerId,
+                                this.leaseMs
+                            );
+                            if (claim == null) {
+                                readyEmpty = true;
+                                break;
+                            }
+                            let row = claim as dict<string, any>;
+                            let jobState = store.Store();
+                            let gate = sync.Mutex();
+                            let worker = this;
+                            let task = async.run(
+                                func(): string { return worker._attempt(row, jobState, gate); }
+                            );
+                            int timeout = row["timeout_ms"] as int;
+                            inflight.push({
+                                "startedAt": now,
+                                "task": task,
+                                "claim": row,
+                                "state": jobState,
+                                "gate": gate,
+                                "queue": row["queue_name"],
+                                "renewAt": now + this.heartbeatMs,
+                                "leaseUntil": now + this.leaseMs,
+                                "deadline": timeout > 0 ? now + timeout : 0,
+                            });
+                            state.incr("started");
+                            this.queue._emit(
+                                "job.started",
+                                {
+                                    "workerId": this.workerId,
+                                    "jobId": row["id"],
+                                    "name": row["name"],
+                                    "queue": row["queue_name"],
+                                    "sequence": row["sequence"],
+                                }
+                            );
+                            claimed = true;
+                        }
+                        nextPoll = now + this.pollIntervalMs;
+                    }
+                    if (storeUsed) {
+                        storeFailures = 0;
+                    }
+                } catch (Error e) {
+                    storeFailures += 1;
+                    this.queue._emit(
+                        "worker.store_error",
+                        {
+                            "workerId": this.workerId,
+                            "operation": "admission",
+                            "failures": storeFailures,
+                            "error": e.message,
+                        }
+                    );
+                    if (storeFailures >= this.maxStoreFailures) {
+                        throw e;
+                    }
+                    int pause = this.pollIntervalMs * storeFailures;
+                    storeBackoffUntil = now + (pause > 30000 ? 30000 : pause);
+                    nextRecovery = storeBackoffUntil;
+                }
+                bool limitReached = this.maxJobs >= 0 && ((state.get("started") ?? 0) as int) >= this.maxJobs;
+                if (inflight.length() == 0 && (limitReached || (this.drainOnce && readyEmpty))) {
+                    break;
+                }
+                if (claimed || inflight.length() > 0) {
+                    nextPoll = 0;
+                }
+                if (nextPoll < storeBackoffUntil) {
+                    nextPoll = storeBackoffUntil;
+                }
+                if (inflight.length() > 0) {
+                    list<Task<any>> pending = [];
+                    for (entry in inflight) {
+                        pending.push(entry["task"] as Task<any>);
+                    }
+                    async.waitAny(pending, 5);
+                } else {
+                    async.await(async.sleep(5));
+                }
+            }
+        } catch (Error e) {
+            failure = e.message;
+            state.set("stop", true);
+            for (entry in inflight) {
+                (entry["state"] as store.Store).set("cancel", true);
+            }
+        }
+        for (entry in inflight) {
+            try {
+                async.await(entry["task"]);
+            } catch (Error e) {
+                if (failure == null) {
+                    failure = e.message;
+                }
+            }
+        }
+        state.set("health", failure == null ? "stopped" : "failed");
+        this.queue._emit("worker.stopped", {"workerId": this.workerId, "error": failure});
+        if (failure != null) {
+            throw JobError(failure as string);
+        }
+        return WorkerResult(state);
+    }
+}
+
+func canonical(any value): any {
+    if (value instanceof dict) {
+        let source = value as dict<string, any>;
+        dict<string, any> result = {};
+        for (key in source.keys().sorted()) {
+            result[key] = canonical(source[key]);
+        }
+        return result;
+    }
+    if (value instanceof list) {
+        list<any> result = [];
+        for (item in value as list<any>) {
+            result.push(canonical(item));
+        }
+        return result;
+    }
+    return value;
+}
+
+export class Scheduler {
+    Queue queue;
+    int tickIntervalMs;
+    dict<string, dict<string, any>> _definitions;
+    atomic.AtomicBool _started;
+
+    func Scheduler(Queue queue, dict<string, any> opts = {}) {
+        if ((opts["timezone"] ?? "UTC") != "UTC") {
+            throw ValueError("jobs: scheduler supports UTC only");
+        }
+        this.queue = queue;
+        this.tickIntervalMs = integer(opts, "tickIntervalMs", 1000, 1);
+        this._definitions = {};
+        this._started = atomic.AtomicBool(false);
+    }
+
+    func _definition(string expression, string jobName, dict<string, any> payload, dict<string, any> opts): dict<string, any> {
+        label(jobName);
+        string missed = (opts["missed"] ?? "skip") as string;
+        string overlap = (opts["overlap"] ?? "allow") as string;
+        string dayMatch = (opts["dayMatch"] ?? "or") as string;
+        if (!["skip", "latest", "all"].contains(missed)) {
+            throw ValueError("jobs: invalid missed-run policy");
+        }
+        if (!["allow", "skip"].contains(overlap)) {
+            throw ValueError("jobs: invalid overlap policy");
+        }
+        if ((opts["timezone"] ?? "UTC") != "UTC") {
+            throw ValueError("jobs: scheduler supports UTC only");
+        }
+        cron.nextAfter(expression, time.now() // 1000, {"dayMatch": dayMatch});
+        return {
+            "cron": expression,
+            "job": jobName,
+            "payload": canonical(payload),
+            "queue": label((opts["queue"] ?? "default") as string),
+            "dedupeKey": opts["dedupeKey"],
+            "missed": missed,
+            "overlap": overlap,
+            "dayMatch": dayMatch,
+            "maxAgeMs": integer(opts, "maxAgeMs", 86400000, 1),
+            "batchSize": integer(opts, "batchSize", 100, 1),
+        };
+    }
+
+    func add(string id, string expression, string jobName, dict<string, any> payload, dict<string, any> opts = {}): void {
+        label(id);
+        if (this._started.load()) {
+            throw JobError("jobs: scheduler registration is closed");
+        }
+        let definition = this._definition(expression, jobName, payload, opts);
+        string encoded = json.stringify(definition);
+        string revision = crypt.sha256(encoded);
+        let q = this.queue;
+        let tx = q._begin();
+        try {
+            int now = q._now(tx);
+            int due = this._next(definition, (now // 60000) * 60000 - 1);
+            tx.exec(
+                q._insertIgnore(
+                    q.prefix + "_schedules",
+                    "namespace, id, definition_json, revision, enabled, next_due_ms, replay_floor_ms",
+                    "?, ?, ?, ?, 1, ?, ?",
+                    "id"
+                ),
+                q.namespace,
+                id,
+                encoded,
+                revision,
+                due,
+                now - (now % 60000)
+            );
+            let row = tx.query("SELECT revision FROM " + q.prefix + "_schedules WHERE namespace = ? AND id = ?" + q._lock(), q.namespace, id).all()[0];
+            if (row["revision"] != revision) {
+                throw ConflictError("jobs: conflicting schedule definition " + id);
+            }
+            tx.commit();
+            this._definitions[id] = {"definition": definition, "revision": revision};
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func revision(string id): ?string {
+        let rows = this.queue.conn.queryWithTimeout(this.queue.operationTimeoutMs, "SELECT revision FROM " + this.queue.prefix + "_schedules WHERE namespace = ? AND id = ?", this.queue.namespace, id).all(
+        );
+        return rows.length() == 0 ? null : (rows[0]["revision"] as string);
+    }
+
+    func disable(string id): bool {
+        return affected(this.queue.conn.execWithTimeout(this.queue.operationTimeoutMs, "UPDATE " + this.queue.prefix + "_schedules SET enabled = 0 WHERE namespace = ? AND id = ? AND enabled = 1", this.queue.namespace, id)) == 1;
+    }
+
+    func update(string id, string expression, string jobName, dict<string, any> payload, dict<string, any> opts): void {
+        if (this._started.load()) {
+            throw JobError("jobs: update definitions before scheduler start");
+        }
+        string expected = opts["expectedRevision"] as string;
+        let definition = this._definition(expression, jobName, payload, opts);
+        string encoded = json.stringify(definition);
+        string revision = crypt.sha256(encoded);
+        let q = this.queue;
+        let tx = q._begin();
+        try {
+            int now = q._now(tx);
+            int due = this._next(definition, now);
+            int changed = affected(
+                tx.exec(
+                    "UPDATE " + q.prefix + "_schedules SET definition_json = ?, revision = ?, enabled = 1, next_due_ms = ? WHERE namespace = ? AND id = ? AND revision = ? AND replay_floor_ms <= ?",
+                    encoded,
+                    revision,
+                    due,
+                    q.namespace,
+                    id,
+                    expected,
+                    now
+                )
+            );
+            if (changed != 1) {
+                throw ConflictError("jobs: schedule revision changed or replay boundary would be crossed");
+            }
+            tx.commit();
+            this._definitions[id] = {"definition": definition, "revision": revision};
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func _next(dict<string, any> definition, int afterMs): int {
+        return cron.nextAfter(definition["cron"] as string, afterMs // 1000, {"dayMatch": definition["dayMatch"]}) * 1000;
+    }
+
+    func inspect(dict<string, any> opts = {}): list<dict<string, any>> {
+        int limit = integer(opts, "limit", 100, 1);
+        if (limit > 1000) {
+            throw ValueError("jobs: schedule page limit exceeds 1000");
+        }
+        string after = (opts["afterId"] ?? "") as string;
+        let tx = this.queue._begin(false);
+        try {
+            int now = this.queue._now(tx);
+            let rows = tx.query("SELECT id, revision, enabled, next_due_ms, replay_floor_ms FROM " + this.queue.prefix + "_schedules WHERE namespace = ? AND id > ? ORDER BY id LIMIT ?", this.queue.namespace, after, limit).all(
+            );
+            for (row in rows) {
+                row["lagMs"] = row["enabled"] == 1 && (row["next_due_ms"] as int) < now ? now - (row["next_due_ms"] as int) : 0;
+            }
+            tx.commit();
+            return rows;
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+
+    func occurrences(string id, dict<string, any> opts = {}): list<dict<string, any>> {
+        int limit = integer(opts, "limit", 100, 1);
+        if (limit > 1000) {
+            throw ValueError("jobs: occurrence page limit exceeds 1000");
+        }
+        int after = (opts["afterMs"] ?? -1) as int;
+        return this.queue.conn.queryWithTimeout(this.queue.operationTimeoutMs, "SELECT due_ms, revision, job_id, disposition, skipped_until_ms FROM " + this.queue.prefix + "_occurrences WHERE namespace = ? AND schedule_id = ? AND due_ms > ? ORDER BY due_ms LIMIT ?", this.queue.namespace, id, after, limit).all(
+        );
+    }
+
+    func tick(): int {
+        int published = 0;
+        let q = this.queue;
+        for (id, local in this._definitions) {
+            let definition = local["definition"] as dict<string, any>;
+            let tx = q._begin();
+            try {
+                int now = q._now(tx);
+                let rows = tx.query("SELECT * FROM " + q.prefix + "_schedules WHERE namespace = ? AND id = ? AND enabled = 1" + q._lock(true), q.namespace, id).all(
+                );
+                if (rows.length() == 0) {
+                    tx.commit();
+                    continue;
+                }
+                let row = rows[0];
+                if (row["revision"] != local["revision"]) {
+                    throw ConflictError("jobs: scheduler definition revision changed");
+                }
+                int due = row["next_due_ms"] as int;
+                if (due > now) {
+                    tx.commit();
+                    continue;
+                }
+                string missed = definition["missed"] as string;
+                int skippedFrom = due;
+                if (missed == "skip" && due < (now // 60000) * 60000) {
+                    due = this._next(definition, (now // 60000) * 60000 - 1);
+                }
+                int earliest = now - (definition["maxAgeMs"] as int);
+                if (due < earliest) {
+                    due = this._next(definition, earliest - 1);
+                }
+                if (missed == "latest") {
+                    int next = this._next(definition, due);
+                    while (next <= now) {
+                        due = next;
+                        next = this._next(definition, due);
+                    }
+                }
+                if (due > skippedFrom) {
+                    tx.exec(
+                        q._insertIgnore(
+                            q.prefix + "_occurrences",
+                            "namespace, schedule_id, due_ms, revision, skipped_until_ms, disposition",
+                            "?, ?, ?, ?, ?, 'skipped'",
+                            "due_ms"
+                        ),
+                        q.namespace,
+                        id,
+                        skippedFrom,
+                        local["revision"],
+                        due
+                    );
+                }
+                int count = 0;
+                while (due <= now && count < (definition["batchSize"] as int)) {
+                    let occurrence = tx.query("SELECT disposition FROM " + q.prefix + "_occurrences WHERE namespace = ? AND schedule_id = ? AND due_ms = ?", q.namespace, id, due).all(
+                    );
+                    if (occurrence.length() == 0) {
+                        bool overlap = false;
+                        if (definition["overlap"] == "skip") {
+                            overlap = tx.query("SELECT id FROM " + q.prefix + "_items WHERE namespace = ? AND schedule_id = ? AND status IN ('pending', 'running') LIMIT 1", q.namespace, id).all().length() > 0;
+                        }
+                        ?string jobId = null;
+                        bool coalesced = false;
+                        if (!overlap) {
+                            jobId = q._enqueue(tx, definition["job"] as string, definition["payload"] as dict<string, any>, {"queue": definition["queue"], "dedupeKey": definition["dedupeKey"], "scheduleId": id, "occurrenceAtMs": due, "runAtMs": due});
+                            let selected = tx.query("SELECT schedule_id, occurrence_at_ms FROM " + q.prefix + "_items WHERE id = ?", jobId).all()[0];
+                            coalesced = selected["schedule_id"] != id || selected["occurrence_at_ms"] != due;
+                            if (!coalesced) {
+                                published += 1;
+                            }
+                        }
+                        tx.exec(
+                            "INSERT INTO " + q.prefix + "_occurrences (namespace, schedule_id, due_ms, revision, job_id, disposition) VALUES (?, ?, ?, ?, ?, ?)",
+                            q.namespace,
+                            id,
+                            due,
+                            local["revision"],
+                            jobId,
+                            overlap ? "skipped" : (coalesced ? "coalesced" : "queued")
+                        );
+                    }
+                    due = this._next(definition, due);
+                    count += 1;
+                    if (missed != "all") {
+                        break;
+                    }
+                }
+                tx.exec(
+                    "UPDATE " + q.prefix + "_schedules SET next_due_ms = ? WHERE namespace = ? AND id = ? AND revision = ?",
+                    due,
+                    q.namespace,
+                    id,
+                    local["revision"]
+                );
+                tx.commit();
+                q._emit(
+                    "schedule.tick",
+                    {
+                        "scheduleId": id,
+                        "revision": local["revision"],
+                        "lagMs": now - (row["next_due_ms"] as int),
+                        "examined": count,
+                    }
+                );
+            } catch (Error e) {
+                tx.rollback();
+                q._emit(
+                    "schedule.failed",
+                    {
+                        "scheduleId": id,
+                        "error": e.message.substring(
+                            0,
+                            e.message.length() > 4096 ? 4096 : e.message.length()
+                        ),
+                    }
+                );
+                throw e;
+            }
+        }
+        return published;
+    }
+
+    func start(): WorkerHandle {
+        this._started.store(true);
+        let state = store.Store();
+        let scheduler = this;
+        let task = async.run(func(): WorkerResult {
+            while (state.get("stop") != true) {
+                state.incr("started", scheduler.tick());
+                int deadline = time.monotonic() + scheduler.tickIntervalMs;
+                while (state.get("stop") != true && time.monotonic() < deadline) {
+                    async.await(async.sleep(5));
+                }
+            }
+            return WorkerResult(state);
+        });
+        return WorkerHandle(task, state);
+    }
+}
+
+export class MigrationReport {
+    int total;
+    int migrated;
+    int invalid;
+    list<string> errors;
+    bool dryRun;
+
+    func MigrationReport(bool dryRun) {
+        this.total = 0;
+        this.migrated = 0;
+        this.invalid = 0;
+        this.errors = [];
+        this.dryRun = dryRun;
+    }
+}
+
+export func migrateLegacy(db.Connection conn, dict<string, any> opts = {}): MigrationReport {
+    bool dryRun = (opts["dryRun"] ?? true) as bool;
+    string source = identifier(opts["sourceTable"] as string);
+    string namespace = label(opts["namespace"] as string);
+    let report = MigrationReport(dryRun);
+    int invalidIds = conn.queryWithTimeout(5000, "SELECT COUNT(*) AS n FROM " + source + " WHERE id IS NULL OR id = ''").all()[0]["n"] as int;
+    if (invalidIds > 0) {
+        report.total = invalidIds;
+        report.invalid = invalidIds;
+        report.errors.push((invalidIds as string) + " legacy rows have empty or null IDs");
+    }
+    dict<string, string> active = {};
+    dict<string, dict<string, any>> policies = (opts["policies"] ?? {}) as dict<string, dict<string, any>>;
+    int defaultMaximum = integer(opts, "maxAttempts", 5, 1);
+    string after = "";
+    while (true) {
+        let rows = conn.queryWithTimeout(5000, "SELECT * FROM " + source + " WHERE id > ? ORDER BY id LIMIT 1000", after).all(
+        );
+        if (rows.length() == 0) {
+            break;
+        }
+        for (row in rows) {
+            report.total += 1;
+            after = row["id"] as string;
+            try {
+                if (after.length() == 0 || after.length() > 64) {
+                    throw ValueError("invalid legacy job ID");
+                }
+                label(row["name"] as string);
+                label((row["priority"] ?? "default") as string);
+                let payload = json.parse(row["payload_json"] as string) as dict<string, any>;
+                datetime.parse(row["run_at"] as string);
+                datetime.parse(row["created_at"] as string);
+                if ((row["attempts"] as int) < 0) {
+                    throw ValueError("negative attempt count");
+                }
+                if (!["pending", "running", "completed", "failed"].contains(row["status"] as string)) {
+                    throw ValueError("unknown legacy state");
+                }
+                if (row["dedupe_key"] != null && ["pending", "running"].contains(row["status"] as string)) {
+                    string key = json.stringify([row["name"], row["dedupe_key"]]);
+                    if (active.contains(key)) {
+                        throw ConflictError("active dedupe conflict with " + active[key]);
+                    }
+                    active[key] = after;
+                }
+            } catch (Error e) {
+                report.invalid += 1;
+                if (report.errors.length() < 1000) {
+                    report.errors.push(after + ": " + e.message);
+                }
+            }
+        }
+    }
+    if (dryRun || report.invalid > 0) {
+        return report;
+    }
+    if ((opts["stopped"] ?? false) != true) {
+        throw ValueError("jobs: migration apply requires stopped=true after stopping producers and workers");
+    }
+    let queue = Queue(
+        conn,
+        {
+            "namespace": namespace,
+            "tablePrefix": opts["tablePrefix"] ?? "geblang_jobs",
+            "maxPayloadBytes": 0,
+            "_migration": true,
+        }
+    );
+    string marker = "migration_" + crypt.sha256(namespace).substring(0, 40);
+    conn.exec(
+        queue._insertIgnore(queue.prefix + "_meta", "component, version", "?, 0", "component"),
+        marker
+    );
+    after = "";
+    while (true) {
+        let rows = conn.queryWithTimeout(5000, "SELECT * FROM " + source + " WHERE id > ? ORDER BY id LIMIT 100", after).all(
+        );
+        if (rows.length() == 0) {
+            break;
+        }
+        let tx = queue._begin();
+        try {
+            for (row in rows) {
+                string id = row["id"] as string;
+                after = id;
+                let existing = tx.query("SELECT namespace, name, payload_json FROM " + queue.prefix + "_items WHERE id = ?" + queue._lock(), id).all(
+                );
+                if (existing.length() > 0) {
+                    if (existing[0]["namespace"] != namespace || existing[0]["name"] != row["name"] || existing[0]["payload_json"] != row["payload_json"]) {
+                        throw ConflictError("jobs: migration ID conflict " + id);
+                    }
+                    continue;
+                }
+                string name = row["name"] as string;
+                dict<string, any> policy = policies[name] ?? {"maxAttempts": defaultMaximum};
+                int maximum = integer(policy, "maxAttempts", defaultMaximum, 1);
+                int attempts = row["attempts"] as int;
+                string status = row["status"] as string;
+                ?string error = row["last_error"] as ?string;
+                if (status == "running") {
+                    status = attempts >= maximum ? "failed" : "pending";
+                    error = "legacy worker interrupted during migration";
+                }
+                ?string hash = row["dedupe_key"] == null ? null : crypt.sha256(row["dedupe_key"] as string);
+                if (hash != null && status == "pending") {
+                    if (queue._reserve(tx, name, hash as string, row["dedupe_key"], id) != id) {
+                        throw ConflictError("jobs: migration dedupe conflict " + id);
+                    }
+                }
+                int created = datetime.parse(row["created_at"] as string) * 1000;
+                int due = datetime.parse(row["run_at"] as string) * 1000;
+                tx.exec(
+                    "INSERT INTO " + queue.prefix + "_items (id, namespace, name, queue_name, payload_json, status, run_at_ms, created_at_ms, completed_at_ms, attempts, sequence, max_attempts, retry_json, next_delay_ms, timeout_ms, dedupe_hash, dedupe_key, last_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    id,
+                    namespace,
+                    name,
+                    row["priority"] ?? "default",
+                    row["payload_json"],
+                    status,
+                    due,
+                    created,
+                    ["completed", "failed"].contains(status) ? created : null,
+                    attempts,
+                    attempts,
+                    maximum,
+                    json.stringify(policy),
+                    queue._delay(policy, attempts + 1),
+                    integer(policy, "timeoutMs", 0),
+                    hash,
+                    row["dedupe_key"],
+                    error
+                );
+                report.migrated += 1;
+            }
+            tx.commit();
+        } catch (Error e) {
+            tx.rollback();
+            throw e;
+        }
+    }
+    conn.exec("UPDATE " + queue.prefix + "_meta SET version = 1 WHERE component = ?", marker);
+    return report;
+}
+
+export func migrationCli(db.Connection conn, dict<string, any> opts, list<string> args): int {
+    let effective = opts.copy();
+    effective["dryRun"] = true;
+    effective["stopped"] = false;
+    bool explicitDryRun = false;
+    bool apply = false;
+    try {
+        for (arg in args) {
+            if (arg == "--apply") {
+                apply = true;
+                effective["dryRun"] = false;
+            } else if (arg == "--stopped") {
+                effective["stopped"] = true;
+            } else if (arg == "--dry-run") {
+                explicitDryRun = true;
+            } else {
+                throw ValueError("jobs: migration accepts --dry-run or --apply --stopped");
+            }
+        }
+        if (apply && explicitDryRun) {
+            throw ValueError("jobs: --apply conflicts with --dry-run");
+        }
+        let report = migrateLegacy(conn, effective);
+        io.println(
+            json.stringify({
+                "dryRun": report.dryRun,
+                "total": report.total,
+                "migrated": report.migrated,
+                "invalid": report.invalid,
+                "errors": report.errors,
+            })
+        );
+        return report.invalid == 0 ? 0 : 1;
+    } catch (ValueError e) {
+        io.stderrPrintln(e.message);
+        return 2;
+    } catch (Error e) {
+        io.stderrPrintln(e.message);
+        return 1;
+    }
+}
+
+export func cli(Worker worker, ?Scheduler scheduler, list<string> args): int {
+    try {
+        dict<string, any> options = {
+            "queues": worker.queues,
+            "names": worker.names,
+            "maxConcurrency": worker.maxConcurrency,
+            "queueConcurrency": worker.queueConcurrency,
+            "pollIntervalMs": worker.pollIntervalMs,
+            "leaseMs": worker.leaseMs,
+            "heartbeatMs": worker.heartbeatMs,
+            "shutdownTimeoutMs": worker.shutdownTimeoutMs,
+            "workerId": worker.workerId,
+            "drainCheck": worker._drainCheck,
+            "recoveryEnabled": worker.recoveryEnabled,
+            "maxStoreFailures": worker.maxStoreFailures,
+        };
+        if (worker.maxJobs >= 0) {
+            options["maxJobs"] = worker.maxJobs;
+        }
+        if (worker.drainOnce) {
+            options["drainOnce"] = true;
+        }
+        list<string> queues = [];
+        list<string> names = [];
+        list<string> positional = [];
+        bool schedulerOnly = false;
+        bool all = false;
+        int limit = 100;
+        for (int i = 0; i < args.length(); i += 1) {
+            string arg = args[i];
+            if (arg == "--help" || arg == "-h") {
+                io.println(
+                    "worker [--queue NAME] [--job NAME] [--concurrency N] [--once | --max-jobs N | --scheduler-only]"
+                );
+                io.println(
+                    "worker stats [--format json] | dlq list [--limit N] | dlq retry/purge ID... [--all]"
+                );
+                return 0;
+            }
+            if (arg == "--once") {
+                options["drainOnce"] = true;
+                continue;
+            }
+            if (arg == "--scheduler-only") {
+                schedulerOnly = true;
+                continue;
+            }
+            if (arg == "--all") {
+                all = true;
+                continue;
+            }
+            if (["--queue", "--job", "--concurrency", "--max-jobs", "--format", "--limit"].contains(arg)) {
+                i += 1;
+                if (i >= args.length() || args[i].startsWith("--")) {
+                    throw ValueError("jobs: missing value for " + arg);
+                }
+                string value = args[i];
+                if (arg == "--queue") {
+                    queues.push(label(value));
+                }
+                if (arg == "--job") {
+                    names.push(label(value));
+                }
+                if (arg == "--concurrency") {
+                    options["maxConcurrency"] = value.toInt();
+                }
+                if (arg == "--max-jobs") {
+                    options["maxJobs"] = value.toInt();
+                    options["drainOnce"] = true;
+                }
+                if (arg == "--limit") {
+                    limit = value.toInt();
+                }
+                if (arg == "--format" && value != "json") {
+                    throw ValueError("jobs: supported output format is json");
+                }
+                continue;
+            }
+            if (arg.startsWith("--")) {
+                throw ValueError("jobs: unknown option " + arg);
+            }
+            positional.push(arg);
+        }
+        if (queues.length() > 0) {
+            options["queues"] = queues;
+            dict<string, int> caps = {};
+            for (q, cap in worker.queueConcurrency) {
+                if (queues.contains(q)) {
+                    caps[q] = cap;
+                }
+            }
+            options["queueConcurrency"] = caps;
+        }
+        if (names.length() > 0) {
+            options["names"] = names;
+        }
+        if (schedulerOnly && ((options["drainOnce"] ?? false) == true || queues.length() > 0 || names.length() > 0)) {
+            throw ValueError("jobs: scheduler-only conflicts with worker selection or finite execution");
+        }
+        let q = worker.queue;
+        if (positional.length() > 0) {
+            if (positional[0] == "stats" && positional.length() == 1) {
+                let stats = q.stats();
+                io.println(
+                    json.stringify({
+                        "pending": stats.pending,
+                        "running": stats.running,
+                        "completed": stats.completed,
+                        "failed": stats.failed,
+                        "cancelled": stats.cancelled,
+                        "ready": stats.ready,
+                        "delayed": stats.delayed,
+                        "oldestReadyAgeMs": stats.oldestReadyAgeMs,
+                    })
+                );
+                return 0;
+            }
+            if (positional[0] != "dlq" || positional.length() < 2) {
+                throw ValueError("jobs: unknown worker command");
+            }
+            string action = positional[1];
+            if (action == "list") {
+                if (positional.length() != 2 || all) {
+                    throw ValueError("jobs: dlq list does not accept targets");
+                }
+                list<dict<string, any>> rows = [];
+                for (snapshot in q.failed({"limit": limit})) {
+                    rows.push({
+                        "id": snapshot.id,
+                        "name": snapshot.name,
+                        "queue": snapshot.queue,
+                        "attempts": snapshot.attempts,
+                        "lastError": snapshot.lastError,
+                    });
+                }
+                io.println(json.stringify(rows));
+                return 0;
+            }
+            if (!["retry", "purge"].contains(action) || (positional.length() == 2 && !all) || (positional.length() > 2 && all)) {
+                throw ValueError("jobs: specify dlq retry/purge IDs or --all");
+            }
+            int changed = 0;
+            if (all) {
+                string after = "";
+                while (true) {
+                    let page = q.failed({"limit": 1000, "afterId": after});
+                    if (page.length() == 0) {
+                        break;
+                    }
+                    for (snapshot in page) {
+                        if (action == "retry" ? q.retry(snapshot.id) : q.purge(snapshot.id)) {
+                            changed += 1;
+                        }
+                    }
+                    after = page[page.length() - 1].id;
+                }
+            } else {
+                for (id in positional.slice(2)) {
+                    if (action == "retry" ? q.retry(id) : q.purge(id)) {
+                        changed += 1;
+                    }
+                }
+            }
+            io.println(json.stringify({"changed": changed}));
+            return 0;
+        }
+        if (all) {
+            throw ValueError("jobs: --all requires a dlq mutation");
+        }
+        let selected = Worker(q, options);
+        ?WorkerHandle scheduleHandle = null;
+        ?WorkerHandle jobHandle = null;
+        if (schedulerOnly && scheduler == null) {
+            throw ValueError("jobs: no scheduler configured");
+        }
+        if (schedulerOnly && selected.drainOnce) {
+            throw ValueError("jobs: scheduler-only cannot be combined with finite worker limits");
+        }
+        ?string infrastructureFailure = null;
+        let stop = atomic.AtomicBool(false);
+        bool signals = !selected.drainOnce;
+        try {
+            if (signals) {
+                let request = func(string signal): void { stop.store(true); };
+                sys.onSignal("SIGTERM", request);
+                sys.onSignal("SIGINT", request);
+            }
+            if (scheduler != null && !selected.drainOnce) {
+                scheduleHandle = (scheduler as Scheduler).start();
+            }
+            if (scheduler != null && selected.drainOnce) {
+                (scheduler as Scheduler).tick();
+            }
+            if (!schedulerOnly) {
+                jobHandle = selected.start();
+            }
+            while (!stop.load()) {
+                if (jobHandle != null && async.done((jobHandle as WorkerHandle).task)) {
+                    break;
+                }
+                if (scheduleHandle != null && async.done((scheduleHandle as WorkerHandle).task)) {
+                    async.await((scheduleHandle as WorkerHandle).task);
+                    throw JobError("jobs: scheduler stopped unexpectedly");
+                }
+                async.await(async.sleep(5));
+            }
+        } catch (Error e) {
+            infrastructureFailure = e.message;
+        } finally {
+            if (signals) {
+                sys.clearSignal("SIGTERM");
+                sys.clearSignal("SIGINT");
+            }
+            if (jobHandle != null) {
+                (jobHandle as WorkerHandle).requestStop();
+            }
+            if (scheduleHandle != null) {
+                (scheduleHandle as WorkerHandle).requestStop();
+            }
+        }
+        int deadline = time.monotonic() + selected.shutdownTimeoutMs;
+        bool drained = true;
+        if (scheduleHandle != null) {
+            try {
+                drained = (scheduleHandle as WorkerHandle).wait(selected.shutdownTimeoutMs).drained;
+            } catch (Error e) {
+                infrastructureFailure = e.message;
+            }
+        }
+        if (jobHandle != null) {
+            int remaining = deadline - time.monotonic();
+            try {
+                let result = (jobHandle as WorkerHandle).wait(remaining > 0 ? remaining : 0);
+                drained = drained && result.drained && result.lost == 0 && (!selected.drainOnce || result.failed == 0);
+            } catch (Error e) {
+                infrastructureFailure = e.message;
+            }
+        }
+        if (infrastructureFailure != null) {
+            io.stderrPrintln(infrastructureFailure as string);
+            return 1;
+        }
+        return drained ? 0 : 1;
+    } catch (ValueError e) {
+        io.stderrPrintln(e.message);
+        return 2;
+    } catch (Error e) {
+        io.stderrPrintln(e.message);
+        return 1;
+    }
+}

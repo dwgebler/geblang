@@ -1,6 +1,8 @@
 module messaging.kafka;
 
 import messaging.contract;
+import messaging.managed as managed;
+import secrets;
 import bytes;
 import datetime;
 import json;
@@ -17,7 +19,7 @@ import kafka;
  * publishing produces records and receiving fetches the next
  * record assigned to this group member.
  */
-export class KafkaQueue implements contract.MessageQueue {
+export class KafkaQueue implements contract.MessageQueue, contract.ManagedMessageQueue {
     int writer;
     int reader;
     string topic;
@@ -56,11 +58,12 @@ export class KafkaQueue implements contract.MessageQueue {
         }
     }
 
+    func consumeUntil(callable handler, callable shouldStop): void { managed.consume(this, handler, shouldStop); }
+
     func close(): void {
         if (this._closed) { return; }
         this._closed = true;
-        kafka.close(this.writer);
-        kafka.close(this.reader);
+        try { kafka.close(this.writer); } finally { kafka.close(this.reader); }
     }
 }
 
@@ -110,7 +113,7 @@ func payloadToBytes(any payload): bytes {
  * groups, the difference vs the queue API is just that each
  * subscriber gets a fresh group id rather than sharing one.
  */
-export class KafkaTopic implements contract.MessageTopic {
+export class KafkaTopic implements contract.MessageTopic, contract.ManagedMessageTopic {
     int writer;
     string topic;
     list<string> brokers;
@@ -120,6 +123,14 @@ export class KafkaTopic implements contract.MessageTopic {
     func publish(any payload): void {
         let body = payloadToBytes(payload);
         kafka.write(this.writer, body);
+    }
+
+    func subscribeUntil(callable handler, callable shouldStop): void {
+        let queue = KafkaQueue();
+        queue.writer = this.writer; queue.topic = this.topic; queue._closed = false;
+        queue.reader = kafka.reader({"brokers": this.brokers, "topic": this.topic, "groupId": "geblang-topic-" + secrets.randomHex(16)});
+        try { queue.consumeUntil(handler, shouldStop); }
+        finally { this._closed = true; }
     }
 
     func subscribe(callable handler): void {

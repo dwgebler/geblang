@@ -1,0 +1,68 @@
+import test;
+import db;
+import jobs;
+import store;
+
+class JobsStoreTest extends test.Test {
+    @test
+    func durableQueueDeduplicatesAndIsolatesNamespaces(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let a = jobs.Queue(conn, {"namespace": "a"});
+        let b = jobs.Queue(conn, {"namespace": "b"});
+
+        let id = a.enqueue("mail", {"to": "a"}, {"dedupeKey": "user-a"});
+        let duplicate = a.enqueue("mail", {"to": "ignored"}, {"dedupeKey": "user-a"});
+
+        this.assertEquals(id, duplicate);
+        this.assertEquals("a", a.get(id).payload["to"]);
+        this.assertEquals(null, b.get(id));
+        this.assertEquals(1, a.stats().pending);
+        this.assertEquals(0, b.stats().pending);
+        this.assertFalse(a.purge(id));
+    }
+
+    @test
+    func rejectsInvalidQueueInputWithoutPublishing(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let queue = jobs.Queue(conn, {"namespace": "limits", "maxPayloadBytes": 10});
+
+        this.assertThrows(func(): void { queue.enqueue("mail", {"text": "large payload"}); });
+        this.assertThrows(func(): void { queue.enqueue("", {}); });
+        this.assertThrows(func(): void { queue.enqueue("mail", {}, {"runAtMs": 0, "delayMs": 1}); });
+        this.assertThrows(
+            func(): void { jobs.Queue(conn, {"namespace": "bad", "tablePrefix": "bad;sql"}); }
+        );
+
+        this.assertEquals(0, queue.stats().pending);
+    }
+    @test
+    func eventsObserveCommittedJobsAndPurgeRemovesHistory(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        defer conn.close();
+        let observed = store.Store();
+        let queue = jobs.Queue(conn, {"namespace": "events", "onEvent": func(dict<string, any> event): void {
+            if (event["event"] == "job.completed") {
+                observed.set(
+                    "status",
+                    conn.query("SELECT status FROM geblang_jobs_items WHERE id = ?", event["jobId"]).all()[0]["status"]
+                );
+                observed.set("hasPayload", event.contains("payload"));
+            }
+        }});
+        queue.register("work", func(jobs.Job job): void {});
+        let id = queue.enqueue("work", {"secret": "private"});
+
+        jobs.Worker(queue, {"drainOnce": true}).run();
+
+        this.assertEquals("completed", observed.get("status"));
+        this.assertFalse(observed.get("hasPayload") as bool);
+        this.assertEquals(1, queue.attempts(id).length());
+        this.assertTrue(queue.purge(id));
+        this.assertEquals(
+            0,
+            conn.query("SELECT COUNT(*) AS n FROM geblang_jobs_attempts WHERE job_id = ?", id).all()[0]["n"]
+        );
+    }
+}
