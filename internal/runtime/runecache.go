@@ -127,6 +127,14 @@ var (
 	singleRuneInfo = &RuneInfo{single: true}
 )
 
+// StringRuneCount counts short strings directly; longer ones use the cached mapping so repeated calls stay O(1).
+func StringRuneCount(s string) int {
+	if len(s) <= shortStringThreshold {
+		return utf8.RuneCountInString(s)
+	}
+	return StringRuneInfo(s).RuneCount(s)
+}
+
 // StringRuneInfo returns cached rune<->byte mapping for s, building it on a miss.
 func StringRuneInfo(s string) *RuneInfo {
 	if len(s) == 0 {

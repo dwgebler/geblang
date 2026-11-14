@@ -1,7 +1,8 @@
 # VS Code Extension
 
-Geblang ships a VS Code extension in the `vscode-geblang/` directory of the
-repository. It provides:
+Geblang has a VS Code extension, published on the Visual Studio Marketplace as
+`geblang.vscode-geblang`. Its source is in the `vscode-geblang/` directory of
+the repository. It provides:
 
 - **Syntax highlighting** for `.gb` files.
 - **Live diagnostics** - parse and semantic errors appear as you type, via the
@@ -14,10 +15,26 @@ repository. It provides:
   methods, and **Run / Debug code lenses** above `func main()` and test
   classes.
 
+## Installing From The Marketplace
+
+The quickest way to get the extension is from the Visual Studio Marketplace.
+Open the Extensions view in VS Code (`Ctrl+Shift+X` / `Cmd+Shift+X`), search
+for `Geblang`, and click **Install**. Or install it from a terminal:
+
+```sh
+code --install-extension geblang.vscode-geblang
+```
+
+The extension uses the `geblang` toolchain already on your machine, so the
+`geblang` binary must be on your `PATH`. See
+[Getting Started](01-getting-started.md) for how to install it.
+
 ## Building The Extension
 
-You need the `geblang` binary on your `PATH` before installing the extension.
-See [Getting Started](01-getting-started.md) for build instructions.
+Build from source only if you want to change the extension or run a version
+that is not published yet. You need the `geblang` binary on your `PATH` before
+installing the extension. See [Getting Started](01-getting-started.md) for
+build instructions.
 
 ### Option A - Docker (no Node.js required)
 

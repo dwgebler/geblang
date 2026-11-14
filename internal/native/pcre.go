@@ -251,8 +251,9 @@ func pcreQuoteSpecial(s string) string {
 
 func registerPCRE(r *Registry) {
 	pcreFn := func(name string, body func(re *regexp2.Regexp, text string) (runtime.Value, error)) {
+		label := "pcre." + name
 		r.Register("pcre", name, func(args []runtime.Value) (runtime.Value, error) {
-			pattern, text, flags, err := pcreArgs(args, "pcre."+name, 2, 3)
+			pattern, text, flags, err := pcreArgs(args, label, 2, 3)
 			if err != nil {
 				return nil, err
 			}

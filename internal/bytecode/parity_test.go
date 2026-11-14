@@ -6154,3 +6154,49 @@ for (conn in [db.Connection("sqlite", ":memory:"), Child()]) {
 io.println(Reply().status);
 `, "15\ninvalid isolation\n15\ninvalid isolation\nsqlite\n200\n")
 }
+
+func TestParityCleanupPreservesEscapingException(t *testing.T) {
+	runParity(t, `import io;
+func cleanup(): void { try { throw TypeError("cleanup"); } catch (TypeError e) {} }
+class BaseCleanup { func clean(): void { cleanup(); } }
+class ChildCleanup extends BaseCleanup { func own(): void { cleanup(); } }
+class ManagedCleanup {
+    func __enter(): ManagedCleanup { return this; }
+    func __exit(): void { cleanup(); }
+}
+func dispatch(callable done): int {
+    try { throw ValueError("original"); } finally { done(); }
+}
+let child = ChildCleanup();
+for (done in [cleanup, child.clean, child.own, func(): void {
+    try { throw TypeError("inline"); } catch (Error e) {}
+}]) {
+    try { dispatch(done); } catch (ValueError e) { io.println(e.message); }
+}
+try { with (ManagedCleanup()) { throw ValueError("with-original"); } }
+catch (ValueError e) { io.println(e.message); }
+try { try { throw ValueError("old"); } finally { throw TypeError("replacement"); } }
+catch (TypeError e) { io.println(e.message); }
+func overridden(): int { try { throw ValueError("old"); } finally { return 17; } }
+io.println(overridden());
+`, "original\noriginal\noriginal\noriginal\nwith-original\nreplacement\n17\n")
+}
+
+func TestParityCleanupPreservesExceptionAcrossModules(t *testing.T) {
+	dir := t.TempDir()
+	source := `module clean;
+export func run(): void { try { throw TypeError("cleanup"); } catch (Error e) {} }
+export class Parent { func run(): void { run(); } }
+`
+	if err := os.WriteFile(filepath.Join(dir, "clean.gb"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, `import io; import clean;
+class Child extends clean.Parent { func own(): void { clean.run(); } }
+let child = Child();
+for (done in [clean.run, child.run, child.own]) {
+    try { try { throw ValueError("original"); } finally { done(); } }
+    catch (ValueError e) { io.println(e.message); }
+}
+`, "original\noriginal\noriginal\n")
+}

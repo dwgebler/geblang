@@ -1,7 +1,7 @@
 # Geblang
 
 Geblang is a statically-typed, general-purpose scripting language implemented in
-Go. Current version: **1.42.0**. It combines the ergonomics of PHP and Python
+Go. Current version: **1.42.1**. It combines the ergonomics of PHP and Python
 with strong static typing, generics, decorators, async, and runtime reflection.
 
 If you are coming from:
@@ -256,7 +256,10 @@ list_functional  node               24         23         24  166616670000
   Ed25519), pathlib, math, and a Twig-style template engine.
 - **Tooling**: `geblang` CLI (run / repl / check / test / fmt /
   init / install / build / doctor / cache), VS Code extension with
-  LSP + DAP + test explorer, Dockerised reproducible build,
+  LSP + DAP + test explorer (install it from the VS Code Marketplace:
+  search for "Geblang", or run
+  `code --install-extension geblang.vscode-geblang`), Dockerised
+  reproducible build,
   single-binary bundling via `geblang build --out`.
 
 ## Docker

@@ -40,6 +40,10 @@ builds:
         goarch: arm64
     flags:
       - -trimpath
+    # Setting ldflags replaces the GoReleaser defaults, so the first line restates them.
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser
+      - -funcalign=64
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:

@@ -73,6 +73,14 @@ knobs apply:
 GOGC=150 GOMEMLIMIT=1GiB ./myapp
 ```
 
+When neither variable is set, Geblang reserves 32 MB of untouched heap at
+startup so the first collection waits until the heap reaches about 64 MB.
+This keeps a small program from collecting every few megabytes. The
+reservation is never written to, so it does not add to resident memory by
+itself, but a process can hold up to about 32 MB more garbage before the
+first collection. Setting either variable, even to its default
+(`GOGC=100`), turns the reservation off.
+
 HTTP servers usually gain the most from a higher `GOGC`, because each
 request allocates short-lived values. On a small JSON endpoint under 64
 concurrent clients, raising `GOGC` from 100 to 400 gave roughly 20% more

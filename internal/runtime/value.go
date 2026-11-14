@@ -318,6 +318,15 @@ func (v Dict) HasOnlyStringKeys() bool {
 	return true
 }
 
+// AppendDistinctEntry adds a string-keyed entry the caller knows is not present yet, skipping the duplicate scan.
+func (v Dict) AppendDistinctEntry(key string, entry DictEntry) {
+	if d := v.data; d != nil && d.m == nil && len(d.items) < cap(d.items) && len(d.items) < dictInlineMax {
+		d.items = append(d.items, dictItem{key, entry})
+		return
+	}
+	v.PutEntry(key, entry)
+}
+
 func (v Dict) PutEntry(key string, entry DictEntry) {
 	if v.dictHeader == nil {
 		panic("runtime: write to zero Dict; construct with NewDict")

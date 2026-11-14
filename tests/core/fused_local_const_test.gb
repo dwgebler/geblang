@@ -1,0 +1,164 @@
+/**
+ * @title Int locals combined with integer literals
+ * @summary Adding or subtracting a literal and comparing against a literal
+ * give the same results for ordinary values, values at and past the 64-bit
+ * range, and locals a closure has captured.
+ */
+import test;
+
+func fib(int n): int {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+func compare(int n): string {
+    string out = "";
+    if (n < 3) { out = out + "lt"; }
+    if (n <= 3) { out = out + "le"; }
+    if (n > 3) { out = out + "gt"; }
+    if (n >= 3) { out = out + "ge"; }
+    if (n == 3) { out = out + "eq"; }
+    if (n != 3) { out = out + "ne"; }
+    return out;
+}
+
+func countdown(int from): generator<int> {
+    int n = from;
+    while (n > 0) {
+        yield n - 1;
+        n = n - 1;
+    }
+}
+
+func optional(int n, int extra = 0): int {
+    if (extra != 0) { return n + extra; }
+    return n - 3;
+}
+
+class Counter {
+    int base;
+    func Counter(int seed) {
+        int local = seed;
+        this.base = local + 100;
+    }
+    func step(int amount): int {
+        if (amount > 1) {
+            return this.base + (amount - 1);
+        }
+        return this.base + (amount + 1);
+    }
+    static func twice(int v): int { return (v + 1) + (v - 1); }
+}
+
+class Sub extends Counter {
+    func Sub(int seed) { parent(seed - 1); }
+    func step(int amount): int {
+        if (amount == 0) { return 0 - 1; }
+        return parent.step(amount + 1);
+    }
+}
+
+class FusedLocalConstTest extends test.Test {
+    @test
+    func recursionWithLiteralSteps(): void {
+        this.assertEquals(610, fib(15));
+        this.assertEquals(0, fib(0));
+        this.assertEquals(1, fib(1));
+    }
+
+    @test
+    func everyComparison(): void {
+        this.assertEquals("ltlene", compare(2));
+        this.assertEquals("legeeq", compare(3));
+        this.assertEquals("gtgene", compare(4));
+        this.assertEquals("ltlene", compare(-3));
+    }
+
+    @test
+    func arithmeticInExpressions(): void {
+        int n = 7;
+        this.assertEquals([8, 6, 7, 7, 45, 9], [n + 1, n - 1, n + 0, n - 0, (n + 2) * (n - 2), n - 5 + n]);
+        int m = -7;
+        this.assertEquals([-6, -8, 45], [m + 1, m - 1, (m + 2) * (m - 2)]);
+    }
+
+    @test
+    func resultsPastSixtyFourBits(): void {
+        int top = 9223372036854775807;
+        int bottom = 0 - top;
+        bottom = bottom - 1;
+        this.assertEquals("9223372036854775808", "${top + 1}");
+        this.assertEquals("9223372036854775806", "${top - 1}");
+        this.assertEquals("-9223372036854775809", "${bottom - 1}");
+        this.assertEquals("-9223372036854775807", "${bottom + 1}");
+        this.assertEquals("int", "${typeof(top + 1)}");
+    }
+
+    @test
+    func localsAlreadyPastSixtyFourBits(): void {
+        int past = 9223372036854775807;
+        past = past + 5;
+        this.assertEquals(9223372036854775807, past - 5);
+        this.assertEquals("18446744073709551619", "${past + 9223372036854775807}");
+        this.assertTrue(past > 9223372036854775807);
+        this.assertTrue(past != 3);
+        this.assertFalse(past == 7);
+        this.assertFalse(past < 0);
+        this.assertTrue(past >= 1);
+        this.assertFalse(past <= 1);
+    }
+
+    @test
+    func capturedLocal(): void {
+        int x = 3;
+        let bump = func(): void { x = x + 10; };
+        let read = func(): int { return x - 1; };
+        this.assertEquals(4, x + 1);
+        bump();
+        this.assertTrue(x > 10);
+        this.assertEquals(12, read());
+        while (x < 40) { x = x + 7; }
+        this.assertEquals(39, x - 2);
+        this.assertEquals(40, read());
+    }
+
+    @test
+    func loopsAndTernary(): void {
+        int total = 0;
+        for (int i = 0; i < 5; i++) {
+            total = total + (i + 1);
+        }
+        int j = 4;
+        while (j > 0) {
+            total = total + (j - 1);
+            j = j - 1;
+        }
+        this.assertEquals(21, total);
+        int n = 12;
+        this.assertEquals("wide2", n >= 10 ? "wide${n - 10}" : "narrow${n + 10}");
+    }
+
+    @test
+    func methodsConstructorsAndStatics(): void {
+        this.assertEquals(105, Counter(1).step(5));
+        this.assertEquals(103, Counter(1).step(1));
+        this.assertEquals(103, Sub(1).step(3));
+        this.assertEquals(-1, Sub(1).step(0));
+        this.assertEquals(18, Counter.twice(9));
+    }
+
+    @test
+    func generatorsDefaultsAndCallArguments(): void {
+        this.assertEquals([3, 2, 1, 0], [v for v in countdown(4)]);
+        this.assertEquals(7, optional(10));
+        this.assertEquals(14, optional(10, 4));
+        this.assertEquals(3, optional(extra: 2, n: 1));
+        int up = 4;
+        up += fib(up + 1);
+        this.assertEquals(9, up);
+        this.assertEquals([0, 1, 2], [1, 2, 3].map(func(int v): int { return v - 1; }));
+        this.assertEquals("abcabc", "abc".repeat(fib(3) + 0));
+    }
+}

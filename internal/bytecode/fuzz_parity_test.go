@@ -471,6 +471,20 @@ func (g *fuzzGen) closureCaptureBlock() (decls string, calls []string) {
 	var d strings.Builder
 	d.WriteString("func capDbl(int x): int { return x * 2; }\n")
 	d.WriteString("func capAdd(int x, int y): int { return x + y; }\n")
+	div := strconv.Itoa(2 + g.rng.Intn(4))
+	d.WriteString("func capFused(int start, int bump): string {\n")
+	d.WriteString("    int x = start;\n    string s = \"s\";\n    s += \"a\";\n")
+	d.WriteString("    let read = func(): string { return \"${x}:${s}\"; };\n")
+	d.WriteString("    if (x % " + div + " == 0) { s += \"z\"; }\n")
+	d.WriteString("    if (x % -" + div + " != 0) { s += \"n\"; }\n")
+	d.WriteString("    x += 3;\n    x++;\n    s += \"b\";\n")
+	d.WriteString("    int big = 9223372036854775807;\n    big = big + bump;\n")
+	d.WriteString("    if (big % " + div + " == 0) { s += \"B\"; }\n")
+	lit := strconv.Itoa(g.rng.Intn(9))
+	d.WriteString("    if (x > " + lit + ") { s += \"g\"; }\n")
+	d.WriteString("    if (x <= " + lit + ") { s += \"l\"; }\n")
+	d.WriteString("    if (big != " + lit + ") { s += \"${big - " + lit + "}\"; }\n")
+	d.WriteString("    return \"${read()}:${x - " + lit + "}:${start + " + lit + "}\";\n}\n")
 	calls = append(calls,
 		"let capBase = "+base+";",
 		"let capInterp = func(): string { return \"v=${capBase}\"; };",
@@ -483,6 +497,7 @@ func (g *fuzzGen) closureCaptureBlock() (decls string, calls []string) {
 		"io.println((capPipe as callable)());",
 		"let capPartial = func(): callable { return capAdd(capBase, _); };",
 		"io.println(((capPartial as callable)() as callable)("+add+"));",
+		"io.println(capFused("+g.intLit()+", "+strconv.Itoa(1+g.rng.Intn(9))+"));",
 	)
 	return d.String(), calls
 }

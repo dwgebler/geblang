@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(99)
+	Version = uint16(102)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -356,6 +356,11 @@ const (
 	// OpPrimMethodGlobal / OpPrimMethodLocal {slot, nameIndex, argc, methodID} are OpGetGlobal / OpGetLocal fused with the following OpPrimMethod.
 	OpPrimMethodGlobal
 	OpPrimMethodLocal
+	// OpLocalAddIntConst / OpLocalSubIntConst {slot, literal} push an int local combined with an integer literal.
+	OpLocalAddIntConst
+	OpLocalSubIntConst
+	// OpJumpIfLocalCmpIntConst {target, slot, literal, compareJumpOp} is an int local load and literal fused with a compare-and-branch opcode.
+	OpJumpIfLocalCmpIntConst
 )
 
 // Method IDs carried by OpPrimMethod.

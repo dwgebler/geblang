@@ -1,0 +1,113 @@
+/**
+ * @title Modulo branches and string appends on captured or oversized locals
+ * @summary A typed local keeps working in a modulo test and in a literal
+ * append when a closure has captured it or when its value has grown past
+ * 64 bits, and the closure sees every later update.
+ */
+import test;
+
+func modLabels(int start): string {
+    int x = start;
+    let read = func(): int { return x; };
+    string out = "";
+    if (x % 3 == 0) { out = out + "a"; }
+    if (x % 3 != 0) { out = out + "b"; }
+    if (0 == x % 2) { out = out + "c"; }
+    if (x % -4 == 0) { out = out + "d"; }
+    return "${out}${read()}";
+}
+
+func bigParity(int bump): string {
+    int x = 9223372036854775807;
+    x = x + bump;
+    if (x % 2 == 0) {
+        return "even";
+    }
+    return "odd";
+}
+
+class FusedSlotFallbacksTest extends test.Test {
+    @test
+    func moduloBranchOnCapturedLocal(): void {
+        this.assertEquals("acd12", modLabels(12));
+        this.assertEquals("b7", modLabels(7));
+        this.assertEquals("bc-2", modLabels(-2));
+    }
+
+    @test
+    func moduloBranchPastSixtyFourBits(): void {
+        this.assertEquals("even", bigParity(1));
+        this.assertEquals("odd", bigParity(2));
+        int x = 9223372036854775807;
+        x = x + 8;
+        bool divisible = false;
+        if (x % -5 == 0) { divisible = true; }
+        this.assertTrue(divisible);
+    }
+
+    @test
+    func moduloBranchInLoopWithCapture(): void {
+        list<any> readers = [];
+        int evens = 0;
+        for (int i = 0; i < 6; i++) {
+            readers.push(func(): int { return i; });
+            if (i % 2 == 0) { evens += 1; }
+        }
+        this.assertEquals(3, evens);
+        this.assertEquals(6, readers.length());
+    }
+
+    @test
+    func appendToCapturedString(): void {
+        string s = "a";
+        let read = func(): string { return s; };
+        s += "b";
+        s = s + "c";
+        this.assertEquals("abc", read());
+        this.assertEquals("abc", s);
+        string viaExpr = (s += "d");
+        this.assertEquals("abcd", viaExpr);
+        this.assertEquals("abcd", read());
+    }
+
+    @test
+    func captureAfterRepeatedAppends(): void {
+        string s = "a";
+        s += "b";
+        s += "c";
+        let read = func(): string { return s; };
+        this.assertEquals("abc", read());
+        s += "d";
+        this.assertEquals("abcd", read());
+        this.assertEquals(4, s.length());
+    }
+
+    @test
+    func closureWritesAreSeenByAppend(): void {
+        string s = "a";
+        let reset = func(): void { s = "z"; };
+        s += "b";
+        reset();
+        s += "c";
+        this.assertEquals("zc", s);
+    }
+
+    @test
+    func captureInMethodBody(): void {
+        let b = Builder("p");
+        this.assertEquals("p-x-y|p-x-y", b.build());
+    }
+}
+
+class Builder {
+    string prefix;
+    func Builder(string prefix) { this.prefix = prefix; }
+
+    func build(): string {
+        string out = this.prefix;
+        out += "-x";
+        let read = func(): string { return out; };
+        out += "-y";
+        return "${read()}|${out}";
+    }
+}

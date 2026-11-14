@@ -138,8 +138,9 @@ func registerRe(r *Registry) {
 	}
 
 	reFn := func(name string, body func(re *regexp.Regexp, text string) runtime.Value) {
+		label := "re." + name
 		r.Register("re", name, func(args []runtime.Value) (runtime.Value, error) {
-			pattern, text, err := twoStrings(args, "re."+name)
+			pattern, text, err := twoStrings(args, label)
 			if err != nil {
 				return nil, err
 			}

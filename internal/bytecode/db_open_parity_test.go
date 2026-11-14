@@ -13,8 +13,9 @@ import async;
 string file = %q;
 list<Task<any>> opens = [];
 for (i in 0..<8) {
+    let n = i;
     opens.push(async.run(func(): string {
-        let conn = db.Connection("sqlite", file + (i %% 2 as string));
+        let conn = db.Connection("sqlite", file + (n %% 2 as string));
         defer conn.close();
         return conn.query("PRAGMA journal_mode").toList()[0]["journal_mode"] as string;
     }));

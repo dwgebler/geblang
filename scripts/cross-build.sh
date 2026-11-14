@@ -88,7 +88,7 @@ RUNTIME="$(mktemp "${TMPDIR:-/tmp}/geblang-runtime.XXXXXX")"
 trap 'rm -f "$RUNTIME"' EXIT
 
 echo "cross-build: compiling ${GOOS_T}/${GOARCH_T} runtime"
-( cd "$ROOT" && GOOS="$GOOS_T" GOARCH="$GOARCH_T" CGO_ENABLED=0 go build -o "$RUNTIME" ./cmd/geblang )
+( cd "$ROOT" && GOOS="$GOOS_T" GOARCH="$GOARCH_T" CGO_ENABLED=0 go build -ldflags=-funcalign=64 -o "$RUNTIME" ./cmd/geblang )
 
 echo "cross-build: embedding bundle (entry=${ENTRY}, dir=${PKGDIR_ABS})"
 ( cd "$ROOT" && go run ./cmd/geblang build --runtime "$RUNTIME" --entry "$ENTRY" --out "$OUT_ABS" ${PASSTHRU[@]+"${PASSTHRU[@]}"} "$PKGDIR_ABS" )

@@ -1934,7 +1934,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.length expects no arguments")
 			}
-			return runtime.SmallInt{Value: int64(runtime.StringRuneInfo(value.Value).RuneCount(value.Value))}, nil
+			return runtime.SmallInt{Value: int64(runtime.StringRuneCount(value.Value))}, nil
 		case "isEmpty":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.isEmpty expects no arguments")

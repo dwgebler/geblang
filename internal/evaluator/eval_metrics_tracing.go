@@ -990,10 +990,11 @@ func profileMemStats(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 	var stats goruntime.MemStats
 	goruntime.ReadMemStats(&stats)
 	entries := map[string]runtime.DictEntry{}
-	putDict(entries, "alloc", runtime.NewInt64(int64(stats.Alloc)))
-	putDict(entries, "totalAlloc", runtime.NewInt64(int64(stats.TotalAlloc)))
+	floor := native.HeapFloorBytes()
+	putDict(entries, "alloc", runtime.NewInt64(int64(stats.Alloc)-floor))
+	putDict(entries, "totalAlloc", runtime.NewInt64(int64(stats.TotalAlloc)-floor))
 	putDict(entries, "sys", runtime.NewInt64(int64(stats.Sys)))
-	putDict(entries, "heapAlloc", runtime.NewInt64(int64(stats.HeapAlloc)))
+	putDict(entries, "heapAlloc", runtime.NewInt64(int64(stats.HeapAlloc)-floor))
 	putDict(entries, "heapSys", runtime.NewInt64(int64(stats.HeapSys)))
 	putDict(entries, "heapObjects", runtime.NewInt64(int64(stats.HeapObjects)))
 	putDict(entries, "numGC", runtime.NewInt64(int64(stats.NumGC)))

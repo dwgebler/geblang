@@ -1,5 +1,44 @@
 # Release Notes
 
+## 1.42.1
+
+### Fixed
+
+- A caught error inside `finally` or a context manager's `__exit` no longer
+  consumes the original exception being propagated by the bytecode VM. A new
+  uncaught cleanup error and an explicit return still replace the original,
+  matching the evaluator.
+- On the bytecode VM, `if (x % n == 0)` on an `int` local no longer fails
+  with "mod-jump fast path requires int local" when a closure has captured
+  `x` or its value is outside the 64-bit range.
+- On the bytecode VM, appending a string literal to a `string` local
+  (`s += "..."`) works when a closure has captured `s`, including a closure
+  created after earlier appends.
+
+### Performance
+
+- Adding two ints, a cast to the type a value already has, and `length()` on
+  a short string take shorter paths on the bytecode VM. A loop that sums
+  method results runs about 20% faster.
+- An `int` local combined with an integer literal (`n - 1`, `n + 1`,
+  `if (n < 2)`) runs as a single bytecode VM step. Recursive functions of
+  that shape run about 20% faster.
+- Release binaries are linked with 64-byte function alignment, which keeps
+  the bytecode VM's main loop from slowing down by about 5% depending on
+  where the linker happened to place it.
+- Dict literals whose string-literal keys are all different skip the
+  duplicate-key check while they are built.
+- Casting an int to a string (`n as string`) formats the value directly on
+  the bytecode VM; loops that build keys or labels this way run about 10%
+  faster.
+- `re` and `pcre` functions no longer build an error label on every call;
+  a tight matching loop runs about 5% faster.
+- The first garbage collection is deferred until the heap reaches about
+  64 MB, so short programs that allocate many small values spend less time
+  collecting (about 10% on a dict-building loop). Setting `GOGC` or
+  `GOMEMLIMIT` turns this off. `profiler` and `profile.memStats` heap figures
+  are unchanged by it.
+
 ## 1.42.0
 
 ### Standard library

@@ -1084,7 +1084,7 @@ func primMethodFast(id int64, receiver runtime.Value, args []runtime.VMValue) (r
 			if id == primMethodIsEmpty {
 				n = len(r.Value)
 			} else {
-				n = runtime.StringRuneInfo(r.Value).RuneCount(r.Value)
+				n = runtime.StringRuneCount(r.Value)
 			}
 		case *runtime.List:
 			n = len(r.Elements)

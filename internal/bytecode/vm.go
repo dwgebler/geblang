@@ -743,6 +743,14 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				vm.push(value)
 			}
 		case OpAdd:
+			if n := len(vm.stack); n >= 2 && vm.stack[n-2].Kind == runtime.VMKindSmallInt && vm.stack[n-1].Kind == runtime.VMKindSmallInt {
+				l, r := vm.stack[n-2].I64, vm.stack[n-1].I64
+				if sum := l + r; (l^sum)&(r^sum) >= 0 {
+					vm.stack[n-2].I64 = sum
+					vm.stack = vm.stack[:n-1]
+					continue
+				}
+			}
 			nextIP, err := vm.add(*instruction, ip)
 			if err != nil {
 				return err
@@ -787,18 +795,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					continue
 				}
 			}
-			vm.pushVM(cur)
-			vm.pushVM(runtime.VMValueFromValue(litVal))
-			nextIP, err := vm.add(*instruction, ip)
+			nextIP, err := vm.appendStringConstSlow(*instruction, ip, litVal, instruction.Op == OpAppendStringConst, true)
 			if err != nil {
 				return err
 			}
-			result, perr := vm.popVM()
-			if perr != nil {
-				return vm.runtimeError(*instruction, "%s", perr.Error())
-			}
-			target[idx] = result
-			vm.pushVM(result)
 			ip = nextIP
 		case OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 			slot := instruction.Operands[0]
@@ -842,17 +842,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					continue
 				}
 			}
-			vm.pushVM(cur)
-			vm.pushVM(runtime.VMValueFromValue(litVal))
-			nextIP, err := vm.add(*instruction, ip)
+			nextIP, err := vm.appendStringConstSlow(*instruction, ip, litVal, instruction.Op == OpAppendStringConstStmt, false)
 			if err != nil {
 				return err
 			}
-			result, perr := vm.popVM()
-			if perr != nil {
-				return vm.runtimeError(*instruction, "%s", perr.Error())
-			}
-			target[idx] = result
 			ip = nextIP
 		case OpAddStringConst:
 			n := len(vm.stack)
@@ -1131,6 +1124,64 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return err
 			}
 			ip = nextIP
+		case OpLocalAddIntConst, OpLocalSubIntConst:
+			idx := vm.currentFrameBP + int(instruction.Operands[0])
+			if idx < len(vm.localsStack) {
+				lv := vm.localsStack[idx]
+				if lv.Kind == runtime.VMKindSmallInt {
+					li := lv.I64
+					ri := instruction.Operands[1]
+					var v int64
+					var fits bool
+					if instruction.Op == OpLocalAddIntConst {
+						v = li + ri
+						fits = (li^v)&(ri^v) >= 0
+					} else {
+						v = li - ri
+						fits = (li^ri)&(li^v) >= 0
+					}
+					if fits {
+						vm.pushVM(runtime.VMValueSmallInt(v))
+						continue
+					}
+				}
+			}
+			if err := vm.localIntConstSlow(*instruction); err != nil {
+				return err
+			}
+		case OpJumpIfLocalCmpIntConst:
+			idx := vm.currentFrameBP + int(instruction.Operands[1])
+			if idx < len(vm.localsStack) {
+				lv := vm.localsStack[idx]
+				if lv.Kind == runtime.VMKindSmallInt {
+					li := lv.I64
+					ri := instruction.Operands[2]
+					var jump bool
+					switch Op(instruction.Operands[3]) {
+					case OpJumpIfNotLessInt:
+						jump = !(li < ri)
+					case OpJumpIfNotLessEqualInt:
+						jump = !(li <= ri)
+					case OpJumpIfNotGreaterInt:
+						jump = !(li > ri)
+					case OpJumpIfNotGreaterEqualInt:
+						jump = !(li >= ri)
+					case OpJumpIfNotEqualInt:
+						jump = !(li == ri)
+					case OpJumpIfEqualInt:
+						jump = li == ri
+					}
+					if jump {
+						ip = int(instruction.Operands[0]) - 1
+					}
+					continue
+				}
+			}
+			nextIP, err := vm.localCmpIntConstSlow(*instruction, ip)
+			if err != nil {
+				return err
+			}
+			ip = nextIP
 		case OpJumpIfModNotZero, OpJumpIfModZero:
 			if len(instruction.Operands) != 3 {
 				return vm.fatalError(*instruction, "mod-jump instruction has invalid operands")
@@ -1142,7 +1193,12 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			lv := vm.localsStack[idx]
 			if lv.Kind != runtime.VMKindSmallInt {
-				return vm.runtimeError(*instruction, "mod-jump fast path requires int local")
+				nextIP, err := vm.modJumpFallback(*instruction, ip)
+				if err != nil {
+					return err
+				}
+				ip = nextIP
+				continue
 			}
 			ri := instruction.Operands[2]
 			if ri == 0 {
@@ -1597,6 +1653,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return err
 			}
 		case OpCast:
+			if code := instruction.Operands[1]; code > 0 && code < int64(len(castCodeKinds)) {
+				if n := len(vm.stack); n > 0 && vm.stack[n-1].Kind == castCodeKinds[code] && (len(vm.frames) == 0 || len(vm.frames[len(vm.frames)-1].typeBindings) == 0) {
+					continue
+				}
+			}
 			nextIP, err := vm.cast(*instruction, ip)
 			if err != nil {
 				return err
@@ -1903,7 +1964,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					}
 				}
 				if cell == nil {
-					cell = &runtime.BytecodeCell{Value: slot.ToValue()}
+					captured := slot.ToValue()
+					if acc, ok := captured.(*runtime.StringAccumulator); ok {
+						captured = acc.Materialize()
+					}
+					cell = &runtime.BytecodeCell{Value: captured}
 					vm.localsStack[outerIdx] = runtime.VMValueFromValue(cell)
 				}
 				upvalues[i] = cell
@@ -3632,6 +3697,98 @@ func (vm *VM) compareJumpIntFallback(instruction Instruction, ip int) (int, erro
 	return nextIP, nil
 }
 
+// appendStringConstSlow reads and writes a local through its closure cell, which the inline path does not unwrap.
+func (vm *VM) appendStringConstSlow(instruction Instruction, ip int, lit runtime.String, isLocal bool, push bool) (int, error) {
+	slot := instruction.Operands[0]
+	var cur runtime.VMValue
+	if isLocal {
+		value, err := vm.getLocalVM(slot)
+		if err != nil {
+			return ip, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		cur = value
+	} else {
+		cur = vm.curGlobals[slot]
+	}
+	vm.pushVM(cur)
+	vm.pushVM(runtime.VMValueFromValue(lit))
+	nextIP, err := vm.add(instruction, ip)
+	if err != nil {
+		return ip, err
+	}
+	result, err := vm.popVM()
+	if err != nil {
+		return ip, vm.runtimeError(instruction, "%s", err.Error())
+	}
+	if isLocal {
+		if err := vm.setLocalVM(slot, result); err != nil {
+			return ip, vm.runtimeError(instruction, "%s", err.Error())
+		}
+	} else {
+		vm.curGlobals[slot] = result
+	}
+	if push {
+		vm.pushVM(result)
+	}
+	return nextIP, nil
+}
+
+// localIntConstSlow covers a captured or big-int local and a result outside 64 bits.
+func (vm *VM) localIntConstSlow(instruction Instruction) error {
+	value, err := vm.getLocalVM(instruction.Operands[0])
+	if err != nil {
+		return vm.runtimeError(instruction, "%s", err.Error())
+	}
+	generic := instruction
+	generic.Op = OpAdd
+	if instruction.Op == OpLocalSubIntConst {
+		generic.Op = OpSub
+	}
+	return vm.binaryNumericValues(generic, value.ToValue(), runtime.SmallInt{Value: instruction.Operands[1]})
+}
+
+func (vm *VM) localCmpIntConstSlow(instruction Instruction, ip int) (int, error) {
+	value, err := vm.getLocalVM(instruction.Operands[1])
+	if err != nil {
+		return ip, vm.runtimeError(instruction, "%s", err.Error())
+	}
+	vm.pushVM(value)
+	vm.pushVM(runtime.VMValueSmallInt(instruction.Operands[2]))
+	generic := instruction
+	generic.Op = Op(instruction.Operands[3])
+	return vm.compareJumpIntFallback(generic, ip)
+}
+
+// modJumpFallback covers a captured or big-int local, which the inline path cannot read.
+func (vm *VM) modJumpFallback(instruction Instruction, ip int) (int, error) {
+	value, err := vm.getLocalVM(instruction.Operands[1])
+	if err != nil {
+		return ip, vm.runtimeError(instruction, "%s", err.Error())
+	}
+	modOp := instruction
+	modOp.Op = OpMod
+	if err := vm.binaryNumericValues(modOp, value.ToValue(), runtime.SmallInt{Value: instruction.Operands[2]}); err != nil {
+		return ip, err
+	}
+	result, err := vm.pop()
+	if err != nil {
+		return ip, vm.callPropagate(instruction, err)
+	}
+	var isZero bool
+	switch r := result.(type) {
+	case runtime.SmallInt:
+		isZero = r.Value == 0
+	case runtime.Int:
+		isZero = r.Value.Sign() == 0
+	default:
+		return ip, vm.runtimeError(instruction, "modulo result must be int")
+	}
+	if isZero == (instruction.Op == OpJumpIfModZero) {
+		return int(instruction.Operands[0]) - 1, nil
+	}
+	return ip, nil
+}
+
 // intSelfArith handles the fused self-update integer arithmetic opcodes
 // (OpAdd/SubLocalIntLocal, OpAdd/SubLocalIntConst, and Global mirrors). The
 // opcode reads the destination slot, applies the right-hand operand, stores
@@ -5069,7 +5226,7 @@ func (vm *VM) buildDictConstKeys(instruction *Instruction) error {
 		if !ok {
 			return vm.runtimeError(*instruction, "dict key constant must be string")
 		}
-		d.PutEntry(internal.Value, runtime.DictEntry{Key: vm.constantValue(ops[1+2*i]), Value: vm.stack[base+i].ToValue()})
+		d.AppendDistinctEntry(internal.Value, runtime.DictEntry{Key: vm.constantValue(ops[1+2*i]), Value: vm.stack[base+i].ToValue()})
 	}
 	vm.truncateStack(base)
 	vm.push(d)

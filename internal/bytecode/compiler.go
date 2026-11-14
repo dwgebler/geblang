@@ -487,14 +487,21 @@ func (c *Compiler) addConstant(value runtime.Value) int64 {
 	return int64(len(c.chunk.Constants) - 1)
 }
 
-func dictHasOnlyStringLiteralKeys(entries []ast.DictEntry) bool {
+// dictHasDistinctStringLiteralKeys gates the append-only const-key build; a repeated key needs the general last-wins path.
+func dictHasDistinctStringLiteralKeys(entries []ast.DictEntry) bool {
 	if len(entries) == 0 {
 		return false
 	}
+	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
-		if _, ok := entry.Key.(*ast.StringLiteral); !ok {
+		key, ok := entry.Key.(*ast.StringLiteral)
+		if !ok {
 			return false
 		}
+		if _, dup := seen[key.Value]; dup {
+			return false
+		}
+		seen[key.Value] = struct{}{}
 	}
 	return true
 }

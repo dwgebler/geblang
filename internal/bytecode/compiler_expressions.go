@@ -163,7 +163,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		if dictHasSpread(expr.Entries) {
 			return c.compileExpression(desugarDictLiteralWithSpread(expr))
 		}
-		if dictHasOnlyStringLiteralKeys(expr.Entries) {
+		if dictHasDistinctStringLiteralKeys(expr.Entries) {
 			operands := make([]int64, 0, 1+2*len(expr.Entries))
 			operands = append(operands, int64(len(expr.Entries)))
 			for _, entry := range expr.Entries {
@@ -358,6 +358,16 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					c.emitAt(OpAddStringConst, expr.Token.Line, expr.Token.Column, constIdx)
 					return nil
 				}
+			}
+		}
+		if bothInt && (expr.Operator == "+" || expr.Operator == "-") {
+			if slot, literal, ok := c.intLocalAndLiteral(expr.Left, expr.Right); ok {
+				op := OpLocalAddIntConst
+				if expr.Operator == "-" {
+					op = OpLocalSubIntConst
+				}
+				c.emitAt(op, expr.Token.Line, expr.Token.Column, slot, literal)
+				return nil
 			}
 		}
 		if err := c.compileExpression(expr.Left); err != nil {
@@ -1253,8 +1263,14 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		target := c.bytecodeTypeNameForParam(expr.Type, nil)
 		plainPrimitive := int64(0)
 		switch target {
-		case "int", "bool", "float", "string":
-			plainPrimitive = 1
+		case "int":
+			plainPrimitive = castCodeInt
+		case "bool":
+			plainPrimitive = castCodeBool
+		case "float":
+			plainPrimitive = castCodeFloat
+		case "string":
+			plainPrimitive = castCodeString
 		}
 		index := c.addConstant(runtime.String{Value: target})
 		c.emitAt(OpCast, expr.Token.Line, expr.Token.Column, index, plainPrimitive)
@@ -3570,6 +3586,12 @@ func (c *Compiler) compileConditionAndJumpIfFalse(cond ast.Expression, line, col
 			return len(c.chunk.Instructions) - 1, nil
 		}
 		fusedOp, fused := fusedCompareJumpOpFor(infix.Operator)
+		if fused {
+			if slot, literal, ok := c.intLocalAndLiteral(infix.Left, infix.Right); ok {
+				c.emitAt(OpJumpIfLocalCmpIntConst, line, column, -1, slot, literal, int64(fusedOp))
+				return len(c.chunk.Instructions) - 1, nil
+			}
+		}
 		if fused && c.staticIntExpr(infix.Left) && c.staticIntExpr(infix.Right) {
 			if err := c.compileExpression(infix.Left); err != nil {
 				return 0, err
@@ -3626,6 +3648,26 @@ func (c *Compiler) tryFuseModZeroBranch(infix *ast.InfixExpression) (int64, int6
 		op = OpJumpIfModZero
 	}
 	return b.slot, divisor, op, true
+}
+
+func (c *Compiler) intLocalAndLiteral(left ast.Expression, right ast.Expression) (int64, int64, bool) {
+	ident, ok := left.(*ast.Identifier)
+	if !ok {
+		return 0, 0, false
+	}
+	b, found := c.resolveName(ident.Value)
+	if !found || b.kind != "local" || b.typ != "int" {
+		return 0, 0, false
+	}
+	lit, ok := right.(*ast.IntegerLiteral)
+	if !ok {
+		return 0, 0, false
+	}
+	literal, err := strconv.ParseInt(lit.Value, 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	return b.slot, literal, true
 }
 
 func isIntZeroLiteral(e ast.Expression) bool {

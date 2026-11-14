@@ -1,0 +1,91 @@
+import test;
+
+func handledCleanup(): void {
+    try {
+        throw TypeError("handled cleanup failure");
+    } catch (TypeError e) {}
+}
+
+class CleanupBase {
+    func clean(): void {
+        handledCleanup();
+    }
+}
+
+class CleanupChild extends CleanupBase {
+    func own(): void {
+        handledCleanup();
+    }
+}
+
+class ConstructedCleanup {
+    func ConstructedCleanup() {
+        handledCleanup();
+    }
+}
+
+class CleanupManager {
+    func __enter(): CleanupManager {
+        return this;
+    }
+    func __exit(): void {
+        handledCleanup();
+    }
+}
+
+class CleanupPendingTest extends test.Test {
+    @test
+    func nestedCatchesInFinallyPreserveOriginalError(): void {
+        let child = CleanupChild();
+        for (done in [handledCleanup, child.clean, child.own, func(): void { ConstructedCleanup(); }, func(): void {
+            [1].map(func(int n): int {
+                handledCleanup();
+                return n;
+            });
+        }, func(): void {
+            try {
+                throw TypeError("inline cleanup");
+            } catch (Error e) {}
+        }]) {
+            string caught = "";
+            try {
+                try {
+                    throw ValueError("original");
+                } finally {
+                    done();
+                }
+            } catch (ValueError e) {
+                caught = e.message;
+            }
+            this.assertEquals("original", caught);
+        }
+    }
+
+    @test
+    func handledExitFailurePreservesWithBodyError(): void {
+        string caught = "";
+        try {
+            with (CleanupManager()) {
+                throw ValueError("body");
+            }
+        } catch (ValueError e) {
+            caught = e.message;
+        }
+        this.assertEquals("body", caught);
+    }
+
+    @test
+    func unhandledCleanupFailureStillReplacesOriginal(): void {
+        string caught = "";
+        try {
+            try {
+                throw ValueError("original");
+            } finally {
+                throw TypeError("replacement");
+            }
+        } catch (TypeError e) {
+            caught = e.message;
+        }
+        this.assertEquals("replacement", caught);
+    }
+}

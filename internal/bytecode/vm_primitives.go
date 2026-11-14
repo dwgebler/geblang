@@ -1538,7 +1538,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 func primitiveLength(receiver runtime.Value) (runtime.Value, error) {
 	switch value := receiver.(type) {
 	case runtime.String:
-		return runtime.SmallInt{Value: int64(runtime.StringRuneInfo(value.Value).RuneCount(value.Value))}, nil
+		return runtime.SmallInt{Value: int64(runtime.StringRuneCount(value.Value))}, nil
 	case runtime.Bytes:
 		return runtime.SmallInt{Value: int64(len(value.Value))}, nil
 	case *runtime.List:

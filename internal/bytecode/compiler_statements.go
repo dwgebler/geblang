@@ -921,11 +921,14 @@ func (c *Compiler) compileTryStatement(stmt *ast.TryStatement) error {
 		c.patchJump(nextCatchJump)
 	}
 	if stmt.Finally != nil {
-		if err := c.compileBlock(stmt.Finally); err != nil {
+		if err := c.compileRethrowingCleanup(stmt.Token.Line, stmt.Token.Column, func() error {
+			return c.compileBlock(stmt.Finally)
+		}); err != nil {
 			return err
 		}
+	} else {
+		c.emitAt(OpRethrow, stmt.Token.Line, stmt.Token.Column)
 	}
-	c.emitAt(OpRethrow, stmt.Token.Line, stmt.Token.Column)
 	handledOrNormalTarget := len(c.chunk.Instructions)
 	c.chunk.Instructions[normalJump].Operands[0] = int64(handledOrNormalTarget)
 	for _, jump := range catchEndJumps {
@@ -936,6 +939,23 @@ func (c *Compiler) compileTryStatement(stmt *ast.TryStatement) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// Keep the escaping error in a local: catches inside cleanup use pendingThrow too.
+func (c *Compiler) compileRethrowingCleanup(line, column int, cleanup func() error) error {
+	c.pushScope()
+	defer c.popScope()
+	saved := c.allocateLocal()
+	skip := c.emitJump(OpCatch, line, column)
+	c.chunk.Instructions[skip].Operands = append(c.chunk.Instructions[skip].Operands, -1, saved)
+	if err := cleanup(); err != nil {
+		return err
+	}
+	c.emitAt(OpGetLocal, line, column, saved)
+	c.emitAt(OpThrow, line, column)
+	c.patchJump(skip)
+	c.emitAt(OpRethrow, line, column)
 	return nil
 }
 
@@ -973,9 +993,13 @@ func (c *Compiler) compileWithStatement(stmt *ast.WithStatement) error {
 	c.emitAt(OpWithExit, stmt.Token.Line, stmt.Token.Column)
 	normalJump := c.emitJump(OpJump, stmt.Token.Line, stmt.Token.Column)
 	c.patchJump(handlerJump)
-	c.emitAt(OpGetLocal, stmt.Token.Line, stmt.Token.Column, hiddenSlot)
-	c.emitAt(OpWithExit, stmt.Token.Line, stmt.Token.Column)
-	c.emitAt(OpRethrow, stmt.Token.Line, stmt.Token.Column)
+	if err := c.compileRethrowingCleanup(stmt.Token.Line, stmt.Token.Column, func() error {
+		c.emitAt(OpGetLocal, stmt.Token.Line, stmt.Token.Column, hiddenSlot)
+		c.emitAt(OpWithExit, stmt.Token.Line, stmt.Token.Column)
+		return nil
+	}); err != nil {
+		return err
+	}
 	c.patchJump(normalJump)
 	return nil
 }

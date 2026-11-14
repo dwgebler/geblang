@@ -46,6 +46,7 @@ const (
 )
 
 func main() {
+	native.InstallHeapFloor()
 	// GEBLANG_PPROF=addr starts Go's pprof HTTP endpoint for engine
 	// profiling (dev tool; no effect when unset).
 	if addr := os.Getenv("GEBLANG_PPROF"); addr != "" {

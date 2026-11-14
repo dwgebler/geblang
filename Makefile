@@ -3,6 +3,8 @@
 BINARY ?= geblang
 GO ?= go
 GOCACHE ?= /tmp/geblang-go-cache
+# The VM dispatch loop loses about 5% when it does not start on a 64-byte boundary.
+GO_LDFLAGS ?= -funcalign=64
 DOCS_SRC ?= docs/user
 DOCS_OUT ?= docs/site
 DOCS_API_SRC ?= stdlib
@@ -75,7 +77,7 @@ check-lang: build
 	@./scripts/check-lang.sh
 
 build:
-	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto $(GO) build -o $(BINARY) ./cmd/geblang
+	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto $(GO) build -ldflags="$(GO_LDFLAGS)" -o $(BINARY) ./cmd/geblang
 
 # Build and install the binary into INSTALL_DIR (defaults to /usr/local/bin).
 # Override with `make build-with-path INSTALL_DIR=~/.local/bin`. Uses sudo

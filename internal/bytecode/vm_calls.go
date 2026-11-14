@@ -3861,7 +3861,8 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 	case OpJump, OpJumpIfFalse, OpIterNext, OpPushExceptionHandler,
 		OpJumpIfNotLessInt, OpJumpIfNotLessEqualInt, OpJumpIfNotGreaterInt,
 		OpJumpIfNotGreaterEqualInt, OpJumpIfNotEqualInt, OpJumpIfEqualInt,
-		OpNullCoalesce, OpOptionalChain, OpJumpIfArgPresent:
+		OpNullCoalesce, OpOptionalChain, OpJumpIfArgPresent,
+		OpJumpIfModNotZero, OpJumpIfModZero, OpJumpIfLocalCmpIntConst:
 		if len(instruction.Operands) > 0 && instruction.Operands[0] >= 0 {
 			instruction.Operands[0] += int64(instructionShift)
 		}

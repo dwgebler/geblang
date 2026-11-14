@@ -437,6 +437,12 @@ func vmCallableTypeName(name string) bool {
 }
 
 func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
+	if instruction.Operands[1] == castCodeString {
+		if n := len(vm.stack); n > 0 && vm.stack[n-1].Kind == runtime.VMKindSmallInt && (len(vm.frames) == 0 || len(vm.frames[len(vm.frames)-1].typeBindings) == 0) {
+			vm.stack[n-1] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: strconv.FormatInt(vm.stack[n-1].I64, 10)}}
+			return ip, nil
+		}
+	}
 	target, err := vm.constantString(instruction, "cast target must be string")
 	if err != nil {
 		return 0, err
@@ -1329,6 +1335,17 @@ func castMayDispatch(slot runtime.VMValue) bool {
 	}
 	return false
 }
+
+// OpCast's second operand: zero means a general cast, otherwise the plain primitive target.
+const (
+	castCodeInt int64 = iota + 1
+	castCodeBool
+	castCodeFloat
+	castCodeString
+)
+
+// castCodeKinds maps a cast code to the unboxed kind that already has that type; strings are boxed and take the general path.
+var castCodeKinds = [...]runtime.VMKind{0xff, runtime.VMKindSmallInt, runtime.VMKindBool, runtime.VMKindFloat}
 
 func vmValueHasPrimitiveType(v runtime.VMValue, target string) bool {
 	switch target {

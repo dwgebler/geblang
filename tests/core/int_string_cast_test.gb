@@ -1,0 +1,66 @@
+/**
+ * @title Casting an int to a string
+ * @summary `n as string` gives the decimal digits for every int, including
+ * negative values, the 64-bit limits and values beyond them, in plain code,
+ * loops, generic functions and methods.
+ */
+import test;
+
+func viaGeneric<T>(T v): string { return v as string; }
+
+class Labeller {
+    int base;
+    func Labeller(int base) { this.base = base; }
+    func label(int n): string { return "k" + ((this.base + n) as string); }
+}
+
+class IntStringCastTest extends test.Test {
+    @test
+    func smallValues(): void {
+        this.assertEquals("0", 0 as string);
+        this.assertEquals("7", 7 as string);
+        this.assertEquals("-7", (0 - 7) as string);
+        this.assertEquals("1000000", 1000000 as string);
+    }
+
+    @test
+    func sixtyFourBitLimits(): void {
+        int top = 9223372036854775807;
+        int bottom = 0 - top - 1;
+        this.assertEquals("9223372036854775807", top as string);
+        this.assertEquals("-9223372036854775808", bottom as string);
+        this.assertEquals("9223372036854775808", (top + 1) as string);
+        this.assertEquals("-9223372036854775809", (bottom - 1) as string);
+    }
+
+    @test
+    func insideLoopsAndConcatenation(): void {
+        string out = "";
+        for (int i = 8; i < 12; i++) {
+            out = out + "k" + (i as string) + ";";
+        }
+        this.assertEquals("k8;k9;k10;k11;", out);
+    }
+
+    @test
+    func insideGenericFunctionAndMethod(): void {
+        this.assertEquals("42", viaGeneric<int>(42));
+        this.assertEquals("-3", viaGeneric<int>(0 - 3));
+        this.assertEquals("k15", Labeller(10).label(5));
+    }
+
+    @test
+    func resultIsAString(): void {
+        let s = 12 as string;
+        this.assertEquals("string", typeof(s));
+        this.assertEquals(2, s.length());
+        this.assertEquals("12!", s + "!");
+    }
+
+    @test
+    func otherKindsAreUnchanged(): void {
+        this.assertEquals("true", true as string);
+        this.assertEquals("1.5", 1.5f as string);
+        this.assertEquals("abc", "abc" as string);
+    }
+}

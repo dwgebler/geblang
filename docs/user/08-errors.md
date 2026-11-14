@@ -26,7 +26,9 @@ try {
 }
 ```
 
-`finally` runs after the `try`/`catch` path completes.
+`finally` runs after the `try`/`catch` path completes. If cleanup handles its own
+error, the original escaping exception still propagates. The same applies to a
+context manager's `__exit`. An uncaught cleanup error replaces the original.
 
 A return from `finally` replaces a pending return or exception. Breaking or
 continuing a loop inside a `try` does not leave that `try`; its finalizer runs

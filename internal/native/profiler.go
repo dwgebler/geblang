@@ -27,15 +27,15 @@ func registerProfiler(r *Registry) {
 	r.Register("profiler", "snapshot", func(args []runtime.Value) (runtime.Value, error) {
 		var ms goruntime.MemStats
 		goruntime.ReadMemStats(&ms)
-		profilerUpdatePeak(int64(ms.HeapAlloc))
+		profilerUpdatePeak(int64(ms.HeapAlloc) - HeapFloorBytes())
 		user, sys := profilerCPUNanos()
 		return profilerDict(map[string]runtime.Value{
 			"wall_ns": runtime.NewInt64(time.Now().UnixNano()),
 			// mono_ns backs delta()'s elapsed_ms; wall_ns can jump backwards under load.
 			"mono_ns":     runtime.NewInt64(time.Since(monoClockStart).Nanoseconds()),
-			"heap_alloc":  runtime.NewInt64(int64(ms.HeapAlloc)),
+			"heap_alloc":  runtime.NewInt64(int64(ms.HeapAlloc) - HeapFloorBytes()),
 			"peak_alloc":  runtime.NewInt64(atomic.LoadInt64(&profilerPeakAlloc)),
-			"total_alloc": runtime.NewInt64(int64(ms.TotalAlloc)),
+			"total_alloc": runtime.NewInt64(int64(ms.TotalAlloc) - HeapFloorBytes()),
 			"num_gc":      runtime.NewInt64(int64(ms.NumGC)),
 			"cpu_user_ns": runtime.NewInt64(user),
 			"cpu_sys_ns":  runtime.NewInt64(sys),
@@ -67,8 +67,8 @@ func registerProfiler(r *Registry) {
 		return profilerDict(map[string]runtime.Value{
 			"elapsed_ms": runtime.Float{Value: float64(elapsedNS) / 1e6},
 			"cpu_ms":     runtime.Float{Value: float64(cpuDelta) / 1e6},
-			"heap_alloc": runtime.NewInt64(int64(ms.HeapAlloc) - snapHeap),
-			"allocs":     runtime.NewInt64(int64(ms.TotalAlloc) - snapTotal),
+			"heap_alloc": runtime.NewInt64(int64(ms.HeapAlloc) - HeapFloorBytes() - snapHeap),
+			"allocs":     runtime.NewInt64(int64(ms.TotalAlloc) - HeapFloorBytes() - snapTotal),
 			"gc_count":   runtime.NewInt64(int64(ms.NumGC) - snapGC),
 		}), nil
 	})
@@ -76,13 +76,13 @@ func registerProfiler(r *Registry) {
 	r.Register("profiler", "memory", func(args []runtime.Value) (runtime.Value, error) {
 		var ms goruntime.MemStats
 		goruntime.ReadMemStats(&ms)
-		profilerUpdatePeak(int64(ms.HeapAlloc))
+		profilerUpdatePeak(int64(ms.HeapAlloc) - HeapFloorBytes())
 		return profilerDict(map[string]runtime.Value{
-			"heap_alloc":  runtime.NewInt64(int64(ms.HeapAlloc)),
+			"heap_alloc":  runtime.NewInt64(int64(ms.HeapAlloc) - HeapFloorBytes()),
 			"peak_alloc":  runtime.NewInt64(atomic.LoadInt64(&profilerPeakAlloc)),
 			"heap_sys":    runtime.NewInt64(int64(ms.HeapSys)),
 			"stack_sys":   runtime.NewInt64(int64(ms.StackSys)),
-			"total_alloc": runtime.NewInt64(int64(ms.TotalAlloc)),
+			"total_alloc": runtime.NewInt64(int64(ms.TotalAlloc) - HeapFloorBytes()),
 			"gc_count":    runtime.NewInt64(int64(ms.NumGC)),
 		}), nil
 	})
@@ -90,7 +90,7 @@ func registerProfiler(r *Registry) {
 	r.Register("profiler", "peak", func(args []runtime.Value) (runtime.Value, error) {
 		var ms goruntime.MemStats
 		goruntime.ReadMemStats(&ms)
-		profilerUpdatePeak(int64(ms.HeapAlloc))
+		profilerUpdatePeak(int64(ms.HeapAlloc) - HeapFloorBytes())
 		return profilerDict(map[string]runtime.Value{
 			"peak_alloc": runtime.NewInt64(atomic.LoadInt64(&profilerPeakAlloc)),
 		}), nil

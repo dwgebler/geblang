@@ -1,0 +1,109 @@
+/**
+ * @title Integer add, string length and dict literal fast paths keep their semantics
+ * @summary Sums of method results still promote past the 64-bit range, string
+ * length counts characters for short and long text, and dict literals of every
+ * size keep key order and stay mutable.
+ */
+import test;
+
+class Counter {
+    int n;
+    func Counter(int n) { this.n = n; }
+    func value(): int { return this.n; }
+    func text(): string { return "n${this.n}"; }
+}
+
+func top(): int { return 9223372036854775807; }
+
+class SmallIntFastPathsTest extends test.Test {
+    @test
+    func sumOfMethodResults(): void {
+        let a = Counter(2);
+        let b = Counter(40);
+        this.assertEquals(84, a.value() + b.value() + b.value() + a.value());
+        this.assertEquals(-38, a.value() + (0 - b.value()));
+    }
+
+    @test
+    func sumPromotesPastSixtyFourBits(): void {
+        let one = Counter(1);
+        this.assertEquals("9223372036854775808", "${top() + one.value()}");
+        this.assertEquals("-9223372036854775809", "${(0 - top()) + (0 - one.value()) + (0 - one.value())}");
+        this.assertEquals("18446744073709551614", "${top() + top()}");
+        this.assertEquals("int", typeof(top() + one.value()));
+        let t = top();
+        let o = one.value();
+        this.assertEquals("9223372036854775808", "${t + o}");
+        this.assertEquals("-9223372036854775809", "${(0 - t) + (0 - o) + (0 - o)}");
+        this.assertEquals("9223372036854775812", "${t + "hello".length()}");
+        this.assertEquals(9223372036854775807, (top() + one.value()) - 1);
+    }
+
+    @test
+    func addKeepsOtherOperandKinds(): void {
+        let c = Counter(3);
+        this.assertEquals("n3n3", c.text() + c.text());
+        this.assertEquals("float", typeof(c.value() + 0.5f));
+        this.assertEquals(3.5f, c.value() + 0.5f);
+        this.assertEquals("decimal", typeof(c.value() + 0.5));
+    }
+
+    @test
+    func stringLengthCountsCharacters(): void {
+        this.assertEquals(0, "".length());
+        this.assertEquals(5, "hello".length());
+        this.assertEquals(5, "héllo".length());
+        this.assertEquals(1, "é".length());
+        this.assertEquals(256, "a".repeat(256).length());
+        this.assertEquals(257, "a".repeat(257).length());
+        this.assertEquals(300, "é".repeat(300).length());
+        this.assertEquals(258, ("a".repeat(257) + "é").length());
+    }
+
+    @test
+    func stringLengthIsStableAcrossCalls(): void {
+        string long = "aé".repeat(200);
+        int total = 0;
+        for (int i = 0; i < 5; i++) {
+            total = total + long.length();
+        }
+        this.assertEquals(2000, total);
+        long = long + "!";
+        this.assertEquals(401, long.length());
+    }
+
+    @test
+    func dictLiteralsOfEverySize(): void {
+        this.assertEquals(["a"], {"a": 1}.keys());
+        this.assertEquals(["a", "b", "c"], {"a": 1, "b": 2, "c": 3}.keys());
+        let eight = {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7, "h": 8};
+        this.assertEquals(["a", "b", "c", "d", "e", "f", "g", "h"], eight.keys());
+        let nine = {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7, "h": 8, "i": 9};
+        this.assertEquals(["a", "b", "c", "d", "e", "f", "g", "h", "i"], nine.keys());
+        this.assertEquals([1, 2, 3, 4, 5, 6, 7, 8, 9], nine.values());
+    }
+
+    @test
+    func dictLiteralStaysMutable(): void {
+        let d = {"x": 1, "y": 2, "z": 3};
+        d["y"] = 20;
+        d["w"] = 4;
+        d.remove("x");
+        this.assertEquals(["y", "z", "w"], d.keys());
+        this.assertEquals([20, 3, 4], d.values());
+        let dup = {"k": 1, "j": 2, "k": 3};
+        this.assertEquals(["k", "j"], dup.keys());
+        this.assertEquals(3, dup["k"]);
+    }
+
+    @test
+    func identityCastsKeepValueAndType(): void {
+        let c = Counter(7);
+        this.assertEquals(7, c.value() as int);
+        this.assertEquals("int", typeof(c.value() as int));
+        this.assertEquals(true, (c.value() == 7) as bool);
+        this.assertEquals("float", typeof(1.5f as float));
+        this.assertEquals("string", typeof(c.value() as string));
+        this.assertEquals(7.0f, c.value() as float);
+    }
+}

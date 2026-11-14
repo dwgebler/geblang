@@ -161,9 +161,18 @@ If `%GOPATH%\bin` is on your `PATH` this is the simplest option on Windows.
 
 ## VS Code IDE Setup
 
-The VS Code extension lives in `vscode-geblang/` inside the repository. It must
-be built and installed from source. It provides syntax highlighting, live error
-diagnostics, completion, and step debugging for `.gb` files.
+The VS Code extension provides syntax highlighting, live error diagnostics,
+completion, and step debugging for `.gb` files. It is published on the Visual
+Studio Marketplace: open the Extensions view in VS Code, search for `Geblang`,
+and click **Install**, or run:
+
+```sh
+code --install-extension geblang.vscode-geblang
+```
+
+If you installed it this way, skip to Step 3 below. The source lives in
+`vscode-geblang/` inside the repository; Steps 1 and 2 build and install it
+from source instead.
 
 ### Step 1  -  Build the extension
 
