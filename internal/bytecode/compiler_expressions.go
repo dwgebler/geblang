@@ -1657,6 +1657,8 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	}
 
 	index := c.declareFunction("<closure>")
+	c.chunk.Functions[index].DefLine = int64(expr.Token.Line)
+	c.chunk.Functions[index].DefColumn = int64(expr.Token.Column)
 	skipJump := c.emitJump(OpJump, expr.Token.Line, expr.Token.Column)
 	entry := int64(len(c.chunk.Instructions))
 	c.pushScope()

@@ -1,0 +1,103 @@
+import test;
+
+func rebindAfterConditionalDeletion(bool retire): int {
+    let value = 1;
+    if (retire) { del value; }
+    let value = 2;
+    return value;
+}
+
+class LocalBindingBase {
+    func value(): int {
+        int value = 1;
+        del value;
+        int value = 2;
+        if (true) { int value = 3; }
+        return value;
+    }
+}
+class LocalBindingSub extends LocalBindingBase {}
+
+class CatchResource {
+    func __enter(): CatchResource { return this; }
+    func __exit(): void {}
+}
+
+func catchShadow(): string {
+    try {
+        throw ValueError("kept");
+    } catch (Error a) {
+        string text = a.message;
+        let a = "shadow";
+        return text + ":" + a;
+    }
+    return "";
+}
+
+class CatchScopeBase {
+    int seen;
+
+    func CatchScopeBase() {
+        try { throw ValueError("ctor"); } catch (Error a) { let a = 4; this.seen = a; }
+    }
+
+    func run(): int {
+        int t = 0;
+        try { throw ValueError("x"); } catch (Error a) { let a = 2; t += a; let g = func(): int { return a; }; t += g(); }
+        try { throw ValueError("y"); } catch (ValueError a) { int a = 5; t += a; } catch (Error a) { t = -1; } finally { let a = 1; t += a; }
+        try { try { throw ValueError("z"); } catch (Error a) { let a = 3; throw RuntimeError("again"); } } catch (Error a) { t += 10; }
+        with (o = CatchResource()) { let o = 100; t += o; }
+        return t;
+    }
+}
+class CatchScopeSub extends CatchScopeBase {
+    func CatchScopeSub() { parent(); }
+}
+
+class LocalBindingScopeTest extends test.Test {
+    @test
+    func rebindingRequiresTheDeletionToExecute(): void {
+        this.assertEquals(2, rebindAfterConditionalDeletion(true));
+        this.assertThrows(func(): void { rebindAfterConditionalDeletion(false); });
+    }
+
+    @test
+    func capturedBindingsSeeTheFreshValue(): void {
+        let value = 1;
+        let read = func(): int { return value; };
+        del value;
+        let value = 2;
+        this.assertEquals(2, read());
+    }
+    @test
+    func shadowingAndDeletionPreserveOuterBindings(): void {
+        let value = 1;
+        if (true) { let value = 2; this.assertEquals(2, value); }
+        this.assertEquals(1, value);
+        del value;
+        let value, other = [3, 4];
+        this.assertEquals(3, value);
+        this.assertEquals(4, other);
+    }
+
+    @test
+    func inheritedMethodsAndCallbacksCanRebindAfterDeletion(): void {
+        this.assertEquals(2, LocalBindingBase().value());
+        this.assertEquals(2, LocalBindingSub().value());
+        let values = [1, 2].map(func(int value): int {
+            let local = value;
+            del local;
+            let local = value + 1;
+            return local;
+        });
+        this.assertEquals([2, 3], values);
+    }
+
+    @test
+    func catchBodyMayShadowTheCatchVariable(): void {
+        this.assertEquals("kept:shadow", catchShadow());
+        this.assertEquals(120, CatchScopeBase().run());
+        this.assertEquals(120, CatchScopeSub().run());
+        this.assertEquals(4, CatchScopeSub().seen);
+    }
+}

@@ -1,0 +1,101 @@
+/**
+ * @title http.serve/listen read timeouts
+ * @summary `readHeaderTimeoutMs`, `readBodyTimeoutMs` and `idleTimeoutMs`
+ * bound how long the server waits on a slow client. A request whose body
+ * stalls answers 408 and frees its concurrency slot; the body timeout
+ * does not limit how long the handler itself may take.
+ */
+import test;
+import http;
+import sys;
+import sockets;
+
+func echoLength(dict<string, any> request): dict<string, any> {
+    return {"status": 200, "body": "got:" + ((request["body"] as string).length() as string)};
+}
+
+class HttpServerTimeoutsTest extends test.Test {
+    func port(any server): int {
+        return http.serverAddr(server).split(":")[1] as int;
+    }
+
+    @test
+    func stalledBodyAnswers408AndFreesTheSlot(): void {
+        let server = http.listen("127.0.0.1:0", echoLength,
+            {"maxConcurrent": 1, "onOverload": "reject", "readBodyTimeoutMs": 200});
+        try {
+            let stalled = sockets.dial("127.0.0.1", this.port(server));
+            stalled.write("POST /in HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\na");
+            /* readAll returns only once the server has closed the connection itself. */
+            string reply = stalled.readAll();
+            stalled.close();
+            this.assertTrue(reply.contains("408 Request Timeout"));
+
+            string base = "http://" + http.serverAddr(server);
+            let ok = http.request(base + "/in").withMethod("POST").withBody("hello").send();
+            this.assertEquals(200, ok.status());
+            this.assertEquals("got:5", ok.text());
+        } finally {
+            http.close(server);
+        }
+    }
+
+    @test
+    func bodyTimeoutDoesNotLimitTheHandler(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            sys.sleep(400);
+            return {"status": 200, "body": "slow-ok"};
+        }, {"readBodyTimeoutMs": 100});
+        try {
+            string base = "http://" + http.serverAddr(server);
+            let r = http.request(base + "/in").withMethod("POST").withBody("x".repeat(4096)).send();
+            this.assertEquals(200, r.status());
+            this.assertEquals("slow-ok", r.text());
+        } finally {
+            http.close(server);
+        }
+    }
+
+    @test
+    func slowHeadersCloseTheConnection(): void {
+        let server = http.listen("127.0.0.1:0", echoLength, {"readHeaderTimeoutMs": 200});
+        try {
+            let slow = sockets.dial("127.0.0.1", this.port(server));
+            slow.write("GET /in HTTP/1.1\r\nHost: x\r\n");
+            string reply = slow.readAll();
+            slow.close();
+            this.assertFalse(reply.contains("200 OK"));
+
+            let ok = http.get("http://" + http.serverAddr(server) + "/in");
+            this.assertEquals(200, ok.status());
+        } finally {
+            http.close(server);
+        }
+    }
+
+    @test
+    func zeroDisablesATimeoutAndDefaultsServeNormally(): void {
+        for (opts in [{}, {"readHeaderTimeoutMs": 0, "readBodyTimeoutMs": 0, "idleTimeoutMs": 0}]) {
+            let server = http.listen("127.0.0.1:0", echoLength, opts as dict<string, any>);
+            try {
+                string base = "http://" + http.serverAddr(server);
+                let r = http.request(base + "/in").withMethod("POST").withBody("abc").send();
+                this.assertEquals("got:3", r.text());
+            } finally {
+                http.close(server);
+            }
+        }
+    }
+
+    @test
+    func invalidTimeoutIsRejected(): void {
+        for (name in ["readHeaderTimeoutMs", "readBodyTimeoutMs", "idleTimeoutMs"]) {
+            dict<string, any> negative = {};
+            negative[name] = -1;
+            this.assertThrows(func(): void { http.listen("127.0.0.1:0", echoLength, negative); });
+            dict<string, any> wrongType = {};
+            wrongType[name] = "soon";
+            this.assertThrows(func(): void { http.listen("127.0.0.1:0", echoLength, wrongType); });
+        }
+    }
+}

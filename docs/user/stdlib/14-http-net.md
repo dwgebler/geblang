@@ -674,6 +674,36 @@ Absent (or `0`) means unlimited:
 http.listen(":8080", handler, { "maxBodyBytes": 10 * 1024 * 1024 });
 ```
 
+#### Read timeouts
+
+The server bounds how long it waits on a slow client. All three options
+are in milliseconds and `0` disables that timeout:
+
+| Option                | Default | Bounds                                             |
+|-----------------------|---------|----------------------------------------------------|
+| `readHeaderTimeoutMs` | 10000   | Receiving the request line and headers             |
+| `readBodyTimeoutMs`   | 60000   | Receiving the whole request body                   |
+| `idleTimeoutMs`       | 120000  | A keep-alive connection waiting for its next request |
+
+```gb
+http.listen(":8080", handler, {
+    "readHeaderTimeoutMs": 5000,
+    "readBodyTimeoutMs":   300000,   # allow slow uploads up to 5 minutes
+    "idleTimeoutMs":       60000
+});
+```
+
+A request whose body does not arrive in time is answered with
+`408 Request Timeout` before the handler runs, and the connection is
+closed, so a stalled client cannot hold a `maxConcurrent` slot. A client
+that is too slow sending headers, or idle too long, is disconnected.
+
+The body timeout covers only reading the request. It does not limit how
+long the handler runs or how long a response takes to send, so streamed
+responses, server-sent events and WebSocket connections are unaffected.
+Raise `readBodyTimeoutMs` if clients legitimately upload for longer
+than a minute.
+
 #### Handler errors and debug mode
 
 When a handler throws and nothing catches it, the client receives a
@@ -862,6 +892,22 @@ http.serve("127.0.0.1:8080", func(dict<string, any> request): dict<string, any> 
     });
 });
 ```
+
+### Message size limit
+
+A server accepts WebSocket messages up to 1 MiB (1048576 bytes) by default.
+Set `maxWebSocketMessageBytes` in the `http.serve` / `http.listen` options
+to change it, or `0` for no limit:
+
+```gb
+http.listen(":8080", handler, {"maxWebSocketMessageBytes": 8 * 1024 * 1024});
+```
+
+The limit applies to the whole message, including one a client sends in
+several frames. When a message is larger, the server closes the connection
+with status 1009 ("message too big") and the handler's `readText` /
+`readBytes` raises an error you can catch. `maxBodyBytes` does not apply to
+WebSocket messages; it only limits the HTTP request body.
 
 ## URL Parsing And Manipulation
 

@@ -47,6 +47,67 @@ let retries = 3;
 dict<string, any> payload = json.parse(text);
 ```
 
+### Scope and shadowing
+
+A name can be declared only once in a scope. Declaring it again in the
+same scope is an error, reported by `geblang check` and by both runtimes:
+
+```gb
+let total = 1;
+let total = 2;        # error: "total" is already declared in this scope
+```
+
+Each `{ ... }` block is a new scope. A declaration inside a block may
+reuse an outer name; it shadows the outer one until the block ends:
+
+```gb
+let total = 1;
+if (true) {
+    let total = 2;    # a different variable, visible only in this block
+}
+# total is 1 here
+```
+
+Names that a construct introduces belong to a scope just outside its
+body, so the body, being its own block, may shadow them. This applies to
+function parameters, loop variables, `with` bindings and the error
+variable of a `catch` clause:
+
+```gb
+func describe(int count): string {
+    string count = "many";             # shadows the parameter
+    return count;
+}
+
+for (i in 0..<3) {
+    let i = "row";                     # shadows the loop variable for this pass
+}
+
+try {
+    risky();
+} catch (Error e) {
+    string message = e.message;
+    let e = "handled: " + message;     # shadows the caught error
+}
+```
+
+Shadowing hides the outer value for the rest of the block, so read what
+you need from a parameter or caught error before you reuse its name.
+The body's own scope still allows each name only once: two `let e`
+declarations in the same `catch` body are an error.
+
+`del name;` retires a variable. After it, the name may be declared again
+in the same scope:
+
+```gb
+let buffer = load();
+del buffer;
+let buffer = [];      # allowed: the earlier binding was deleted
+```
+
+Two functions with the same name in one scope are not a redeclaration;
+they are overloads (see [Functions and callables](05-functions-callables.md)).
+
 ### The `any` type
 
 `any` is Geblang's explicit opt-in for dynamic values. It is useful at

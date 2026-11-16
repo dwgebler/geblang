@@ -2,6 +2,7 @@ package evaluator
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/native"
@@ -739,6 +740,13 @@ func (e *Evaluator) websocketSendText(call *ast.CallExpression, args []runtime.V
 	return runtime.Null{}, nil
 }
 
+func websocketReadError(call *ast.CallExpression, err error) error {
+	if errors.Is(err, websocket.ErrReadLimit) {
+		return fmt.Errorf("%s: message exceeds the server's maxWebSocketMessageBytes limit; the connection was closed", call.Callee.String())
+	}
+	return err
+}
+
 func (e *Evaluator) websocketReadText(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects connection", call.Callee.String())
@@ -749,7 +757,7 @@ func (e *Evaluator) websocketReadText(call *ast.CallExpression, args []runtime.V
 	}
 	messageType, data, err := h.conn.ReadMessage()
 	if err != nil {
-		return nil, err
+		return nil, websocketReadError(call, err)
 	}
 	if messageType != websocket.TextMessage {
 		return nil, fmt.Errorf("%s received non-text message", call.Callee.String())
@@ -785,7 +793,7 @@ func (e *Evaluator) websocketReadBytes(call *ast.CallExpression, args []runtime.
 	}
 	_, data, err := h.conn.ReadMessage()
 	if err != nil {
-		return nil, err
+		return nil, websocketReadError(call, err)
 	}
 	return runtime.Bytes{Value: data}, nil
 }

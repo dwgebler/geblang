@@ -211,6 +211,8 @@ func (f *fmtr) program(prog *ast.Program) {
 	// line before other declarations.
 	stmts := prog.Statements
 	i := 0
+	prevEnd := 0
+	var prev ast.Statement
 	// imports and module declarations
 	for i < len(stmts) {
 		switch stmts[i].(type) {
@@ -218,14 +220,14 @@ func (f *fmtr) program(prog *ast.Program) {
 			f.flushComments(startLine(stmts[i]))
 			f.stmt(stmts[i])
 			f.flushTrailing(endLine(stmts[i]))
+			prevEnd = endLine(stmts[i])
+			prev = stmts[i]
 			i++
 			continue
 		}
 		break
 	}
-	// Top-level declarations are always blank-separated; other statements keep the author's blanks.
-	prevEnd := 0
-	var prev ast.Statement
+	// Top-level declarations are always blank-separated; other statements, including the first after the header, keep the author's blanks.
 	for i < len(stmts) {
 		if i > 0 {
 			if isTopDecl(stmts[i]) || isTopDecl(prev) {

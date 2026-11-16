@@ -484,6 +484,9 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 			if err != nil {
 				var notFound *runtime.MethodNotFoundError
 				if errors.As(err, &notFound) {
+					if vm.hasForeignMagic(instance, "__call") {
+						return vm.callForeignMagic(instruction, ip, instance, "__call", []runtime.Value{runtime.String{Value: nameValue.Value}, &runtime.List{Elements: args}}, nil)
+					}
 					return vm.throwTyped(instruction, ip, "RuntimeError", fmt.Sprintf("unknown method %s.%s", notFound.Class, notFound.Method))
 				}
 				return vm.propagateModuleError(instruction, ip, err)
@@ -538,6 +541,9 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 			}
 			if nextIP, err, handled := vm.callInterfaceDefault(instruction, ip, instance, loweredName, args); handled {
 				return nextIP, err
+			}
+			if vm.inheritsAcrossModules(classInfo) && vm.hasForeignMagic(instance, "__call") {
+				return vm.callForeignMagic(instruction, ip, instance, "__call", []runtime.Value{runtime.String{Value: nameValue.Value}, &runtime.List{Elements: args}}, nil)
 			}
 			return vm.throwTyped(instruction, ip, "RuntimeError", fmt.Sprintf("unknown method %s.%s", instance.Class.Name, nameValue.Value))
 		}

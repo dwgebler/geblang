@@ -71,7 +71,7 @@ func TestHTTPHandlerAllowsConcurrentCallbacks(t *testing.T) {
 		return gruntime.String{Value: "ok"}, nil
 	}}
 
-	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil, nil, 0, false, false))
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil, nil, 0, false, false, handlerLimits{}))
 	defer server.Close()
 
 	var wg sync.WaitGroup
@@ -128,7 +128,7 @@ func TestHTTPClosureHandlerAllowsConcurrentCallbacks(t *testing.T) {
 	// Geblang closure handler — exercises the clone path.
 	handler := concurrencyHandler(blocker)
 
-	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil, nil, 0, false, false))
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil, nil, 0, false, false, handlerLimits{}))
 	defer server.Close()
 
 	var wg sync.WaitGroup
@@ -307,7 +307,7 @@ func TestHTTPHandlerRejectsOverloadWhenCapped(t *testing.T) {
 	}}
 
 	pool := concurrent.NewPool(2, 0, concurrent.Reject)
-	server := newLocalHTTPTestServer(t, e.httpHandler(handler, pool, nil, 0, false, false))
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, pool, nil, 0, false, false, handlerLimits{}))
 	defer server.Close()
 
 	var wg sync.WaitGroup
@@ -368,7 +368,7 @@ func TestHTTPHandlerWaitsForSlotUnderWaitPolicy(t *testing.T) {
 	}}
 
 	pool := concurrent.NewPool(1, 0, concurrent.Wait)
-	server := newLocalHTTPTestServer(t, e.httpHandler(handler, pool, nil, 0, false, false))
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, pool, nil, 0, false, false, handlerLimits{}))
 	defer server.Close()
 
 	var wg sync.WaitGroup

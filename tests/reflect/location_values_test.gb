@@ -1,0 +1,49 @@
+import test;
+import reflect;
+import math;
+import location_values_donor as donor;
+
+class LocalLocationBase {
+    func own(): int { return 1; }
+    static func staticOwn(): int { return 2; }
+    func literal(): callable { return func(): int { return 3; }; }
+}
+class LocalLocationSub extends LocalLocationBase {}
+
+class LocationValuesTest extends test.Test {
+    func check(any target, string expectedModule): void {
+        let location = reflect.location(target);
+        this.assertTrue(location != null);
+        let data = location as dict<string, any>;
+        this.assertEquals(expectedModule, data["module"]);
+        this.assertTrue((data["line"] as int) > 0);
+        this.assertTrue((data["column"] as int) > 0);
+        this.assertEquals(data, donor.inspect(target));
+    }
+
+    @test
+    func localAndImportedLiteralsKeepTheirDeclaringModule(): void {
+        this.check(func(): int { return 1; }, "");
+        this.check(donor.literal(2), "location_values_donor");
+        this.check(LocalLocationSub().literal(), "");
+        this.check(donor.Sub().literal(), "location_values_donor");
+        this.assertEquals(5, reflect.location(donor.literal(2))["line"]);
+    }
+
+    @test
+    func ownInheritedAndStaticMethodValuesKeepLocations(): void {
+        for (obj in [LocalLocationBase(), LocalLocationSub()]) {
+            this.check(reflect.method(obj, "own"), "");
+            this.check(obj.own, "");
+        }
+        for (obj in [donor.Base(), donor.Sub()]) {
+            this.check(reflect.method(obj, "own"), "location_values_donor");
+            this.check(obj.own, "location_values_donor");
+        }
+        this.check(reflect.staticMethod(LocalLocationBase, "staticOwn"), "");
+        this.check(reflect.staticMethod(donor.Base, "staticOwn"), "location_values_donor");
+        this.check(donor.Sub().extra, "location_values_donor");
+        this.assertEquals(11, reflect.location(donor.Sub().own)["line"]);
+        this.assertEquals(null, reflect.location(math.abs));
+    }
+}

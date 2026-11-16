@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(102)
+	Version = uint16(103)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.

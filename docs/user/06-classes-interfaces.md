@@ -981,6 +981,18 @@ class Bag {
 }
 ```
 
+A declared field or a real method always wins: `__get`, `__set` and `__call`
+run only for names the class does not define. Static access has the same
+hooks: `static func __getStatic(string name)`, `__setStatic(string name, any
+value)` and `__callStatic(string name, list<any> args)` handle `Class.name`,
+`Class.name = value` and `Class.name(...)` for undeclared static members.
+
+These hooks belong to the class, wherever it is used. They are inherited by
+subclasses, including a subclass declared in a different module from its
+parent, and they apply to an instance or class imported from another module
+exactly as they do inside the module that defines it. Two classes with the
+same name in different modules each use their own hooks.
+
 Dynamic access is useful at framework boundaries, but normal declared fields and
 methods should be preferred for domain code because they are easier to type
 check and document.

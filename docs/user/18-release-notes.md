@@ -2,7 +2,36 @@
 
 ## 1.42.1
 
+### Security
+
+- `http.serve` and `http.listen` now time out slow clients: 10 seconds to
+  send request headers, 60 seconds to send the request body, and 120 seconds
+  idle on a keep-alive connection. Previously there was no limit, so a client
+  that stalled mid-body held a `maxConcurrent` slot indefinitely. A body that
+  times out is answered with 408. Change the limits with the new
+  `readHeaderTimeoutMs`, `readBodyTimeoutMs` and `idleTimeoutMs` options
+  (`0` disables one); raise `readBodyTimeoutMs` for uploads that take longer
+  than a minute. Handler run time, streamed responses, server-sent events and
+  WebSockets are not affected.
+- WebSocket servers now reject a message larger than 1 MiB by default.
+  Previously a client could send a message of any size, which was read into
+  memory in full. An oversize message closes the connection with status 1009
+  and the handler's read raises an error. Change the limit with the new
+  `maxWebSocketMessageBytes` server option (`0` disables it).
+
 ### Fixed
+
+- `geblang fmt` keeps a blank line between the `module` / `import` lines and
+  a following `const`, `let` or other statement, as it already did before a
+  function or class. It was dropped, including above a doc comment.
+- The compiler and `geblang check` reject repeated local declarations in one
+  scope, matching the evaluator. Nested shadowing and rebinding after `del`
+  remain valid; a `catch` body may shadow its catch variable, as a function
+  body may shadow a parameter.
+- `reflect.location` preserves the declaring module and position for function
+  literals, closures, and own or inherited method values across module
+  boundaries. Imported method values also resolve against the correct module
+  when a local class has the same name.
 
 - A caught error inside `finally` or a context manager's `__exit` no longer
   consumes the original exception being propagated by the bytecode VM. A new
@@ -14,6 +43,21 @@
 - On the bytecode VM, appending a string literal to a `string` local
   (`s += "..."`) works when a closure has captured `s`, including a closure
   created after earlier appends.
+- On the bytecode VM, the dynamic hooks `__get`, `__set`, `__call`,
+  `__getStatic`, `__setStatic` and `__callStatic` now run for a class defined
+  in another module, for a subclass whose parent is in another module, and
+  for an instance used from a module other than its own. Previously `__get`
+  failed with "has no field", `__set` wrote a plain field instead, and a
+  local class with the same name as an imported one could have its hook
+  called for the imported instance. `__index`, `__setIndex` and `__string`
+  inherited within another module are also found.
+- `Class.name(...)` on a class that defines `__callStatic` is no longer
+  rejected as "has no method" before the program runs.
+- On the bytecode VM, `reflect.decorators`, `reflect.hasDecorator` and
+  `reflect.decorator` accept any function value: a function passed as an
+  argument or stored in a variable, a function literal, a closure, or an
+  overload set. They previously failed with "expects reflect target, got
+  func". Frameworks that read decorators from handler values are affected.
 
 ### Performance
 

@@ -822,6 +822,15 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		return
 	case *ast.DeclarationStatement:
 		a.analyzeDeclaration(stmt)
+	case *ast.DestructuringStatement:
+		a.analyzeExpression(stmt.Value)
+		for _, name := range stmt.Names {
+			if stmt.Define {
+				a.declare(name.Value, typeInfo{})
+			} else {
+				a.checkBindingNotDestroyed(name)
+			}
+		}
 	case *ast.ExpressionStatement:
 		a.analyzeExpression(stmt.Expression)
 		a.validateCallStatementArgs(stmt.Expression)

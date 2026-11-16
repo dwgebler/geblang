@@ -2172,18 +2172,11 @@ func (vm *VM) closureParameters(closure runtime.BytecodeClosure) []runtime.Param
 	return parameterMetadataFromFunctionInfo(vm.chunk.Functions[idx], 0)
 }
 
-// bridgedFunctionMetadata resolves the reflection metadata of a bytecode function value at the module boundary so reflect.parameters/returnType survive the native-wrapper bridge; nil when the home chunk is a different module.
+// Bridge metadata follows the callable's home chunk, including entry-script closures.
 func (vm *VM) bridgedFunctionMetadata(value runtime.Value) *runtime.FunctionMetadata {
-	switch callable := value.(type) {
+	switch callable := vm.resolveClosureFunction(value).(type) {
 	case runtime.BytecodeFunction:
-		if callable.Module == "" || callable.Module == vm.moduleName {
-			return bytecodeFunctionMetadata(vm.bytecodeFunctionValue(callable.Index, false))
-		}
 		return bytecodeFunctionMetadata(callable)
-	case runtime.BytecodeClosure:
-		if callable.Module == "" || callable.Module == vm.moduleName {
-			return bytecodeFunctionMetadata(vm.bytecodeFunctionValue(callable.FunctionIndex, false))
-		}
 	}
 	return nil
 }
@@ -3413,6 +3406,14 @@ func (vm *VM) CallStaticMethod(classIndex int64, name string, args []runtime.Val
 	}
 	indices, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], name)
 	if !ok {
+		if fallback, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], "__callStatic"); ok {
+			callArgs := []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}
+			functionIndex, err := vm.selectRuntimeFunction(Instruction{}, "__callStatic", fallback, callArgs, 0)
+			if err != nil {
+				return nil, err
+			}
+			return vm.callStaticFunction(functionIndex, callArgs)
+		}
 		return nil, fmt.Errorf("unknown static method %s.%s", vm.chunk.Classes[classIndex].Name, name)
 	}
 	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 0)

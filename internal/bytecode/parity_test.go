@@ -3963,6 +3963,22 @@ func TestParityGlobalRedeclarationRule(t *testing.T) {
 	}
 }
 
+func TestParityLocalBindingsInConstructorsAndInheritedMethods(t *testing.T) {
+	ev, vm := parityOutputs(t, `import io;
+class ScopeBase {
+    int value;
+    func ScopeBase() { let n = 1; del n; let n = 2; this.value = n; }
+    func read(): int { let n = this.value; if (true) { let n = 9; } return n; }
+}
+class ScopeSub extends ScopeBase {}
+io.println(ScopeBase().read());
+io.println(ScopeSub().read());
+`)
+	if ev != "2\n2\n" || vm != ev {
+		t.Fatalf("evaluator=%q VM=%q", ev, vm)
+	}
+}
+
 // A native module function can be referenced as a first-class value (with
 // the module imported) and passed as a callback, on both backends.
 func TestParityNativeModuleFnAsValue(t *testing.T) {

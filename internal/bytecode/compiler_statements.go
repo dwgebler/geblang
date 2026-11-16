@@ -116,6 +116,9 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		c.declareTypeAlias(stmt)
 		return nil
 	case *ast.DeclarationStatement:
+		if err := c.checkLocalDeclaration(stmt.Name.Value, false); err != nil {
+			return err
+		}
 		declType := c.bytecodeTypeName(stmt.Type)
 		// An explicit `any` stays opaque; only an untyped declaration takes its initializer's type.
 		if declType == "any" && stmt.Type == nil && stmt.Value != nil {
@@ -178,8 +181,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 			c.emitAt(OpDefineGlobal, stmt.Token.Line, stmt.Token.Column, slot)
 			return nil
 		}
-		slot := c.defineTypedLocal(stmt.Name.Value, declType, declRef)
-		c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, slot)
+		c.emitLocalDeclaration(stmt.Name.Value, declType, declRef, stmt.Token.Line, stmt.Token.Column)
 		return nil
 	case *ast.DestructuringStatement:
 		return c.compileDestructuringStatement(stmt)
@@ -445,13 +447,15 @@ func (c *Compiler) compileDestructuringStatement(stmt *ast.DestructuringStatemen
 		}
 		c.emitAt(OpIndex, stmt.Token.Line, stmt.Token.Column)
 		if stmt.Define {
+			if err := c.checkLocalDeclaration(name.Value, false); err != nil {
+				return err
+			}
 			if c.inGlobalScope() {
 				slot := c.globalSlot(name.Value)
 				c.globalTypes[name.Value] = "any"
 				c.emitAt(OpDefineGlobal, stmt.Token.Line, stmt.Token.Column, slot)
 			} else {
-				slot := c.defineLocalWithType(name.Value, "any")
-				c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, slot)
+				c.emitLocalDeclaration(name.Value, "any", nil, stmt.Token.Line, stmt.Token.Column)
 			}
 		} else {
 			resolved, ok := c.resolveName(name.Value)
@@ -656,15 +660,19 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	}
 	var callableSlot int64
 	if nestedStatement {
+		if err := c.checkLocalDeclaration(name, true); err != nil {
+			return err
+		}
 		b, exists := c.scopes[len(c.scopes)-1][name]
-		if !exists {
-			callableSlot = c.defineLocalWithType(name, "callable")
+		if !exists || b.deleted {
 			c.emitConstant(runtime.Null{}, stmt.Token.Line, stmt.Token.Column)
-			c.emitAt(OpSetLocal, stmt.Token.Line, stmt.Token.Column, callableSlot)
-			c.emitAt(OpPop, stmt.Token.Line, stmt.Token.Column)
+			callableSlot = c.emitLocalDeclaration(name, "callable", nil, stmt.Token.Line, stmt.Token.Column)
 		} else {
 			callableSlot = b.slot
 		}
+		b = c.scopes[len(c.scopes)-1][name]
+		b.functionDeclaration = true
+		c.scopes[len(c.scopes)-1][name] = b
 		scanner := newFreeVarSet(stmt.Parameters)
 		scanner.scanFunction(stmt.Parameters, stmt.Body)
 		scanner.free[name] = true
@@ -908,15 +916,13 @@ func (c *Compiler) compileTryStatement(stmt *ast.TryStatement) error {
 		}
 		c.chunk.Instructions[nextCatchJump].Operands = append(c.chunk.Instructions[nextCatchJump].Operands, typeIndex, slot)
 		c.pushFinalizer(finalizerContext{body: stmt.Finally})
-		for _, bodyStmt := range catch.Body.Statements {
-			if err := c.compileStatement(bodyStmt); err != nil {
-				c.popFinalizer()
-				c.popScope()
-				return err
-			}
-		}
+		// The body is its own scope so it may redeclare the catch variable, as on the evaluator.
+		err := c.compileBlock(catch.Body)
 		c.popFinalizer()
 		c.popScope()
+		if err != nil {
+			return err
+		}
 		catchEndJumps = append(catchEndJumps, c.emitJump(OpJump, stmt.Token.Line, stmt.Token.Column))
 		c.patchJump(nextCatchJump)
 	}
@@ -1022,6 +1028,13 @@ func (c *Compiler) compileDelStatement(stmt *ast.DelStatement) error {
 	switch resolved.kind {
 	case "local":
 		c.emitAt(OpDel, stmt.Token.Line, stmt.Token.Column, resolved.slot, 0)
+		for i := len(c.scopes) - 1; i >= 1; i-- {
+			if entry, ok := c.scopes[i][stmt.Target.Value]; ok {
+				entry.deleted = true
+				c.scopes[i][stmt.Target.Value] = entry
+				break
+			}
+		}
 	case "global":
 		c.emitAt(OpDel, stmt.Token.Line, stmt.Token.Column, resolved.slot, 1)
 	default:

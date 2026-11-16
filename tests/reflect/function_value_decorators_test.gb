@@ -1,0 +1,131 @@
+/**
+ * @title Decorator reflection on function values
+ * @summary reflect.decorators / hasDecorator / decorator accept any
+ * function value: a named function passed by value, a function literal,
+ * a capturing closure, an overload set, and functions from another module.
+ */
+import test;
+import reflect;
+import function_value_decorators_donor as donor;
+
+@Tag("local")
+func tagged(int x): int { return x; }
+
+@Tag("first")
+func over(int x): int { return x; }
+
+@Tag("second")
+@Extra
+func over(string x): string { return x; }
+
+class Holder {
+    @Tag("method")
+    func handle(): int { return 1; }
+
+    func literal(): callable {
+        return func(): int { return 2; };
+    }
+}
+
+class Sub extends Holder {}
+
+class FunctionValueDecoratorsTest extends test.Test {
+    func count(any fn): int {
+        return reflect.decorators(fn).length();
+    }
+
+    func tagArg(any fn): any {
+        let d = reflect.decorator(fn, "Tag");
+        if (d == null) {
+            return null;
+        }
+        return ((d as dict<string, any>)["args"] as list<any>)[0];
+    }
+
+    @test
+    func namedFunctionPassedByValueKeepsDecorators(): void {
+        any viaAny = tagged;
+        callable viaCallable = tagged;
+        for (fn in [viaAny, viaCallable]) {
+            this.assertEquals(1, this.count(fn));
+            this.assertTrue(reflect.hasDecorator(fn, "Tag"));
+            this.assertEquals("local", this.tagArg(fn));
+            this.assertEquals(1, reflect.decorators(fn, "Tag").length());
+            this.assertEquals(0, reflect.decorators(fn, "Missing").length());
+        }
+    }
+
+    @test
+    func functionLiteralHasNoDecorators(): void {
+        let fn = func(int x): int { return x; };
+        this.assertEquals(0, this.count(fn));
+        this.assertFalse(reflect.hasDecorator(fn, "Tag"));
+        this.assertEquals(null, reflect.decorator(fn, "Tag"));
+    }
+
+    @test
+    func capturingClosureHasNoDecorators(): void {
+        int base = 3;
+        let fn = func(int x): int { return base + x; };
+        this.assertEquals(0, this.count(fn));
+        this.assertFalse(reflect.hasDecorator(fn, "Tag"));
+    }
+
+    @test
+    func literalReturnedFromMethod(): void {
+        this.assertEquals(0, this.count(Holder().literal()));
+        this.assertEquals(0, this.count(Sub().literal()));
+    }
+
+    @test
+    func boundMethodsOwnAndInherited(): void {
+        this.assertEquals("method", this.tagArg(reflect.method(Holder(), "handle")));
+        this.assertEquals("method", this.tagArg(reflect.method(Sub(), "handle")));
+    }
+
+    @test
+    func overloadSetPassedByValueListsEveryOverload(): void {
+        any fn = over;
+        let all = reflect.decorators(fn);
+        this.assertEquals(3, all.length());
+        this.assertEquals(0, (all[0] as dict<string, any>)["overload"]);
+        this.assertEquals(1, (all[1] as dict<string, any>)["overload"]);
+        this.assertEquals("Extra", (all[2] as dict<string, any>)["name"]);
+        this.assertTrue(reflect.hasDecorator(fn, "Extra"));
+        this.assertEquals("first", this.tagArg(fn));
+    }
+
+    @test
+    func crossModuleFunctions(): void {
+        this.assertEquals("donor", this.tagArg(donor.tagged));
+        this.assertEquals(0, this.count(donor.plain));
+        this.assertEquals(0, this.count(donor.literal()));
+        this.assertEquals(0, this.count(donor.capturing(4)));
+        this.assertFalse(reflect.hasDecorator(donor.literal(), "Tag"));
+    }
+
+    @test
+    func functionValuesReflectedInAnotherModule(): void {
+        int base = 2;
+        let reg = donor.Registry();
+        reg.add(tagged);
+        reg.add(func(bool flag, string label): bool { return flag; });
+        reg.add(func(decimal amount): int { return base; });
+        reg.add(donor.tagged);
+        reg.add(over);
+        this.assertEquals([
+            "1 true [\"x\"] int",
+            "0 false [\"flag\", \"label\"] bool",
+            "0 false [\"amount\"] int",
+            "1 true [\"x\"] int",
+            "3 true [\"x\"] int",
+        ], reg.describeAll());
+        this.assertEquals("1 true [\"x\"] int", donor.describe(tagged));
+    }
+
+    @test
+    func nonFunctionIsRejected(): void {
+        this.assertThrows(func(): void { reflect.decorators(5); });
+        this.assertThrows(func(): void { reflect.hasDecorator("x", "Tag"); });
+    }
+}

@@ -1,0 +1,146 @@
+/**
+ * @title Magic accessors across modules
+ * @summary `__get`, `__set`, `__getStatic` and `__setStatic` are honoured
+ * when the class (or the ancestor that defines them) lives in another
+ * module, when a local class has the same name as an imported one, and
+ * when an instance is accessed from a module other than its own.
+ */
+import test;
+import magic_accessors_donor as donor;
+
+class Same {
+    dict<string, any> seen;
+
+    func Same() { this.seen = {}; }
+    func __get(string name): any { return "local-get:" + name; }
+    func __set(string name, any value): void { this.seen[name] = "local-set"; }
+    func dump(): string { return "${this.seen}"; }
+}
+
+class LocalChild extends donor.Magic {
+    func LocalChild() { parent(); }
+}
+
+class LocalRegistry extends donor.Registry {}
+
+class LocalStatic {
+    static dict<string, any> seen = {};
+    static func __callStatic(string name, list<any> args): any { return "local-scall:" + name; }
+    static func __getStatic(string name): any { return "local-static:" + name; }
+    static func __setStatic(string name, any value): void { LocalStatic.seen[name] = value; }
+}
+
+class LocalDyn extends donor.Dyn {
+    func LocalDyn() { parent(); }
+}
+
+class MagicAccessorsCrossModuleTest extends test.Test {
+    @test
+    func getOnImportedInstance(): void {
+        let m = donor.Magic();
+        this.assertEquals(3, m.real);
+        this.assertEquals(7, m.foo);
+        this.assertEquals("none", m.zzz);
+        this.assertEquals("none", m.viaThis());
+        let h = m.hello;
+        this.assertEquals("hi", h());
+    }
+
+    @test
+    func setOnImportedInstance(): void {
+        let m = donor.Magic();
+        m.added = 9;
+        this.assertEquals("set:9", m.bag["added"]);
+        m.real = 4;
+        this.assertEquals(4, m.real);
+        this.assertFalse(m.bag.contains("real"));
+    }
+
+    @test
+    func inheritedWithinTheDonorModule(): void {
+        let c = donor.Child();
+        this.assertEquals(7, c.foo);
+        c.x = 1;
+        this.assertEquals("set:1", c.bag["x"]);
+    }
+
+    @test
+    func localSubclassInheritsFromImportedParent(): void {
+        let c = LocalChild();
+        this.assertEquals(7, c.foo);
+        c.x = 1;
+        this.assertEquals("set:1", c.bag["x"]);
+        c.real = 8;
+        this.assertEquals(8, c.real);
+    }
+
+    @test
+    func sameNamedClassesUseTheirOwnAccessors(): void {
+        let imported = donor.Same();
+        let own = Same();
+        this.assertEquals("donor-get:q", imported.q);
+        this.assertEquals("local-get:q", own.q);
+        imported.q = 1;
+        own.q = 1;
+        this.assertEquals("{\"q\": \"donor-set\"}", imported.dump());
+        this.assertEquals("{\"q\": \"local-set\"}", own.dump());
+    }
+
+    @test
+    func instanceAccessedFromAnotherModule(): void {
+        let own = Same();
+        this.assertEquals("local-get:dyn", donor.touch(own));
+        donor.poke(own);
+        this.assertEquals("{\"dyn\": \"local-set\"}", own.dump());
+        this.assertEquals("donor-get:dyn", donor.touch(donor.Same()));
+    }
+
+    @test
+    func staticAccessorsOnImportedClass(): void {
+        this.assertEquals(1, donor.Registry.declared);
+        this.assertEquals("static:anything", donor.Registry.anything);
+        donor.Registry.dyn = 9;
+        this.assertEquals(9, donor.Registry.recorded("dyn"));
+        this.assertEquals("static:other", donor.SubRegistry.other);
+        donor.SubRegistry.viaSub = 4;
+        this.assertEquals(4, donor.Registry.recorded("viaSub"));
+        let k = donor.Registry;
+        this.assertEquals("static:viaValue", k.viaValue);
+    }
+
+    @test
+    func staticAccessorsThroughLocalSubclass(): void {
+        this.assertEquals("static:thing", LocalRegistry.thing);
+        LocalRegistry.viaLocal = 6;
+        this.assertEquals(6, donor.Registry.recorded("viaLocal"));
+    }
+
+    @test
+    func staticAccessorsThroughALocalClassValue(): void {
+        let k = LocalStatic;
+        this.assertEquals("local-static:viaValue", k.viaValue);
+        k.dyn = 2;
+        this.assertEquals(2, LocalStatic.seen["dyn"]);
+    }
+
+    @test
+    func callIndexStringAndInvokeDunders(): void {
+        for (o in [donor.Dyn(), donor.DynKid(), LocalDyn()]) {
+            this.assertEquals("call:missing:2", o.missing(1, 2));
+            this.assertEquals("known", o.known());
+            this.assertEquals("idx:k", o["k"]);
+            o["k"] = 3;
+            this.assertEquals(3, o.d["k"]);
+            this.assertEquals("Dyn!", "${o}");
+            this.assertEquals(5, o(4));
+        }
+    }
+
+    @test
+    func callStaticDunder(): void {
+        this.assertEquals("scall:nothing", donor.Dyn.nothing(1));
+        this.assertEquals("scall:nothing", donor.DynKid.nothing(1));
+        this.assertEquals("scall:nothing", LocalDyn.nothing(1));
+        this.assertEquals("local-scall:anything", LocalStatic.anything(1, 2));
+    }
+}

@@ -1,0 +1,18 @@
+module location_values_donor;
+import reflect;
+
+export func literal(int n): callable {
+    return func(): int { return n; };
+}
+
+export func inspect(any value): any { return reflect.location(value); }
+
+export class Base {
+    func own(): int { return 1; }
+    static func staticOwn(): int { return 2; }
+    func literal(): callable { return func(): int { return 3; }; }
+}
+
+export class Sub extends Base {
+    func extra(): int { return 4; }
+}

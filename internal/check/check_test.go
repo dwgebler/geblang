@@ -328,6 +328,18 @@ func TestSourceBailsOnCallClass(t *testing.T) {
 	}
 }
 
+func TestSourceBailsOnCallStaticClass(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class Registry {\n    static func __callStatic(string m, list<any> a): any { return null; }\n}\nRegistry.anything(1);\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if d.Rule == "semantic" && strings.Contains(d.Message, "no method") {
+			t.Fatalf("__callStatic class should bail, got %+v", d)
+		}
+	}
+}
+
 func TestSourceBailsOnDecoratedClass(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "deco.gb"),

@@ -110,11 +110,21 @@ func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
+	timeouts, err := parseServerTimeouts(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
+	wsLimit, err := parseWebSocketMessageLimit(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
+	limits := handlerLimits{bodyTimeout: timeouts.body, wsMessageBytes: wsLimit}
 	server := &http.Server{
 		Addr:     addr.Value,
-		Handler:  e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug), share),
+		Handler:  e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug), share, limits),
 		ErrorLog: errLog,
 	}
+	timeouts.apply(server)
 	if tlsCfg != nil {
 		server.TLSConfig = tlsCfg
 		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
@@ -172,11 +182,21 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
+	timeouts, err := parseServerTimeouts(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
+	wsLimit, err := parseWebSocketMessageLimit(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
+	limits := handlerLimits{bodyTimeout: timeouts.body, wsMessageBytes: wsLimit}
 	listener, err := net.Listen("tcp", addr.Value)
 	if err != nil {
 		return nil, err
 	}
-	server := &http.Server{Handler: e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug), share), ErrorLog: errLog}
+	server := &http.Server{Handler: e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug), share, limits), ErrorLog: errLog}
+	timeouts.apply(server)
 	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1), pool: pool, certPEM: certPEM}
 	e.httpServerMu.Lock()
 	e.nextHTTPServerID++
@@ -447,7 +467,14 @@ func waitHTTPServerDone(handle *httpServerHandle) error {
 	return err
 }
 
-func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool, tp *trustedProxies, maxBody int64, debug bool, shareHandler bool) http.Handler {
+// handlerLimits are the per-request limits a server applies to each connection it hands a handler.
+type handlerLimits struct {
+	bodyTimeout    time.Duration
+	wsMessageBytes int64
+}
+
+func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool, tp *trustedProxies, maxBody int64, debug bool, shareHandler bool, limits handlerLimits) http.Handler {
+	bodyTimeout := limits.bodyTimeout
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pool != nil && !pool.IsUnbounded() {
 			if err := pool.Acquire(r.Context()); err != nil {
@@ -474,11 +501,25 @@ func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool,
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		}
+		// The deadline covers only this read, so streaming responses and upgraded connections are not cut off.
+		readDeadline := http.NewResponseController(w)
+		if bodyTimeout > 0 {
+			_ = readDeadline.SetReadDeadline(time.Now().Add(bodyTimeout))
+		}
 		body, err := io.ReadAll(r.Body)
+		// A failed read keeps its deadline so net/http's drain of the unread body cannot block on the same client.
+		if bodyTimeout > 0 && err == nil {
+			_ = readDeadline.SetReadDeadline(time.Time{})
+		}
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				w.Header().Set("Connection", "close")
+				http.Error(w, "request body read timed out", http.StatusRequestTimeout)
 				return
 			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -496,7 +537,7 @@ func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool,
 			}
 			return
 		}
-		e.writeHTTPResponse(w, r, response)
+		e.writeHTTPResponse(w, r, response, limits)
 	})
 }
 
@@ -596,6 +637,71 @@ func parseMaxBodyBytes(opts runtime.Value, label string) (int64, error) {
 		return 0, fmt.Errorf("%s opts.maxBodyBytes must be a non-negative int", label)
 	}
 	return n, nil
+}
+
+const (
+	defaultReadHeaderTimeout = 10 * time.Second
+	defaultReadBodyTimeout   = 60 * time.Second
+	defaultIdleTimeout       = 120 * time.Second
+)
+
+type serverTimeouts struct {
+	header time.Duration
+	body   time.Duration
+	idle   time.Duration
+}
+
+func (t serverTimeouts) apply(server *http.Server) {
+	server.ReadHeaderTimeout = t.header
+	server.IdleTimeout = t.idle
+}
+
+const defaultWebSocketMessageBytes = 1 << 20
+
+// parseWebSocketMessageLimit reads opts.maxWebSocketMessageBytes for http.serve/listen; 0 disables the limit.
+func parseWebSocketMessageLimit(opts runtime.Value, label string) (int64, error) {
+	dict, ok := opts.(runtime.Dict)
+	if !ok {
+		return defaultWebSocketMessageBytes, nil
+	}
+	v, ok := dictField(dict, "maxWebSocketMessageBytes")
+	if !ok {
+		return defaultWebSocketMessageBytes, nil
+	}
+	n, ok := toInt64(v)
+	if !ok || n < 0 {
+		return 0, fmt.Errorf("%s opts.maxWebSocketMessageBytes must be a non-negative int", label)
+	}
+	return n, nil
+}
+
+// parseServerTimeouts reads the read/idle timeout opts for http.serve/listen; 0 disables one.
+func parseServerTimeouts(opts runtime.Value, label string) (serverTimeouts, error) {
+	timeouts := serverTimeouts{header: defaultReadHeaderTimeout, body: defaultReadBodyTimeout, idle: defaultIdleTimeout}
+	dict, ok := opts.(runtime.Dict)
+	if !ok {
+		return timeouts, nil
+	}
+	fields := []struct {
+		name   string
+		target *time.Duration
+	}{
+		{"readHeaderTimeoutMs", &timeouts.header},
+		{"readBodyTimeoutMs", &timeouts.body},
+		{"idleTimeoutMs", &timeouts.idle},
+	}
+	for _, field := range fields {
+		v, ok := dictField(dict, field.name)
+		if !ok {
+			continue
+		}
+		n, ok := toInt64(v)
+		if !ok || n < 0 {
+			return serverTimeouts{}, fmt.Errorf("%s opts.%s must be a non-negative int", label, field.name)
+		}
+		*field.target = time.Duration(n) * time.Millisecond
+	}
+	return timeouts, nil
 }
 
 // parseDebugFlag reads opts.debug for http.serve/listen.
@@ -1057,13 +1163,13 @@ func handlerWantsRequestObject(handler runtime.Function) bool {
 	return typ.Operator == "" && !typ.ListAlias && typeNamesEqual(typ.Name, "Request")
 }
 
-func (e *Evaluator) writeHTTPResponse(w http.ResponseWriter, r *http.Request, response runtime.Value) {
+func (e *Evaluator) writeHTTPResponse(w http.ResponseWriter, r *http.Request, response runtime.Value, limits handlerLimits) {
 	if handler, ok := streamResponseHandler(response); ok {
 		e.writeHTTPStreamResponse(w, response, handler)
 		return
 	}
 	if handler, ok := websocketResponseHandler(response); ok {
-		e.writeWebSocketResponse(w, r, response, handler)
+		e.writeWebSocketResponse(w, r, response, handler, limits.wsMessageBytes)
 		return
 	}
 	if outer, desc, ok := serveFileDescriptor(response); ok {
@@ -1191,7 +1297,7 @@ func websocketResponseHandler(response runtime.Value) (runtime.Function, bool) {
 	return handler, ok
 }
 
-func (e *Evaluator) writeWebSocketResponse(w http.ResponseWriter, r *http.Request, response runtime.Value, handler runtime.Function) {
+func (e *Evaluator) writeWebSocketResponse(w http.ResponseWriter, r *http.Request, response runtime.Value, handler runtime.Function, maxMessageBytes int64) {
 	if dict, ok := response.(runtime.Dict); ok {
 		if value, ok := dictField(dict, "headers"); ok {
 			writeHTTPHeaders(w.Header(), value)
@@ -1201,6 +1307,9 @@ func (e *Evaluator) writeWebSocketResponse(w http.ResponseWriter, r *http.Reques
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
+	}
+	if maxMessageBytes > 0 {
+		conn.SetReadLimit(maxMessageBytes)
 	}
 	callbackEval, callbackHandler := e.callbackEvaluator(handler)
 	if callbackEval != e {

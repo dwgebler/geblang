@@ -39,6 +39,11 @@ base classes. `catch (Error e)` acts as a catch-all for any throwable error.
 An untyped `catch { ... }` block also catches everything but does not bind the
 error value.
 
+The error variable belongs to its `catch` clause, so each clause may use the
+same name. The clause body is a nested scope: it may declare a variable with
+the error variable's name, which hides the caught error for the rest of the
+body. See [Scope and shadowing](02-syntax-basics.md#scope-and-shadowing).
+
 Geblang converts recoverable host/runtime failures into language-level
 exceptions. For example, file and network failures such as a missing file,
 connection refusal, or trying to bind a port that is already in use are raised

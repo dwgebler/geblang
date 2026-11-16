@@ -424,6 +424,13 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 					vm.push(value)
 					return ip, nil
 				}
+				if indices, ok := vm.lookupStaticMethod(classInfo, "__getStatic"); ok {
+					functionIndex, err := vm.selectRuntimeFunction(instruction, "__getStatic", indices, []runtime.Value{runtime.String{Value: name}}, 0)
+					if err != nil {
+						return 0, err
+					}
+					return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}}, nil)
+				}
 				return 0, vm.runtimeError(instruction, "unknown static member %s.%s", class.Name, name)
 			}
 			if vm.moduleLoader != nil {
@@ -432,6 +439,13 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 					return ip, nil
 				}
 				if value, found := vm.moduleLoader.StaticMethodValueForModuleClass(class.Module, class.Name, name); found {
+					vm.push(value)
+					return ip, nil
+				}
+				if value, found, err := vm.moduleLoader.CallModuleStaticMethodByName(class.Module, class.Name, "__getStatic", []runtime.Value{runtime.String{Value: name}}); found {
+					if err != nil {
+						return vm.propagateModuleError(instruction, ip, err)
+					}
 					vm.push(value)
 					return ip, nil
 				}
@@ -547,11 +561,14 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 		break
 	}
 	classInfo, classOk := vm.classInfo(instance.Class.Name)
-	if !classOk {
+	if !classOk || instance.Class.Module != vm.moduleName {
 		// Cross-module instance: bind a method value if one exists.
 		if bound, ok := vm.bindCrossModuleMethod(instance, name); ok {
 			vm.push(bound)
 			return ip, nil
+		}
+		if vm.hasForeignMagic(instance, "__get") {
+			return vm.callForeignMagic(instruction, ip, instance, "__get", []runtime.Value{runtime.String{Value: name}}, nil)
 		}
 		return 0, vm.runtimeError(instruction, "%s has no field %s", instance.Class.Name, name)
 	}
@@ -564,6 +581,10 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 		return 0, vm.runtimeError(instruction, "%s has no field %s", instance.Class.Name, name)
 	}
 	indices, hasGet := vm.lookupMethod(classInfo, "__get")
+	if !hasGet && vm.inheritsAcrossModules(classInfo) && vm.hasForeignMagic(instance, "__get") {
+		vm.cacheFieldShapeFull(instance.Class, name, false, true, classInfo)
+		return vm.callForeignMagic(instruction, ip, instance, "__get", []runtime.Value{runtime.String{Value: name}}, nil)
+	}
 	vm.cacheFieldShapeFull(instance.Class, name, false, hasGet, classInfo)
 	if hasGet {
 		functionIndex, err := vm.selectRuntimeFunction(instruction, "__get", indices, []runtime.Value{runtime.String{Value: name}}, 1)
@@ -647,18 +668,21 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 		return ip, nil
 	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
-	if !ok {
-		// Cross-module subclass: the instance was created from a class
-		// in another chunk (e.g. a user subclass running its parent's
-		// constructor here). The __set magic method can't be looked up
-		// from this chunk; fall back to a direct field write to match
-		// evaluator semantics.
+	if !ok || instance.Class.Module != vm.moduleName {
+		// The class lives in another chunk, so its __set is reached through the loader; a declared field is written directly.
+		if vm.hasForeignMagic(instance, "__set") && !vm.isDeclaredForeignField(instance, name) {
+			return vm.callForeignMagic(instruction, ip, instance, "__set", []runtime.Value{runtime.String{Value: name}, value}, value)
+		}
 		instance.SetField(name, value)
 		vm.push(value)
 		return ip, nil
 	}
 	indices, hasSet := vm.lookupMethod(classInfo, "__set")
 	vm.cacheFieldShapeFull(instance.Class, name, false, false, classInfo)
+	if !hasSet && vm.inheritsAcrossModules(classInfo) && vm.hasForeignMagic(instance, "__set") && !vm.isDeclaredForeignField(instance, name) {
+		vm.fieldLookupHasSetMag = true
+		return vm.callForeignMagic(instruction, ip, instance, "__set", []runtime.Value{runtime.String{Value: name}, value}, value)
+	}
 	vm.fieldLookupHasSetMag = hasSet
 	if hasSet {
 		functionIndex, err := vm.selectRuntimeFunction(instruction, "__set", indices, []runtime.Value{runtime.String{Value: name}, value}, 1)
@@ -919,6 +943,15 @@ func (vm *VM) getStaticValue(instruction Instruction, ip int) (int, error) {
 		}
 		return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}}, nil)
 	}
+	if module, parent, boundary := vm.crossModuleBoundary(classInfo); boundary && vm.moduleLoader != nil {
+		if value, found, err := vm.moduleLoader.CallModuleStaticMethodByName(module, parent, "__getStatic", []runtime.Value{runtime.String{Value: name}}); found {
+			if err != nil {
+				return vm.propagateModuleError(instruction, ip, err)
+			}
+			vm.push(value)
+			return ip, nil
+		}
+	}
 	return 0, vm.runtimeError(instruction, "unknown static member %s.%s", classInfo.Name, name)
 }
 
@@ -1024,6 +1057,53 @@ func (vm *VM) bindLocalMethod(instance *runtime.Instance, classInfo ClassInfo, n
 	return vm.bindMethodValue(instance, vm.moduleName, indices[0], name), true
 }
 
+// hasForeignMagic reports whether a magic accessor for the instance is defined in another chunk, on its class or an ancestor.
+func (vm *VM) hasForeignMagic(instance *runtime.Instance, method string) bool {
+	if vm.moduleLoader == nil || instance.Class == nil {
+		return false
+	}
+	home, _, ok := vm.moduleLoader.MethodFirstOverload(instance.Class.Module, instance.Class.Name, method)
+	return ok && (home != vm.moduleName || instance.Class.Module != vm.moduleName)
+}
+
+func (vm *VM) inheritsAcrossModules(classInfo ClassInfo) bool {
+	_, _, boundary := vm.crossModuleBoundary(classInfo)
+	return boundary
+}
+
+func (vm *VM) callForeignMagic(instruction Instruction, ip int, instance *runtime.Instance, method string, args []runtime.Value, result runtime.Value) (int, error) {
+	value, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, method, instance, vm.wrapStatefulNativeArgs("", "", args), vm)
+	if err != nil {
+		return vm.propagateModuleError(instruction, ip, err)
+	}
+	if result == nil {
+		result = value
+	}
+	vm.push(result)
+	return ip, nil
+}
+
+// isDeclaredForeignField reports whether name is a field declared by the instance's class chain when part of it lives in another chunk.
+func (vm *VM) isDeclaredForeignField(instance *runtime.Instance, name string) bool {
+	if vm.moduleLoader == nil || instance.Class == nil {
+		return false
+	}
+	for class := instance.Class; class != nil; class = class.Parent {
+		resolved, ok := vm.moduleLoader.ClassValueInModule(class.Module, class.Name)
+		if !ok {
+			continue
+		}
+		if bc, ok := resolved.(runtime.BytecodeClass); ok {
+			for _, field := range bc.Fields {
+				if field == name {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // bindCrossModuleMethod binds an instance method whose class lives in another chunk, resolving the first overload through the loader.
 func (vm *VM) bindCrossModuleMethod(instance *runtime.Instance, name string) (runtime.Value, bool) {
 	if vm.moduleLoader == nil || instance.Class == nil {
@@ -1039,12 +1119,19 @@ func (vm *VM) bindCrossModuleMethod(instance *runtime.Instance, name string) (ru
 // bindMethodValue wraps a specific method function bound to a receiver as a callable value. With a loader each call routes to a fresh worker (goroutine-safe); without one it captures this VM, so the VM must stay out of the pool.
 func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcIndex int64, name string) runtime.Value {
 	loader := vm.moduleLoader
+	var metadata *runtime.FunctionMetadata
+	if info, ok := vm.functionInfoIn(module, funcIndex); ok {
+		metadata = bytecodeFunctionMetadata(bytecodeFunctionFromInfo(info, funcIndex, module, false))
+		metadata.Target = "method"
+		metadata.Parameters = parameterMetadataFromFunctionInfo(info, 1)
+	}
 	if loader == nil {
 		vm.noteEscape()
 		return runtime.Function{
 			NativeTyped: vm.typedMethodValue(module, funcIndex, instance),
 			Identity:    runtime.NewFunctionIdentity(),
 			Name:        name,
+			Metadata:    metadata,
 			NativeNamed: func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
 				return vm.CallBoundMethodValue(instance, funcIndex, args, names)
 			},
@@ -1064,6 +1151,7 @@ func (vm *VM) bindMethodValue(instance *runtime.Instance, module string, funcInd
 		NativeTyped: vm.typedMethodValue(module, funcIndex, instance),
 		Identity:    runtime.NewFunctionIdentity(),
 		Name:        name,
+		Metadata:    metadata,
 		NativeNamed: func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
 			return loader.CallModuleMethodValue(module, funcIndex, instance, args, names, nil)
 		},
@@ -1218,6 +1306,15 @@ func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classInd
 				return 0, err
 			}
 			return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}, nil)
+		}
+		if module, parentClass, boundary := vm.crossModuleBoundary(vm.curMod.Chunk.Classes[classIndex]); boundary && vm.moduleLoader != nil {
+			if result, found, err := vm.moduleLoader.CallModuleStaticMethodByName(module, parentClass, "__callStatic", []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}); found {
+				if err != nil {
+					return 0, vm.callPropagate(instruction, err)
+				}
+				vm.push(result)
+				return ip, nil
+			}
 		}
 		return 0, vm.runtimeError(instruction, "unknown static method %s.%s", vm.curMod.Chunk.Classes[classIndex].Name, name)
 	}

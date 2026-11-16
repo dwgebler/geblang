@@ -654,6 +654,9 @@ func reflectLocation(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 			return makeDict(v.Class.Module, v.Class.DefLine, v.Class.DefColumn), nil
 		}
 	case runtime.Function:
+		if v.Metadata != nil && (v.Metadata.DefLine != 0 || v.Metadata.DefColumn != 0) {
+			return makeDict(v.Metadata.Module, v.Metadata.DefLine, v.Metadata.DefColumn), nil
+		}
 		if v.DefinitionLine != 0 || v.DefinitionColumn != 0 {
 			return makeDict(v.DefinitionModule, int64(v.DefinitionLine), int64(v.DefinitionColumn)), nil
 		}
@@ -1314,13 +1317,17 @@ func boundReflectMethodFunction(label string, overloads []runtime.Function, inst
 		metadataSource = overloads[0]
 	}
 	return runtime.Function{
-		Bound:      &runtime.BoundMethod{Label: label, Overloads: overloads, Instance: instance},
-		Name:       metadataSource.Name,
-		Parameters: append([]ast.Parameter(nil), metadataSource.Parameters...),
-		ReturnType: metadataSource.ReturnType,
-		Decorators: append([]ast.Decorator(nil), metadataSource.Decorators...),
-		Target:     reflectFunctionTarget(metadataSource),
-		Async:      metadataSource.Async,
+		Bound:            &runtime.BoundMethod{Label: label, Overloads: overloads, Instance: instance},
+		Name:             metadataSource.Name,
+		Parameters:       append([]ast.Parameter(nil), metadataSource.Parameters...),
+		ReturnType:       metadataSource.ReturnType,
+		Decorators:       append([]ast.Decorator(nil), metadataSource.Decorators...),
+		Target:           reflectFunctionTarget(metadataSource),
+		Async:            metadataSource.Async,
+		DefinitionModule: metadataSource.DefinitionModule,
+		DefinitionLine:   metadataSource.DefinitionLine,
+		DefinitionColumn: metadataSource.DefinitionColumn,
+		DefinitionPath:   metadataSource.DefinitionPath,
 		Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 			method, err := selectOverload(label, overloads, args)
 			if err != nil {

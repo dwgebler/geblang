@@ -607,9 +607,11 @@ func (vm *VM) callForeignDunder(instance *runtime.Instance, name string, args []
 	if instance.Class.Module != vm.moduleName {
 		methods := instance.Class.Methods[strings.ToLower(name)]
 		if len(methods) == 0 {
-			return nil, false, nil
-		}
-		if methods[0].Native != nil {
+			// The class value lists only its own methods; one inherited inside the foreign chunk resolves through the loader.
+			if !vm.hasForeignMagic(instance, name) {
+				return nil, false, nil
+			}
+		} else if methods[0].Native != nil {
 			result, err := vm.callNativeMethod(methods[0], instance, args)
 			return result, true, err
 		}
@@ -1384,6 +1386,18 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			value, err := vm.popVM()
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
+			}
+			if len(instruction.Operands) == 3 {
+				rebound, rebindErr := vm.rebindDeletedLocal(*instruction, value)
+				if rebindErr != nil {
+					nextIP, err := vm.throwRecoverableError(*instruction, ip, rebindErr)
+					if err != nil {
+						return err
+					}
+					ip = nextIP
+					continue
+				}
+				value = rebound
 			}
 			// Fresh binding: replace the slot rather than writing into a cell a
 			// prior iteration boxed, so a re-run `let` captures a distinct value.
@@ -5106,8 +5120,11 @@ func (vm *VM) execDel(instruction Instruction) error {
 	}
 	switch kind {
 	case 0:
-		if err := vm.setLocal(slot, runtime.Null{}); err != nil {
-			return vm.callPropagate(instruction, err)
+		idx := vm.currentFrameBP + int(slot)
+		if cell, ok := vm.localsStack[idx].Boxed.(*runtime.BytecodeCell); ok && vm.localsStack[idx].Kind == runtime.VMKindBoxed {
+			cell.Value = nil
+		} else {
+			vm.localsStack[idx] = runtime.VMValue{}
 		}
 	case 1:
 		vm.curGlobals[slot] = runtime.VMValueNull
@@ -6504,8 +6521,26 @@ func (vm *VM) setLocalVM(slot int64, value runtime.VMValue) error {
 	return nil
 }
 
-// defineLocalVM binds slot to a fresh value, replacing any cell an earlier
-// closure boxed, so a re-executed `let` starts a new binding.
+// A conditional del must execute before a repeated declaration can bind.
+func (vm *VM) rebindDeletedLocal(instruction Instruction, value runtime.VMValue) (runtime.VMValue, error) {
+	previous := vm.localsStack[vm.currentFrameBP+int(instruction.Operands[1])]
+	cell, captured := previous.Boxed.(*runtime.BytecodeCell)
+	captured = captured && previous.Kind == runtime.VMKindBoxed
+	if previous.Kind != runtime.VMKindUnset && !(captured && cell.Value == nil) {
+		name, err := vm.constantStringAt(instruction, instruction.Operands[2], "local name must be string")
+		if err != nil {
+			return runtime.VMValue{}, err
+		}
+		return runtime.VMValue{}, fmt.Errorf("%q is already declared in this scope", name)
+	}
+	if captured {
+		cell.Value = value.ToValue()
+		return previous, nil
+	}
+	return value, nil
+}
+
+// defineLocalVM replaces cells so each loop iteration can capture a fresh binding.
 func (vm *VM) defineLocalVM(slot int64, value runtime.VMValue) error {
 	idx := vm.currentFrameBP + int(slot)
 	if idx >= len(vm.localsStack) {

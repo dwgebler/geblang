@@ -265,6 +265,24 @@ func (vm *VM) setClassStatic(instruction Instruction, ip int, class runtime.Byte
 		}
 	}
 	if owner == "" {
+		if info, ok := vm.classInfo(class.Name); ok && class.Module == vm.moduleName {
+			if indices, ok := vm.lookupStaticMethod(info, "__setStatic"); ok {
+				functionIndex, err := vm.selectRuntimeFunction(instruction, "__setStatic", indices, []runtime.Value{runtime.String{Value: name}, value}, 0)
+				if err != nil {
+					return 0, err
+				}
+				return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}, value}, nil)
+			}
+		}
+		if remoteClass != "" && vm.moduleLoader != nil {
+			if _, found, err := vm.moduleLoader.CallModuleStaticMethodByName(remoteModule, remoteClass, "__setStatic", []runtime.Value{runtime.String{Value: name}, value}); found {
+				if err != nil {
+					return vm.propagateModuleError(instruction, ip, err)
+				}
+				vm.push(value)
+				return ip, nil
+			}
+		}
 		return 0, vm.runtimeError(instruction, "unknown static member %s.%s", class.Name, name)
 	}
 	if declared != "" {

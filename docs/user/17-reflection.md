@@ -420,6 +420,12 @@ io.println(reflect.decorator(Widget, "immutable"));
 #  "namedArgs": {}, "overload": 0, "position": 0, "target": "class"}
 ```
 
+All three accept any function value, however it was obtained. A function
+passed as an argument or stored in a variable keeps its decorators, a function
+literal or closure reports none, and an overloaded function lists the
+decorators of every overload, each tagged with its `overload` index. Any other
+value is an error.
+
 A decorator can act as pure metadata for reflection, as a callable wrapper, or
 both. See [Functions and callables](05-functions-callables.md#decorators) for
 how to define and apply decorators.
@@ -476,6 +482,11 @@ io.println(reflect.exports(m));   # ["Thing", "add", "sub"]
 `reflect.location(target)` returns the source position of a function or class
 declaration as `{module, line, column}`, or `null` when no position was
 recorded:
+
+Function literals and capturing closures report the position of their `func`
+token. Bound, static and inherited method values report the original method's
+declaring module and position, including when reflected from another module.
+Native functions without source metadata return `null`.
 
 ```gb
 let cls = reflect.class("Thing");

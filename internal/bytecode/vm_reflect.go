@@ -57,9 +57,9 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		if len(args) != 1 && len(args) != 2 {
 			return nil, fmt.Errorf("reflect.decorators expects value and optional decorator name")
 		}
-		target, ok := reflectDecoratorTarget(args[0])
+		target, ok := vm.reflectDecoratorTargetValue(args[0])
 		if !ok {
-			return nil, fmt.Errorf("reflect.decorators expects reflect target, got %s", args[0].TypeName())
+			return nil, fmt.Errorf("reflect.decorators expects function or class, got %s", args[0].TypeName())
 		}
 		filter := ""
 		if len(args) == 2 {
@@ -81,9 +81,9 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		if len(args) != 2 {
 			return nil, fmt.Errorf("reflect.hasDecorator expects value and decorator name")
 		}
-		target, ok := reflectDecoratorTarget(args[0])
+		target, ok := vm.reflectDecoratorTargetValue(args[0])
 		if !ok {
-			return nil, fmt.Errorf("reflect.hasDecorator expects reflect target, got %s", args[0].TypeName())
+			return nil, fmt.Errorf("reflect.hasDecorator expects function or class, got %s", args[0].TypeName())
 		}
 		name, ok := args[1].(runtime.String)
 		if !ok {
@@ -99,9 +99,9 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		if len(args) != 2 {
 			return nil, fmt.Errorf("reflect.decorator expects value and decorator name")
 		}
-		target, ok := reflectDecoratorTarget(args[0])
+		target, ok := vm.reflectDecoratorTargetValue(args[0])
 		if !ok {
-			return nil, fmt.Errorf("reflect.decorator expects reflect target, got %s", args[0].TypeName())
+			return nil, fmt.Errorf("reflect.decorator expects function or class, got %s", args[0].TypeName())
 		}
 		name, ok := args[1].(runtime.String)
 		if !ok {
@@ -555,6 +555,12 @@ func (vm *VM) reflectMethodNativeCall(fn string, args []runtime.Value) (runtime.
 		class = vm.canonicalClassValue(value)
 	case *runtime.Instance:
 		instance = value
+		if value.Class.Module != vm.moduleName {
+			if target, ok := vm.reflectedRuntimeInstanceMethod(fn, key, value); ok {
+				return target, nil
+			}
+			return runtime.Null{}, nil
+		}
 		if len(value.Class.Methods[key]) == 0 && len(value.Class.MethodMetadata[key]) == 0 {
 			if target, ok := vm.reflectedRuntimeInstanceMethod(fn, key, value); ok {
 				return target, nil
@@ -737,6 +743,14 @@ func reflectDecoratorTarget(value runtime.Value) (runtime.DecoratorTarget, bool)
 		return runtime.DecoratorTarget{Target: "function", Decorators: value.Decorators, Function: bytecodeFunctionMetadata(value)}, true
 	case runtime.BytecodeClass:
 		return runtime.DecoratorTarget{Target: "class", Decorators: value.Decorators}, true
+	case runtime.Function:
+		// A module-boundary bridge wrapper carries the source function's metadata; natives have none.
+		target := runtime.DecoratorTarget{Target: "function"}
+		if value.Metadata != nil {
+			target.Decorators = value.Metadata.Decorators
+			target.Function = value.Metadata
+		}
+		return target, true
 	default:
 		return runtime.DecoratorTarget{}, false
 	}
@@ -746,21 +760,23 @@ func reflectDecoratorTarget(value runtime.Value) (runtime.DecoratorTarget, bool)
 // declaration as `{module: string, line: int, column: int}`. Returns
 // null when the value has no recorded location (native stdlib, etc.).
 func (vm *VM) reflectLocation(value runtime.Value) (runtime.Value, error) {
+	value = vm.resolveClosureFunction(value)
 	switch v := value.(type) {
+	case runtime.Function:
+		if v.Metadata != nil && (v.Metadata.DefLine != 0 || v.Metadata.DefColumn != 0) {
+			return makeLocationDict(v.Metadata.Module, v.Metadata.DefLine, v.Metadata.DefColumn), nil
+		}
+		if v.DefinitionLine != 0 || v.DefinitionColumn != 0 {
+			return makeLocationDict(v.DefinitionModule, int64(v.DefinitionLine), int64(v.DefinitionColumn)), nil
+		}
+		return runtime.Null{}, nil
 	case runtime.BytecodeFunction:
 		if v.DefLine == 0 && v.DefColumn == 0 {
 			return runtime.Null{}, nil
 		}
 		return makeLocationDict(v.Module, v.DefLine, v.DefColumn), nil
 	case runtime.BytecodeClosure:
-		if int(v.FunctionIndex) >= len(vm.chunk.Functions) {
-			return runtime.Null{}, nil
-		}
-		info := vm.chunk.Functions[v.FunctionIndex]
-		if info.DefLine == 0 && info.DefColumn == 0 {
-			return runtime.Null{}, nil
-		}
-		return makeLocationDict(v.Module, info.DefLine, info.DefColumn), nil
+		return runtime.Null{}, nil
 	case runtime.BytecodeClass:
 		v = vm.canonicalClassValue(v)
 		if v.DefLine == 0 && v.DefColumn == 0 {
@@ -808,18 +824,42 @@ func (vm *VM) reflectFunctionMetadataValue(value runtime.Value) (runtime.Functio
 		}
 	}
 
-	if closure, ok := value.(runtime.BytecodeClosure); ok {
-		if closure.Module == "" || closure.Module == vm.moduleName {
-			if closure.FunctionIndex >= 0 && int(closure.FunctionIndex) < len(vm.curMod.Chunk.Functions) {
-				value = closureFunctionValue(vm.curMod.Chunk.Functions[closure.FunctionIndex], closure, vm.moduleName)
-			}
-		} else if vm.moduleLoader != nil {
-			if info, err := vm.moduleLoader.ModuleFunctionInfo(closure.Module, closure.FunctionIndex); err == nil {
-				value = closureFunctionValue(info, closure, closure.Module)
-			}
+	return reflectFunctionMetadata(vm.resolveClosureFunction(value))
+}
+
+func (vm *VM) resolveClosureFunction(value runtime.Value) runtime.Value {
+	closure, ok := value.(runtime.BytecodeClosure)
+	if !ok {
+		return value
+	}
+	if closure.Module == vm.moduleName {
+		if closure.FunctionIndex >= 0 && int(closure.FunctionIndex) < len(vm.curMod.Chunk.Functions) {
+			return closureFunctionValue(vm.curMod.Chunk.Functions[closure.FunctionIndex], closure, vm.moduleName)
+		}
+	} else if vm.moduleLoader != nil {
+		if info, err := vm.moduleLoader.ModuleFunctionInfo(closure.Module, closure.FunctionIndex); err == nil {
+			return closureFunctionValue(info, closure, closure.Module)
 		}
 	}
-	return reflectFunctionMetadata(value)
+	return value
+}
+
+func (vm *VM) reflectDecoratorTargetValue(value runtime.Value) (runtime.DecoratorTarget, bool) {
+	if set, ok := value.(runtime.OverloadedFunction); ok && len(set.Indices) > 0 {
+		target := runtime.DecoratorTarget{Target: "function"}
+		for overload, index := range set.Indices {
+			info, ok := vm.functionInfoIn(set.Module, index)
+			if !ok {
+				continue
+			}
+			for _, decorator := range info.Decorators {
+				decorator.Overload = int64(overload)
+				target.Decorators = append(target.Decorators, decorator)
+			}
+		}
+		return target, true
+	}
+	return reflectDecoratorTarget(vm.resolveClosureFunction(value))
 }
 
 // closureFunctionValue describes a closure's own parameters, skipping the leading captured-variable slots.

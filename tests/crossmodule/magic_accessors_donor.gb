@@ -1,0 +1,60 @@
+module magic_accessors_donor;
+
+export class Magic {
+    dict<string, any> bag;
+    int real;
+
+    func Magic() {
+        this.bag = {"foo": 7};
+        this.real = 3;
+    }
+
+    func __get(string name): any { return this.bag[name] ?? "none"; }
+    func __set(string name, any value): void { this.bag[name] = "set:${value}"; }
+    func hello(): string { return "hi"; }
+    func viaThis(): any { return this.inner; }
+}
+
+export class Child extends Magic {
+    func Child() { parent(); }
+}
+
+export class Same {
+    dict<string, any> bag;
+
+    func Same() { this.bag = {}; }
+    func __get(string name): any { return "donor-get:" + name; }
+    func __set(string name, any value): void { this.bag[name] = "donor-set"; }
+    func dump(): string { return "${this.bag}"; }
+}
+
+export class Registry {
+    static int declared = 1;
+    static dict<string, any> seen = {};
+
+    static func __getStatic(string name): any { return "static:" + name; }
+    static func __setStatic(string name, any value): void { Registry.seen[name] = value; }
+    static func recorded(string name): any { return Registry.seen[name] ?? null; }
+}
+
+export class SubRegistry extends Registry {}
+
+export func touch(any target): any { return target.dyn; }
+export func poke(any target): void { target.dyn = 5; }
+
+export class Dyn {
+    dict<string, any> d;
+
+    func Dyn() { this.d = {}; }
+    func __call(string name, list<any> args): any { return "call:" + name + ":" + (args.length() as string); }
+    func __index(any key): any { return "idx:${key}"; }
+    func __setIndex(any key, any value): void { this.d["${key}"] = value; }
+    static func __callStatic(string name, list<any> args): any { return "scall:" + name; }
+    func __string(): string { return "Dyn!"; }
+    func __invoke(int x): int { return x + 1; }
+    func known(): string { return "known"; }
+}
+
+export class DynKid extends Dyn {
+    func DynKid() { parent(); }
+}

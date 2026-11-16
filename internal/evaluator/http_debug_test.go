@@ -33,7 +33,7 @@ func serveOnce(t *testing.T, debug bool) (int, string, string) {
 	e := New(io.Discard)
 	var errBuf bytes.Buffer
 	e.stderr = &errBuf
-	server := httptest.NewServer(e.httpHandler(throwingHandler(), nil, nil, 0, debug, false))
+	server := httptest.NewServer(e.httpHandler(throwingHandler(), nil, nil, 0, debug, false, handlerLimits{}))
 	defer server.Close()
 	resp, err := http.Get(server.URL)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestStreamingHandlerGetsFreshThreadID(t *testing.T) {
 		return gruntime.DictFromEntries(entries, nil), nil
 	}}
 
-	server := httptest.NewServer(e.httpHandler(outer, nil, nil, 0, false, false))
+	server := httptest.NewServer(e.httpHandler(outer, nil, nil, 0, false, false, handlerLimits{}))
 	defer server.Close()
 	resp, err := http.Get(server.URL)
 	if err != nil {

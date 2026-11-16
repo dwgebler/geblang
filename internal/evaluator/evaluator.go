@@ -1988,7 +1988,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		// outer generic frame's concrete bindings. snapshotTypeBindings
 		// walks the env chain so all reachable bindings come along.
 		captured := snapshotEnvTypeBindings(env)
-		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: e.resolveParameters(expr.Parameters, env), ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env.MarkShared(), Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured, OuterTypeParameters: e.enclosingTypeParameters(), DefinitionPath: e.currentDebugPath()}, nil
+		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: e.resolveParameters(expr.Parameters, env), ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env.MarkShared(), Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured, OuterTypeParameters: e.enclosingTypeParameters(), DefinitionPath: e.currentDebugPath(), DefinitionModule: e.currentModule, DefinitionLine: expr.Token.Line, DefinitionColumn: expr.Token.Column}, nil
 	case *ast.AwaitExpression:
 		value, err := e.evalExpression(expr.Value, env)
 		if err != nil {
@@ -6050,6 +6050,9 @@ func (e *Evaluator) applyEnumMethod(fn runtime.Function, args []runtime.Value, r
 }
 
 func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtime.Value, this *runtime.Instance) (runtime.Value, error) {
+	previousModule := e.currentModule
+	e.currentModule = fn.DefinitionModule
+	defer func() { e.currentModule = previousModule }()
 	if fn.OriginalEnv != nil {
 		args = append([]runtime.Value(nil), args...)
 		env := runtime.NewLocalEnclosedEnvironment(fn.OriginalEnv)

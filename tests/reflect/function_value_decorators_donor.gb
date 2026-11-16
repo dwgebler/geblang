@@ -1,0 +1,44 @@
+module function_value_decorators_donor;
+
+import reflect;
+
+@Tag("donor")
+export func tagged(int x): int { return x; }
+
+export func plain(int x): int { return x; }
+
+export func literal(): callable {
+    return func(int y): int { return y; };
+}
+
+export func capturing(int base): callable {
+    return func(int y): int { return base + y; };
+}
+
+export func describe(any fn): string {
+    list<string> names = [];
+    for (p in reflect.parameters(fn)) {
+        names.push((p as dict<string, any>)["name"] as string);
+    }
+    return "${reflect.decorators(fn).length()} ${reflect.hasDecorator(fn, "Tag")} ${names} ${reflect.returnType(fn)}";
+}
+
+export class Registry {
+    list<any> items;
+
+    func Registry() {
+        this.items = [];
+    }
+
+    func add(any fn): void {
+        this.items.push(fn);
+    }
+
+    func describeAll(): list<string> {
+        list<string> out = [];
+        for (fn in this.items) {
+            out.push(describe(fn));
+        }
+        return out;
+    }
+}

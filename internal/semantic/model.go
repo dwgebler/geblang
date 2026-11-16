@@ -15,8 +15,8 @@ type ClassDecl struct {
 	Implements []string // implemented interface names
 	Methods    map[string]bool
 	Fields     map[string]bool
-	// HasCall marks a `__call` method (dynamic dispatch): callers must
-	// not flag unknown methods on such a class.
+	// HasCall marks a `__call` or `__callStatic` method (dynamic dispatch):
+	// callers must not flag unknown methods on such a class.
 	HasCall bool
 	// Decorated marks class-level decorators, which may inject members:
 	// callers must bail rather than risk a false positive.
@@ -183,7 +183,7 @@ func ExtractModel(program *ast.Program) ModuleModel {
 					name := strings.ToLower(m.Name.Value)
 					decl.Methods[name] = true
 					decl.MethodSigs[name] = append(decl.MethodSigs[name], methodSignatureFromFunc(m))
-					if name == "__call" {
+					if name == "__call" || name == "__callstatic" {
 						decl.HasCall = true
 					}
 				case *ast.DeclarationStatement:

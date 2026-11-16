@@ -556,6 +556,7 @@ func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment)
 			}
 			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: typeParameterNames(member.Generics), TypeParamConstraints: typeParamConstraints(member.Generics), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env.MarkShared(), Decorators: member.Decorators, Target: "method", Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: true}
 			fn.DefinitionPath = e.currentDebugPath()
+			fn.DefinitionModule, fn.DefinitionLine, fn.DefinitionColumn = e.currentModule, member.Token.Line, member.Token.Column
 			if len(member.Decorators) > 0 {
 				e.currentLine = member.Token.Line
 			}
@@ -643,6 +644,7 @@ func (e *Evaluator) foldInterfaceDefaultsIntoEnum(enum *runtime.EnumDef, iface *
 		}
 		fn := runtime.Function{Name: def.Name.Value, Doc: def.Doc, TypeParameters: typeParameterNames(def.Generics), TypeParamConstraints: typeParamConstraints(def.Generics), Parameters: e.resolveParameters(def.Parameters, env), ReturnType: e.resolveTypeRef(def.ReturnType, env), Body: def.Body, Env: env.MarkShared(), Decorators: def.Decorators, Target: "method", Async: def.Async, IsGenerator: blockContainsYield(def.Body), ForwardThis: true}
 		fn.DefinitionPath = e.currentDebugPath()
+		fn.DefinitionModule, fn.DefinitionLine, fn.DefinitionColumn = iface.Module, def.Token.Line, def.Token.Column
 		if iface.DefinitionPath != "" {
 			fn.DefinitionPath = iface.DefinitionPath
 		}
@@ -822,11 +824,18 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 	if err := mergeInterfaceMembers(stmt, implementedIfaces); err != nil {
 		return nil, err
 	}
-	defaultPaths := map[*ast.FunctionStatement]string{}
-	for _, iface := range implementedIfaces {
-		for _, method := range iface.Defaults {
-			defaultPaths[method] = iface.DefinitionPath
+	defaultOwners := map[*ast.FunctionStatement]*runtime.Interface{}
+	var recordDefaults func(*runtime.Interface)
+	recordDefaults = func(iface *runtime.Interface) {
+		for _, parent := range iface.Parents {
+			recordDefaults(parent)
 		}
+		for _, method := range iface.Defaults {
+			defaultOwners[method] = iface
+		}
+	}
+	for _, iface := range implementedIfaces {
+		recordDefaults(iface)
 	}
 	for _, member := range stmt.Members {
 		switch member := member.(type) {
@@ -877,8 +886,10 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 			methodTypeParams := append(typeParameterNames(member.Generics), classTypeParams...)
 			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(member.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env.MarkShared(), Decorators: member.Decorators, Target: target, Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: !member.Static}
 			fn.DefinitionPath = e.currentDebugPath()
-			if path := defaultPaths[member]; path != "" {
-				fn.DefinitionPath = path
+			fn.DefinitionModule, fn.DefinitionLine, fn.DefinitionColumn = e.currentModule, member.Token.Line, member.Token.Column
+			if owner := defaultOwners[member]; owner != nil {
+				fn.DefinitionPath = owner.DefinitionPath
+				fn.DefinitionModule = owner.Module
 			}
 			if len(member.Decorators) > 0 {
 				e.currentLine = member.Token.Line
@@ -909,6 +920,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 		methodTypeParams := append(typeParameterNames(dtor.Generics), classTypeParams...)
 		fn := runtime.Function{Name: "~" + dtor.Name.Value, Doc: dtor.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(dtor.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(dtor.Parameters, env), ReturnType: e.resolveTypeRef(dtor.ReturnType, env), Body: dtor.Body, Env: env.MarkShared(), Decorators: dtor.Decorators, Target: "method", Async: dtor.Async, IsGenerator: false, ForwardThis: true}
 		fn.DefinitionPath = e.currentDebugPath()
+		fn.DefinitionModule, fn.DefinitionLine, fn.DefinitionColumn = e.currentModule, dtor.Token.Line, dtor.Token.Column
 		if len(dtor.Decorators) > 0 {
 			e.currentLine = dtor.Token.Line
 		}

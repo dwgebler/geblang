@@ -81,7 +81,33 @@ type binding struct {
 	slot int64
 	typ  string
 	// declared is the annotated type, nil for an untyped binding.
-	declared *ast.TypeRef
+	declared            *ast.TypeRef
+	deleted             bool
+	functionDeclaration bool
+}
+
+func (c *Compiler) checkLocalDeclaration(name string, function bool) error {
+	if !c.inGlobalScope() {
+		if existing, ok := c.scopes[len(c.scopes)-1][name]; ok && !existing.deleted {
+			if !function || !existing.functionDeclaration {
+				return fmt.Errorf("%q is already declared in this scope", name)
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Compiler) emitLocalDeclaration(name, typ string, declared *ast.TypeRef, line, column int) int64 {
+	previous, existed := c.scopes[len(c.scopes)-1][name]
+	slot := c.defineTypedLocal(name, typ, declared)
+	if existed && previous.deleted {
+		nameIndex := int64(len(c.chunk.Constants))
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: name})
+		c.emitAt(OpDefineLocal, line, column, slot, previous.slot, nameIndex)
+	} else {
+		c.emitAt(OpDefineLocal, line, column, slot)
+	}
+	return slot
 }
 
 type loopContext struct {

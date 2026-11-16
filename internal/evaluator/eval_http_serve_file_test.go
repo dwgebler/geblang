@@ -40,7 +40,7 @@ func TestWriteHTTPServeFileFull200(t *testing.T) {
 	path := writeTempServeFile(t, body)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/file", nil)
-	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, nil))
+	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, nil), handlerLimits{})
 
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -61,7 +61,7 @@ func TestWriteHTTPServeFileHEAD(t *testing.T) {
 	path := writeTempServeFile(t, body)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("HEAD", "/file", nil)
-	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, nil))
+	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, nil), handlerLimits{})
 
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -80,7 +80,7 @@ func TestWriteHTTPServeFileRange(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/file", nil)
 	req.Header.Set("Range", "bytes=0-3")
-	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, nil))
+	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, nil), handlerLimits{})
 
 	if rec.Code != 206 {
 		t.Fatalf("status = %d, want 206", rec.Code)
@@ -99,7 +99,7 @@ func TestWriteHTTPServeFileIfNoneMatch304(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/file", nil)
 	req.Header.Set("If-None-Match", etag)
-	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, map[string]string{"ETag": etag}))
+	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, map[string]string{"ETag": etag}), handlerLimits{})
 
 	if rec.Code != 304 {
 		t.Fatalf("status = %d, want 304", rec.Code)
@@ -118,7 +118,7 @@ func TestWriteHTTPServeFileIfModifiedSince304(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/file", nil)
 	req.Header.Set("If-Modified-Since", modtime.Add(time.Minute).UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
-	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, nil))
+	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, nil), handlerLimits{})
 
 	if rec.Code != 304 {
 		t.Fatalf("status = %d, want 304", rec.Code)
@@ -129,7 +129,7 @@ func TestWriteHTTPServeFileMissing404(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/file", nil)
 	missing := filepath.Join(t.TempDir(), "does-not-exist.txt")
-	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(missing, nil))
+	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(missing, nil), handlerLimits{})
 
 	if rec.Code != 404 {
 		t.Fatalf("status = %d, want 404", rec.Code)
@@ -150,7 +150,7 @@ func TestWriteHTTPServeFileForgedMarkerDoesNotServe(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/file", nil)
-	(&Evaluator{}).writeHTTPResponse(rec, req, forged)
+	(&Evaluator{}).writeHTTPResponse(rec, req, forged, handlerLimits{})
 
 	if contains(rec.Body.String(), "top secret") {
 		t.Fatalf("forged plain-dict marker served the file: %q", rec.Body.String())
@@ -163,7 +163,7 @@ func TestWriteHTTPServeFileDefaultETag304(t *testing.T) {
 
 	rec1 := httptest.NewRecorder()
 	req1 := httptest.NewRequest("GET", "/file", nil)
-	(&Evaluator{}).writeHTTPResponse(rec1, req1, serveFileMarker(path, nil))
+	(&Evaluator{}).writeHTTPResponse(rec1, req1, serveFileMarker(path, nil), handlerLimits{})
 	etag := rec1.Header().Get("Etag")
 	if etag == "" {
 		t.Fatalf("no default ETag emitted")
@@ -172,7 +172,7 @@ func TestWriteHTTPServeFileDefaultETag304(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest("GET", "/file", nil)
 	req2.Header.Set("If-None-Match", etag)
-	(&Evaluator{}).writeHTTPResponse(rec2, req2, serveFileMarker(path, nil))
+	(&Evaluator{}).writeHTTPResponse(rec2, req2, serveFileMarker(path, nil), handlerLimits{})
 	if rec2.Code != 304 {
 		t.Fatalf("status = %d, want 304 for matching If-None-Match", rec2.Code)
 	}
@@ -186,7 +186,7 @@ func TestWriteHTTPServeFilePreservesCallerETag(t *testing.T) {
 	path := writeTempServeFile(t, "caller etag body")
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/file", nil)
-	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, map[string]string{"ETag": `"custom"`}))
+	(&Evaluator{}).writeHTTPResponse(rec, req, serveFileMarker(path, map[string]string{"ETag": `"custom"`}), handlerLimits{})
 	if got := rec.Header().Get("Etag"); got != `"custom"` {
 		t.Fatalf("ETag = %q, want caller value", got)
 	}

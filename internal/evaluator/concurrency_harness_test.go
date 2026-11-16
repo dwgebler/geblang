@@ -83,7 +83,7 @@ const okHandlerSrc = `func(any req) { return {"status": 200, "body": "ok"}; }`
 func BenchmarkHTTPServeThroughput(b *testing.B) {
 	e := New(io.Discard)
 	handler := buildServerHandler(b, e, okHandlerSrc, nil)
-	srv := startServerTB(b, 64, e.httpHandler(handler, nil, nil, 0, false, false))
+	srv := startServerTB(b, 64, e.httpHandler(handler, nil, nil, 0, false, false, handlerLimits{}))
 	defer srv.Close()
 	client := srv.Client()
 
@@ -115,7 +115,7 @@ func TestHTTPConcurrencyLatency(t *testing.T) {
 
 	e := New(io.Discard)
 	handler := buildServerHandler(t, e, okHandlerSrc, nil)
-	srv := startServerTB(t, concurrency, e.httpHandler(handler, nil, nil, 0, false, false))
+	srv := startServerTB(t, concurrency, e.httpHandler(handler, nil, nil, 0, false, false, handlerLimits{}))
 	defer srv.Close()
 	client := srv.Client()
 
@@ -173,7 +173,7 @@ func TestHTTPServerWorkerPoolOverload(t *testing.T) {
 		map[string]gruntime.Value{"_block": blocker})
 
 	pool := concurrent.NewPool(slots, 0, concurrent.Reject)
-	srv := startServerTB(t, 16, e.httpHandler(handler, pool, nil, 0, false, false))
+	srv := startServerTB(t, 16, e.httpHandler(handler, pool, nil, 0, false, false, handlerLimits{}))
 	defer srv.Close()
 	client := srv.Client()
 
@@ -253,7 +253,7 @@ func TestServerHandlerStateIsolation(t *testing.T) {
 	handler := buildServerHandler(t, e,
 		`func(any req) { shared.n = shared.n + 1; return {"status": 200, "body": "${shared.n}"}; }`,
 		map[string]gruntime.Value{"shared": shared})
-	srv := startServerTB(t, 1, e.httpHandler(handler, nil, nil, 0, false, false))
+	srv := startServerTB(t, 1, e.httpHandler(handler, nil, nil, 0, false, false, handlerLimits{}))
 	defer srv.Close()
 
 	for i := 0; i < 3; i++ {
