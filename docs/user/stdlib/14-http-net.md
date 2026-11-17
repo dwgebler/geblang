@@ -18,6 +18,13 @@ let response = http.get("https://example.com");
 io.println(response["status"]);
 ```
 
+Every client call has a 30 second timeout by default and raises
+`TimeoutError` when it expires. A response body larger than 64 MiB
+(67108864 bytes) raises `IOError` instead of being buffered. Change either
+with `timeoutMs` / `maxResponseBytes` on `requestWithOptions`,
+`http.newClient` or `Client.request`; `0` removes the limit. For larger or
+open-ended bodies use `requestStream`.
+
 ### The Response object
 
 Client calls (`get`, `post`, `postJson`, `request`, the request builder's
@@ -229,7 +236,9 @@ A configured client exposes the same `fetchStream`.
 `http.requestStream(options)` performs a request like `requestWithOptions`, but
 instead of buffering the whole body it returns a `StreamResponse` you read
 line-by-line as data arrives. This is the client-side analog of server-sent
-events: long-polling feeds, chunked logs, and LLM token streams.
+events: long-polling feeds, chunked logs, and LLM token streams. The 64 MiB
+response cap does not apply, and the default 30 second timeout covers only
+connecting and receiving the response headers, so a stream can stay open.
 
 | Method | Description |
 |--------|-------------|
@@ -238,6 +247,11 @@ events: long-polling feeds, chunked logs, and LLM token streams.
 | `headers()` | The response headers as a `dict<string, string>`. |
 | `done()` | `true` once the stream has been fully read or closed. |
 | `close()` | Closes the underlying connection (call it when you stop early). |
+
+Each stream is read independently, so a stream waiting on a slow server
+does not hold up others. `close()` may be called from another task; a
+`read()` blocked on that stream then raises `IOError`. A line longer than
+1 MiB (1048576 bytes) raises `IOError` and closes the stream.
 
 ```gb
 let stream = http.requestStream({
@@ -266,7 +280,8 @@ shape the underlying connection pool and cookie behaviour:
 
 | Key            | Type                          | Default | Meaning |
 |----------------|-------------------------------|---------|---------|
-| `timeoutMs`    | int                           | none    | Per-request deadline (entire request lifecycle) |
+| `timeoutMs`    | int                           | `30000` | Per-request deadline (entire request lifecycle); `0` for none |
+| `maxResponseBytes` | int                       | `67108864` | Largest response body accepted; larger raises `IOError`. `0` for no limit |
 | `baseUrl`      | string                        | none    | Prefix for relative URLs passed to `client.get(...)` etc. |
 | `headers`      | dict<string, string> / Headers | empty  | Default headers added to every request |
 | `cookieJar`    | CookieJar or `true`           | none    | Persist cookies across requests. Pass an explicit `http.newCookieJar()` to inspect/share, or `true` to attach a fresh jar |
@@ -282,6 +297,7 @@ timeouts in addition to the standard `method`, `url`, `body`, and `headers`:
 | Key                  | Type      | Default                | Meaning |
 |----------------------|-----------|------------------------|---------|
 | `timeoutMs`          | int       | client default         | Overrides the per-request timeout for this call |
+| `maxResponseBytes`   | int       | client default         | Overrides the response size cap for this call; `0` for no limit |
 | `retries`            | int       | `1` (no retry)         | Total attempts including the first |
 | `retryBackoffMs`     | int       | `100`                  | Base backoff before retry 2; doubled each retry, with full jitter |
 | `retryBackoffMaxMs`  | int       | `5000`                 | Upper bound on a single sleep |
@@ -571,6 +587,23 @@ When a handler is shared, do not mutate a plain `dict`, `list`, `set`, or
 object reachable from more than one invocation; use a `store.Store` for
 shared mutable state. Both backends behave identically.
 
+On the VM, a shared handler's writes to module-level variables become
+visible to other requests when the writing call returns, not at the
+instant of the write; the evaluator applies them immediately. Code that
+coordinates through module variables mid-request should use a
+`store.Store` or the `async.sync` primitives, which are shared live on both
+backends.
+
+### Request-scoped handles
+
+Native handles a handler opens while serving a request or connection
+(sockets, listeners, files, streams, processes, database connections opened
+with module functions) belong to that request: anything still open when
+the handler returns is closed then, including handles opened by tasks the
+handler started. Open long-lived resources such as a database pool or a
+listener outside the handler, at module level or in startup code, and pass
+them in.
+
 ### Server request and response objects
 
 A handler receives a plain request dict by default. To opt into a rich
@@ -668,15 +701,15 @@ untrusted peer the socket values win, so a client cannot spoof its IP.
 `maxBodyBytes` caps the request body the server will read. A request
 whose body exceeds the cap (by `Content-Length` or while streaming) is
 answered with `413 Request Entity Too Large` before the handler runs.
-Absent (or `0`) means unlimited:
+The default is 10 MiB (10485760 bytes); `0` means unlimited:
 
 ```gb
-http.listen(":8080", handler, { "maxBodyBytes": 10 * 1024 * 1024 });
+http.listen(":8080", handler, { "maxBodyBytes": 50 * 1024 * 1024 });
 ```
 
-#### Read timeouts
+#### Read and write timeouts
 
-The server bounds how long it waits on a slow client. All three options
+The server bounds how long it waits on a slow client. All four options
 are in milliseconds and `0` disables that timeout:
 
 | Option                | Default | Bounds                                             |
@@ -684,6 +717,7 @@ are in milliseconds and `0` disables that timeout:
 | `readHeaderTimeoutMs` | 10000   | Receiving the request line and headers             |
 | `readBodyTimeoutMs`   | 60000   | Receiving the whole request body                   |
 | `idleTimeoutMs`       | 120000  | A keep-alive connection waiting for its next request |
+| `writeTimeoutMs`      | 60000   | Sending a response that makes no progress            |
 
 ```gb
 http.listen(":8080", handler, {
@@ -695,14 +729,42 @@ http.listen(":8080", handler, {
 
 A request whose body does not arrive in time is answered with
 `408 Request Timeout` before the handler runs, and the connection is
-closed, so a stalled client cannot hold a `maxConcurrent` slot. A client
-that is too slow sending headers, or idle too long, is disconnected.
+closed. The body is read before the request takes a `maxConcurrent`
+slot, so slow uploads cannot hold every slot. A client that is too slow
+sending headers, or idle too long, is disconnected.
 
 The body timeout covers only reading the request. It does not limit how
-long the handler runs or how long a response takes to send, so streamed
-responses, server-sent events and WebSocket connections are unaffected.
+long the handler runs, so streamed responses, server-sent events and
+WebSocket connections are unaffected.
+
+`writeTimeoutMs` applies to responses the handler returns whole,
+including files. It is a progress timeout, not a total: the response
+fails only when no data can be sent to the client for that long, so a
+large download to a slow but live client still completes, while a client
+that has stopped reading is disconnected and frees its handler and slot.
+Streamed responses and WebSockets have their own limits (see
+[Timeouts and keepalive](#timeouts-and-keepalive)).
 Raise `readBodyTimeoutMs` if clients legitimately upload for longer
 than a minute.
+
+#### Connection blocklist (1.42.2)
+
+Pass a `net.IpSet` as `ipBlocklist` to drop clients before they cost
+anything. A connection from a blocked address is closed as soon as it is
+accepted, before any TLS handshake or HTTP parsing; each request is checked
+again before its body is read, so a client blocked while it holds a
+kept-alive connection is cut off on its next request, and behind
+`trustedProxies` the resolved client IP is checked rather than the proxy's.
+Blocked clients get no response. The set can change at any time:
+
+```gb
+let blocklist = net.ipSet(["203.0.113.0/24"]);
+http.listen(":8080", handler, {"ipBlocklist": blocklist});
+
+blocklist.add("198.51.100.7", 3600);   # ban for an hour
+```
+
+`net.serve` accepts the same option.
 
 #### Handler errors and debug mode
 
@@ -778,6 +840,24 @@ For task-returning socket calls, import `async.net`.
 the accepted socket immediately (the same effect for `reject` and
 `drop`). Poll counters with `net.serverStats(handle)`.
 
+`net.serve` closes each connection when its handler returns or throws, so a
+handler does not have to close it, and a handler error is logged to stderr.
+If accepting fails, for example because the process has run out of file
+descriptors during a connection flood, the listener waits briefly (backing
+off up to one second) and keeps accepting rather than stopping.
+
+Line reads on a network stream (`readLine`, `readLines` and the line iterator
+on the `stream` of a `net.serve` or `net.dial` connection, and on the stdout /
+stderr of an `ssh` session) accept at most 1 MiB
+(1048576 bytes) per line, not counting the line ending. A longer line raises
+`IOError`, so a peer that never sends a newline cannot exhaust memory.
+`readAll` and `readLines` on such a stream stop at 64 MiB (67108864 bytes) in
+total and raise `IOError`, so a peer that never closes cannot exhaust memory
+either; pass `maxBytes` (`stream.readAll(maxBytes)`, `io.readLines(handle,
+maxBytes)`) to change the cap, or `0` for no limit. File and other streams
+have no line or total limit. The generic `streams.readAll(src)` reads through
+`__read` and is not capped; use the stream's own `readAll` for sockets.
+
 Socket operations use the same error model as HTTP: connection failures,
 deadline failures, and bind conflicts throw `IOError` so applications can
 recover or report a clean message.
@@ -798,6 +878,19 @@ binary protocols. Backed by Go's `net/netip`.
 | `net.isIpv6(s)` | `bool` | True when `s` parses as a native IPv6 address. Never throws; returns false for IPv4-mapped addresses. |
 | `net.ipToBytes(s)` | `bytes` | Raw 4-byte (IPv4) or 16-byte (IPv6) representation. Throws on malformed input. |
 | `net.ipFromBytes(b)` | `string` | Decodes 4 or 16 bytes back to a canonical IP string. Throws on any other length. |
+| `net.ipSet(entries = [])` | `net.IpSet` | A thread-safe set of IPs and CIDR prefixes (1.42.2); see below. |
+
+`net.IpSet` answers "is this address in any of these networks" in near
+constant time however many entries it holds, and can be shared and updated
+while servers use it:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `add(entry, ttlSeconds = 0)` | `void` | Adds an IP or CIDR; a positive `ttlSeconds` makes it expire. Invalid input raises `ValueError`. |
+| `remove(entry)` | `bool` | Removes an IP or CIDR; returns whether it was present. |
+| `contains(ip)` | `bool` | True when `ip` is in the set or one of its prefixes; false for an invalid address. IPv4-mapped IPv6 addresses match their IPv4 form. |
+| `size()` | `int` | Number of unexpired entries. |
+| `clear()` | `void` | Removes every entry. |
 
 ```gb
 import net;
@@ -893,6 +986,54 @@ http.serve("127.0.0.1:8080", func(dict<string, any> request): dict<string, any> 
 });
 ```
 
+### Sharing a connection between tasks
+
+A connection can be shared with tasks started by `async.run`:
+
+- Sends (`sendText`, `sendBytes`, `sendJson`) are serialised per connection,
+  so any number of tasks can send on the same connection at once.
+- Only one task may read from a connection at a time. Keep a single read loop
+  per connection and hand incoming messages to other tasks over a channel.
+- `close()` may be called from any task. It makes a read or send that is
+  blocked on that connection raise `IOError`, which is the way to stop a read
+  loop from outside it. Call it once; see [Errors](#errors).
+- An empty string is an ordinary empty message, not an end-of-stream marker.
+  A read loop ends when the read raises.
+- A send blocks once the peer stops reading and its network buffer is full,
+  until the server's `webSocketWriteTimeoutMs` (10 seconds by default) fails
+  it. When one task produces messages for many connections, give each
+  connection a bounded `async.channel` drained by its own writer task, and
+  close the connection when `trySend` reports the channel is full.
+
+```gb
+import async;
+import async.channel as ch;
+import web.websocket as ws;
+
+let handler = func(ws.Connection conn): void {
+    let outbox = ch.Channel<string>(64);
+    let writer = async.run(func(): void {
+        try {
+            for (msg in outbox) {
+                conn.sendText(msg as string);
+            }
+        } catch (IOError e) {
+            # The connection closed mid-send; the read loop sees it too.
+        }
+    });
+    try {
+        while (true) {
+            outbox.send("echo: " + conn.readText());
+        }
+    } catch (IOError e) {
+        # The peer disconnected or another task closed the connection.
+    } finally {
+        outbox.close();
+        async.await(writer);
+    }
+};
+```
+
 ### Message size limit
 
 A server accepts WebSocket messages up to 1 MiB (1048576 bytes) by default.
@@ -906,8 +1047,52 @@ http.listen(":8080", handler, {"maxWebSocketMessageBytes": 8 * 1024 * 1024});
 The limit applies to the whole message, including one a client sends in
 several frames. When a message is larger, the server closes the connection
 with status 1009 ("message too big") and the handler's `readText` /
-`readBytes` raises an error you can catch. `maxBodyBytes` does not apply to
+`readBytes` raises an `IOError`. `maxBodyBytes` does not apply to
 WebSocket messages; it only limits the HTTP request body.
+
+### Timeouts and keepalive
+
+A server applies three per-connection timeouts to upgraded WebSockets. Set
+them in the `http.serve` / `http.listen` options; `0` disables one:
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `webSocketPingIntervalMs` | `25000` | The server sends a ping this often. Clients answer automatically while they are reading. |
+| `webSocketIdleTimeoutMs` | `60000` | A `readText` / `readBytes` that receives no message and no pong within this window raises `TimeoutError`. The window starts when the read starts, so a handler that only sends is not affected. |
+| `webSocketWriteTimeoutMs` | `10000` | A send that cannot complete within this window (the client has stopped reading) raises `TimeoutError`. |
+
+```gb
+http.listen(":8080", handler, {"webSocketIdleTimeoutMs": 120000});
+```
+
+A connection that has timed out cannot be used again; end the handler.
+`TimeoutError` is an `IOError`, so a read loop that catches `IOError` ends on
+a timeout too.
+
+When a handler throws, the error is logged to stderr and the client sees a
+close with status 1011 and the reason `internal error`; the error text is not
+sent to the client.
+
+### Errors
+
+Every WebSocket connection failure raises `IOError` (or its `TimeoutError` /
+`TlsError` subclasses): a failed `connect`, the peer disconnecting, a message
+over the size limit, a read or send that was blocked when the connection was
+closed, and any use of a connection after `close()`, including a second
+`close()`. Catch `IOError` to end a read loop:
+
+```gb
+try {
+    while (true) {
+        conn.sendText("echo: " + conn.readText());
+    }
+} catch (IOError e) {
+    # The connection ended.
+}
+```
+
+`readText` on a binary message is a usage error, not a connection failure,
+and raises `RuntimeError`.
 
 ## URL Parsing And Manipulation
 

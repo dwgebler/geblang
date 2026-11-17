@@ -114,25 +114,40 @@ func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
-	wsLimit, err := parseWebSocketMessageLimit(serverOpts, call.Callee.String())
+	wsOpts, err := parseWebSocketOptions(serverOpts, call.Callee.String())
 	if err != nil {
 		return nil, err
 	}
-	limits := handlerLimits{bodyTimeout: timeouts.body, wsMessageBytes: wsLimit}
+	blocklist, err := parseIPBlocklist(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
+	limits := handlerLimits{bodyTimeout: timeouts.body, writeTimeout: timeouts.write, ws: wsOpts, blocklist: blocklist}
 	server := &http.Server{
 		Addr:     addr.Value,
 		Handler:  e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug), share, limits),
 		ErrorLog: errLog,
 	}
 	timeouts.apply(server)
+	listenAddr := addr.Value
+	if listenAddr == "" {
+		listenAddr = ":http"
+		if tlsCfg != nil {
+			listenAddr = ":https"
+		}
+	}
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return nil, err
+	}
+	listener = withIPBlocklist(listener, blocklist)
 	if tlsCfg != nil {
 		server.TLSConfig = tlsCfg
-		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-			return nil, err
-		}
-		return runtime.Null{}, nil
+		err = server.ServeTLS(listener, "", "")
+	} else {
+		err = server.Serve(listener)
 	}
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err != nil && err != http.ErrServerClosed {
 		return nil, err
 	}
 	return runtime.Null{}, nil
@@ -186,21 +201,25 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
-	wsLimit, err := parseWebSocketMessageLimit(serverOpts, call.Callee.String())
+	wsOpts, err := parseWebSocketOptions(serverOpts, call.Callee.String())
 	if err != nil {
 		return nil, err
 	}
-	limits := handlerLimits{bodyTimeout: timeouts.body, wsMessageBytes: wsLimit}
+	blocklist, err := parseIPBlocklist(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
+	limits := handlerLimits{bodyTimeout: timeouts.body, writeTimeout: timeouts.write, ws: wsOpts, blocklist: blocklist}
 	listener, err := net.Listen("tcp", addr.Value)
 	if err != nil {
 		return nil, err
 	}
+	listener = withIPBlocklist(listener, blocklist)
 	server := &http.Server{Handler: e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug), share, limits), ErrorLog: errLog}
 	timeouts.apply(server)
 	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1), pool: pool, certPEM: certPEM}
 	e.httpServerMu.Lock()
-	e.nextHTTPServerID++
-	id := e.nextHTTPServerID
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.httpServers)[id] = handle
 	e.httpServerMu.Unlock()
 	go func() {
@@ -289,9 +308,6 @@ func (e *Evaluator) netServerStats(call *ast.CallExpression, args []runtime.Valu
 	server, ok := e.netServers[id]
 	e.netServerMu.Unlock()
 	if !ok {
-		if e.parent != nil {
-			return e.parent.netServerStats(call, args)
-		}
 		return nil, fmt.Errorf("unknown net server handle %d", id)
 	}
 	return poolStatsDict(server.pool), nil
@@ -398,12 +414,6 @@ func (e *Evaluator) httpWait(call *ast.CallExpression, args []runtime.Value) (ru
 	e.httpServerMu.Lock()
 	handle, ok := e.httpServers[id]
 	e.httpServerMu.Unlock()
-	for !ok && e.parent != nil {
-		e = e.parent
-		e.httpServerMu.Lock()
-		handle, ok = e.httpServers[id]
-		e.httpServerMu.Unlock()
-	}
 	if !ok {
 		return runtime.Null{}, nil
 	}
@@ -421,9 +431,6 @@ func (e *Evaluator) httpServerHandle(value runtime.Value) (*httpServerHandle, er
 	e.httpServerMu.Lock()
 	handle, ok := e.httpServers[id]
 	e.httpServerMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.httpServerHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown http server handle %d", id)
 	}
@@ -435,13 +442,11 @@ func (e *Evaluator) takeHTTPServerHandle(id int64) (*httpServerHandle, bool) {
 	handle, ok := e.httpServers[id]
 	if ok {
 		delete(e.httpServers, id)
+		e.releaseHandle(id)
 	}
 	e.httpServerMu.Unlock()
 	if ok {
 		return handle, true
-	}
-	if e.parent != nil {
-		return e.parent.takeHTTPServerHandle(id)
 	}
 	return nil, false
 }
@@ -469,30 +474,21 @@ func waitHTTPServerDone(handle *httpServerHandle) error {
 
 // handlerLimits are the per-request limits a server applies to each connection it hands a handler.
 type handlerLimits struct {
-	bodyTimeout    time.Duration
-	wsMessageBytes int64
+	bodyTimeout  time.Duration
+	writeTimeout time.Duration
+	ws           wsOptions
+	blocklist    *ipSet
 }
 
 func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool, tp *trustedProxies, maxBody int64, debug bool, shareHandler bool, limits handlerLimits) http.Handler {
 	bodyTimeout := limits.bodyTimeout
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if pool != nil && !pool.IsUnbounded() {
-			if err := pool.Acquire(r.Context()); err != nil {
-				switch pool.Policy() {
-				case concurrent.Drop:
-					if hijacker, ok := w.(http.Hijacker); ok {
-						if conn, _, hErr := hijacker.Hijack(); hErr == nil {
-							_ = conn.Close()
-							return
-						}
-					}
-					w.WriteHeader(http.StatusServiceUnavailable)
-				default:
-					http.Error(w, "server at capacity", http.StatusServiceUnavailable)
-				}
+		// Re-checked per request so a kept-alive connection, or a client behind a trusted proxy, is dropped before its body is read.
+		if limits.blocklist != nil {
+			if _, _, clientIP := resolveRequestMeta(r, tp); limits.blocklist.containsHost(clientIP) {
+				dropConnection(w)
 				return
 			}
-			defer pool.Release()
 		}
 		if maxBody > 0 {
 			if r.ContentLength > maxBody {
@@ -524,6 +520,25 @@ func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool,
 			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		// The slot is taken after the body arrives so slow uploads cannot hold every slot.
+		if pool != nil && !pool.IsUnbounded() {
+			if err := pool.Acquire(r.Context()); err != nil {
+				switch pool.Policy() {
+				case concurrent.Drop:
+					if hijacker, ok := w.(http.Hijacker); ok {
+						if conn, _, hErr := hijacker.Hijack(); hErr == nil {
+							_ = conn.Close()
+							return
+						}
+					}
+					w.WriteHeader(http.StatusServiceUnavailable)
+				default:
+					http.Error(w, "server at capacity", http.StatusServiceUnavailable)
+				}
+				return
+			}
+			defer pool.Release()
 		}
 		response, err := e.callHTTPHandler(handler, r, body, tp, shareHandler)
 		if err != nil {
@@ -621,16 +636,17 @@ func httpRequestEntries(request *http.Request, body []byte) map[string]runtime.D
 	return entries
 }
 
-// parseMaxBodyBytes reads opts.maxBodyBytes for http.serve/listen.
-// 0 (or absent) means unlimited.
+const defaultMaxBodyBytes = 10 << 20
+
+// parseMaxBodyBytes reads opts.maxBodyBytes for http.serve/listen; 0 means unlimited.
 func parseMaxBodyBytes(opts runtime.Value, label string) (int64, error) {
 	dict, ok := opts.(runtime.Dict)
 	if !ok {
-		return 0, nil
+		return defaultMaxBodyBytes, nil
 	}
 	v, ok := dictField(dict, "maxBodyBytes")
 	if !ok {
-		return 0, nil
+		return defaultMaxBodyBytes, nil
 	}
 	n, ok := toInt64(v)
 	if !ok || n < 0 {
@@ -643,12 +659,14 @@ const (
 	defaultReadHeaderTimeout = 10 * time.Second
 	defaultReadBodyTimeout   = 60 * time.Second
 	defaultIdleTimeout       = 120 * time.Second
+	defaultWriteTimeout      = 60 * time.Second
 )
 
 type serverTimeouts struct {
 	header time.Duration
 	body   time.Duration
 	idle   time.Duration
+	write  time.Duration
 }
 
 func (t serverTimeouts) apply(server *http.Server) {
@@ -656,28 +674,65 @@ func (t serverTimeouts) apply(server *http.Server) {
 	server.IdleTimeout = t.idle
 }
 
-const defaultWebSocketMessageBytes = 1 << 20
+const (
+	defaultWebSocketMessageBytes = 1 << 20
+	defaultWebSocketPingInterval = 25 * time.Second
+	defaultWebSocketIdleTimeout  = 60 * time.Second
+	defaultWebSocketWriteTimeout = 10 * time.Second
+)
 
-// parseWebSocketMessageLimit reads opts.maxWebSocketMessageBytes for http.serve/listen; 0 disables the limit.
-func parseWebSocketMessageLimit(opts runtime.Value, label string) (int64, error) {
+// wsOptions are the per-connection WebSocket limits a server applies; a zero field is disabled.
+type wsOptions struct {
+	maxMessageBytes int64
+	pingInterval    time.Duration
+	idleTimeout     time.Duration
+	writeTimeout    time.Duration
+}
+
+// parseWebSocketOptions reads the maxWebSocketMessageBytes and webSocket*Ms opts for http.serve/listen.
+func parseWebSocketOptions(opts runtime.Value, label string) (wsOptions, error) {
+	ws := wsOptions{
+		maxMessageBytes: defaultWebSocketMessageBytes,
+		pingInterval:    defaultWebSocketPingInterval,
+		idleTimeout:     defaultWebSocketIdleTimeout,
+		writeTimeout:    defaultWebSocketWriteTimeout,
+	}
 	dict, ok := opts.(runtime.Dict)
 	if !ok {
-		return defaultWebSocketMessageBytes, nil
+		return ws, nil
 	}
-	v, ok := dictField(dict, "maxWebSocketMessageBytes")
-	if !ok {
-		return defaultWebSocketMessageBytes, nil
+	if v, ok := dictField(dict, "maxWebSocketMessageBytes"); ok {
+		n, ok := toInt64(v)
+		if !ok || n < 0 {
+			return wsOptions{}, fmt.Errorf("%s opts.maxWebSocketMessageBytes must be a non-negative int", label)
+		}
+		ws.maxMessageBytes = n
 	}
-	n, ok := toInt64(v)
-	if !ok || n < 0 {
-		return 0, fmt.Errorf("%s opts.maxWebSocketMessageBytes must be a non-negative int", label)
+	durations := []struct {
+		name   string
+		target *time.Duration
+	}{
+		{"webSocketPingIntervalMs", &ws.pingInterval},
+		{"webSocketIdleTimeoutMs", &ws.idleTimeout},
+		{"webSocketWriteTimeoutMs", &ws.writeTimeout},
 	}
-	return n, nil
+	for _, field := range durations {
+		v, ok := dictField(dict, field.name)
+		if !ok {
+			continue
+		}
+		n, ok := toInt64(v)
+		if !ok || n < 0 {
+			return wsOptions{}, fmt.Errorf("%s opts.%s must be a non-negative int", label, field.name)
+		}
+		*field.target = time.Duration(n) * time.Millisecond
+	}
+	return ws, nil
 }
 
 // parseServerTimeouts reads the read/idle timeout opts for http.serve/listen; 0 disables one.
 func parseServerTimeouts(opts runtime.Value, label string) (serverTimeouts, error) {
-	timeouts := serverTimeouts{header: defaultReadHeaderTimeout, body: defaultReadBodyTimeout, idle: defaultIdleTimeout}
+	timeouts := serverTimeouts{header: defaultReadHeaderTimeout, body: defaultReadBodyTimeout, idle: defaultIdleTimeout, write: defaultWriteTimeout}
 	dict, ok := opts.(runtime.Dict)
 	if !ok {
 		return timeouts, nil
@@ -689,6 +744,7 @@ func parseServerTimeouts(opts runtime.Value, label string) (serverTimeouts, erro
 		{"readHeaderTimeoutMs", &timeouts.header},
 		{"readBodyTimeoutMs", &timeouts.body},
 		{"idleTimeoutMs", &timeouts.idle},
+		{"writeTimeoutMs", &timeouts.write},
 	}
 	for _, field := range fields {
 		v, ok := dictField(dict, field.name)
@@ -749,9 +805,9 @@ func serveDebugEnabled(optDebug bool) bool {
 
 // serveErrorParts extracts a one-line headline and the full canonical render from a handler error.
 func serveErrorParts(err error) (string, string) {
-	var thrown thrownError
+	var thrown runtime.ThrownError
 	if errors.As(err, &thrown) {
-		v := thrown.value
+		v := thrown.Thrown()
 		return v.Inspect(), uncaughtFromThrown(v).Render()
 	}
 	var uncaught *runtime.UncaughtError
@@ -1169,8 +1225,13 @@ func (e *Evaluator) writeHTTPResponse(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	if handler, ok := websocketResponseHandler(response); ok {
-		e.writeWebSocketResponse(w, r, response, handler, limits.wsMessageBytes)
+		e.writeWebSocketResponse(w, r, response, handler, limits.ws)
 		return
+	}
+	if limits.writeTimeout > 0 {
+		pw := &progressWriter{ResponseWriter: w, rc: http.NewResponseController(w), timeout: limits.writeTimeout}
+		defer pw.finish()
+		w = pw
 	}
 	if outer, desc, ok := serveFileDescriptor(response); ok {
 		writeHTTPServeFile(w, r, outer, desc)
@@ -1178,6 +1239,39 @@ func (e *Evaluator) writeHTTPResponse(w http.ResponseWriter, r *http.Request, re
 	}
 	e.writeHTTPResponseValue(w, response)
 }
+
+// progressWriter fails a response write that makes no progress within timeout, so a client that stops reading cannot pin the handler.
+type progressWriter struct {
+	http.ResponseWriter
+	rc      *http.ResponseController
+	timeout time.Duration
+}
+
+const progressWriteChunk = 64 << 10
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	written := 0
+	for len(b) > 0 {
+		n := min(len(b), progressWriteChunk)
+		_ = p.rc.SetWriteDeadline(time.Now().Add(p.timeout))
+		m, err := p.ResponseWriter.Write(b[:n])
+		written += m
+		if err != nil {
+			return written, err
+		}
+		b = b[n:]
+	}
+	return written, nil
+}
+
+// finish flushes under the deadline, then clears it so it cannot cut off the next request on a kept-alive connection.
+func (p *progressWriter) finish() {
+	_ = p.rc.SetWriteDeadline(time.Now().Add(p.timeout))
+	_ = p.rc.Flush()
+	_ = p.rc.SetWriteDeadline(time.Time{})
+}
+
+func (p *progressWriter) Unwrap() http.ResponseWriter { return p.ResponseWriter }
 
 // Response-dict key carrying the file marker.
 const serveFileMarkerKey = "__serveFile"
@@ -1297,7 +1391,7 @@ func websocketResponseHandler(response runtime.Value) (runtime.Function, bool) {
 	return handler, ok
 }
 
-func (e *Evaluator) writeWebSocketResponse(w http.ResponseWriter, r *http.Request, response runtime.Value, handler runtime.Function, maxMessageBytes int64) {
+func (e *Evaluator) writeWebSocketResponse(w http.ResponseWriter, r *http.Request, response runtime.Value, handler runtime.Function, opts wsOptions) {
 	if dict, ok := response.(runtime.Dict); ok {
 		if value, ok := dictField(dict, "headers"); ok {
 			writeHTTPHeaders(w.Header(), value)
@@ -1308,15 +1402,15 @@ func (e *Evaluator) writeWebSocketResponse(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		return
 	}
-	if maxMessageBytes > 0 {
-		conn.SetReadLimit(maxMessageBytes)
+	if opts.maxMessageBytes > 0 {
+		conn.SetReadLimit(opts.maxMessageBytes)
 	}
 	callbackEval, callbackHandler := e.callbackEvaluator(handler)
 	if callbackEval != e {
 		defer callbackEval.Cleanup()
 		defer callbackEval.startDebugThread("websocket")()
 	}
-	handleValue := callbackEval.registerWebSocket(conn)
+	handleValue := callbackEval.registerServerWebSocket(callbackEval.scope, conn, opts)
 	handleID, _ := websocketHandleID(handleValue)
 	defer func() {
 		if err := callbackEval.closeWebSocketID(handleID); err != nil && !strings.Contains(err.Error(), "unknown websocket connection") {
@@ -1325,7 +1419,9 @@ func (e *Evaluator) writeWebSocketResponse(w http.ResponseWriter, r *http.Reques
 	}()
 	_, err = callbackEval.applyFunction(callbackHandler, []runtime.Value{handleValue})
 	if err != nil {
-		_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+		headline, _ := serveErrorParts(err)
+		fmt.Fprintf(e.stderr, "http.serve: handler error: %s\n", headline)
+		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "internal error"), time.Now().Add(time.Second))
 	}
 }
 
@@ -1351,7 +1447,7 @@ func (e *Evaluator) writeHTTPStreamResponse(w http.ResponseWriter, response runt
 		defer callbackEval.Cleanup()
 		defer callbackEval.startDebugThread("stream")()
 	}
-	handleValue := callbackEval.registerHTTPStream(w, flusher)
+	handleValue := callbackEval.registerHTTPStream(callbackEval.scope, w, flusher)
 	handleID, _ := httpStreamHandleID(handleValue)
 	defer callbackEval.closeHTTPStreamID(handleID)
 	_, _ = callbackEval.applyFunction(callbackHandler, []runtime.Value{handleValue})
@@ -1453,4 +1549,16 @@ func (e *Evaluator) writeHTTPBody(w http.ResponseWriter, body runtime.Value) err
 		_, err := io.WriteString(w, body.Inspect())
 		return err
 	}
+}
+
+// dropConnection closes the client connection without a response, falling back to a bare 403 when it cannot be hijacked.
+func dropConnection(w http.ResponseWriter) {
+	if hijacker, ok := w.(http.Hijacker); ok {
+		if conn, _, err := hijacker.Hijack(); err == nil {
+			_ = conn.Close()
+			return
+		}
+	}
+	w.Header().Set("Connection", "close")
+	w.WriteHeader(http.StatusForbidden)
 }

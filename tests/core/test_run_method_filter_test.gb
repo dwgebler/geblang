@@ -1,0 +1,58 @@
+/**
+ * @title Test runner method filter (1.42.2)
+ * @summary test.run(Class, {"methods": [...]}) runs only the named test
+ * methods, own or inherited, and combines with a tag filter. This is what
+ * `geblang test --method` passes through.
+ */
+import test;
+
+class FilterSubjectBase extends test.Test {
+    @test
+    @tag("fast")
+    func inherited(): void { this.assertTrue(true); }
+}
+
+class FilterSubject extends FilterSubjectBase {
+    @test
+    @tag("fast")
+    func chosen(): void { this.assertTrue(true); }
+
+    @test
+    func other(): void { this.assertTrue(true); }
+}
+
+class MethodFilterTest extends test.Test {
+    func ran(dict<string, any> result): list<string> {
+        list<string> names = [];
+        for (c in result["tests"]) {
+            names.push((c as dict<string, any>)["name"] as string);
+        }
+        return names.sorted();
+    }
+
+    @test
+    func runsOnlyTheNamedMethod(): void {
+        this.assertEquals(["chosen"], this.ran(test.run(FilterSubject, {"methods": ["chosen"]})));
+    }
+
+    @test
+    func selectsInheritedMethodsByName(): void {
+        this.assertEquals(["chosen", "inherited"], this.ran(test.run(FilterSubject, {"methods": ["inherited", "chosen"]})));
+    }
+
+    @test
+    func combinesWithTags(): void {
+        this.assertEquals(["inherited"], this.ran(test.run(FilterSubject, {"methods": ["other", "inherited"], "tags": ["fast"]})));
+    }
+
+    @test
+    func unknownNameRunsNothing(): void {
+        let r = test.run(FilterSubject, {"methods": ["missing"]});
+        this.assertEquals(0, r["total"] as int);
+    }
+
+    @test
+    func noFilterRunsEverything(): void {
+        this.assertEquals(["chosen", "inherited", "other"], this.ran(test.run(FilterSubject, {})));
+    }
+}

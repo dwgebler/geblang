@@ -42,8 +42,7 @@ func (e *Evaluator) onnxSession(call *ast.CallExpression, args []runtime.Value) 
 		return nil, err
 	}
 	e.onnxMu.Lock()
-	id := e.nextOnnxID
-	e.nextOnnxID++
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.onnxSessions)[id] = sess
 	e.onnxMu.Unlock()
 	return &runtime.Instance{Class: e.onnxSessionClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(id)}}, nil
@@ -145,6 +144,7 @@ func (e *Evaluator) onnxSessionClass() *runtime.Class {
 		if s, ok := e.onnxSessions[id.Value.Int64()]; ok {
 			s.Close()
 			delete(e.onnxSessions, id.Value.Int64())
+			e.releaseHandle(id.Value.Int64())
 		}
 		return runtime.Null{}, nil
 	}}}

@@ -196,7 +196,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 				return nil, err
 			}
 		}
-		return doHTTPRequest(h.client, req)
+		return h.do(h.client, req)
 	}}}
 	clientClass.Methods["post"] = []runtime.Function{{Name: "post", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		if len(args) < 2 || len(args) > 3 {
@@ -224,7 +224,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 				return nil, err
 			}
 		}
-		return doHTTPRequest(h.client, req)
+		return h.do(h.client, req)
 	}}}
 	clientClass.Methods["request"] = []runtime.Function{{Name: "request", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
@@ -273,6 +273,9 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		retry, err := httpRetryOptionsFromDict(opts)
 		if err != nil {
 			return nil, err
+		}
+		if retry.maxResponseBytes == 0 {
+			retry.maxResponseBytes = h.maxResponseBytes
 		}
 		return doHTTPRequestWithRetries(client, req, retry)
 	}}}
@@ -364,17 +367,16 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		}
 		jar, _ := cookiejar.New(nil)
 		h.client.Jar = jar
-		id := e.nextCookieJarID
-		e.nextCookieJarID++
+		id := e.newHandleID()
 		ensureMap(&e.httpCookieJars)[id] = jar
 		return newJarInst(id), nil
 	}}}
 
 	// Helpers for async and batch operations
-	doHTTPRequestAsync := func(client *http.Client, req *http.Request) *runtime.Task {
+	doHTTPRequestAsync := func(h *httpClientHandle, client *http.Client, req *http.Request) *runtime.Task {
 		task := runtime.NewTask()
 		go func() {
-			result, err := doHTTPRequest(client, req)
+			result, err := h.do(client, req)
 			task.Complete(result, err)
 		}()
 		return task
@@ -434,7 +436,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 				return nil, err
 			}
 		}
-		return doHTTPRequestAsync(h.client, req), nil
+		return doHTTPRequestAsync(h, h.client, req), nil
 	}}}
 	clientClass.Methods["postasync"] = []runtime.Function{{Name: "postAsync", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		if len(args) < 2 || len(args) > 3 {
@@ -462,7 +464,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 				return nil, err
 			}
 		}
-		return doHTTPRequestAsync(h.client, req), nil
+		return doHTTPRequestAsync(h, h.client, req), nil
 	}}}
 	clientClass.Methods["requestasync"] = []runtime.Function{{Name: "requestAsync", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
@@ -490,7 +492,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 				}
 			}
 		}
-		return doHTTPRequestAsync(client, req), nil
+		return doHTTPRequestAsync(h, client, req), nil
 	}}}
 
 	// FetchStream class - completion-ordered streaming parallel fetch
@@ -518,6 +520,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		if id, ok := this.Fields["handle"].(runtime.Int); ok {
 			e.httpFetchStreamMu.Lock()
 			delete(e.httpFetchStreams, id.Value.Int64())
+			e.releaseHandle(id.Value.Int64())
 			e.httpFetchStreamMu.Unlock()
 		}
 	}
@@ -588,8 +591,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		ch := make(chan runtime.Value, len(specs))
 		sh := &httpFetchStreamHandle{ch: ch, total: len(specs)}
 		e.httpFetchStreamMu.Lock()
-		id := e.nextFetchStreamID
-		e.nextFetchStreamID++
+		id := e.newHandleID()
 		ensureMap(&e.httpFetchStreams)[id] = sh
 		e.httpFetchStreamMu.Unlock()
 		for i, specVal := range specs {
@@ -603,13 +605,13 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 					ch <- httpStreamResult(httpErrorResult(reqErr), idx, resolvedURL)
 					return
 				}
-				var client *http.Client
+				var result runtime.Value
+				var doErr error
 				if h != nil {
-					client = h.client
+					result, doErr = h.do(h.client, req)
 				} else {
-					client = http.DefaultClient
+					result, doErr = doHTTPRequest(defaultHTTPClient, req)
 				}
-				result, doErr := doHTTPRequest(client, req)
 				if doErr != nil {
 					ch <- httpStreamResult(httpErrorResult(doErr), idx, resolvedURL)
 					return
@@ -917,3 +919,8 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 
 // httpRequestFromBuilder materialises an *http.Request and the client to
 // run it from a Builder instance's fields. Shared by Builder.send and the
+
+func (h *httpClientHandle) do(client *http.Client, req *http.Request) (runtime.Value, error) {
+	applyDefaultUserAgent(req)
+	return doHTTPRequestWithRetries(client, req, httpRetryOptions{maxResponseBytes: h.maxResponseBytes})
+}

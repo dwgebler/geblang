@@ -2,7 +2,6 @@ package evaluator
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -27,11 +26,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"weak"
 
 	"geblang/internal/ast"
 	"geblang/internal/binding"
-	"geblang/internal/cdp"
 	"geblang/internal/concurrent"
 	"geblang/internal/desugar"
 	"geblang/internal/native"
@@ -146,114 +143,19 @@ type Evaluator struct {
 	parent                *Evaluator
 	AssertionsDisabled    bool
 	vmDispatcher          MethodDispatcher
-	dbMu                  sync.Mutex
 	builtinTypesMu        sync.Mutex
 	builtinTypesReady     atomic.Bool
-	nextDBID              int64
-	dbs                   map[int64]*sql.DB
-	dbDrivers             map[int64]string
-	nextTxID              int64
-	txs                   map[int64]*dbTxHandle
-	nextStmtID            int64
-	stmts                 map[int64]*dbStmtHandle
-	nextDBRowsID          int64
-	dbRows                map[int64]weak.Pointer[dbRowsHandle]
-	fileMu                sync.Mutex
-	nextFileID            int64
-	files                 map[int64]*os.File
-	bufReaders            map[int64]*bufio.Reader
-	bufferMu              sync.Mutex
-	nextBufferID          int64
-	buffers               map[int64]*bytes.Buffer
-	streamMu              sync.Mutex
-	nextStreamID          int64
-	streams               map[int64]*ioStreamHandle
-	processMu             sync.Mutex
-	nextProcID            int64
-	processes             map[int64]*processHandle
-	logMu                 sync.Mutex
-	nextLogID             int64
-	loggers               map[int64]*loggerHandle
-	metricsMu             sync.Mutex
-	metrics               map[string]float64
-	metricRegistry        map[string]*metricsEntry
-	traceMu               sync.Mutex
-	nextTraceID           int64
-	traces                map[int64]*traceSpan
-	watchMu               sync.Mutex
-	nextWatchID           int64
-	watches               map[int64]*watchHandle
-	signalMu              sync.Mutex
-	signalHandlers        map[string]*signalSubscription
-	webMu                 sync.Mutex
-	nextWebID             int64
-	webApps               map[int64]*webApp
-	wsMu                  sync.Mutex
-	nextWSID              int64
-	websockets            map[int64]*wsHandle
 	messaging             *messagingState
-	netMu                 sync.Mutex
-	nextNetID             int64
-	netHandles            map[int64]*netHandle
-	netServerMu           sync.Mutex
-	nextNetServerID       int64
-	netServers            map[int64]*netServerHandle
-	sshMu                 sync.Mutex
-	nextSSHID             int64
-	sshClients            map[int64]*sshClientHandle
-	sshSessions           map[int64]*sshSessionHandle
-	sshTunnels            map[int64]*sshTunnelHandle
-	httpServerMu          sync.Mutex
-	nextHTTPServerID      int64
-	httpServers           map[int64]*httpServerHandle
-	httpStreamMu          sync.Mutex
-	nextHTTPStreamID      int64
-	httpStreams           map[int64]*httpStreamHandle
-	httpClientMu          sync.Mutex
-	nextHTTPClientID      int64
-	httpClientHandles     map[int64]*httpClientHandle
-	httpCookieJarMu       sync.Mutex
-	nextCookieJarID       int64
-	httpCookieJars        map[int64]http.CookieJar
-	httpFetchStreamMu     sync.Mutex
-	nextFetchStreamID     int64
-	httpFetchStreams      map[int64]*httpFetchStreamHandle
-	httpResponseStreamMu  sync.Mutex
-	nextResponseStreamID  int64
-	httpResponseStreams   map[int64]*httpResponseStreamHandle
 	httpStreamRespClass   *runtime.Class
-	onnxMu                sync.Mutex
-	nextOnnxID            int64
-	onnxSessions          map[int64]*native.ONNXSession
 	onnxClass             *runtime.Class
-	browserMu             sync.Mutex
-	nextBrowserID         int64
-	nextPageID            int64
-	browsers              map[int64]*cdp.Browser
-	pages                 map[int64]*cdp.Page
-	browserRoutes         map[string][]browserRoute
 	browserClassCache     *runtime.Class
 	pageClassCache        *runtime.Class
 	contextClassCache     *runtime.Class
-	browserSetups         map[*cdp.Browser]pageSetup
-	browserContexts       map[int64]*browserContext
-	nextContextID         int64
-	jsonMu                sync.Mutex
-	nextJSONID            int64
-	jsonReaders           map[int64]*jsonStreamReader
-	xmlMu                 sync.Mutex
-	nextXMLID             int64
-	xmlReaders            map[int64]*xmlStreamReader
-	csvMu                 sync.Mutex
-	nextCSVID             int64
-	csvReaders            map[int64]*csvStreamReader
-	yamlMu                sync.Mutex
-	nextYAMLID            int64
-	yamlReaders           map[int64]*yamlStreamReader
-	extMu                 sync.Mutex
-	nextExtID             int64
-	extConns              map[int64]*extHandle
 	ffi                   *ffiState
+	*handleStore
+	scope   *Evaluator
+	ownedMu sync.Mutex
+	owned   map[int64]struct{}
 }
 
 type builtinFunc func(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error)
@@ -263,7 +165,7 @@ type builtinFunc func(call *ast.CallExpression, args []runtime.Value) (runtime.V
 type MethodDispatcher interface {
 	HasInstanceMethod(instance *runtime.Instance, name string) bool
 	CallInstanceMethod(instance *runtime.Instance, name string, args []runtime.Value) (runtime.Value, error)
-	RunTestClass(classIndex int64, tagFilter []string) (runtime.Value, error)
+	RunTestClass(classIndex int64, tagFilter []string, methodFilter []string) (runtime.Value, error)
 	PatchNative(module, name string, fn native.Function)
 	UnpatchNative(module, name string)
 	NativeSnapshot() map[string]native.Function
@@ -271,9 +173,10 @@ type MethodDispatcher interface {
 }
 
 type httpClientHandle struct {
-	client  *http.Client
-	baseURL string
-	headers http.Header
+	client           *http.Client
+	baseURL          string
+	headers          http.Header
+	maxResponseBytes int64
 }
 
 type httpFetchStreamHandle struct {
@@ -335,6 +238,7 @@ type ioStreamHandle struct {
 	restore   func()
 	closed    bool
 	bufReader *bufio.Reader
+	network   bool
 }
 
 type netHandle struct {
@@ -568,6 +472,8 @@ func (e thrownError) ErrorClass() string {
 	return e.value.Class
 }
 
+func (e thrownError) Thrown() runtime.Error { return e.value }
+
 func New(stdout io.Writer) *Evaluator {
 	return NewWithArgs(stdout, nil)
 }
@@ -577,10 +483,23 @@ func NewWithArgs(stdout io.Writer, args []string) *Evaluator {
 }
 
 func newEvaluatorCore(stdout io.Writer, args []string, modulePaths []string) *Evaluator {
+	e := newEvaluatorShell(stdout, args, modulePaths)
+	e.imports = map[string]bool{}
+	e.importNames = map[string]string{}
+	e.modulePrograms = map[string]*ast.Program{}
+	e.manifests = map[string]*packageManifest{}
+	e.handleStore = newHandleStore()
+	e.messaging = &messagingState{}
+	return e
+}
+
+// newEvaluatorShell builds everything except the state childForCallback takes from its parent, so a per-request child does not allocate it only to discard it.
+func newEvaluatorShell(stdout io.Writer, args []string, modulePaths []string) *Evaluator {
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, webApps: map[int64]*webApp{}, ffi: newFFIState(), messaging: &messagingState{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, moduleClasses: map[string]*runtime.Class{}, classModulesByName: map[string][]string{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, moduleClasses: map[string]*runtime.Class{}, classModulesByName: map[string][]string{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
+	e.scope = e
 	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer, ClassFields: e.classFieldsForConversion, StreamWriter: e.writeJSONBytes})
 	return e
 }
@@ -606,12 +525,12 @@ func (e *Evaluator) isolatedInstanceInvoker(instance *runtime.Instance, method s
 	if _, ok := lookupMethod(instance.Class, method); !ok {
 		return nil, false, nil
 	}
-	return e.childForCallback().invokeInstanceMethod(instance, method, args)
+	return e.childInScope().invokeInstanceMethod(instance, method, args)
 }
 
 // isolatedClassDeserializer deserializes on a fresh child evaluator for the same reason.
 func (e *Evaluator) isolatedClassDeserializer(classValue runtime.Value, value runtime.Value) (runtime.Value, error) {
-	return e.childForCallback().deserializeIntoClass(classValue, value)
+	return e.childInScope().deserializeIntoClass(classValue, value)
 }
 
 // deserializeIntoClass implements native.ClassDeserializer for
@@ -839,6 +758,10 @@ func (e *Evaluator) registryBuiltin(module, name string) builtinFunc {
 }
 
 func (e *Evaluator) CallBuiltin(module, name string, args []runtime.Value, argNames []string) (runtime.Value, error) {
+	return e.callBuiltinScoped(nil, module, name, args, argNames)
+}
+
+func (e *Evaluator) callBuiltinScoped(scope *Evaluator, module, name string, args []runtime.Value, argNames []string) (runtime.Value, error) {
 	e.ensureBuiltinFunctions()
 	if err := e.ensureBuiltinTypes(); err != nil {
 		return nil, err
@@ -858,6 +781,9 @@ func (e *Evaluator) CallBuiltin(module, name string, args []runtime.Value, argNa
 		},
 		Arguments: make([]ast.CallArgument, len(args)),
 	}
+	if scope != nil {
+		call.NativeScope = scope
+	}
 	for i := range args {
 		call.Arguments[i].Value = &ast.Literal{Value: nil}
 		if i < len(argNames) && argNames[i] != "" {
@@ -876,11 +802,12 @@ func ensureMap[K comparable, V any](m *map[K]V) map[K]V {
 }
 
 func (e *Evaluator) childForCallback() *Evaluator {
-	child := newEvaluatorCore(e.stdout, e.args, e.modulePaths)
+	child := newEvaluatorShell(e.stdout, e.args, e.modulePaths)
 	child.stderr = e.stderr
 	child.input = e.input
 	child.parent = e
 	child.messaging = e.messaging
+	child.handleStore = e.handleStore
 	child.maxCallDepth = e.maxCallDepth
 	child.imports = maps.Clone(e.imports)
 	child.importNames = maps.Clone(e.importNames)
@@ -900,25 +827,6 @@ func (e *Evaluator) childForCallback() *Evaluator {
 	child.dbStatementClass = e.dbStatementClass
 	child.dbRowsClass = e.dbRowsClass
 	child.streamIfaces = maps.Clone(e.streamIfaces)
-	// App-global handles (web apps, db connections, loggers, http clients,
-	// cookie jars) are created on the parent at setup and resolved here via the
-	// parent chain during request handling. Continue the parent's id counters
-	// so a handle the child creates can never shadow a parent handle's id.
-	e.webMu.Lock()
-	child.nextWebID = e.nextWebID
-	e.webMu.Unlock()
-	e.dbMu.Lock()
-	child.nextDBID = e.nextDBID
-	e.dbMu.Unlock()
-	e.logMu.Lock()
-	child.nextLogID = e.nextLogID
-	e.logMu.Unlock()
-	e.httpClientMu.Lock()
-	child.nextHTTPClientID = e.nextHTTPClientID
-	e.httpClientMu.Unlock()
-	e.httpCookieJarMu.Lock()
-	child.nextCookieJarID = e.nextCookieJarID
-	e.httpCookieJarMu.Unlock()
 	child.typeNameScopes = maps.Clone(e.typeNameScopes)
 	child.decoratorTypeBindings = e.decoratorTypeBindings
 	child.debug = e.debug
@@ -929,38 +837,30 @@ func (e *Evaluator) childForCallback() *Evaluator {
 	return child
 }
 
-// Handle lookups for app-global native state walk the parent chain so a handler
-// running in a callback child evaluator (e.g. an HTTP request) resolves
-// connections/apps/loggers/clients created on the parent at setup. Per-request
-// handles created in the child shadow the parent (checked first).
+// childInScope builds a child whose handles belong to e's cleanup scope, for callers that never run Cleanup.
+func (e *Evaluator) childInScope() *Evaluator {
+	child := e.childForCallback()
+	child.scope = e.scope
+	return child
+}
+
 func (e *Evaluator) lookupWebApp(id int64) (*webApp, bool) {
-	for ev := e; ev != nil; ev = ev.parent {
-		ev.webMu.Lock()
-		app, ok := ev.webApps[id]
-		ev.webMu.Unlock()
-		if ok {
-			return app, true
-		}
-	}
-	return nil, false
+	e.webMu.Lock()
+	defer e.webMu.Unlock()
+	app, ok := e.webApps[id]
+	return app, ok
 }
 
+// lookupHTTPClient requires the caller to hold httpClientMu.
 func (e *Evaluator) lookupHTTPClient(id int64) (*httpClientHandle, bool) {
-	for ev := e; ev != nil; ev = ev.parent {
-		if v, ok := ev.httpClientHandles[id]; ok {
-			return v, true
-		}
-	}
-	return nil, false
+	v, ok := e.httpClientHandles[id]
+	return v, ok
 }
 
+// lookupCookieJar requires the caller to hold httpCookieJarMu.
 func (e *Evaluator) lookupCookieJar(id int64) (http.CookieJar, bool) {
-	for ev := e; ev != nil; ev = ev.parent {
-		if v, ok := ev.httpCookieJars[id]; ok {
-			return v, true
-		}
-	}
-	return nil, false
+	v, ok := e.httpCookieJars[id]
+	return v, ok
 }
 
 func (e *Evaluator) Eval(program *ast.Program) (result Result, err error) {
@@ -1041,53 +941,63 @@ func (e *Evaluator) Cleanup() error {
 	// drained so destructors can still call io.close / db.close etc.
 	e.runDestructorSweep()
 
+	ids := e.takeOwnedIDs()
+	root := e.parent == nil
+
 	e.fileMu.Lock()
-	files := e.files
-	e.files = nil
+	files := takeHandles(e, &e.files, ids)
+	if !root {
+		takeHandles(e, &e.bufReaders, ids)
+	}
 	e.fileMu.Unlock()
 	for _, file := range files {
 		record(file.Close())
 	}
 
+	if !root {
+		e.bufferMu.Lock()
+		takeHandles(e, &e.buffers, ids)
+		e.bufferMu.Unlock()
+	}
+
 	e.streamMu.Lock()
-	streams := e.streams
-	e.streams = nil
+	streams := takeHandles(e, &e.streams, ids)
 	e.streamMu.Unlock()
 	for _, stream := range streams {
 		record(closeIOStreamHandle(stream))
 	}
 
 	e.watchMu.Lock()
-	watches := e.watches
-	e.watches = nil
+	watches := takeHandles(e, &e.watches, ids)
 	e.watchMu.Unlock()
 	for _, watcher := range watches {
 		record(stopWatchHandle(watcher))
 	}
 
 	e.signalMu.Lock()
-	signalSubs := e.signalHandlers
-	e.signalHandlers = nil
+	var signalSubs []*signalSubscription
+	for name, sub := range e.signalHandlers {
+		if root || sub.owner == e {
+			signalSubs = append(signalSubs, sub)
+			delete(e.signalHandlers, name)
+		}
+	}
 	e.signalMu.Unlock()
 	for _, sub := range signalSubs {
 		sub.stop()
 	}
 
 	e.netServerMu.Lock()
-	netServers := e.netServers
-	e.netServers = nil
+	netServers := takeHandles(e, &e.netServers, ids)
 	e.netServerMu.Unlock()
 	for _, server := range netServers {
 		record(stopNetServerHandle(server))
 	}
 
 	e.sshMu.Lock()
-	sshTunnels := e.sshTunnels
-	sshSessions := e.sshSessions
-	sshClients := e.sshClients
-	e.sshTunnels = nil
-	e.sshSessions = nil
-	e.sshClients = nil
+	sshTunnels := takeHandles(e, &e.sshTunnels, ids)
+	sshSessions := takeHandles(e, &e.sshSessions, ids)
+	sshClients := takeHandles(e, &e.sshClients, ids)
 	e.sshMu.Unlock()
 	for _, tunnel := range sshTunnels {
 		record(stopSSHTunnelHandle(tunnel))
@@ -1100,15 +1010,11 @@ func (e *Evaluator) Cleanup() error {
 	}
 
 	e.dbMu.Lock()
-	dbRows := e.dbRows
-	stmts := e.stmts
-	txs := e.txs
-	dbs := e.dbs
-	e.dbRows = nil
-	e.stmts = nil
-	e.txs = nil
-	e.dbs = nil
-	e.dbDrivers = nil
+	dbRows := takeHandles(e, &e.dbRows, ids)
+	stmts := takeHandles(e, &e.stmts, ids)
+	txs := takeHandles(e, &e.txs, ids)
+	dbs := takeHandles(e, &e.dbs, ids)
+	takeHandles(e, &e.dbDrivers, ids)
 	e.dbMu.Unlock()
 	for _, ref := range dbRows {
 		rows := ref.Value()
@@ -1136,40 +1042,36 @@ func (e *Evaluator) Cleanup() error {
 	}
 
 	e.netMu.Lock()
-	netHandles := e.netHandles
-	e.netHandles = nil
+	netHandles := takeHandles(e, &e.netHandles, ids)
 	e.netMu.Unlock()
 	for _, handle := range netHandles {
 		record(closeNetHandle(handle))
 	}
 
 	e.httpServerMu.Lock()
-	httpServers := e.httpServers
-	e.httpServers = nil
+	httpServers := takeHandles(e, &e.httpServers, ids)
 	e.httpServerMu.Unlock()
 	for _, handle := range httpServers {
 		record(closeHTTPServerHandle(handle))
 	}
 
 	e.httpStreamMu.Lock()
-	e.httpStreams = nil
+	takeHandles(e, &e.httpStreams, ids)
 	e.httpStreamMu.Unlock()
 
 	e.httpResponseStreamMu.Lock()
-	respStreams := e.httpResponseStreams
-	e.httpResponseStreams = nil
+	respStreams := takeHandles(e, &e.httpResponseStreams, ids)
 	e.httpResponseStreamMu.Unlock()
 	for _, h := range respStreams {
 		h.closeBody()
 	}
 
 	e.httpFetchStreamMu.Lock()
-	e.httpFetchStreams = nil
+	takeHandles(e, &e.httpFetchStreams, ids)
 	e.httpFetchStreamMu.Unlock()
 
 	e.httpClientMu.Lock()
-	clientHandles := e.httpClientHandles
-	e.httpClientHandles = nil
+	clientHandles := takeHandles(e, &e.httpClientHandles, ids)
 	e.httpClientMu.Unlock()
 	for _, h := range clientHandles {
 		if h.client != nil {
@@ -1177,30 +1079,48 @@ func (e *Evaluator) Cleanup() error {
 		}
 	}
 
+	if !root {
+		e.httpCookieJarMu.Lock()
+		takeHandles(e, &e.httpCookieJars, ids)
+		e.httpCookieJarMu.Unlock()
+		e.webMu.Lock()
+		takeHandles(e, &e.webApps, ids)
+		e.webMu.Unlock()
+		e.onnxMu.Lock()
+		for _, session := range takeHandles(e, &e.onnxSessions, ids) {
+			session.Close()
+		}
+		e.onnxMu.Unlock()
+	}
+
 	e.browserMu.Lock()
-	browsers := e.browsers
-	e.browsers = nil
-	e.pages = nil
-	e.browserRoutes = nil
-	e.browserSetups = nil
-	e.browserContexts = nil
+	browsers := takeHandles(e, &e.browsers, ids)
+	pages := takeHandles(e, &e.pages, ids)
+	takeHandles(e, &e.browserContexts, ids)
+	for _, b := range browsers {
+		delete(e.browserSetups, b)
+	}
+	for _, p := range pages {
+		delete(e.browserRoutes, p.SessionID)
+	}
+	if root {
+		e.browserRoutes = nil
+		e.browserSetups = nil
+	}
 	e.browserMu.Unlock()
 	for _, b := range browsers {
 		b.Close()
 	}
 
 	e.wsMu.Lock()
-	websockets := e.websockets
-	e.websockets = nil
+	websockets := takeHandles(e, &e.websockets, ids)
 	e.wsMu.Unlock()
 	for _, h := range websockets {
-		conn := h.conn
-		record(conn.Close())
+		record(h.close())
 	}
 
 	e.logMu.Lock()
-	loggers := e.loggers
-	e.loggers = nil
+	loggers := takeHandles(e, &e.loggers, ids)
 	e.logMu.Unlock()
 	for _, logger := range loggers {
 		if logger.closer != nil {
@@ -1209,36 +1129,36 @@ func (e *Evaluator) Cleanup() error {
 	}
 
 	e.processMu.Lock()
-	processes := e.processes
-	e.processes = nil
+	processes := takeHandles(e, &e.processes, ids)
 	e.processMu.Unlock()
 	for _, process := range processes {
 		cleanupProcess(process)
 	}
 
-	e.traceMu.Lock()
-	e.traces = nil
-	e.traceMu.Unlock()
+	if root {
+		e.traceMu.Lock()
+		e.traces = nil
+		e.traceMu.Unlock()
+	}
 
 	e.jsonMu.Lock()
-	e.jsonReaders = nil
+	takeHandles(e, &e.jsonReaders, ids)
 	e.jsonMu.Unlock()
 
 	e.xmlMu.Lock()
-	e.xmlReaders = nil
+	takeHandles(e, &e.xmlReaders, ids)
 	e.xmlMu.Unlock()
 
 	e.csvMu.Lock()
-	e.csvReaders = nil
+	takeHandles(e, &e.csvReaders, ids)
 	e.csvMu.Unlock()
 
 	e.yamlMu.Lock()
-	e.yamlReaders = nil
+	takeHandles(e, &e.yamlReaders, ids)
 	e.yamlMu.Unlock()
 
 	e.extMu.Lock()
-	extConns := e.extConns
-	e.extConns = nil
+	extConns := takeHandles(e, &e.extConns, ids)
 	e.extMu.Unlock()
 	for _, h := range extConns {
 		closeExtHandle(h)
@@ -3856,7 +3776,7 @@ func randomBytes(n int) []byte {
 }
 
 func copyDict(value runtime.Dict) runtime.Dict {
-	entries := map[string]runtime.DictEntry{}
+	entries := make(map[string]runtime.DictEntry, value.Len())
 	value.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
 		entries[key] = entry
 		return true
@@ -6022,6 +5942,9 @@ func (e *Evaluator) applyFunctionWithThis(fn runtime.Function, args []runtime.Va
 	if fn.Bound != nil {
 		return e.applyBoundMethod(fn.Bound, args)
 	}
+	if fn.ScopedInvoke != nil && e.parent != nil {
+		return fn.ScopedInvoke(e.nativeScopeCaller(), args)
+	}
 	if fn.Native != nil {
 		return fn.Native(this, args)
 	}
@@ -6084,6 +6007,9 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	}
 	if fn.Bound != nil {
 		return e.applyBoundMethod(fn.Bound, args)
+	}
+	if fn.ScopedInvoke != nil && e.parent != nil {
+		return fn.ScopedInvoke(e.nativeScopeCaller(), args)
 	}
 	if fn.Native != nil {
 		return fn.Native(this, args)
@@ -6246,7 +6172,7 @@ func (e *Evaluator) lazyGenerator(fn runtime.Function, args []runtime.Value, thi
 			// Construct the child evaluator on the parent goroutine to keep
 			// concurrent generator starts race-clean on package-level
 			// native callbacks.
-			child := e.childForCallback()
+			child := e.childInScope()
 			child.pendingEnumThis = enumThis
 			runner := fn
 			runner.IsGenerator = false
@@ -6258,7 +6184,7 @@ func (e *Evaluator) lazyGenerator(fn runtime.Function, args []runtime.Value, thi
 				defer endThread()
 				defer close(items)
 				defer child.popYieldFrame()
-				value, err := child.applyFunctionWithThisSync(runner, args, this)
+				value, err := runtime.CallRecovering(func() (runtime.Value, error) { return child.applyFunctionWithThisSync(runner, args, this) })
 				if err != nil {
 					select {
 					case items <- generatorItem{err: err}:
@@ -6300,14 +6226,14 @@ func (e *Evaluator) startAsyncFunction(fn runtime.Function, args []runtime.Value
 	// Build the child evaluator on the parent's goroutine; spawning it
 	// inside the goroutine races with parallel async calls on writes to
 	// package-level native callbacks (InstanceInvoker, ClassDeserializer).
-	child := e.childForCallback()
+	child := e.childInScope()
 	child.pendingEnumThis = e.enumThisForChild
 	endThread := child.startDebugThread("async worker")
 	runtime.AsyncEnter()
 	go func() {
 		defer endThread()
 		defer runtime.AsyncLeave()
-		value, err := child.applyFunctionWithThisSync(fn, args, this)
+		value, err := runtime.CallRecovering(func() (runtime.Value, error) { return child.applyFunctionWithThisSync(fn, args, this) })
 		if exit, ok := value.(exitValue); ok && err == nil {
 			err = fmt.Errorf("async function attempted to exit with code %d", exit.code)
 			value = runtime.Null{}

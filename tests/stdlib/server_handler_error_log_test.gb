@@ -1,0 +1,51 @@
+/**
+ * @title Server handler error log line (1.42.2)
+ * @summary When an http.listen or net.serve handler throws or faults, the
+ * server logs one line, "<server>: handler error: <Class>: <message>", on
+ * both backends.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import io;
+import http;
+import net;
+
+class ServerHandlerErrorLogTest extends test.Test {
+    @tag("integration")
+    @test
+    func logsOneHeadlinePerFailure(): void {
+        let cap = io.captureStderr();
+        let s = http.listen("127.0.0.1:0", func(dict<string, any> r): dict<string, any> {
+            if (r["path"] == "/throw") {
+                throw ValueError("bad input");
+            }
+            let m = {"a": 1};
+            return {"status": 200, "body": "${m.nope()}"};
+        });
+        let thrown = http.get("http://${http.serverAddr(s)}/throw");
+        let faulted = http.get("http://${http.serverAddr(s)}/fault");
+        http.close(s);
+        let ns = net.serve("127.0.0.1", 0, func(dict<string, any> sock): void {
+            throw RuntimeError("tcp handler failed");
+        });
+        let c = net.connectTcp(ns["localAddr"] as string);
+        net.setDeadline(c, 2000);
+        net.read(c, 1);
+        net.close(c);
+        net.closeListener(ns["handle"]);
+        let logged = cap.toString();
+        cap.close();
+        this.assertEquals(500, thrown["status"] as int);
+        this.assertEquals(500, faulted["status"] as int);
+        this.assertEquals(
+            [
+                "http.serve: handler error: ValueError: bad input",
+                "http.serve: handler error: RuntimeError: unknown method dict.nope",
+                "net.serve: handler error: RuntimeError: tcp handler failed",
+                ""
+            ],
+            logged.split("\n")
+        );
+    }
+}

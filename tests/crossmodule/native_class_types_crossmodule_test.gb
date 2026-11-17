@@ -1,0 +1,44 @@
+/**
+ * @title Native-module classes as types (1.42.2)
+ * @summary re.Pattern, re.RegexSet, pcre.Pattern and net.IpSet work as
+ * type annotations, parameter and return types (also across modules) and
+ * with instanceof, and a mismatched value is rejected with TypeError.
+ */
+import test;
+import re;
+import pcre;
+import net;
+import native_class_types_donor as donor;
+
+class NativeClassTypesTest extends test.Test {
+    @test
+    func annotationsAndInstanceof(): void {
+        re.Pattern p = re.compile("a+");
+        re.RegexSet s = re.set(["a", "b"]);
+        pcre.Pattern q = pcre.compile("(?<=a)b");
+        net.IpSet ips = net.ipSet(["10.0.0.0/8"]);
+        this.assertTrue(p.test("aa"));
+        this.assertTrue(q.test("ab"));
+        this.assertTrue(p instanceof re.Pattern);
+        this.assertTrue(s instanceof re.RegexSet);
+        this.assertTrue(ips instanceof net.IpSet);
+        this.assertFalse(p instanceof re.RegexSet);
+    }
+
+    @test
+    func typesCrossModuleBoundaries(): void {
+        net.IpSet ips = donor.blocklist();
+        this.assertEquals("true 1 true", donor.describe(re.compile("a+"), re.set(["a", "b"]), ips));
+    }
+
+    @test
+    func mismatchedValueIsRejected(): void {
+        string outcome = "assigned";
+        try {
+            re.Pattern bad = re.set(["a"]) as any;
+        } catch (TypeError e) {
+            outcome = "TypeError";
+        }
+        this.assertEquals("TypeError", outcome);
+    }
+}

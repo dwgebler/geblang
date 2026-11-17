@@ -694,3 +694,46 @@ class DispatcherTest extends test.Test {
         });
     }
 }
+
+class LlmTimeoutTest extends test.Test {
+    func slowEndpoint(): dict<string, any> {
+        return startMockServer(func(dict<string, any> _): dict<string, any> {
+            sys.sleep(1500);
+            return {"status": 200, "headers": {"Content-Type": "application/json"}, "body": "{}"};
+        });
+    }
+
+    @test
+    func providersDefaultToTenMinutes(): void {
+        dict<string, any> base = {"apiKey": "k", "region": "us-east-1", "accessKey": "AK", "secretKey": "SK"};
+        for (provider in ["openai", "anthropic", "bedrock"]) {
+            dict<string, any> opts = base.copy();
+            opts["provider"] = provider;
+            let c = llm.client(opts);
+            this.assertEquals(600000, (c as any).timeoutMs as int);
+        }
+    }
+
+    @tag("integration")
+    @test
+    func timeoutMsBoundsEachProviderCall(): void {
+        for (provider in ["openai", "anthropic", "bedrock"]) {
+            let mock = this.slowEndpoint();
+            let c = llm.client({
+                "provider": provider, "apiKey": "k", "region": "us-east-1", "accessKey": "AK", "secretKey": "SK",
+                "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string),
+                "timeoutMs": 300
+            });
+            string outcome = "returned";
+            try {
+                c.chat([{"role": "user", "content": "hi"}], {"model": "m"});
+            } catch (TimeoutError e) {
+                outcome = "TimeoutError";
+            } catch (Error e) {
+                outcome = typeof(e) + ": " + e.message;
+            }
+            http.shutdown(mock["server"]);
+            this.assertEquals("TimeoutError", outcome);
+        }
+    }
+}

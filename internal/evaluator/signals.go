@@ -15,9 +15,10 @@ import (
 // signalSubscription owns one signal.Notify channel and the goroutine
 // dispatching it to the registered Geblang handler.
 type signalSubscription struct {
-	ch   chan os.Signal
-	done chan struct{}
-	once sync.Once
+	ch    chan os.Signal
+	done  chan struct{}
+	once  sync.Once
+	owner *Evaluator
 }
 
 func (s *signalSubscription) stop() {
@@ -56,7 +57,7 @@ func (e *Evaluator) sysOnSignal(call *ast.CallExpression, args []runtime.Value) 
 		return nil, err
 	}
 
-	sub := &signalSubscription{ch: make(chan os.Signal, 4), done: make(chan struct{})}
+	sub := &signalSubscription{ch: make(chan os.Signal, 4), done: make(chan struct{}), owner: e}
 	e.signalMu.Lock()
 	if e.signalHandlers == nil {
 		e.signalHandlers = map[string]*signalSubscription{}
@@ -98,7 +99,9 @@ func (e *Evaluator) invokeSignalHandler(name string, handler runtime.Function) {
 	if child.debug != nil {
 		defer child.startDebugThread("signal " + name)()
 	}
-	result, err := child.applyFunction(handler, []runtime.Value{runtime.String{Value: name}})
+	result, err := runtime.CallRecovering(func() (runtime.Value, error) {
+		return child.applyFunction(handler, []runtime.Value{runtime.String{Value: name}})
+	})
 	if err != nil {
 		// A VM-side handler surfaces sys.exit as an exit-coded error.
 		var coder interface{ ExitCode() int }

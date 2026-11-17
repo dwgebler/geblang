@@ -255,8 +255,7 @@ func TestWriteHTTPResponseStreamsFileAndBufferBodies(t *testing.T) {
 	}
 	defer file.Close()
 	e.fileMu.Lock()
-	e.nextFileID++
-	fileID := e.nextFileID
+	fileID := e.newHandleID()
 	ensureMap(&e.files)[fileID] = file
 	e.fileMu.Unlock()
 
@@ -274,8 +273,7 @@ func TestWriteHTTPResponseStreamsFileAndBufferBodies(t *testing.T) {
 	}
 
 	e.bufferMu.Lock()
-	e.nextBufferID++
-	bufferID := e.nextBufferID
+	bufferID := e.newHandleID()
 	buffer := &bytes.Buffer{}
 	buffer.WriteString("buffer-body")
 	ensureMap(&e.buffers)[bufferID] = buffer

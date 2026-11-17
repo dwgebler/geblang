@@ -91,6 +91,7 @@ func registerAllBuiltins(r *Registry) {
 	registerUUID(r)
 	registerRe(r)
 	registerRegexCompile(r)
+	registerRegexSet(r)
 	registerNDArray(r)
 	registerStats(r)
 	registerStatsDescriptive(r)

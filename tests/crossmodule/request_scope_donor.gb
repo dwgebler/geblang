@@ -1,0 +1,18 @@
+module request_scope_donor;
+
+import net;
+import async.channel as ch;
+
+int served = 0;
+
+export func handlerFor(ch.Channel<any> handles): callable {
+    return func(dict<string, any> request): dict<string, any> {
+        served = served + 1;
+        handles.send(net.listenTcp("127.0.0.1:0"));
+        return {"status": 200, "body": "ok"};
+    };
+}
+
+export func servedCount(): int {
+    return served;
+}

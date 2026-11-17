@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"geblang/internal/ast"
@@ -15,24 +16,38 @@ import (
 )
 
 // httpResponseStreamHandle keeps a response body open for line-at-a-time reads (read() yields lines, null at EOF).
+// httpResponseStreamHandle serialises reads per stream; closing takes only stateMu so it can interrupt a blocked read.
 type httpResponseStreamHandle struct {
-	resp   *http.Response
-	reader *bufio.Reader
-	closed bool
+	resp    *http.Response
+	reader  *bufio.Reader
+	readMu  sync.Mutex
+	stateMu sync.Mutex
+	closed  bool
 }
 
 func (h *httpResponseStreamHandle) closeBody() {
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
 	if !h.closed {
 		h.closed = true
 		_ = h.resp.Body.Close()
 	}
 }
 
-// closeResponseStream closes the body and drops the handle so it is not retained for the program's life. Caller holds httpResponseStreamMu.
+func (h *httpResponseStreamHandle) isClosed() bool {
+	h.stateMu.Lock()
+	defer h.stateMu.Unlock()
+	return h.closed
+}
+
+// closeResponseStream closes the body and drops the handle so it is not retained for the program's life.
 func (e *Evaluator) closeResponseStream(this *runtime.Instance, h *httpResponseStreamHandle) {
 	h.closeBody()
 	if id, ok := this.Fields["handle"].(runtime.Int); ok {
+		e.httpResponseStreamMu.Lock()
 		delete(e.httpResponseStreams, id.Value.Int64())
+		e.httpResponseStreamMu.Unlock()
+		e.releaseHandle(id.Value.Int64())
 	}
 }
 
@@ -78,7 +93,7 @@ func (e *Evaluator) httpRequestStream(call *ast.CallExpression, args []runtime.V
 		timeout = int(n)
 	}
 	applyDefaultUserAgent(req)
-	client := http.DefaultClient
+	client := streamingHTTPClient
 	if timeout > 0 {
 		client = &http.Client{Timeout: time.Duration(timeout) * time.Millisecond}
 	}
@@ -88,8 +103,7 @@ func (e *Evaluator) httpRequestStream(call *ast.CallExpression, args []runtime.V
 	}
 	handle := &httpResponseStreamHandle{resp: resp, reader: bufio.NewReader(resp.Body)}
 	e.httpResponseStreamMu.Lock()
-	id := e.nextResponseStreamID
-	e.nextResponseStreamID++
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.httpResponseStreams)[id] = handle
 	e.httpResponseStreamMu.Unlock()
 	return &runtime.Instance{Class: e.responseStreamClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(id)}}, nil
@@ -118,12 +132,16 @@ func (e *Evaluator) responseStreamClass() *runtime.Class {
 		if err != nil {
 			return runtime.Null{}, nil
 		}
-		e.httpResponseStreamMu.Lock()
-		defer e.httpResponseStreamMu.Unlock()
-		if h.closed {
+		h.readMu.Lock()
+		defer h.readMu.Unlock()
+		if h.isClosed() {
 			return runtime.Null{}, nil
 		}
-		line, rerr := h.reader.ReadString('\n')
+		line, rerr := readLineLimited(h.reader, maxNetworkLineBytes)
+		if _, tooLong := rerr.(runtime.ClassifiedError); tooLong {
+			e.closeResponseStream(this, h)
+			return nil, rerr
+		}
 		if len(line) == 0 {
 			e.closeResponseStream(this, h)
 			if rerr == nil || errors.Is(rerr, io.EOF) {
@@ -158,20 +176,23 @@ func (e *Evaluator) responseStreamClass() *runtime.Class {
 		if err != nil {
 			return runtime.Bool{Value: true}, nil
 		}
-		e.httpResponseStreamMu.Lock()
-		defer e.httpResponseStreamMu.Unlock()
-		return runtime.Bool{Value: h.closed}, nil
+		return runtime.Bool{Value: h.isClosed()}, nil
 	}}}
 	cls.Methods["close"] = []runtime.Function{{Name: "close", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
 		h, err := get(this)
 		if err != nil {
 			return runtime.Null{}, nil
 		}
-		e.httpResponseStreamMu.Lock()
-		defer e.httpResponseStreamMu.Unlock()
 		e.closeResponseStream(this, h)
 		return runtime.Null{}, nil
 	}}}
 	e.httpStreamRespClass = cls
 	return cls
 }
+
+// streamingHTTPClient bounds connecting and the response headers but not the body, which may stream indefinitely.
+var streamingHTTPClient = func() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = defaultHTTPClientTimeout
+	return &http.Client{Transport: transport}
+}()

@@ -6,8 +6,9 @@ import file;
 import io;
 import reflect;
 
-export func zipRead(bytes data): list<dict<string, any>> {
-    return archive_native.zipRead(data);
+/** Total decompressed size is capped at maxBytes (default 256 MiB, 0 = no cap); a larger archive raises IOError. */
+export func zipRead(bytes data, int maxBytes = 268435456): list<dict<string, any>> {
+    return archive_native.zipRead(data, maxBytes);
 }
 
 export func zipWrite(list<dict<string, any>> entries): bytes {
@@ -22,8 +23,9 @@ export func tarWrite(list<dict<string, any>> entries): bytes {
     return archive_native.tarWrite(entries);
 }
 
-export func tarGzRead(bytes data): list<dict<string, any>> {
-    return archive_native.tarGzRead(data);
+/** Total decompressed size is capped at maxBytes (default 256 MiB, 0 = no cap); a larger archive raises IOError. */
+export func tarGzRead(bytes data, int maxBytes = 268435456): list<dict<string, any>> {
+    return archive_native.tarGzRead(data, maxBytes);
 }
 
 export func tarGzWrite(list<dict<string, any>> entries): bytes {

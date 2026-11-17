@@ -17,7 +17,7 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 		if e.vmDispatcher == nil {
 			return nil, fmt.Errorf("%s requires VM dispatcher for bytecode class", call.Callee.String())
 		}
-		var tagFilter []string
+		var tagFilter, methodFilter []string
 		if len(args) == 2 {
 			options, err := testRunOptionsFromArgs(call, args)
 			if err != nil {
@@ -26,8 +26,11 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 			for tag := range options.tags {
 				tagFilter = append(tagFilter, tag)
 			}
+			for name := range options.methods {
+				methodFilter = append(methodFilter, name)
+			}
 		}
-		return e.vmDispatcher.RunTestClass(bytecodeClass.Index, tagFilter)
+		return e.vmDispatcher.RunTestClass(bytecodeClass.Index, tagFilter, methodFilter)
 	}
 	class, ok := args[0].(*runtime.Class)
 	if !ok {

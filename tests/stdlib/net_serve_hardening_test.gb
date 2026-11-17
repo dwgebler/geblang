@@ -1,0 +1,71 @@
+/**
+ * @title net.serve connection lifecycle and line limit (1.42.2)
+ * @summary A net.serve connection is closed when its handler returns or
+ * throws, and a line read from a socket is limited to 1 MiB: a line of
+ * exactly 1 MiB is accepted, a longer one raises IOError.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import net;
+import sockets;
+import async.channel as ch;
+
+class NetServeHardeningTest extends test.Test {
+    func exchange(string addr, string msg): string {
+        let c = net.connectTcp(addr);
+        net.write(c, msg as bytes);
+        net.setDeadline(c, 2000);
+        let reply = net.read(c, 8) as string;
+        let after = net.read(c, 8);
+        net.close(c);
+        return "${reply}|${after.length()}";
+    }
+
+    @tag("integration")
+    @test
+    func connectionClosesWhenTheHandlerReturnsOrThrows(): void {
+        let srv = net.serve("127.0.0.1", 0, func(dict<string, any> sock): void {
+            let first = net.read(sock["handle"], 8) as string;
+            if (first == "throw") {
+                throw RuntimeError("bad input");
+            }
+            net.write(sock["handle"], "ok" as bytes);
+        });
+        let addr = srv["localAddr"] as string;
+        let returned = this.exchange(addr, "hello");
+        let threw = this.exchange(addr, "throw");
+        net.closeListener(srv["handle"]);
+        this.assertEquals("ok|0", returned);
+        this.assertEquals("|0", threw);
+    }
+
+    @tag("integration")
+    @test
+    func socketLinesAreLimitedToOneMebibyte(): void {
+        let results = ch.Channel<string>(3);
+        let srv = sockets.serve("127.0.0.1", 0, func(any conn): void {
+            try {
+                results.send(conn.readLine());
+                results.send(conn.readLine().length() as string);
+                conn.readLine();
+                results.send("long line returned");
+            } catch (IOError e) {
+                results.send(e.message);
+            }
+        });
+        let port = srv.localAddr().split(":")[1] as int;
+        let c = sockets.dial("127.0.0.1", port);
+        c.writeln("hello");
+        c.write("y".repeat(1048576) + "\r\n");
+        c.writeln("x".repeat(1048577));
+        let first = results.recv();
+        let atLimit = results.recv();
+        let over = results.recv();
+        c.close();
+        srv.close();
+        this.assertEquals("hello", first);
+        this.assertEquals("1048576", atLimit);
+        this.assertEquals("line exceeds 1048576 bytes", over);
+    }
+}

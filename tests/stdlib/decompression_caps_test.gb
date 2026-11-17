@@ -1,0 +1,43 @@
+/**
+ * @title Decompression output caps (1.42.2)
+ * @summary compress.gunzip, archive.zipRead and archive.tarGzRead raise
+ * IOError once decompressed output would exceed maxBytes (default 256 MiB,
+ * 0 = no limit); the archive limit covers all entries together.
+ */
+import test;
+import compress;
+import archive;
+
+class DecompressionCapsTest extends test.Test {
+    @test
+    func gunzipStopsAtMaxBytes(): void {
+        let gz = compress.gzip("z".repeat(100000) as bytes);
+        this.assertThrows(func(): void { compress.gunzip(gz, 99999); }, "decompressed data exceeds 99999 bytes");
+        this.assertEquals(100000, compress.gunzip(gz, 100000).length());
+        this.assertEquals(100000, compress.gunzip(gz, 0).length());
+        this.assertEquals(100000, compress.gunzip(gz).length());
+    }
+
+    @test
+    func archiveLimitCoversAllEntries(): void {
+        let entries = [{"name": "a.txt", "data": "a".repeat(600) as bytes}, {"name": "b.txt", "data": "b".repeat(600) as bytes}];
+        let z = archive.zipWrite(entries);
+        let t = archive.tarGzWrite(entries);
+        this.assertThrows(func(): void { archive.zipRead(z, 1000); }, "decompressed data exceeds 1000 bytes");
+        this.assertThrows(func(): void { archive.tarGzRead(t, 1000); }, "decompressed data exceeds 1000 bytes");
+        this.assertEquals(2, archive.zipRead(z, 1200).length());
+        this.assertEquals(2, archive.tarGzRead(t, 0).length());
+        this.assertEquals(2, archive.tarGzRead(t).length());
+    }
+
+    @test
+    func capRaisesIOError(): void {
+        string outcome = "returned";
+        try {
+            compress.gunzip(compress.gzip("hello world" as bytes), 5);
+        } catch (IOError e) {
+            outcome = "IOError";
+        }
+        this.assertEquals("IOError", outcome);
+    }
+}

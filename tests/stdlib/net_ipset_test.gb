@@ -1,0 +1,96 @@
+/**
+ * @title net.IpSet and the ipBlocklist server option (1.42.2)
+ * @summary net.ipSet matches addresses and CIDR prefixes (IPv4, IPv6,
+ * IPv4-mapped) with optional expiry; passed as ipBlocklist to http.listen
+ * or net.serve it drops blocked clients at connect time and on each
+ * request, including the resolved client behind a trusted proxy.
+ */
+import test;
+import http;
+import net;
+import async;
+
+func ipsetOk(dict<string, any> r): dict<string, any> {
+    return {"status": 200, "body": "ok"};
+}
+
+class NetIpSetTest extends test.Test {
+    func status(string url, dict<string, string> headers): string {
+        try {
+            return "${http.requestWithOptions({"url": url, "headers": headers, "timeoutMs": 2000})["status"]}";
+        } catch (IOError e) {
+            return "dropped";
+        }
+    }
+
+    @test
+    func matchesAddressesAndPrefixes(): void {
+        let s = net.ipSet(["10.0.0.0/8", "2001:db8::/32", "192.0.2.7"]);
+        this.assertTrue(s.contains("10.1.2.3"));
+        this.assertFalse(s.contains("11.0.0.1"));
+        this.assertTrue(s.contains("2001:db8:5::1"));
+        this.assertTrue(s.contains("::ffff:10.9.9.9"));
+        this.assertFalse(s.contains("bogus"));
+        this.assertEquals(3, s.size());
+        this.assertTrue(s.remove("192.0.2.7"));
+        this.assertFalse(s.remove("192.0.2.7"));
+        this.assertThrows(func(): void { s.add("not-an-ip"); });
+        s.clear();
+        this.assertEquals(0, s.size());
+    }
+
+    @test
+    func entriesExpire(): void {
+        let s = net.ipSet();
+        s.add("203.0.113.0/24", 1);
+        this.assertTrue(s.contains("203.0.113.9"));
+        await async.sleep(1200);
+        this.assertFalse(s.contains("203.0.113.9"));
+        this.assertEquals(0, s.size());
+    }
+
+    @tag("integration")
+    @test
+    func serversDropBlockedClients(): void {
+        let fresh = http.listen("127.0.0.1:0", ipsetOk, {"ipBlocklist": net.ipSet(["127.0.0.0/8"])});
+        let atConnect = this.status("http://${http.serverAddr(fresh)}/", {});
+        http.close(fresh);
+
+        let block = net.ipSet();
+        let srv = http.listen("127.0.0.1:0", ipsetOk, {"ipBlocklist": block});
+        let url = "http://${http.serverAddr(srv)}/";
+        let before = this.status(url, {});
+        block.add("127.0.0.1");
+        let keptAlive = this.status(url, {});
+        block.remove("127.0.0.1");
+        let after = this.status(url, {});
+        http.close(srv);
+
+        let proxied = http.listen("127.0.0.1:0", ipsetOk, {"ipBlocklist": net.ipSet(["198.51.100.0/24"]), "trustedProxies": ["127.0.0.1/32"]});
+        let purl = "http://${http.serverAddr(proxied)}/";
+        let blockedClient = this.status(purl, {"X-Forwarded-For": "198.51.100.20"});
+        let otherClient = this.status(purl, {"X-Forwarded-For": "198.51.101.20"});
+        http.close(proxied);
+
+        this.assertEquals("dropped", atConnect);
+        this.assertEquals("200", before);
+        this.assertEquals("dropped", keptAlive);
+        this.assertEquals("200", after);
+        this.assertEquals("dropped", blockedClient);
+        this.assertEquals("200", otherClient);
+    }
+
+    @tag("integration")
+    @test
+    func netServeDropsBlockedClients(): void {
+        let srv = net.serve("127.0.0.1", 0, func(dict<string, any> sock): void {
+            net.write(sock["handle"], "hi" as bytes);
+        }, {"ipBlocklist": net.ipSet(["127.0.0.1"])});
+        let c = net.connectTcp(srv["localAddr"] as string);
+        net.setDeadline(c, 1000);
+        let got = net.read(c, 4).length();
+        net.close(c);
+        net.closeListener(srv["handle"]);
+        this.assertEquals(0, got);
+    }
+}

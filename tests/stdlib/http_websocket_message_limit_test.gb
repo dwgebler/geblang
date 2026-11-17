@@ -13,27 +13,27 @@ import websocket;
 
 const outcome = store.Store();
 
-func echoLengths(dict<string, any> request): dict<string, any> {
-    return websocket.upgrade(func(any conn): void {
-        try {
-            while (true) {
-                string msg = websocket.readText(conn);
-                websocket.sendText(conn, "ok:" + (msg.length() as string));
+/* Each server reports under its own key: a connection left over from an earlier test can end at any time and must not overwrite this test's result. */
+func echoLengthsTo(string key): callable {
+    outcome.set(key, null);
+    return func(dict<string, any> request): dict<string, any> {
+        return websocket.upgrade(func(any conn): void {
+            try {
+                while (true) {
+                    string msg = websocket.readText(conn);
+                    websocket.sendText(conn, "ok:" + (msg.length() as string));
+                }
+            } catch (Error e) {
+                outcome.set(key, e.message);
             }
-        } catch (Error e) {
-            outcome.set("error", e.message);
-        }
-    });
+        });
+    };
 }
 
 class HttpWebSocketMessageLimitTest extends test.Test {
-    func setUp(): void {
-        outcome.set("error", null);
-    }
-
-    func serverError(): string {
+    func serverError(string key): string {
         for (i in 0..<100) {
-            let e = outcome.get("error");
+            let e = outcome.get(key);
             if (e != null) {
                 return e as string;
             }
@@ -49,12 +49,13 @@ class HttpWebSocketMessageLimitTest extends test.Test {
 
     @test
     func defaultLimitIsOneMebibyte(): void {
-        let server = http.listen("127.0.0.1:0", echoLengths, {});
+        let server = http.listen("127.0.0.1:0", echoLengthsTo("default"), {});
         try {
             let conn = websocket.connect("ws://" + http.serverAddr(server) + "/");
             this.assertEquals("ok:1048576", this.echo(conn, 1048576));
             this.assertThrows(func(): void { this.echo(conn, 1048577); });
-            this.assertTrue(this.serverError().contains("maxWebSocketMessageBytes"));
+            this.assertTrue(this.serverError("default").contains("maxWebSocketMessageBytes"));
+            websocket.close(conn);
         } finally {
             http.close(server);
         }
@@ -62,16 +63,17 @@ class HttpWebSocketMessageLimitTest extends test.Test {
 
     @test
     func limitCanBeRaisedOrLowered(): void {
-        let server = http.listen("127.0.0.1:0", echoLengths, {"maxWebSocketMessageBytes": 64, "maxBodyBytes": 8});
+        let server = http.listen("127.0.0.1:0", echoLengthsTo("lowered"), {"maxWebSocketMessageBytes": 64, "maxBodyBytes": 8});
         try {
             let conn = websocket.connect("ws://" + http.serverAddr(server) + "/");
             this.assertEquals("ok:64", this.echo(conn, 64));
             this.assertThrows(func(): void { this.echo(conn, 65); });
-            this.assertTrue(this.serverError().contains("maxWebSocketMessageBytes"));
+            this.assertTrue(this.serverError("lowered").contains("maxWebSocketMessageBytes"));
+            websocket.close(conn);
         } finally {
             http.close(server);
         }
-        let raised = http.listen("127.0.0.1:0", echoLengths, {"maxWebSocketMessageBytes": 2097152});
+        let raised = http.listen("127.0.0.1:0", echoLengthsTo("raised"), {"maxWebSocketMessageBytes": 2097152});
         try {
             let conn = websocket.connect("ws://" + http.serverAddr(raised) + "/");
             this.assertEquals("ok:2097152", this.echo(conn, 2097152));
@@ -83,7 +85,7 @@ class HttpWebSocketMessageLimitTest extends test.Test {
 
     @test
     func zeroDisablesTheLimit(): void {
-        let server = http.listen("127.0.0.1:0", echoLengths, {"maxWebSocketMessageBytes": 0});
+        let server = http.listen("127.0.0.1:0", echoLengthsTo("unlimited"), {"maxWebSocketMessageBytes": 0});
         try {
             let conn = websocket.connect("ws://" + http.serverAddr(server) + "/");
             this.assertEquals("ok:3000000", this.echo(conn, 3000000));
@@ -95,7 +97,7 @@ class HttpWebSocketMessageLimitTest extends test.Test {
 
     @test
     func invalidLimitIsRejected(): void {
-        this.assertThrows(func(): void { http.listen("127.0.0.1:0", echoLengths, {"maxWebSocketMessageBytes": -1}); });
-        this.assertThrows(func(): void { http.listen("127.0.0.1:0", echoLengths, {"maxWebSocketMessageBytes": "big"}); });
+        this.assertThrows(func(): void { http.listen("127.0.0.1:0", echoLengthsTo("invalid"), {"maxWebSocketMessageBytes": -1}); });
+        this.assertThrows(func(): void { http.listen("127.0.0.1:0", echoLengthsTo("invalid"), {"maxWebSocketMessageBytes": "big"}); });
     }
 }

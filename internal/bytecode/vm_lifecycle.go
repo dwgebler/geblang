@@ -766,6 +766,10 @@ func (vm *VM) SetStatefulNativeCaller(caller StatefulNativeCaller) {
 	vm.statefulNative = caller
 }
 
+func (vm *VM) StatefulNative() StatefulNativeCaller {
+	return vm.statefulNative
+}
+
 func (vm *VM) SetMaxCallDepth(limit int) {
 	vm.maxCallDepth = limit
 }

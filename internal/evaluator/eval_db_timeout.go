@@ -48,7 +48,7 @@ func (e *Evaluator) dbTimedOperation(handle runtime.Value, args []runtime.Value,
 			return nil, err
 		}
 		// Streaming rows own the deadline until they are closed or exhausted.
-		return e.registerDBRowsContext(rows, cancel)
+		return e.registerDBRowsContext(e.scope, rows, cancel)
 	}
 	defer cancel()
 	result, err := db.ExecContext(ctx, query, params...)

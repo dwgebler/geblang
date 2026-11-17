@@ -1,0 +1,50 @@
+/**
+ * @title re.set pattern sets (1.42.2)
+ * @summary re.set compiles several patterns into one RegexSet; match
+ * returns the index of the pattern behind the leftmost match (ties go to
+ * the lower index) or -1, each pattern keeps its own flags and groups, and
+ * an invalid pattern raises ValueError.
+ */
+import test;
+import re;
+
+class ReSetTest extends test.Test {
+    @test
+    func reportsWhichPatternMatched(): void {
+        let s = re.set(["(?i)\\bunion\\s+select\\b", "(a)(b)c", "x|y", "(?i)<script\\b"]);
+        this.assertEquals(4, s.size());
+        this.assertEquals(0, s.match("1 UNION SELECT 2"));
+        this.assertEquals(1, s.match("abc"));
+        this.assertEquals(2, s.match("y"));
+        this.assertEquals(3, s.match("<SCRIPT>"));
+        this.assertEquals(-1, s.match("nothing"));
+        this.assertTrue(s.test("abc"));
+        this.assertFalse(s.test(""));
+    }
+
+    @test
+    func leftmostMatchWinsAndTiesGoToTheLowerIndex(): void {
+        let s = re.set(["(a)(b)c", "x|y"]);
+        this.assertEquals(1, s.match("x then abc"));
+        this.assertEquals(0, s.match("abc then x"));
+        this.assertEquals(0, re.set(["ab", "a"]).match("ab"));
+    }
+
+    @test
+    func flagsStayWithTheirPattern(): void {
+        this.assertEquals(-1, re.set(["(?i)abc", "XYZ"]).match("xyz"));
+        this.assertEquals(0, re.set(["(?i)abc", "XYZ"]).match("ABC"));
+    }
+
+    @test
+    func emptyAndInvalidSets(): void {
+        this.assertEquals(-1, re.set([]).match("anything"));
+        string outcome = "built";
+        try {
+            re.set(["ok", "("]);
+        } catch (ValueError e) {
+            outcome = "ValueError";
+        }
+        this.assertEquals("ValueError", outcome);
+    }
+}

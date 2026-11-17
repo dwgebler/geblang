@@ -37,6 +37,13 @@ func New(input string) *Lexer {
 	return l
 }
 
+// NewAt lexes input as if it began on the given line, for source embedded in a larger file.
+func NewAt(input string, line int) *Lexer {
+	l := &Lexer{input: input, line: line}
+	l.readChar()
+	return l
+}
+
 func (l *Lexer) NextToken() token.Token {
 	l.skipIgnored()
 

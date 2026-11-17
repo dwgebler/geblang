@@ -158,9 +158,13 @@ export class IOStream {
     }
 
     ## Reads the entire remaining contents of the stream into a
-    ## single string.
-    func readAll(): string {
-        return io.readAll(this.handle);
+    ## single string. A socket stream is capped at 64 MiB unless
+    ## maxBytes is given (0 = no limit); over the cap raises IOError.
+    func readAll(int maxBytes = -1): string {
+        if (maxBytes < 0) {
+            return io.readAll(this.handle);
+        }
+        return io.readAll(this.handle, maxBytes);
     }
 
     ## Reads the next line with the trailing `\n` (or `\r\n`)

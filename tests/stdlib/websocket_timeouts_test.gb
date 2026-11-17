@@ -1,0 +1,109 @@
+/**
+ * @title WebSocket server timeouts (1.42.2)
+ * @summary A server drops a client that sends nothing and answers no ping
+ * within webSocketIdleTimeoutMs, keeps a client that answers pings, fails a
+ * send that cannot complete within webSocketWriteTimeoutMs, and closes a
+ * failed handler's connection with a generic reason.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import http;
+import async;
+import async.channel as ch;
+import web.websocket as ws;
+
+class WebSocketTimeoutsTest extends test.Test {
+    func serverWith(dict<string, any> opts, callable onConn): int {
+        opts["shareHandler"] = true;
+        return http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return ws.upgrade(func(ws.Connection conn): void { onConn(conn); });
+        }, opts);
+    }
+
+    @tag("integration")
+    @test
+    func silentClientIsDroppedAtTheIdleTimeout(): void {
+        let results = ch.Channel<string>(1);
+        let server = this.serverWith({"webSocketIdleTimeoutMs": 300, "webSocketPingIntervalMs": 0}, func(ws.Connection conn): void {
+            try {
+                conn.readText();
+                results.send("returned");
+            } catch (TimeoutError e) {
+                results.send("TimeoutError");
+            }
+        });
+        let c = ws.connect("ws://${http.serverAddr(server)}/");
+        let outcome = results.recv();
+        c.close();
+        http.close(server);
+        this.assertEquals("TimeoutError", outcome);
+    }
+
+    @tag("integration")
+    @test
+    func answeredPingsKeepTheConnectionAlive(): void {
+        let results = ch.Channel<string>(1);
+        let server = this.serverWith({"webSocketIdleTimeoutMs": 300, "webSocketPingIntervalMs": 100}, func(ws.Connection conn): void {
+            try {
+                results.send(conn.readText());
+            } catch (Error e) {
+                results.send(typeof(e));
+            }
+        });
+        let c = ws.connect("ws://${http.serverAddr(server)}/");
+        let pump = async.run(func(): void {
+            try {
+                c.readText();
+            } catch (IOError e) {
+            }
+        });
+        await async.sleep(1000);
+        c.sendText("late message");
+        let outcome = results.recv();
+        c.close();
+        async.await(pump);
+        http.close(server);
+        this.assertEquals("late message", outcome);
+    }
+
+    @tag("integration")
+    @test
+    func sendToANonReadingClientTimesOut(): void {
+        let results = ch.Channel<string>(1);
+        let server = this.serverWith({"webSocketWriteTimeoutMs": 200}, func(ws.Connection conn): void {
+            string chunk = "z".repeat(256 * 1024);
+            try {
+                for (let int i = 0; i < 4000; i++) {
+                    conn.sendText(chunk);
+                }
+                results.send("all sends completed");
+            } catch (TimeoutError e) {
+                results.send("TimeoutError");
+            }
+        });
+        let c = ws.connect("ws://${http.serverAddr(server)}/");
+        let outcome = results.recv();
+        c.close();
+        http.close(server);
+        this.assertEquals("TimeoutError", outcome);
+    }
+
+    @tag("integration")
+    @test
+    func failedHandlerClosesWithAGenericReason(): void {
+        let server = this.serverWith({}, func(ws.Connection conn): void {
+            throw RuntimeError("secret detail");
+        });
+        let c = ws.connect("ws://${http.serverAddr(server)}/");
+        string message = "";
+        try {
+            c.readText();
+        } catch (IOError e) {
+            message = e.message;
+        }
+        http.close(server);
+        this.assertFalse(message.contains("secret"));
+        this.assertTrue(message.contains("internal error"));
+    }
+}

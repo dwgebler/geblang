@@ -2671,6 +2671,7 @@ func (p *Parser) interpolationLiteral(tok token.Token, seg string) *ast.StringLi
 func (p *Parser) parseInterpolatedString(tok token.Token) *ast.InterpolatedString {
 	node := &ast.InterpolatedString{Token: tok}
 	raw := tok.Raw
+	line := tok.Line
 
 	for len(raw) > 0 {
 		start := strings.Index(raw, "${")
@@ -2712,13 +2713,15 @@ func (p *Parser) parseInterpolatedString(tok token.Token) *ast.InterpolatedStrin
 			}
 		}
 		exprSrc := raw[start+2 : i]
+		exprLine := line + strings.Count(raw[:start+2], "\n")
+		line = exprLine + strings.Count(exprSrc, "\n")
 		raw = raw[i+1:]
 
 		// Locate the format-spec separator `:` that sits at depth 0
 		// and isn't being consumed by an enclosing ternary `? ... :`.
 		exprText, spec, hasSpec := splitInterpolationSpec(exprSrc)
 
-		subLexer := lexer.New(exprText)
+		subLexer := lexer.NewAt(exprText, exprLine)
 		subParser := New(subLexer)
 		expr := subParser.parseExpression(lowest)
 		if len(subParser.errors) == 0 && !subParser.peekTokenIs(token.EOF) {

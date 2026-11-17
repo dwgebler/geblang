@@ -1,0 +1,113 @@
+/**
+ * @title WebSocket connections shared between tasks
+ * @summary Pins the documented concurrency guarantees: sends from many
+ * tasks are serialised whole, a close from another task ends a blocked
+ * read, a second close raises, a peer disconnect raises from the read,
+ * and an empty message is an ordinary message.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import http;
+import async;
+import async.channel as ch;
+import web.websocket as ws;
+
+class WebSocketConcurrencyTest extends test.Test {
+    @tag("integration")
+    @test
+    func sendsFromManyTasksArriveWhole(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return ws.upgrade(func(ws.Connection conn): void {
+                list<any> senders = [];
+                for (let int t = 0; t < 8; t++) {
+                    let tag = "task${t}:" + "x".repeat(4096);
+                    senders.push(async.run(func(): void {
+                        for (let int i = 0; i < 25; i++) {
+                            conn.sendText(tag);
+                        }
+                    }));
+                }
+                for (s in senders) {
+                    async.await(s);
+                }
+                conn.readText();
+            });
+        }, {"shareHandler": true});
+        let c = ws.connect("ws://${http.serverAddr(server)}/");
+        list<string> tags = [];
+        for (let int i = 0; i < 200; i++) {
+            let msg = c.readText();
+            this.assertEquals(4096 + 6, msg.length());
+            tags.push(msg.substring(0, 6));
+        }
+        let counts = tags.frequencies();
+        c.sendText("done");
+        c.close();
+        http.close(server);
+        this.assertEquals(8, counts.length());
+        for (k in counts.keys()) {
+            this.assertEquals(25, counts[k] as int);
+        }
+    }
+
+    @tag("integration")
+    @test
+    func closeFromAnotherTaskEndsTheReadAndCannotRepeat(): void {
+        let results = ch.Channel<string>(1);
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return ws.upgrade(func(ws.Connection conn): void {
+                let closer = async.run(func(): void {
+                    await async.sleep(20);
+                    conn.close();
+                });
+                string outcome = "read returned";
+                try {
+                    conn.readText();
+                } catch (IOError e) {
+                    outcome = "read raised";
+                }
+                async.await(closer);
+                try {
+                    conn.close();
+                    outcome = outcome + "; second close returned";
+                } catch (Error e) {
+                    outcome = outcome + "; second close raised";
+                }
+                results.send(outcome);
+            });
+        }, {"shareHandler": true});
+        let c = ws.connect("ws://${http.serverAddr(server)}/");
+        let outcome = results.recv();
+        c.close();
+        http.close(server);
+        this.assertEquals("read raised; second close raised", outcome);
+    }
+
+    @tag("integration")
+    @test
+    func peerDisconnectRaisesAndEmptyMessagesAreMessages(): void {
+        let results = ch.Channel<string>(1);
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return ws.upgrade(func(ws.Connection conn): void {
+                list<string> got = [];
+                try {
+                    while (true) {
+                        got.push("[" + conn.readText() + "]");
+                    }
+                } catch (IOError e) {
+                    got.push("disconnected");
+                }
+                results.send(got.join(" "));
+            });
+        }, {"shareHandler": true});
+        let c = ws.connect("ws://${http.serverAddr(server)}/");
+        c.sendText("a");
+        c.sendText("");
+        c.sendText("b");
+        c.close();
+        let got = results.recv();
+        http.close(server);
+        this.assertEquals("[a] [] [b] disconnected", got);
+    }
+}

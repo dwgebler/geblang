@@ -1,0 +1,70 @@
+/**
+ * @title HTTP server body limit, slot order and write timeout (1.42.2)
+ * @summary Request bodies default to a 10 MiB limit (0 lifts it), a slow
+ * upload does not hold a maxConcurrent slot, and a client that stops
+ * reading a large response frees its slot at writeTimeoutMs while
+ * keep-alive requests continue to work.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import http;
+import net;
+import async;
+
+func limitsHandler(dict<string, any> r): dict<string, any> {
+    if (r["path"] == "/big") {
+        return {"status": 200, "body": "b".repeat(64 * 1024 * 1024)};
+    }
+    return {"status": 200, "body": "small"};
+}
+
+class HttpServerLimitsTest extends test.Test {
+    @tag("integration")
+    @test
+    func bodiesDefaultToTenMebibytes(): void {
+        string eleven = "x".repeat(11 * 1024 * 1024);
+        let d = http.listen("127.0.0.1:0", limitsHandler);
+        let over = http.post("http://${http.serverAddr(d)}/", eleven)["status"] as int;
+        let under = http.post("http://${http.serverAddr(d)}/", "x".repeat(1024 * 1024))["status"] as int;
+        http.close(d);
+        let u = http.listen("127.0.0.1:0", limitsHandler, {"maxBodyBytes": 0});
+        let unlimited = http.post("http://${http.serverAddr(u)}/", eleven)["status"] as int;
+        http.close(u);
+        this.assertEquals(413, over);
+        this.assertEquals(200, under);
+        this.assertEquals(200, unlimited);
+    }
+
+    @tag("integration")
+    @test
+    func slowUploadDoesNotHoldTheOnlySlot(): void {
+        let p = http.listen("127.0.0.1:0", limitsHandler, {"maxConcurrent": 1, "queueSize": 0, "onOverload": "reject"});
+        let addr = http.serverAddr(p);
+        let slow = net.connectTcp(addr);
+        net.write(slow, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\nabc" as bytes);
+        await async.sleep(200);
+        let status = http.get("http://${addr}/")["status"] as int;
+        net.close(slow);
+        http.close(p);
+        this.assertEquals(200, status);
+    }
+
+    @tag("integration")
+    @test
+    func stalledDownloadFreesItsSlotAtTheWriteTimeout(): void {
+        let g = http.listen("127.0.0.1:0", limitsHandler, {"maxConcurrent": 1, "queueSize": 0, "onOverload": "reject", "writeTimeoutMs": 300});
+        let addr = http.serverAddr(g);
+        let stuck = net.connectTcp(addr);
+        net.write(stuck, "GET /big HTTP/1.1\r\nHost: x\r\n\r\n" as bytes);
+        await async.sleep(1500);
+        let after = http.get("http://${addr}/")["status"] as int;
+        let full = http.get("http://${addr}/big");
+        let again = http.get("http://${addr}/")["status"] as int;
+        net.close(stuck);
+        http.close(g);
+        this.assertEquals(200, after);
+        this.assertEquals(64 * 1024 * 1024, (full["body"] as string).length());
+        this.assertEquals(200, again);
+    }
+}

@@ -152,9 +152,26 @@ func lookupPcreHandle(this *runtime.Instance) (*regexp2.Regexp, bool) {
 	return re, ok
 }
 
+// Singletons so the class a module exports for annotations is the one its instances carry.
+var (
+	rePatternClass   = buildRePatternClass()
+	pcrePatternClass = buildPcrePatternClass()
+)
+
+// ModuleClasses returns the classes a pure native module exports as types.
+func ModuleClasses(module string) map[string]*runtime.Class {
+	switch module {
+	case "re":
+		return map[string]*runtime.Class{"Pattern": rePatternClass, "RegexSet": reSetClass}
+	case "pcre":
+		return map[string]*runtime.Class{"Pattern": pcrePatternClass}
+	}
+	return nil
+}
+
 func registerRegexCompile(r *Registry) {
-	reClass := buildRePatternClass()
-	pcreClass := buildPcrePatternClass()
+	reClass := rePatternClass
+	pcreClass := pcrePatternClass
 
 	r.Register("re", "compile", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {

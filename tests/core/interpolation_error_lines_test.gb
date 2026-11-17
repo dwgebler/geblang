@@ -1,0 +1,40 @@
+/**
+ * @title Errors inside string interpolation report their line (1.42.2)
+ * @summary A fault in a `${...}` expression reports the line the
+ * expression is on, including inside a multi-line triple-quoted string,
+ * in functions and closures on both backends.
+ */
+import test;
+
+func interpolationIndexFault(): string {
+    list<int> xs = [];
+    return "value ${xs[3]}";
+}
+
+class InterpolationErrorLinesTest extends test.Test {
+    func faultLine(callable f): int {
+        try {
+            f();
+        } catch (Error e) {
+            return e.stackTrace().first().line();
+        }
+        return -1;
+    }
+
+    @test
+    func singleLineStringReportsItsLine(): void {
+        this.assertEquals(11, this.faultLine(interpolationIndexFault));
+    }
+
+    @test
+    func tripleQuotedStringReportsTheExpressionsLine(): void {
+        let closureFault = func(): string {
+            any m = {"a": 1};
+            return """
+first line
+second ${m.nope()}
+""";
+        };
+        this.assertEquals(35, this.faultLine(closureFault));
+    }
+}

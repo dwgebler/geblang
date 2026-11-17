@@ -79,3 +79,36 @@ func BenchmarkDictionaryShapes(b *testing.B) {
 		})
 	}
 }
+
+func TestEntriesDictKeyCacheFollowsSharedHeaders(t *testing.T) {
+	value := DictFromEntries(map[string]DictEntry{"a": {Key: String{Value: "a"}, Value: Null{}}}, nil)
+	alias := value.WithElementTypes([]string{"string", "any"})
+	if !alias.HasOnlyStringKeys() {
+		t.Fatal("string keys rejected")
+	}
+	value.PutEntry("i1", DictEntry{Key: NewInt64(1), Value: Null{}})
+	if alias.HasOnlyStringKeys() {
+		t.Fatal("cached answer ignored a non-string key added through another header")
+	}
+	value.DelEntry("i1")
+	if !alias.HasOnlyStringKeys() {
+		t.Fatal("deleting the only non-string key left the cache stale")
+	}
+	value.PutEntry("i2", DictEntry{Key: NewInt64(2), Value: Null{}})
+	value.Clear()
+	if !alias.HasOnlyStringKeys() {
+		t.Fatal("clear left the cache stale")
+	}
+}
+
+func TestEntriesDictKeyCacheIsNotSharedAcrossNewMaps(t *testing.T) {
+	value := DictFromEntries(nil, nil)
+	alias := value.WithElementTypes([]string{"string", "any"})
+	value.PutEntry("i1", DictEntry{Key: NewInt64(1), Value: Null{}})
+	if value.HasOnlyStringKeys() {
+		t.Fatal("non-string key accepted")
+	}
+	if !alias.HasOnlyStringKeys() {
+		t.Fatal("a header still holding the empty map inherited another map's key state")
+	}
+}

@@ -1,0 +1,40 @@
+/**
+ * @title dict<string, any> checks on natively built dicts (1.42.2)
+ * @summary A request dict built by the engine satisfies dict<string, any>
+ * until a non-string key is added, and again once it is removed.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import http;
+import async.channel as ch;
+
+func acceptsStringKeyed(dict<string, any> d): string {
+    return "ok";
+}
+
+class NativeDictKeyTypesTest extends test.Test {
+    @tag("integration")
+    @test
+    func keyTypeCheckFollowsMutation(): void {
+        let results = ch.Channel<string>(1);
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            list<string> out = [acceptsStringKeyed(request)];
+            any loose = request;
+            loose[1] = "int key";
+            try {
+                out.push(acceptsStringKeyed(loose));
+            } catch (TypeError e) {
+                out.push("TypeError");
+            }
+            loose.remove(1);
+            out.push(acceptsStringKeyed(loose));
+            results.send(out.join(" "));
+            return {"status": 200, "body": "ok"};
+        });
+        http.get("http://${http.serverAddr(server)}/");
+        let got = results.recv();
+        http.close(server);
+        this.assertEquals("ok TypeError ok", got);
+    }
+}

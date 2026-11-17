@@ -15,7 +15,7 @@ import (
 // registerArchive wires the eager archive functions used by the source module.
 func registerArchive(r *Registry) {
 	r.Register("archive_native", "zipRead", func(args []runtime.Value) (runtime.Value, error) {
-		data, err := singleBytes(args, "archive.zipRead")
+		data, budget, err := bytesWithDecompressBudget(args, "archive.zipRead")
 		if err != nil {
 			return nil, err
 		}
@@ -29,7 +29,7 @@ func registerArchive(r *Registry) {
 			if err != nil {
 				return nil, fmt.Errorf("archive.zipRead: open %s: %w", f.Name, err)
 			}
-			body, err := io.ReadAll(rc)
+			body, err := budget.readAll(rc)
 			_ = rc.Close()
 			if err != nil {
 				return nil, fmt.Errorf("archive.zipRead: read %s: %w", f.Name, err)
@@ -66,7 +66,7 @@ func registerArchive(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		return readTar(bytes.NewReader(data), "archive.tarRead")
+		return readTar(bytes.NewReader(data), "archive.tarRead", nil)
 	})
 	r.Register("archive_native", "tarWrite", func(args []runtime.Value) (runtime.Value, error) {
 		entries, err := singleArchiveEntries(args, "archive.tarWrite")
@@ -80,7 +80,7 @@ func registerArchive(r *Registry) {
 		return runtime.Bytes{Value: buf.Bytes()}, nil
 	})
 	r.Register("archive_native", "tarGzRead", func(args []runtime.Value) (runtime.Value, error) {
-		data, err := singleBytes(args, "archive.tarGzRead")
+		data, budget, err := bytesWithDecompressBudget(args, "archive.tarGzRead")
 		if err != nil {
 			return nil, err
 		}
@@ -89,7 +89,7 @@ func registerArchive(r *Registry) {
 			return nil, fmt.Errorf("archive.tarGzRead: %w", err)
 		}
 		defer gz.Close()
-		return readTar(gz, "archive.tarGzRead")
+		return readTar(gz, "archive.tarGzRead", budget)
 	})
 	r.Register("archive_native", "tarGzWrite", func(args []runtime.Value) (runtime.Value, error) {
 		entries, err := singleArchiveEntries(args, "archive.tarGzWrite")
@@ -191,7 +191,7 @@ func dictDataField(d runtime.Dict, field string) ([]byte, error) {
 	return nil, fmt.Errorf("missing field %q", field)
 }
 
-func readTar(src io.Reader, label string) (runtime.Value, error) {
+func readTar(src io.Reader, label string, budget *decompressBudget) (runtime.Value, error) {
 	r := tar.NewReader(src)
 	var entries []runtime.Value
 	for {
@@ -205,7 +205,7 @@ func readTar(src io.Reader, label string) (runtime.Value, error) {
 		var body []byte
 		isDir := hdr.Typeflag == tar.TypeDir
 		if !isDir {
-			body, err = io.ReadAll(r)
+			body, err = budget.readAll(r)
 			if err != nil {
 				return nil, fmt.Errorf("%s: read %s: %w", label, hdr.Name, err)
 			}

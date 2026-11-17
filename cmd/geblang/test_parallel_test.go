@@ -99,6 +99,18 @@ func TestParallelTestFiles_PublicCLI(t *testing.T) {
 				}
 			}
 		})
+		t.Run(lane+"/method filter alone", func(t *testing.T) {
+			dir := writeTestCorpus(t, map[string]string{
+				"a_test.gb": `import test; class Both extends test.Test {
+    @test func selected(): void { this.assertTrue(true); }
+    @test func excluded(): void { this.fail(); }
+}`,
+			})
+			output, err := run(t, "--runtime", lane, "--method", "selected", dir)
+			if err != nil || !strings.Contains(output, "tests: total=1 failed=0 passed=1 skipped=0") {
+				t.Fatalf("method filter: %v\n%s", err, output)
+			}
+		})
 		t.Run(lane+"/aggregates failures errors and skips", func(t *testing.T) {
 			dir := writeTestCorpus(t, map[string]string{
 				"a_pass_test.gb":  `import test; class Passing extends test.Test { @test func ok(): void { this.assertTrue(true); } }`,

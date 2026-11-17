@@ -1363,6 +1363,7 @@ func (e *Evaluator) pageClass() *runtime.Class {
 		e.browserMu.Lock()
 		p := e.pages[id]
 		delete(e.pages, id)
+		e.releaseHandle(id)
 		if p != nil {
 			delete(e.browserRoutes, p.SessionID)
 		}

@@ -147,7 +147,7 @@ func (e *Evaluator) logSyslog(call *ast.CallExpression, args []runtime.Value) (r
 		pid:      os.Getpid(),
 		framing:  framing,
 	}
-	return e.registerLogger(&loggerHandle{target: "syslog:" + network, leveled: sink, closer: sink}), nil
+	return e.registerLogger(e.callOwner(call), &loggerHandle{target: "syslog:" + network, leveled: sink, closer: sink}), nil
 }
 
 func syslogOpt(call *ast.CallExpression, opts runtime.Dict, key, def string) (string, error) {

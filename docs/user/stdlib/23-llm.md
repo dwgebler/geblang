@@ -70,6 +70,11 @@ Provider-specific options:
 | `anthropic` | `apiKey` | `endpoint` (default `https://api.anthropic.com`), `apiVersion` (default `2023-06-01`) |
 | `bedrock` | `region`, `accessKey`, `secretKey` | `endpoint` (default regional Bedrock Runtime host) |
 
+Every provider also accepts `timeoutMs`, the deadline for one non-streaming
+call (default `600000`, ten minutes, since long generations can take
+minutes; `0` for none). It raises `TimeoutError` when it expires. Streaming
+calls are bounded only while connecting and waiting for the response headers.
+
 ## Capability matrix
 
 Not every provider supports every operation. Calls into a

@@ -386,6 +386,11 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.
 	vm.SetModuleName(module)
 	vm.SetModulePaths(l.basePaths)
 	vm.SetStatefulNativeCaller(l.stateful)
+	if caller != nil {
+		if native := caller.StatefulNative(); native != nil {
+			vm.SetStatefulNativeCaller(native)
+		}
+	}
 	rec, _ := l.recordFor(module)
 	l.restoreModuleGlobals(vm, module, rec)
 	var decorators bytecode.FunctionDecoratorState
@@ -506,6 +511,28 @@ func (l *Loader) CallModuleHandlerIsolated(fn runtime.Value, module string, args
 		chunk = c
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
+	result, err := vm.CallIsolatedHandler(fn, args)
+	l.releaseModuleVM(pool, vm, err)
+	return result, err
+}
+
+// CallModuleHandlerIsolatedScoped is CallModuleHandlerIsolated with the request scope's native caller on the home module's worker.
+func (l *Loader) CallModuleHandlerIsolatedScoped(fn runtime.Value, module string, args []runtime.Value, caller *bytecode.VM, native bytecode.StatefulNativeCaller) (runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script handler invoked without a main chunk")
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunkValue(module)
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	vm, pool := l.moduleVM(module, chunk, caller)
+	vm.SetStatefulNativeCaller(native)
 	result, err := vm.CallIsolatedHandler(fn, args)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err

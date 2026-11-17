@@ -26,7 +26,7 @@ export class Socket {
     }
 
     func read(int n): string { return this.stream.read(n); }
-    func readAll(): string { return this.stream.readAll(); }
+    func readAll(int maxBytes = -1): string { return this.stream.readAll(maxBytes); }
     func readLine(): ?string { return this.stream.readLine(); }
     func lines(): generator<string> {
         for (line in this.stream) {

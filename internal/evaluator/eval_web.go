@@ -18,9 +18,9 @@ func (e *Evaluator) webNew(call *ast.CallExpression, args []runtime.Value) (runt
 	}
 	e.webMu.Lock()
 	defer e.webMu.Unlock()
-	e.nextWebID++
-	e.webApps[e.nextWebID] = &webApp{routes: []webRoute{}, beforeMiddlewares: []runtime.Value{}, middlewares: []runtime.Value{}}
-	return runtime.NewInt64(e.nextWebID), nil
+	hid := e.newHandleIDFor(e.callOwner(call))
+	e.webApps[hid] = &webApp{routes: []webRoute{}, beforeMiddlewares: []runtime.Value{}, middlewares: []runtime.Value{}}
+	return runtime.NewInt64(hid), nil
 }
 
 func (e *Evaluator) webUse(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

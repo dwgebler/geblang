@@ -1,0 +1,75 @@
+/**
+ * @title Response streams read independently (1.42.2)
+ * @summary A StreamResponse blocked on a stalled server does not hold up
+ * other streams, close() from another task ends a blocked read with
+ * IOError, and a streamed line over 1 MiB raises IOError.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import http;
+import async;
+import async.channel as ch;
+
+class HttpResponseStreamConcurrencyTest extends test.Test {
+    @tag("integration")
+    @test
+    func streamsDoNotBlockEachOther(): void {
+        let release = ch.Channel<bool>(1);
+        let s = http.listen("127.0.0.1:0", func(dict<string, any> r): dict<string, any> {
+            return http.stream(func(int handle): void {
+                if (r["path"] == "/stall") {
+                    http.streamWrite(handle, "first\n");
+                    http.streamFlush(handle);
+                    release.recv();
+                } else {
+                    for (i in 1..3) {
+                        http.streamWrite(handle, "line ${i}\n");
+                    }
+                }
+                http.streamClose(handle);
+            });
+        }, {"shareHandler": true});
+        let base = "http://${http.serverAddr(s)}";
+        let stalled = http.requestStream({"url": base + "/stall"});
+        this.assertEquals("first", stalled.read() as string);
+        let blocked = async.run(func(): string {
+            try {
+                stalled.read();
+                return "returned";
+            } catch (IOError e) {
+                return "IOError";
+            }
+        });
+        await async.sleep(100);
+        let other = http.requestStream({"url": base + "/fast"});
+        list<string> lines = [];
+        let line = other.read();
+        while (line != null) {
+            lines.push(line as string);
+            line = other.read();
+        }
+        stalled.close();
+        let blockedOutcome = async.await(blocked) as string;
+        release.send(true);
+        http.close(s);
+        this.assertEquals(["line 1", "line 2", "line 3"], lines);
+        this.assertEquals("IOError", blockedOutcome);
+    }
+
+    @tag("integration")
+    @test
+    func overlongStreamedLineRaisesIOError(): void {
+        let s = http.listen("127.0.0.1:0", func(dict<string, any> r): dict<string, any> {
+            return http.stream(func(int handle): void {
+                http.streamWrite(handle, "x".repeat(2 * 1024 * 1024));
+                http.streamClose(handle);
+            });
+        });
+        let stream = http.requestStream({"url": "http://${http.serverAddr(s)}/"});
+        this.assertThrows(func(): void { stream.read(); }, "line exceeds 1048576 bytes");
+        let done = stream.done();
+        http.close(s);
+        this.assertTrue(done);
+    }
+}

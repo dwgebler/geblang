@@ -93,7 +93,7 @@ func (e *Evaluator) netListenTCP(call *ast.CallExpression, args []runtime.Value)
 	if err != nil {
 		return nil, err
 	}
-	return e.registerNetHandle(&netHandle{listener: listener}), nil
+	return e.registerNetHandle(e.callOwner(call), &netHandle{listener: listener}), nil
 }
 
 func (e *Evaluator) netConnectTCP(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -105,7 +105,7 @@ func (e *Evaluator) netConnectTCP(call *ast.CallExpression, args []runtime.Value
 	if err != nil {
 		return nil, err
 	}
-	return e.registerNetHandle(&netHandle{conn: conn}), nil
+	return e.registerNetHandle(e.callOwner(call), &netHandle{conn: conn}), nil
 }
 
 func (e *Evaluator) netAccept(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -123,7 +123,7 @@ func (e *Evaluator) netAccept(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
-	return e.registerNetHandle(&netHandle{conn: conn}), nil
+	return e.registerNetHandle(e.callOwner(call), &netHandle{conn: conn}), nil
 }
 
 func (e *Evaluator) netRead(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -215,6 +215,7 @@ func (e *Evaluator) netClose(call *ast.CallExpression, args []runtime.Value) (ru
 	handle, ok := e.netHandles[id]
 	if ok {
 		delete(e.netHandles, id)
+		e.releaseHandle(id)
 	}
 	e.netMu.Unlock()
 	if !ok {
@@ -275,7 +276,7 @@ func (e *Evaluator) netListenUDP(call *ast.CallExpression, args []runtime.Value)
 	if err != nil {
 		return nil, err
 	}
-	return e.registerNetHandle(&netHandle{packet: packet}), nil
+	return e.registerNetHandle(e.callOwner(call), &netHandle{packet: packet}), nil
 }
 
 func (e *Evaluator) netDialUDP(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -287,7 +288,7 @@ func (e *Evaluator) netDialUDP(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
-	return e.registerNetHandle(&netHandle{conn: conn}), nil
+	return e.registerNetHandle(e.callOwner(call), &netHandle{conn: conn}), nil
 }
 
 func (e *Evaluator) netReadFrom(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -349,12 +350,12 @@ func (e *Evaluator) netWriteTo(call *ast.CallExpression, args []runtime.Value) (
 	return runtime.NewInt64(int64(written)), nil
 }
 
-func (e *Evaluator) registerNetHandle(handle *netHandle) runtime.Value {
+func (e *Evaluator) registerNetHandle(owner *Evaluator, handle *netHandle) runtime.Value {
 	e.netMu.Lock()
 	defer e.netMu.Unlock()
-	e.nextNetID++
-	ensureMap(&e.netHandles)[e.nextNetID] = handle
-	return runtime.NewInt64(e.nextNetID)
+	hid := e.newHandleIDFor(owner)
+	ensureMap(&e.netHandles)[hid] = handle
+	return runtime.NewInt64(hid)
 }
 
 func (e *Evaluator) netHandle(value runtime.Value) (*netHandle, error) {
@@ -365,9 +366,6 @@ func (e *Evaluator) netHandle(value runtime.Value) (*netHandle, error) {
 	e.netMu.Lock()
 	handle, ok := e.netHandles[id]
 	e.netMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.netHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown net handle %d", id)
 	}
@@ -433,9 +431,9 @@ func (e *Evaluator) netDial(call *ast.CallExpression, args []runtime.Value) (run
 	if err != nil {
 		return nil, err
 	}
-	netHandleValue := e.registerNetHandle(&netHandle{conn: conn})
-	streamHandle := &ioStreamHandle{name: "net socket", reader: conn, writer: conn, closer: conn}
-	streamValue := e.registerIOStream(streamHandle)
+	netHandleValue := e.registerNetHandle(e.callOwner(call), &netHandle{conn: conn})
+	streamHandle := &ioStreamHandle{name: "net socket", reader: conn, writer: conn, closer: conn, network: true}
+	streamValue := e.registerIOStream(e.callOwner(call), streamHandle)
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "handle", netHandleValue)
 	putDict(entries, "stream", streamValue)
@@ -477,30 +475,29 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 	if err != nil {
 		return nil, err
 	}
+	blocklist, err := parseIPBlocklist(optsArg, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	addr := net.JoinHostPort(host.Value, strconv.FormatInt(port, 10))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
+	listener = withIPBlocklist(listener, blocklist)
 	server := &netServerHandle{listener: listener, pool: pool}
 	e.netServerMu.Lock()
-	e.nextNetServerID++
-	id := e.nextNetServerID
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.netServers)[id] = server
 	e.netServerMu.Unlock()
 	server.wg.Add(1)
 	go func() {
 		defer server.wg.Done()
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			handlerConn := conn
+		acceptLoop(listener, func(handlerConn net.Conn) {
 			if pool != nil && !pool.IsUnbounded() {
 				if err := pool.Acquire(context.Background()); err != nil {
 					_ = handlerConn.Close()
-					continue
+					return
 				}
 			}
 			server.wg.Add(1)
@@ -511,10 +508,11 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 				}
 				child := e.childForCallback()
 				defer child.Cleanup()
+				defer recoverHandlerPanic(e.stderr, "net.serve")
 				defer child.startDebugThread("net connection")()
-				connHandle := e.registerNetHandle(&netHandle{conn: handlerConn})
-				streamHandle := &ioStreamHandle{name: "net socket", reader: handlerConn, writer: handlerConn, closer: handlerConn}
-				streamValue := e.registerIOStream(streamHandle)
+				connHandle := child.registerNetHandle(child.scope, &netHandle{conn: handlerConn})
+				streamHandle := &ioStreamHandle{name: "net socket", reader: handlerConn, writer: handlerConn, closer: handlerConn, network: true}
+				streamValue := child.registerIOStream(child.scope, streamHandle)
 				entries := map[string]runtime.DictEntry{}
 				putDict(entries, "handle", connHandle)
 				putDict(entries, "stream", streamValue)
@@ -526,9 +524,12 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 				if handler.Native == nil && !share {
 					callbackHandler = runtime.CloneFunction(handler)
 				}
-				_, _ = child.applyFunction(callbackHandler, []runtime.Value{socketDict})
+				if _, err := child.applyFunction(callbackHandler, []runtime.Value{socketDict}); err != nil {
+					headline, _ := serveErrorParts(err)
+					fmt.Fprintf(e.stderr, "net.serve: handler error: %s\n", headline)
+				}
 			}()
-		}
+		})
 	}()
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "handle", runtime.NewInt64(id))
@@ -551,12 +552,10 @@ func (e *Evaluator) netCloseListener(call *ast.CallExpression, args []runtime.Va
 	server, ok := e.netServers[id]
 	if ok {
 		delete(e.netServers, id)
+		e.releaseHandle(id)
 	}
 	e.netServerMu.Unlock()
 	if !ok {
-		if e.parent != nil {
-			return e.parent.netCloseListener(call, args)
-		}
 		return runtime.Null{}, nil
 	}
 	return runtime.Null{}, stopNetServerHandle(server)
@@ -592,5 +591,40 @@ func setNetHandleDeadline(handle *netHandle, deadline time.Time) error {
 		return handle.packet.SetDeadline(deadline)
 	default:
 		return nil
+	}
+}
+
+func acceptLoop(listener net.Listener, onConn func(net.Conn)) {
+	var backoff time.Duration
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			// Back off instead of exiting so fd exhaustion from a connection flood cannot stop the server for good.
+			backoff = acceptBackoff(backoff)
+			time.Sleep(backoff)
+			continue
+		}
+		backoff = 0
+		onConn(conn)
+	}
+}
+
+func acceptBackoff(previous time.Duration) time.Duration {
+	if previous == 0 {
+		return 5 * time.Millisecond
+	}
+	if next := previous * 2; next < time.Second {
+		return next
+	}
+	return time.Second
+}
+
+// recoverHandlerPanic keeps an engine panic in one connection or task from taking down the process.
+func recoverHandlerPanic(stderr io.Writer, label string) {
+	if r := recover(); r != nil {
+		fmt.Fprintf(stderr, "%s: internal error: %v\n", label, r)
 	}
 }

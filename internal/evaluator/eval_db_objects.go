@@ -37,6 +37,7 @@ func releaseAbandonedDBRows(c dbRowsCleanup) {
 func (e *Evaluator) forgetDBRows(id int64) {
 	e.dbMu.Lock()
 	delete(e.dbRows, id)
+	e.releaseHandle(id)
 	e.dbMu.Unlock()
 }
 
@@ -299,10 +300,10 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 }
 
 func (e *Evaluator) registerDBRows(rows *sql.Rows) (runtime.Value, error) {
-	return e.registerDBRowsContext(rows, nil)
+	return e.registerDBRowsContext(e.scope, rows, nil)
 }
 
-func (e *Evaluator) registerDBRowsContext(rows *sql.Rows, cancel context.CancelFunc) (runtime.Value, error) {
+func (e *Evaluator) registerDBRowsContext(owner *Evaluator, rows *sql.Rows, cancel context.CancelFunc) (runtime.Value, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		_ = rows.Close()
@@ -324,8 +325,7 @@ func (e *Evaluator) registerDBRowsContext(rows *sql.Rows, cancel context.CancelF
 	}
 	h := &dbRowsHandle{owner: e, rows: rows, cancel: cancel, columns: columns, textCols: sqlTextColumns(rows)}
 	e.dbMu.Lock()
-	e.nextDBRowsID++
-	h.id = e.nextDBRowsID
+	h.id = e.newHandleIDFor(owner)
 	ensureMap(&e.dbRows)[h.id] = weak.Make(h)
 	e.dbMu.Unlock()
 	goruntime.AddCleanup(h, releaseAbandonedDBRows, dbRowsCleanup{owner: e, id: h.id, rows: rows, cancel: cancel})

@@ -9,6 +9,7 @@ import (
 	"geblang/internal/ffi"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
+	"geblang/internal/native"
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"geblang/internal/semantic"
@@ -240,6 +241,12 @@ func (e *Evaluator) builtinModuleValue(canonical, alias string) *runtime.Module 
 		if e.httpFetchStreamClass != nil {
 			exports["FetchStream"] = e.httpFetchStreamClass
 		}
+	case "re", "pcre":
+		for name, class := range native.ModuleClasses(canonical) {
+			exports[name] = class
+		}
+	case "net":
+		exports["IpSet"] = ipSetClass
 	case "process":
 		if e.processClass != nil {
 			exports["Process"] = e.processClass

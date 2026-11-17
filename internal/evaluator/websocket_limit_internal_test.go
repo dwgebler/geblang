@@ -65,7 +65,7 @@ func writeFragmented(t *testing.T, conn *gorillawebsocket.Conn, total, frame int
 
 func TestWebSocketMessageLimitClosesWith1009(t *testing.T) {
 	e := New(io.Discard)
-	url, readErr, stop := limitedEchoServer(t, e, handlerLimits{wsMessageBytes: 1024})
+	url, readErr, stop := limitedEchoServer(t, e, handlerLimits{ws: wsOptions{maxMessageBytes: 1024}})
 	defer stop()
 	conn, _, err := gorillawebsocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
@@ -111,17 +111,28 @@ func TestWebSocketMessageLimitZeroIsUnlimited(t *testing.T) {
 	}
 }
 
-func TestParseWebSocketMessageLimit(t *testing.T) {
-	if n, err := parseWebSocketMessageLimit(gruntime.Null{}, "http.listen"); err != nil || n != 1<<20 {
-		t.Fatalf("default = %d, %v; want 1 MiB", n, err)
+func TestParseWebSocketOptions(t *testing.T) {
+	if ws, err := parseWebSocketOptions(gruntime.Null{}, "http.listen"); err != nil || ws.maxMessageBytes != 1<<20 ||
+		ws.pingInterval != 25*time.Second || ws.idleTimeout != 60*time.Second || ws.writeTimeout != 10*time.Second {
+		t.Fatalf("defaults = %+v, %v", ws, err)
 	}
-	if n, err := parseWebSocketMessageLimit(optsDict(t, map[string]gruntime.Value{"maxWebSocketMessageBytes": gruntime.NewInt64(0)}), "http.listen"); err != nil || n != 0 {
-		t.Fatalf("zero = %d, %v", n, err)
+	if ws, err := parseWebSocketOptions(optsDict(t, map[string]gruntime.Value{"maxWebSocketMessageBytes": gruntime.NewInt64(0)}), "http.listen"); err != nil || ws.maxMessageBytes != 0 {
+		t.Fatalf("zero = %d, %v", ws.maxMessageBytes, err)
 	}
-	for _, bad := range []gruntime.Value{gruntime.NewInt64(-1), gruntime.String{Value: "1"}} {
-		_, err := parseWebSocketMessageLimit(optsDict(t, map[string]gruntime.Value{"maxWebSocketMessageBytes": bad}), "http.listen")
-		if err == nil || !strings.Contains(err.Error(), "opts.maxWebSocketMessageBytes must be a non-negative int") {
-			t.Fatalf("%v: error = %v", bad, err)
+	set := optsDict(t, map[string]gruntime.Value{
+		"webSocketPingIntervalMs": gruntime.NewInt64(0),
+		"webSocketIdleTimeoutMs":  gruntime.NewInt64(1500),
+		"webSocketWriteTimeoutMs": gruntime.NewInt64(250),
+	})
+	if ws, err := parseWebSocketOptions(set, "http.listen"); err != nil || ws.pingInterval != 0 || ws.idleTimeout != 1500*time.Millisecond || ws.writeTimeout != 250*time.Millisecond {
+		t.Fatalf("set = %+v, %v", ws, err)
+	}
+	for _, name := range []string{"maxWebSocketMessageBytes", "webSocketPingIntervalMs", "webSocketIdleTimeoutMs", "webSocketWriteTimeoutMs"} {
+		for _, bad := range []gruntime.Value{gruntime.NewInt64(-1), gruntime.String{Value: "1"}} {
+			_, err := parseWebSocketOptions(optsDict(t, map[string]gruntime.Value{name: bad}), "http.listen")
+			if err == nil || !strings.Contains(err.Error(), "opts."+name+" must be a non-negative int") {
+				t.Fatalf("%s=%v: error = %v", name, bad, err)
+			}
 		}
 	}
 }

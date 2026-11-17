@@ -182,8 +182,7 @@ func (e *Evaluator) sshConnect(call *ast.CallExpression, args []runtime.Value) (
 	}
 	handle := &sshClientHandle{client: client}
 	e.sshMu.Lock()
-	e.nextSSHID++
-	id := e.nextSSHID
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.sshClients)[id] = handle
 	e.sshMu.Unlock()
 	entries := map[string]runtime.DictEntry{}
@@ -201,9 +200,6 @@ func (e *Evaluator) sshClient(value runtime.Value) (*sshClientHandle, error) {
 	e.sshMu.Lock()
 	handle, ok := e.sshClients[id]
 	e.sshMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.sshClient(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown ssh handle %d", id)
 	}
@@ -285,13 +281,12 @@ func (e *Evaluator) sshSpawn(call *ast.CallExpression, args []runtime.Value) (ru
 	}
 	sessionHandle := &sshSessionHandle{session: session, stdin: stdin, stdout: stdout, stderr: stderr}
 	e.sshMu.Lock()
-	e.nextSSHID++
-	sid := e.nextSSHID
+	sid := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.sshSessions)[sid] = sessionHandle
 	e.sshMu.Unlock()
-	stdinStream := e.registerIOStream(&ioStreamHandle{name: "ssh stdin", writer: stdin, closer: stdin})
-	stdoutStream := e.registerIOStream(&ioStreamHandle{name: "ssh stdout", reader: stdout})
-	stderrStream := e.registerIOStream(&ioStreamHandle{name: "ssh stderr", reader: stderr})
+	stdinStream := e.registerIOStream(e.callOwner(call), &ioStreamHandle{name: "ssh stdin", writer: stdin, closer: stdin})
+	stdoutStream := e.registerIOStream(e.callOwner(call), &ioStreamHandle{name: "ssh stdout", reader: stdout, network: true})
+	stderrStream := e.registerIOStream(e.callOwner(call), &ioStreamHandle{name: "ssh stderr", reader: stderr, network: true})
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "handle", runtime.NewInt64(sid))
 	putDict(entries, "stdin", stdinStream)
@@ -308,9 +303,6 @@ func (e *Evaluator) sshSession(value runtime.Value) (*sshSessionHandle, error) {
 	e.sshMu.Lock()
 	handle, ok := e.sshSessions[id]
 	e.sshMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.sshSession(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown ssh session handle %d", id)
 	}
@@ -566,7 +558,7 @@ func (e *Evaluator) sshSftpOpen(call *ast.CallExpression, args []runtime.Value) 
 	if err != nil {
 		return nil, err
 	}
-	return e.registerIOStream(&ioStreamHandle{name: "ssh sftp file", reader: f, writer: f, closer: f}), nil
+	return e.registerIOStream(e.callOwner(call), &ioStreamHandle{name: "ssh sftp file", reader: f, writer: f, closer: f}), nil
 }
 
 // sshForwardLocal binds localPort on 127.0.0.1 and forwards each
@@ -595,8 +587,7 @@ func (e *Evaluator) sshForwardLocal(call *ast.CallExpression, args []runtime.Val
 	}
 	tunnel := &sshTunnelHandle{listener: listener}
 	e.sshMu.Lock()
-	e.nextSSHID++
-	tid := e.nextSSHID
+	tid := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.sshTunnels)[tid] = tunnel
 	e.sshMu.Unlock()
 	tunnel.wg.Add(1)
@@ -649,8 +640,7 @@ func (e *Evaluator) sshForwardRemote(call *ast.CallExpression, args []runtime.Va
 	}
 	tunnel := &sshTunnelHandle{listener: listener}
 	e.sshMu.Lock()
-	e.nextSSHID++
-	tid := e.nextSSHID
+	tid := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.sshTunnels)[tid] = tunnel
 	e.sshMu.Unlock()
 	tunnel.wg.Add(1)
@@ -693,12 +683,10 @@ func (e *Evaluator) sshTunnelClose(call *ast.CallExpression, args []runtime.Valu
 	tunnel, ok := e.sshTunnels[id]
 	if ok {
 		delete(e.sshTunnels, id)
+		e.releaseHandle(id)
 	}
 	e.sshMu.Unlock()
 	if !ok {
-		if e.parent != nil {
-			return e.parent.sshTunnelClose(call, args)
-		}
 		return runtime.Null{}, nil
 	}
 	return runtime.Null{}, stopSSHTunnelHandle(tunnel)
@@ -731,12 +719,10 @@ func (e *Evaluator) sshClose(call *ast.CallExpression, args []runtime.Value) (ru
 	handle, ok := e.sshClients[id]
 	if ok {
 		delete(e.sshClients, id)
+		e.releaseHandle(id)
 	}
 	e.sshMu.Unlock()
 	if !ok {
-		if e.parent != nil {
-			return e.parent.sshClose(call, args)
-		}
 		return runtime.Null{}, nil
 	}
 	return runtime.Null{}, closeSSHClientHandle(handle)

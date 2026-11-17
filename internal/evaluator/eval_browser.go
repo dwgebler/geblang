@@ -311,8 +311,7 @@ func (e *Evaluator) browserLaunch(call *ast.CallExpression, args []runtime.Value
 		return nil, fmt.Errorf("browser.launch: %w", err)
 	}
 	e.browserMu.Lock()
-	id := e.nextBrowserID
-	e.nextBrowserID++
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.browsers)[id] = b
 	if e.browserSetups == nil {
 		e.browserSetups = map[*cdp.Browser]pageSetup{}
@@ -413,7 +412,7 @@ func noArgs(args []runtime.Value, name string) error {
 	return nil
 }
 
-func (e *Evaluator) pageInstance(p *cdp.Page) runtime.Value {
+func (e *Evaluator) pageInstance(owner *Evaluator, p *cdp.Page) runtime.Value {
 	e.browserMu.Lock()
 	defer e.browserMu.Unlock()
 	for pid, existing := range e.pages {
@@ -421,8 +420,7 @@ func (e *Evaluator) pageInstance(p *cdp.Page) runtime.Value {
 			return &runtime.Instance{Class: e.pageClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(pid)}}
 		}
 	}
-	pid := e.nextPageID
-	e.nextPageID++
+	pid := e.newHandleIDFor(owner)
 	ensureMap(&e.pages)[pid] = p
 	return &runtime.Instance{Class: e.pageClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(pid)}}
 }
@@ -436,7 +434,7 @@ func (e *Evaluator) openPage(b *cdp.Browser, contextID string, setup pageSetup) 
 		_ = p.Close()
 		return nil, err
 	}
-	return e.pageInstance(p), nil
+	return e.pageInstance(e.scope, p), nil
 }
 
 // listPages wraps the open page targets accepted by keep, attaching to any the program has not seen.
@@ -465,7 +463,7 @@ func (e *Evaluator) listPages(b *cdp.Browser, keep func(cdp.TargetInfo) bool) (r
 			}
 			pg.ContextID = info.ContextID
 		}
-		out = append(out, e.pageInstance(pg))
+		out = append(out, e.pageInstance(e.scope, pg))
 	}
 	return &runtime.List{Elements: out}, nil
 }
@@ -530,8 +528,7 @@ func (e *Evaluator) browserClass() *runtime.Class {
 		if e.browserContexts == nil {
 			e.browserContexts = map[int64]*browserContext{}
 		}
-		id := e.nextContextID
-		e.nextContextID++
+		id := e.newHandleID()
 		e.browserContexts[id] = &browserContext{browser: b, id: cid, setup: setup}
 		e.browserMu.Unlock()
 		return &runtime.Instance{Class: e.contextClass(), Fields: map[string]runtime.Value{"handle": runtime.NewInt64(id)}}, nil
@@ -562,16 +559,19 @@ func (e *Evaluator) browserClass() *runtime.Class {
 		e.browserMu.Lock()
 		b := e.browsers[id]
 		delete(e.browsers, id)
+		e.releaseHandle(id)
 		if b != nil {
 			delete(e.browserSetups, b)
 			for pid, pg := range e.pages {
 				if pg.Browser() == b {
 					delete(e.pages, pid)
+					e.releaseHandle(pid)
 				}
 			}
 			for cid, c := range e.browserContexts {
 				if c.browser == b {
 					delete(e.browserContexts, cid)
+					e.releaseHandle(cid)
 				}
 			}
 		}
@@ -692,10 +692,12 @@ func (e *Evaluator) contextClass() *runtime.Class {
 		e.browserMu.Lock()
 		c := e.browserContexts[id]
 		delete(e.browserContexts, id)
+		e.releaseHandle(id)
 		if c != nil {
 			for pid, pg := range e.pages {
 				if pg.Browser() == c.browser && pg.ContextID == c.id {
 					delete(e.pages, pid)
+					e.releaseHandle(pid)
 				}
 			}
 		}
@@ -750,7 +752,9 @@ func (e *Evaluator) handleFetchPaused(sessionID string, params json.RawMessage) 
 			defer callbackEval.Cleanup()
 			defer callbackEval.startDebugThread("browser fetch")()
 		}
-		result, err := callbackEval.applyFunction(callbackHandler, []runtime.Value{reqDict})
+		result, err := runtime.CallRecovering(func() (runtime.Value, error) {
+			return callbackEval.applyFunction(callbackHandler, []runtime.Value{reqDict})
+		})
 		if err != nil {
 			_, _ = page.Send("Fetch.failRequest", map[string]any{"requestId": ev.RequestID, "errorReason": "Failed"})
 			return

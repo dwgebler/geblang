@@ -30,6 +30,9 @@ client.close();
 Returns a `Socket` with:
 
 - `read(n)` / `readAll()` / `readLine()` / `lines()` - stream reads.
+  A line longer than 1 MiB raises `IOError`, and `readAll(maxBytes = 64 MiB)`
+  raises `IOError` past its cap (`0` for no limit); see
+  [Networking](14-http-net.md).
 - `write(buf)` / `writeln(buf)` - stream writes.
 - `close()` - shut the connection (idempotent).
 - `isClosed()` - state check.
@@ -63,6 +66,7 @@ globals propagate; local captures don't, same caveat as `watch.start`).
 The handler receives a typed `Socket` (the same type `sockets.dial`
 returns): `read` / `readLine` / `write` / `writeln` / `close`, the
 `for (line in conn)` line iterator, plus `localAddr()` / `remoteAddr()`.
+The connection is closed when the handler returns or throws.
 
 `server.close()` stops accepting and joins the goroutine so the next
 read of module-level state from the parent happens-after the last

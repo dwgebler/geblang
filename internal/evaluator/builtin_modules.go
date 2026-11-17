@@ -206,7 +206,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 				if err != nil {
 					return nil, err
 				}
-				handle, err := e.startProcessSpec(spec)
+				handle, err := e.startProcessSpec(e.callOwner(call), spec)
 				if err != nil {
 					return nil, err
 				}
@@ -217,7 +217,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 				if err != nil {
 					return nil, err
 				}
-				handle, err := e.startProcessSpec(spec)
+				handle, err := e.startProcessSpec(e.callOwner(call), spec)
 				if err != nil {
 					return nil, err
 				}
@@ -646,6 +646,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"replace":  e.registryBuiltin("re", "replace"),
 			"split":    e.registryBuiltin("re", "split"),
 			"compile":  e.registryBuiltin("re", "compile"),
+			"set":      e.registryBuiltin("re", "set"),
 		},
 		"pcre": {
 			"test":     e.registryBuiltin("pcre", "test"),
@@ -908,6 +909,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"parseIp":       netParseIP,
 			"parseCidr":     netParseCIDR,
 			"cidrContains":  netCIDRContains,
+			"ipSet":         netIPSet,
 			"cidrRange":     netCIDRRange,
 			"isIpv4":        netIsIPv4,
 			"isIpv6":        netIsIPv6,

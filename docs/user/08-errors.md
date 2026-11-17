@@ -210,6 +210,12 @@ if (configMissing) {
 }
 ```
 
+If the runtime itself fails while running an async task, a generator, or a
+signal, file-watch or server callback, that failure is raised as a
+`RuntimeError` whose message starts with `internal error:` in the code that
+awaits or consumes it, instead of stopping the whole program. Please report
+such errors; they indicate an interpreter bug.
+
 ## The `assert` Builtin (1.6.0)
 
 `assert(cond)` and `assert(cond, message)` are top-level builtins that

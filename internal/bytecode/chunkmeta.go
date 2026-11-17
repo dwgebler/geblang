@@ -50,12 +50,46 @@ type wrapperShape struct {
 	wrapperLen int
 }
 
-func (meta *chunkSharedMeta) poolFor(shape wrapperShape) *sync.Pool {
-	if p, ok := meta.vmPools.Load(shape); ok {
-		return p.(*sync.Pool)
+// wrapperVMPool keeps a few idle wrapper VMs across GCs (sync.Pool alone is emptied by every GC, so busy servers kept rebuilding them).
+type wrapperVMPool struct {
+	mu       sync.Mutex
+	free     []*VM
+	overflow sync.Pool
+}
+
+const wrapperVMPoolRetained = 64
+
+func (p *wrapperVMPool) Get() *VM {
+	p.mu.Lock()
+	if n := len(p.free); n > 0 {
+		vm := p.free[n-1]
+		p.free[n-1] = nil
+		p.free = p.free[:n-1]
+		p.mu.Unlock()
+		return vm
 	}
-	p, _ := meta.vmPools.LoadOrStore(shape, &sync.Pool{})
-	return p.(*sync.Pool)
+	p.mu.Unlock()
+	vm, _ := p.overflow.Get().(*VM)
+	return vm
+}
+
+func (p *wrapperVMPool) Put(vm *VM) {
+	p.mu.Lock()
+	if len(p.free) < wrapperVMPoolRetained {
+		p.free = append(p.free, vm)
+		p.mu.Unlock()
+		return
+	}
+	p.mu.Unlock()
+	p.overflow.Put(vm)
+}
+
+func (meta *chunkSharedMeta) poolFor(shape wrapperShape) *wrapperVMPool {
+	if p, ok := meta.vmPools.Load(shape); ok {
+		return p.(*wrapperVMPool)
+	}
+	p, _ := meta.vmPools.LoadOrStore(shape, &wrapperVMPool{})
+	return p.(*wrapperVMPool)
 }
 
 func newChunkSharedMeta() *chunkSharedMeta { return &chunkSharedMeta{} }

@@ -1056,6 +1056,8 @@ type CallExpression struct {
 	Callee        Expression
 	Arguments     []CallArgument
 	End           token.Token // closing paren, so the formatter can measure a multi-line call's end line
+	// NativeScope is set only on synthetic calls a VM worker makes for a request; it owns the handles the native opens.
+	NativeScope any
 }
 
 func (*CallExpression) expressionNode()        {}

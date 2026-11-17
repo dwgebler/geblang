@@ -19,6 +19,7 @@ import json;
 export class AnthropicClient implements contract.Client {
     string apiKey;
     string endpoint;
+    int timeoutMs;
     string apiVersion;
 
     func chat(list<dict<string, any>> messages, dict<string, any> opts): dict<string, any> {
@@ -156,6 +157,7 @@ export class AnthropicClient implements contract.Client {
     func post(string path, dict<string, any> payload): dict<string, any> {
         string body = json.stringify(payload);
         let resp = http.requestWithOptions({
+            "timeoutMs": this.timeoutMs,
             "method":  "POST",
             "url":     this.endpoint + path,
             "headers": {
@@ -189,6 +191,7 @@ export class AnthropicClient implements contract.Client {
 
     func get(string path): dict<string, any> {
         let resp = http.requestWithOptions({
+            "timeoutMs": this.timeoutMs,
             "method":  "GET",
             "url":     this.endpoint + path,
             "headers": {
@@ -218,6 +221,7 @@ export func connect(dict<string, any> opts): AnthropicClient {
     c.apiKey = opts["apiKey"] as string;
     c.endpoint = opts.contains("endpoint") ? (opts["endpoint"] as string) : "https://api.anthropic.com";
     c.apiVersion = opts.contains("apiVersion") ? (opts["apiVersion"] as string) : "2023-06-01";
+    c.timeoutMs = opts.contains("timeoutMs") ? (opts["timeoutMs"] as int) : 600000;
     return c;
 }
 

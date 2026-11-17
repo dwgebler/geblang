@@ -52,10 +52,10 @@ func (e *Evaluator) dbOpen(call *ast.CallExpression, args []runtime.Value) (runt
 	}
 	e.dbMu.Lock()
 	defer e.dbMu.Unlock()
-	e.nextDBID++
-	ensureMap(&e.dbs)[e.nextDBID] = db
-	ensureMap(&e.dbDrivers)[e.nextDBID] = driverName
-	return runtime.NewInt64(e.nextDBID), nil
+	hid := e.newHandleIDFor(e.callOwner(call))
+	ensureMap(&e.dbs)[hid] = db
+	ensureMap(&e.dbDrivers)[hid] = driverName
+	return runtime.NewInt64(hid), nil
 }
 
 // dbPing retries a busy first sqlite open: the WAL switch needs a lock that busy_timeout does not wait for.
@@ -228,9 +228,9 @@ func (e *Evaluator) dbBegin(call *ast.CallExpression, args []runtime.Value) (run
 	}
 	e.dbMu.Lock()
 	defer e.dbMu.Unlock()
-	e.nextTxID++
-	ensureMap(&e.txs)[e.nextTxID] = &dbTxHandle{tx: tx, driver: driver, cancel: cancel, ctx: ctx}
-	return runtime.NewInt64(e.nextTxID), nil
+	hid := e.newHandleIDFor(e.callOwner(call))
+	ensureMap(&e.txs)[hid] = &dbTxHandle{tx: tx, driver: driver, cancel: cancel, ctx: ctx}
+	return runtime.NewInt64(hid), nil
 }
 
 func (e *Evaluator) dbTxExec(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -381,9 +381,9 @@ func (e *Evaluator) dbPrepare(call *ast.CallExpression, args []runtime.Value) (r
 	}
 	e.dbMu.Lock()
 	defer e.dbMu.Unlock()
-	e.nextStmtID++
-	ensureMap(&e.stmts)[e.nextStmtID] = &dbStmtHandle{stmt: stmt, driver: driver, paramNames: paramNames}
-	return runtime.NewInt64(e.nextStmtID), nil
+	hid := e.newHandleIDFor(e.callOwner(call))
+	ensureMap(&e.stmts)[hid] = &dbStmtHandle{stmt: stmt, driver: driver, paramNames: paramNames}
+	return runtime.NewInt64(hid), nil
 }
 
 func (e *Evaluator) dbStmtExec(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -788,6 +788,7 @@ func (e *Evaluator) dbClose(call *ast.CallExpression, args []runtime.Value) (run
 	db, ok := e.dbs[handle]
 	if ok {
 		delete(e.dbs, handle)
+		e.releaseHandle(handle)
 		delete(e.dbDrivers, handle)
 	}
 	e.dbMu.Unlock()
@@ -805,9 +806,6 @@ func (e *Evaluator) dbHandle(value runtime.Value) (*sql.DB, error) {
 	e.dbMu.Lock()
 	db, ok := e.dbs[handle]
 	e.dbMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.dbHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown database handle %d", handle)
 	}
@@ -818,9 +816,6 @@ func (e *Evaluator) dbDriver(handle int64) (string, error) {
 	e.dbMu.Lock()
 	driver, ok := e.dbDrivers[handle]
 	e.dbMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.dbDriver(handle)
-	}
 	if !ok {
 		return "", fmt.Errorf("unknown database handle %d", handle)
 	}
@@ -843,9 +838,6 @@ func (e *Evaluator) txHandle(value runtime.Value) (*dbTxHandle, error) {
 	e.dbMu.Lock()
 	tx, ok := e.txs[handle]
 	e.dbMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.txHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown transaction handle %d", handle)
 	}
@@ -861,11 +853,9 @@ func (e *Evaluator) takeTxHandle(value runtime.Value) (*dbTxHandle, error) {
 	tx, ok := e.txs[handle]
 	if ok {
 		delete(e.txs, handle)
+		e.releaseHandle(handle)
 	}
 	e.dbMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.takeTxHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown transaction handle %d", handle)
 	}
@@ -880,9 +870,6 @@ func (e *Evaluator) stmtHandle(value runtime.Value) (*dbStmtHandle, error) {
 	e.dbMu.Lock()
 	stmt, ok := e.stmts[handle]
 	e.dbMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.stmtHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown statement handle %d", handle)
 	}
@@ -898,11 +885,9 @@ func (e *Evaluator) takeStmtHandle(value runtime.Value) (*dbStmtHandle, error) {
 	stmt, ok := e.stmts[handle]
 	if ok {
 		delete(e.stmts, handle)
+		e.releaseHandle(handle)
 	}
 	e.dbMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.takeStmtHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown statement handle %d", handle)
 	}

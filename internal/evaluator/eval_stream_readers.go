@@ -158,8 +158,7 @@ func (e *Evaluator) yamlReader(call *ast.CallExpression, args []runtime.Value) (
 	decoder := yamllib.NewDecoder(source.Reader)
 	e.yamlMu.Lock()
 	defer e.yamlMu.Unlock()
-	e.nextYAMLID++
-	id := e.nextYAMLID
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.yamlReaders)[id] = &yamlStreamReader{decoder: decoder}
 	return runtime.NativeObject{Kind: "YamlReader", ID: id}, nil
 }
@@ -167,6 +166,7 @@ func (e *Evaluator) yamlReader(call *ast.CallExpression, args []runtime.Value) (
 func (e *Evaluator) closeYAMLReader(id int64) {
 	e.yamlMu.Lock()
 	delete(e.yamlReaders, id)
+	e.releaseHandle(id)
 	e.yamlMu.Unlock()
 }
 
@@ -215,9 +215,6 @@ func (e *Evaluator) lookupYAMLReader(id int64) (*yamlStreamReader, error) {
 	e.yamlMu.Lock()
 	reader, ok := e.yamlReaders[id]
 	e.yamlMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.lookupYAMLReader(id)
-	}
 	if !ok {
 		return nil, fmt.Errorf("YamlReader is closed")
 	}
@@ -396,8 +393,7 @@ func (e *Evaluator) csvReader(call *ast.CallExpression, args []runtime.Value) (r
 	reader := csv.NewReader(source.Reader)
 	e.csvMu.Lock()
 	defer e.csvMu.Unlock()
-	e.nextCSVID++
-	id := e.nextCSVID
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.csvReaders)[id] = &csvStreamReader{reader: reader}
 	return runtime.NativeObject{Kind: "CsvReader", ID: id}, nil
 }
@@ -405,6 +401,7 @@ func (e *Evaluator) csvReader(call *ast.CallExpression, args []runtime.Value) (r
 func (e *Evaluator) closeCSVReader(id int64) {
 	e.csvMu.Lock()
 	delete(e.csvReaders, id)
+	e.releaseHandle(id)
 	e.csvMu.Unlock()
 }
 
@@ -453,9 +450,6 @@ func (e *Evaluator) lookupCSVReader(id int64) (*csvStreamReader, error) {
 	e.csvMu.Lock()
 	reader, ok := e.csvReaders[id]
 	e.csvMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.lookupCSVReader(id)
-	}
 	if !ok {
 		return nil, fmt.Errorf("CsvReader is closed")
 	}
@@ -595,8 +589,7 @@ func (e *Evaluator) xmlReader(call *ast.CallExpression, args []runtime.Value) (r
 	decoder := xml.NewDecoder(source.Reader)
 	e.xmlMu.Lock()
 	defer e.xmlMu.Unlock()
-	e.nextXMLID++
-	id := e.nextXMLID
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.xmlReaders)[id] = &xmlStreamReader{decoder: decoder, source: source.Text}
 	return runtime.NativeObject{Kind: "XmlReader", ID: id}, nil
 }
@@ -604,6 +597,7 @@ func (e *Evaluator) xmlReader(call *ast.CallExpression, args []runtime.Value) (r
 func (e *Evaluator) closeXMLReader(id int64) {
 	e.xmlMu.Lock()
 	delete(e.xmlReaders, id)
+	e.releaseHandle(id)
 	e.xmlMu.Unlock()
 }
 
@@ -690,9 +684,6 @@ func (e *Evaluator) lookupXMLReader(id int64) (*xmlStreamReader, error) {
 	e.xmlMu.Lock()
 	reader, ok := e.xmlReaders[id]
 	e.xmlMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.lookupXMLReader(id)
-	}
 	if !ok {
 		return nil, fmt.Errorf("XmlReader is closed")
 	}
@@ -805,8 +796,7 @@ func (e *Evaluator) jsonReader(call *ast.CallExpression, args []runtime.Value) (
 	decoder.UseNumber()
 	e.jsonMu.Lock()
 	defer e.jsonMu.Unlock()
-	e.nextJSONID++
-	id := e.nextJSONID
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.jsonReaders)[id] = &jsonStreamReader{decoder: decoder}
 	return runtime.NativeObject{Kind: "JsonReader", ID: id}, nil
 }
@@ -814,6 +804,7 @@ func (e *Evaluator) jsonReader(call *ast.CallExpression, args []runtime.Value) (
 func (e *Evaluator) closeJSONReader(id int64) {
 	e.jsonMu.Lock()
 	delete(e.jsonReaders, id)
+	e.releaseHandle(id)
 	e.jsonMu.Unlock()
 }
 
@@ -905,9 +896,6 @@ func (e *Evaluator) lookupJSONReader(id int64) (*jsonStreamReader, error) {
 	e.jsonMu.Lock()
 	reader, ok := e.jsonReaders[id]
 	e.jsonMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.lookupJSONReader(id)
-	}
 	if !ok {
 		return nil, fmt.Errorf("JsonReader is closed")
 	}

@@ -206,6 +206,11 @@ type VM struct {
 	requiresCallSitePolymorphism bool
 }
 
+// scopedHandlerLoader runs a cross-module isolated handler with an explicit native caller for its request scope.
+type scopedHandlerLoader interface {
+	CallModuleHandlerIsolatedScoped(fn runtime.Value, module string, args []runtime.Value, caller *VM, native StatefulNativeCaller) (runtime.Value, error)
+}
+
 type ModuleLoader interface {
 	LoadModule(canonical string, alias string) (*runtime.Module, error)
 	CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value, caller *VM) (runtime.Value, error)
@@ -512,6 +517,8 @@ func (e vmThrownError) Error() string {
 // ErrorClass exposes the carried Geblang error class so a typed throw
 // (e.g. TestSkip) survives the native-to-script boundary via runtime.TypedError.
 func (e vmThrownError) ErrorClass() string { return e.err.Class }
+
+func (e vmThrownError) Thrown() runtime.Error { return e.err }
 
 // vmFatalError marks a fault that try/catch must never intercept (VM
 // bytecode corruption, stack overflow). Run() routes ordinary runtime
@@ -6704,6 +6711,8 @@ func (e *vmRuntimeError) uncaught() *runtime.UncaughtError {
 
 func (e *vmRuntimeError) Error() string { return e.uncaught().Render() }
 
+func (e *vmRuntimeError) Thrown() runtime.Error { return e.toRuntimeError() }
+
 // toRuntimeError converts a dispatch-loop fault into a catchable runtime.Error, preserving frames.
 func (e *vmRuntimeError) toRuntimeError() runtime.Error {
 	return runtime.Error{
@@ -6752,6 +6761,10 @@ func (vm *VM) callPropagate(instruction Instruction, err error) error {
 	var classified runtime.TypedError
 	if errors.As(err, &classified) {
 		return vm.typedFault(instruction, classified.ErrorClass(), runtime.NewRecoverableError(err).Message)
+	}
+	// Untagged host errors (network, file) get the evaluator's classification so catch (IOError) matches on both backends.
+	if class := runtime.RecoverableErrorClass(err); class != "RuntimeError" {
+		return vm.typedFault(instruction, class, err.Error())
 	}
 	return vm.runtimeError(instruction, "%s", err.Error())
 }

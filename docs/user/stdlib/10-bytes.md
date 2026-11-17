@@ -166,7 +166,12 @@ pack accepts either `int` form.
 Import `compress`:
 
 - `gzip(value)`
-- `gunzip(bytes)`
+- `gunzip(bytes, maxBytes = 268435456)`
+
+`gunzip` raises `IOError` when the decompressed output would exceed
+`maxBytes` (256 MiB by default), so a small, highly compressed input cannot
+exhaust memory. Pass a larger limit for big trusted payloads, or `0` for no
+limit.
 
 ```gb
 import bytes;
@@ -184,10 +189,15 @@ The original eager functions remain available for small archives. Use the
 file-backed API below when archive entries may be large or when extracting
 untrusted archives.
 
-- `archive.zipRead(bytes)` and `archive.zipWrite(entries)`.
+- `archive.zipRead(bytes, maxBytes = 268435456)` and `archive.zipWrite(entries)`.
 - `archive.tarRead(bytes)` and `archive.tarWrite(entries)`.
-- `archive.tarGzRead(bytes)` and `archive.tarGzWrite(entries)`
+- `archive.tarGzRead(bytes, maxBytes = 268435456)` and `archive.tarGzWrite(entries)`
   for the common `.tar.gz` / `.tgz` shape.
+
+`zipRead` and `tarGzRead` raise `IOError` when the entries' total
+decompressed size would exceed `maxBytes` (256 MiB by default; `0` for no
+limit). `tarRead` needs no limit because an uncompressed tar is never larger
+than its input.
 
 Each reader returns a `list<dict<string, any>>` whose dicts
 carry `name` (string), `data` (bytes), `isDir` (bool), and

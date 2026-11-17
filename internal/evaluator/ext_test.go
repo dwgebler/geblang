@@ -433,7 +433,7 @@ func TestExtCallWithOptionsPassesNamedArguments(t *testing.T) {
 	}()
 
 	e := New(io.Discard)
-	handle := e.registerExtHandle(&extHandle{conn: client, functions: map[string]bool{"greet": true}})
+	handle := e.registerExtHandle(e.scope, &extHandle{conn: client, functions: map[string]bool{"greet": true}})
 	call := &ast.CallExpression{Arguments: []ast.CallArgument{
 		{Value: &ast.Literal{}},
 		{Value: &ast.Literal{}},
@@ -473,7 +473,7 @@ func TestExtCallWithOptionsRejectsOversizedResponse(t *testing.T) {
 	}()
 
 	e := New(io.Discard)
-	handle := e.registerExtHandle(&extHandle{conn: client, functions: map[string]bool{"large": true}})
+	handle := e.registerExtHandle(e.scope, &extHandle{conn: client, functions: map[string]bool{"large": true}})
 	options := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	putDict(options.Entries, "maxResponseBytes", runtime.NewInt64(16))
 	_, err := e.extCallWithOptions(nil, []runtime.Value{handle, runtime.String{Value: "large"}, options})
@@ -493,7 +493,7 @@ func TestExtCallWithOptionsTimesOut(t *testing.T) {
 	}()
 
 	e := New(io.Discard)
-	handle := e.registerExtHandle(&extHandle{conn: client, functions: map[string]bool{"slow": true}})
+	handle := e.registerExtHandle(e.scope, &extHandle{conn: client, functions: map[string]bool{"slow": true}})
 	options := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 	putDict(options.Entries, "timeoutMs", runtime.NewInt64(10))
 	_, err := e.extCallWithOptions(nil, []runtime.Value{handle, runtime.String{Value: "slow"}, options})

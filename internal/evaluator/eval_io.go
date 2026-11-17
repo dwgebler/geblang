@@ -493,9 +493,9 @@ func (e *Evaluator) ioOpen(call *ast.CallExpression, args []runtime.Value) (runt
 	}
 	e.fileMu.Lock()
 	defer e.fileMu.Unlock()
-	e.nextFileID++
-	ensureMap(&e.files)[e.nextFileID] = file
-	return runtime.NewInt64(e.nextFileID), nil
+	hid := e.newHandleIDFor(e.callOwner(call))
+	ensureMap(&e.files)[hid] = file
+	return runtime.NewInt64(hid), nil
 }
 
 func (e *Evaluator) ioMemory(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -513,14 +513,14 @@ func (e *Evaluator) ioMemory(call *ast.CallExpression, args []runtime.Value) (ru
 			return nil, fmt.Errorf("%s initial value must be string or bytes", call.Callee.String())
 		}
 	}
-	return e.registerIOStream(&ioStreamHandle{name: "memory", reader: mem, writer: mem, memory: mem}), nil
+	return e.registerIOStream(e.callOwner(call), &ioStreamHandle{name: "memory", reader: mem, writer: mem, memory: mem}), nil
 }
 
 func (e *Evaluator) ioStdout(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
 	}
-	return e.registerIOStream(&ioStreamHandle{name: "stdout", writer: writerFunc(func(p []byte) (int, error) {
+	return e.registerIOStream(e.callOwner(call), &ioStreamHandle{name: "stdout", writer: writerFunc(func(p []byte) (int, error) {
 		return e.stdout.Write(p)
 	})}), nil
 }
@@ -529,7 +529,7 @@ func (e *Evaluator) ioStderr(call *ast.CallExpression, args []runtime.Value) (ru
 	if len(args) != 0 {
 		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
 	}
-	return e.registerIOStream(&ioStreamHandle{name: "stderr", writer: writerFunc(func(p []byte) (int, error) {
+	return e.registerIOStream(e.callOwner(call), &ioStreamHandle{name: "stderr", writer: writerFunc(func(p []byte) (int, error) {
 		return e.stderr.Write(p)
 	})}), nil
 }
@@ -538,7 +538,7 @@ func (e *Evaluator) ioStdin(call *ast.CallExpression, args []runtime.Value) (run
 	if len(args) != 0 {
 		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
 	}
-	return e.registerIOStream(&ioStreamHandle{name: "stdin", reader: e.input, console: e.input}), nil
+	return e.registerIOStream(e.callOwner(call), &ioStreamHandle{name: "stdin", reader: e.input, console: e.input}), nil
 }
 
 type writerFunc func([]byte) (int, error)
@@ -549,12 +549,12 @@ type readerFunc func([]byte) (int, error)
 
 func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
 
-func (e *Evaluator) registerIOStream(handle *ioStreamHandle) runtime.Value {
+func (e *Evaluator) registerIOStream(owner *Evaluator, handle *ioStreamHandle) runtime.Value {
 	e.streamMu.Lock()
 	defer e.streamMu.Unlock()
-	e.nextStreamID++
-	ensureMap(&e.streams)[e.nextStreamID] = handle
-	return runtime.NativeObject{Kind: "IOStream", ID: e.nextStreamID}
+	hid := e.newHandleIDFor(owner)
+	ensureMap(&e.streams)[hid] = handle
+	return runtime.NativeObject{Kind: "IOStream", ID: hid}
 }
 
 func (e *Evaluator) ioStreamHandle(value runtime.Value) (*ioStreamHandle, error) {
@@ -565,9 +565,6 @@ func (e *Evaluator) ioStreamHandle(value runtime.Value) (*ioStreamHandle, error)
 	e.streamMu.Lock()
 	handle, ok := e.streams[stream.ID]
 	e.streamMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.ioStreamHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown stream handle %d", stream.ID)
 	}
@@ -635,18 +632,56 @@ func (e *Evaluator) ioRead(call *ast.CallExpression, args []runtime.Value) (runt
 }
 
 func (e *Evaluator) ioReadAll(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
+	if len(args) != 1 && len(args) != 2 {
+		return nil, fmt.Errorf("%s expects a handle and optional maxBytes", call.Callee.String())
+	}
+	limit, err := e.readTotalLimit(call, args)
+	if err != nil {
+		return nil, err
 	}
 	reader, err := e.ioReader(args[0])
 	if err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(reader)
+	if limit <= 0 {
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, err
+		}
+		return runtime.String{Value: string(data)}, nil
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
 	if err != nil {
 		return nil, err
 	}
+	if int64(len(data)) > limit {
+		return nil, streamTooLarge(limit)
+	}
 	return runtime.String{Value: string(data)}, nil
+}
+
+// maxNetworkReadAllBytes bounds readAll / readLines on a socket so a peer that never closes cannot exhaust memory.
+const maxNetworkReadAllBytes = 64 << 20
+
+// readTotalLimit returns the byte cap for a whole-stream read: an explicit maxBytes (0 = none), else the network default.
+func (e *Evaluator) readTotalLimit(call *ast.CallExpression, args []runtime.Value) (int64, error) {
+	if len(args) == 2 {
+		n, ok := native.AsInt64(args[1])
+		if !ok || n < 0 {
+			return 0, fmt.Errorf("%s maxBytes must be a non-negative int", call.Callee.String())
+		}
+		return n, nil
+	}
+	if stream, ok := isIOStreamKind(args[0]); ok {
+		if handle, err := e.ioStreamHandle(stream); err == nil && handle.network {
+			return maxNetworkReadAllBytes, nil
+		}
+	}
+	return 0, nil
+}
+
+func streamTooLarge(limit int64) error {
+	return runtime.ClassifiedError{Class: "IOError", Message: fmt.Sprintf("stream data exceeds %d bytes", limit)}
 }
 
 func (e *Evaluator) ioWrite(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -811,11 +846,9 @@ func (e *Evaluator) ioClose(call *ast.CallExpression, args []runtime.Value) (run
 		handle, ok := e.streams[stream.ID]
 		if ok {
 			delete(e.streams, stream.ID)
+			e.releaseHandle(stream.ID)
 		}
 		e.streamMu.Unlock()
-		if !ok && e.parent != nil {
-			return e.parent.ioClose(call, args)
-		}
 		if !ok {
 			return nil, fmt.Errorf("unknown stream handle %d", stream.ID)
 		}
@@ -829,6 +862,8 @@ func (e *Evaluator) ioClose(call *ast.CallExpression, args []runtime.Value) (run
 	file, ok := e.files[handle]
 	if ok {
 		delete(e.files, handle)
+		delete(e.bufReaders, handle)
+		e.releaseHandle(handle)
 	}
 	e.fileMu.Unlock()
 	if !ok {
@@ -868,7 +903,7 @@ func (e *Evaluator) ioCaptureStdout(call *ast.CallExpression, args []runtime.Val
 		e.stdout = previous
 	}
 	e.stdout = mem
-	value := e.registerIOStream(handle).(runtime.NativeObject)
+	value := e.registerIOStream(e.callOwner(call), handle).(runtime.NativeObject)
 	value.Kind = "IOCapture"
 	return value, nil
 }
@@ -884,7 +919,7 @@ func (e *Evaluator) ioCaptureStderr(call *ast.CallExpression, args []runtime.Val
 		e.stderr = previous
 	}
 	e.stderr = mem
-	value := e.registerIOStream(handle).(runtime.NativeObject)
+	value := e.registerIOStream(e.callOwner(call), handle).(runtime.NativeObject)
 	value.Kind = "IOCapture"
 	return value, nil
 }
@@ -951,8 +986,7 @@ func (e *Evaluator) ioBuffer(call *ast.CallExpression, args []runtime.Value) (ru
 	}
 	e.bufferMu.Lock()
 	defer e.bufferMu.Unlock()
-	e.nextBufferID++
-	id := e.nextBufferID
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.buffers)[id] = &bytes.Buffer{}
 	return runtime.NativeObject{Kind: "IOBuffer", ID: id}, nil
 }
@@ -1075,9 +1109,6 @@ func (e *Evaluator) fileBufReader(handle int64) (*bufio.Reader, error) {
 	}
 	file, ok := e.files[handle]
 	if !ok {
-		if e.parent != nil {
-			return e.parent.fileBufReader(handle)
-		}
 		return nil, fmt.Errorf("unknown file handle %d", handle)
 	}
 	r := bufio.NewReader(file)
@@ -1110,7 +1141,7 @@ func (e *Evaluator) ioReadLine(call *ast.CallExpression, args []runtime.Value) (
 		if handle.bufReader == nil {
 			handle.bufReader = bufio.NewReader(handle.reader)
 		}
-		line, err := handle.bufReader.ReadString('\n')
+		line, err := readLineLimited(handle.bufReader, handle.lineLimit())
 		if err != nil && err != io.EOF {
 			return nil, err
 		}
@@ -1140,10 +1171,16 @@ func (e *Evaluator) ioReadLine(call *ast.CallExpression, args []runtime.Value) (
 }
 
 func (e *Evaluator) ioReadLines(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
+	if len(args) != 1 && len(args) != 2 {
+		return nil, fmt.Errorf("%s expects a handle and optional maxBytes", call.Callee.String())
 	}
+	total, err := e.readTotalLimit(call, args)
+	if err != nil {
+		return nil, err
+	}
+	var consumed int64
 	var r *bufio.Reader
+	limit := 0
 	if stream, ok := isIOStreamKind(args[0]); ok {
 		handle, err := e.ioStreamHandle(stream)
 		if err != nil {
@@ -1170,6 +1207,7 @@ func (e *Evaluator) ioReadLines(call *ast.CallExpression, args []runtime.Value) 
 			handle.bufReader = bufio.NewReader(handle.reader)
 		}
 		r = handle.bufReader
+		limit = handle.lineLimit()
 	} else {
 		handle, err := fileHandleID(args[0])
 		if err != nil {
@@ -1182,7 +1220,11 @@ func (e *Evaluator) ioReadLines(call *ast.CallExpression, args []runtime.Value) 
 	}
 	var lines []runtime.Value
 	for {
-		line, readErr := r.ReadString('\n')
+		line, readErr := readLineLimited(r, limit)
+		consumed += int64(len(line))
+		if total > 0 && consumed > total {
+			return nil, streamTooLarge(total)
+		}
 		line = strings.TrimRight(line, "\r\n")
 		if line != "" || readErr == nil {
 			lines = append(lines, runtime.String{Value: line})
@@ -1195,6 +1237,42 @@ func (e *Evaluator) ioReadLines(call *ast.CallExpression, args []runtime.Value) 
 		}
 	}
 	return &runtime.List{Elements: lines}, nil
+}
+
+// maxNetworkLineBytes bounds one line read from a socket so a peer that never sends a newline cannot exhaust memory.
+const maxNetworkLineBytes = 1 << 20
+
+func (h *ioStreamHandle) lineLimit() int {
+	if h.network {
+		return maxNetworkLineBytes
+	}
+	return 0
+}
+
+// readLineLimited is bufio.Reader.ReadString('\n') with an optional byte limit; limit <= 0 means unlimited.
+func readLineLimited(r *bufio.Reader, limit int) (string, error) {
+	if limit <= 0 {
+		return r.ReadString('\n')
+	}
+	var line []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		line = append(line, chunk...)
+		if err == bufio.ErrBufferFull {
+			if len(line) > limit+1 {
+				return "", networkLineTooLong(limit)
+			}
+			continue
+		}
+		if len(strings.TrimRight(string(line), "\r\n")) > limit {
+			return "", networkLineTooLong(limit)
+		}
+		return string(line), err
+	}
+}
+
+func networkLineTooLong(limit int) error {
+	return runtime.ClassifiedError{Class: "IOError", Message: fmt.Sprintf("line exceeds %d bytes", limit)}
 }
 
 func fileInfoDict(name string, info os.FileInfo) runtime.Dict {
@@ -1565,27 +1643,21 @@ func (e *Evaluator) fileHandle(value runtime.Value) (*os.File, error) {
 	e.fileMu.Lock()
 	file, ok := e.files[handle]
 	e.fileMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.fileHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown file handle %d", handle)
 	}
 	return file, nil
 }
 
-// invalidateBufReader drops the cached line reader for a handle (across the
-// parent chain) so a reposition or content change re-syncs the next readLine.
+// invalidateBufReader drops a handle's cached line reader so a reposition or content change re-syncs the next readLine.
 func (e *Evaluator) invalidateBufReader(value runtime.Value) {
 	handle, err := fileHandleID(value)
 	if err != nil {
 		return
 	}
-	for cur := e; cur != nil; cur = cur.parent {
-		cur.fileMu.Lock()
-		delete(cur.bufReaders, handle)
-		cur.fileMu.Unlock()
-	}
+	e.fileMu.Lock()
+	delete(e.bufReaders, handle)
+	e.fileMu.Unlock()
 }
 
 // bufferedCount returns the bytes a cached line reader has read ahead but not yet
@@ -1595,13 +1667,11 @@ func (e *Evaluator) bufferedCount(value runtime.Value) int {
 	if err != nil {
 		return 0
 	}
-	for cur := e; cur != nil; cur = cur.parent {
-		cur.fileMu.Lock()
-		r, ok := cur.bufReaders[handle]
-		cur.fileMu.Unlock()
-		if ok {
-			return r.Buffered()
-		}
+	e.fileMu.Lock()
+	r, ok := e.bufReaders[handle]
+	e.fileMu.Unlock()
+	if ok {
+		return r.Buffered()
 	}
 	return 0
 }
@@ -1754,9 +1824,6 @@ func (e *Evaluator) bufferHandle(id int64) (*bytes.Buffer, error) {
 	e.bufferMu.Lock()
 	buffer, ok := e.buffers[id]
 	e.bufferMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.bufferHandle(id)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown buffer handle %d", id)
 	}
@@ -1767,9 +1834,6 @@ func (e *Evaluator) writeBuffer(id int64, text string) (runtime.Value, error) {
 	e.bufferMu.Lock()
 	buffer, ok := e.buffers[id]
 	e.bufferMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.writeBuffer(id, text)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown buffer handle %d", id)
 	}
@@ -1792,9 +1856,6 @@ func (e *Evaluator) resetBuffer(id int64) (runtime.Value, error) {
 	e.bufferMu.Lock()
 	buffer, ok := e.buffers[id]
 	e.bufferMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.resetBuffer(id)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown buffer handle %d", id)
 	}
@@ -1807,11 +1868,9 @@ func (e *Evaluator) closeBuffer(id int64) (runtime.Value, error) {
 	_, ok := e.buffers[id]
 	if ok {
 		delete(e.buffers, id)
+		e.releaseHandle(id)
 	}
 	e.bufferMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.closeBuffer(id)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown buffer handle %d", id)
 	}
@@ -1899,10 +1958,10 @@ func (e *Evaluator) ioStreamMethod(stream runtime.NativeObject, name string, arg
 		}
 		return e.ioReadBytes(call, []runtime.Value{stream, args[0]})
 	case "readAll":
-		if len(args) != 0 {
-			return nil, fmt.Errorf("%s.%s expects no arguments", stream.Kind, name)
+		if len(args) > 1 {
+			return nil, fmt.Errorf("%s.%s expects optional maxBytes", stream.Kind, name)
 		}
-		return e.ioReadAll(call, []runtime.Value{stream})
+		return e.ioReadAll(call, append([]runtime.Value{stream}, args...))
 	case "toString":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.%s expects no arguments", stream.Kind, name)

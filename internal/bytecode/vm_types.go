@@ -1015,8 +1015,11 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 	if typeParams[spec.baseLower] {
 		return true
 	}
-	if aliased, ok := vm.aliasedTypeSpec(spec); ok {
-		spec = aliased
+	// Checked here so built-in kinds skip copying the spec into the alias lookup.
+	if spec.kind == vmTypeOther {
+		if aliased, ok := vm.aliasedTypeSpec(spec); ok {
+			spec = aliased
+		}
 	}
 	if spec.kind == vmTypeAny {
 		return true

@@ -14,6 +14,8 @@ var ambientNativeTypeNames = map[string]struct{}{
 	"Connection": {}, "Transaction": {}, "Statement": {}, "Rows": {},
 	// test
 	"Test": {},
+	// re / pcre / net
+	"Pattern": {}, "RegexSet": {}, "IpSet": {},
 	// stream interfaces
 	"JsonStreamInterface": {}, "XmlStreamInterface": {},
 	"YamlStreamInterface": {}, "CsvStreamInterface": {}, "LogInterface": {},

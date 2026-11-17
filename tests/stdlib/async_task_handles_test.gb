@@ -1,0 +1,123 @@
+/**
+ * @title Native handles across async tasks (1.42.2)
+ * @summary A handle opened by a parent is usable and closable from a task it
+ * spawns, a handle opened by a task is usable by its parent, a task's own
+ * connections never shadow the parent's, and trace spans and metrics
+ * recorded in tasks and request handlers land in the program's shared
+ * registries.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import http;
+import net;
+import async;
+import async.channel as ch;
+import metrics;
+import trace;
+import web.websocket as ws;
+
+class AsyncTaskHandlesTest extends test.Test {
+    @tag("integration")
+    @test
+    func closingFromATaskUnblocksTheReader(): void {
+        let results = ch.Channel<string>(1);
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return ws.upgrade(func(ws.Connection conn): void {
+                let closer = async.run(func(): void {
+                    await async.sleep(20);
+                    conn.close();
+                });
+                string outcome = "returned";
+                try {
+                    conn.readText();
+                } catch (Error e) {
+                    outcome = "raised";
+                }
+                async.await(closer);
+                results.send(outcome);
+            });
+        }, {"shareHandler": true});
+        let c = ws.connect("ws://${http.serverAddr(server)}/");
+        bool clientSawClose = false;
+        try {
+            c.readText();
+        } catch (Error e) {
+            clientSawClose = true;
+        }
+        let outcome = results.recv();
+        http.close(server);
+        this.assertTrue(clientSawClose);
+        this.assertEquals("raised", outcome);
+    }
+
+    @tag("integration")
+    @test
+    func taskSendsReachTheIntendedConnection(): void {
+        let received = ch.Channel<string>(1);
+        let other = http.listen(
+            "127.0.0.1:0",
+            func(dict<string, any> request): dict<string, any> { return ws.upgrade(func(ws.Connection conn): void { received.send(conn.readText()); }); },
+            {"shareHandler": true}
+        );
+        let otherAddr = http.serverAddr(other);
+        let main = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return ws.upgrade(func(ws.Connection conn): void {
+                async.await(async.run(func(): void {
+                    let side = ws.connect("ws://${otherAddr}/");
+                    conn.sendText("for main");
+                    side.sendText("for other");
+                    side.close();
+                }));
+                conn.close();
+            });
+        }, {"shareHandler": true});
+        let c = ws.connect("ws://${http.serverAddr(main)}/");
+        let mainGot = c.readText();
+        let otherGot = received.recv();
+        http.close(main);
+        http.close(other);
+        this.assertEquals("for main", mainGot);
+        this.assertEquals("for other", otherGot);
+    }
+
+    @tag("integration")
+    @test
+    func handlesCrossTheTaskBoundaryBothWays(): void {
+        let parentOwned = net.listenTcp("127.0.0.1:0");
+        async.await(async.run(func(): void { net.close(parentOwned); }));
+        this.assertThrows(func(): void { net.localAddr(parentOwned); });
+
+        let taskOwned = async.await(async.run(func(): any { return net.listenTcp("127.0.0.1:0"); }));
+        this.assertTrue(net.localAddr(taskOwned) != "");
+        net.close(taskOwned);
+    }
+
+    @tag("integration")
+    @test
+    func tracesAndMetricsFromTasksAndRequestsAreShared(): void {
+        metrics.reset();
+        trace.reset();
+        let span = trace.start("outer");
+        async.await(async.run(func(): void {
+            trace.end(span);
+            trace.end(trace.start("task-span"));
+            metrics.inc("task");
+        }));
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            metrics.inc("request");
+            trace.end(trace.start("request-span"));
+            return {"status": 200, "body": "ok"};
+        });
+        http.get("http://${http.serverAddr(server)}/");
+        http.close(server);
+
+        this.assertEquals(1, metrics.get("task") as int);
+        this.assertEquals(1, metrics.get("request") as int);
+        list<string> names = [];
+        for (s in trace.snapshot()) {
+            names.push((s as dict<string, any>)["name"] as string);
+        }
+        this.assertEquals(["outer", "request-span", "task-span"], names.sorted());
+    }
+}

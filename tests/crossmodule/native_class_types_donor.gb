@@ -1,0 +1,12 @@
+module native_class_types_donor;
+
+import re;
+import net;
+
+export func describe(re.Pattern pattern, re.RegexSet set, net.IpSet ips): string {
+    return "${pattern.test("aa")} ${set.match("b")} ${ips.contains("10.1.1.1")}";
+}
+
+export func blocklist(): net.IpSet {
+    return net.ipSet(["10.0.0.0/8"]);
+}

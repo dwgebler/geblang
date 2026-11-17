@@ -322,7 +322,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"ulid": {},
 	},
 	"re": {
-		"match": {}, "matchAll": {}, "find": {}, "findAll": {}, "replace": {}, "split": {}, "test": {}, "compile": {},
+		"match": {}, "matchAll": {}, "find": {}, "findAll": {}, "replace": {}, "split": {}, "test": {}, "compile": {}, "set": {},
 	},
 	"pcre": {
 		"match": {}, "matchAll": {}, "find": {}, "findAll": {}, "replace": {}, "split": {}, "test": {}, "quote": {}, "compile": {},

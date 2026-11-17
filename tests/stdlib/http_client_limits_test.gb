@@ -1,0 +1,62 @@
+/**
+ * @title HTTP client response cap and timeout (1.42.2)
+ * @summary Client responses are capped at 64 MiB by default; maxResponseBytes
+ * on requestWithOptions, newClient and Client.request tightens or (with 0)
+ * lifts the cap, and timeoutMs raises TimeoutError.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import http;
+import async;
+
+func clientLimitsHandler(dict<string, any> r): dict<string, any> {
+    if (r["path"] == "/huge") {
+        return {"status": 200, "body": "h".repeat(64 * 1024 * 1024 + 1)};
+    }
+    if (r["path"] == "/slow") {
+        await async.sleep(1500);
+        return {"status": 200, "body": "late"};
+    }
+    return {"status": 200, "body": "x".repeat(200)};
+}
+
+class HttpClientLimitsTest extends test.Test {
+    @tag("integration")
+    @test
+    func responsesAreCappedAtSixtyFourMebibytesByDefault(): void {
+        let s = http.listen("127.0.0.1:0", clientLimitsHandler);
+        let base = "http://${http.serverAddr(s)}";
+        this.assertThrows(func(): void { http.get(base + "/huge"); }, "exceeds 67108864 bytes");
+        let lifted = http.requestWithOptions({"url": base + "/huge", "maxResponseBytes": 0});
+        http.close(s);
+        this.assertEquals(64 * 1024 * 1024 + 1, (lifted["body"] as string).length());
+    }
+
+    @tag("integration")
+    @test
+    func capsApplyPerRequestAndPerClient(): void {
+        let s = http.listen("127.0.0.1:0", clientLimitsHandler);
+        let base = "http://${http.serverAddr(s)}";
+        this.assertThrows(func(): void { http.requestWithOptions({"url": base + "/", "maxResponseBytes": 100}); }, "exceeds 100 bytes");
+        let c = http.newClient({"maxResponseBytes": 100});
+        this.assertThrows(func(): void { c.get(base + "/"); }, "exceeds 100 bytes");
+        let overridden = c.request({"url": base + "/", "maxResponseBytes": 1000});
+        http.close(s);
+        this.assertEquals(200, (overridden["body"] as string).length());
+    }
+
+    @tag("integration")
+    @test
+    func timeoutRaisesTimeoutError(): void {
+        let s = http.listen("127.0.0.1:0", clientLimitsHandler);
+        string outcome = "returned";
+        try {
+            http.requestWithOptions({"url": "http://${http.serverAddr(s)}/slow", "timeoutMs": 300});
+        } catch (TimeoutError e) {
+            outcome = "TimeoutError";
+        }
+        http.close(s);
+        this.assertEquals("TimeoutError", outcome);
+    }
+}

@@ -1,0 +1,71 @@
+/**
+ * @title Request-scoped handles (1.42.2)
+ * @summary A handle opened while serving a request, in the handler, in a
+ * task it awaits, or in a handler declared in another module, is closed
+ * when the request ends on both backends; handles opened outside requests
+ * stay open, and shareHandler handlers still persist module-global writes.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import http;
+import net;
+import async;
+import async.channel as ch;
+import request_scope_donor as donor;
+
+class RequestScopedHandlesTest extends test.Test {
+    func stillOpen(any h): bool {
+        try {
+            net.localAddr(h);
+            return true;
+        } catch (Error e) {
+            return false;
+        }
+    }
+
+    @tag("integration")
+    @test
+    func handlesCloseWhenTheRequestEnds(): void {
+        let handles = ch.Channel<any>(4);
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            handles.send(net.listenTcp("127.0.0.1:0"));
+            handles.send(async.await(async.run(func(): any { return net.listenTcp("127.0.0.1:0"); })));
+            return {"status": 200, "body": "ok"};
+        }, {"shareHandler": true});
+        http.get("http://${http.serverAddr(server)}/");
+        let fromHandler = handles.recv();
+        let fromTask = handles.recv();
+        http.close(server);
+        this.assertFalse(this.stillOpen(fromHandler));
+        this.assertFalse(this.stillOpen(fromTask));
+    }
+
+    @tag("integration")
+    @test
+    func crossModuleHandlersAreScopedAndKeepTheirGlobals(): void {
+        let handles = ch.Channel<any>(4);
+        let before = donor.servedCount();
+        let server = http.listen("127.0.0.1:0", donor.handlerFor(handles), {"shareHandler": true});
+        http.get("http://${http.serverAddr(server)}/");
+        http.get("http://${http.serverAddr(server)}/");
+        let first = handles.recv();
+        handles.recv();
+        http.close(server);
+        this.assertFalse(this.stillOpen(first));
+        this.assertEquals(before + 2, donor.servedCount());
+    }
+
+    @tag("integration")
+    @test
+    func handlesOutsideRequestsStayOpen(): void {
+        let listener = net.listenTcp("127.0.0.1:0");
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return {"status": 200, "body": "ok"};
+        });
+        http.get("http://${http.serverAddr(server)}/");
+        http.close(server);
+        this.assertTrue(this.stillOpen(listener));
+        net.close(listener);
+    }
+}

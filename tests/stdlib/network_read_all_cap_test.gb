@@ -1,0 +1,56 @@
+/**
+ * @title Whole-stream reads on sockets are capped (1.42.2)
+ * @summary readAll and readLines on a socket stream stop at 64 MiB by
+ * default and raise IOError, so a peer that never closes cannot exhaust
+ * memory; maxBytes tightens the cap or (with 0) removes it, and file
+ * reads are not capped.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import io;
+import net;
+import sockets;
+import async.channel as ch;
+
+class NetworkReadAllCapTest extends test.Test {
+    @tag("integration")
+    @test
+    func capsApplyToSocketsOnly(): void {
+        let release = ch.Channel<bool>(1);
+        let srv = net.serve("127.0.0.1", 0, func(dict<string, any> sock): void {
+            let mode = net.read(sock["handle"], 8) as string;
+            if (mode == "big") {
+                net.write(sock["handle"], "b".repeat(64 * 1024 * 1024 + 1) as bytes);
+                release.recv();
+            } else if (mode == "lines") {
+                for (let int i = 0; i < 30; i++) {
+                    net.write(sock["handle"], ("l".repeat(100) + "\n") as bytes);
+                }
+            } else {
+                net.write(sock["handle"], "small data" as bytes);
+            }
+        });
+        let port = (srv["localAddr"] as string).split(":")[1] as int;
+        func dial(string mode): any {
+            let c = sockets.dial("127.0.0.1", port);
+            c.write(mode);
+            return c;
+        }
+        let big = dial("big");
+        this.assertThrows(func(): void { big.readAll(); }, "stream data exceeds 67108864 bytes");
+        release.send(true);
+        big.close();
+        this.assertThrows(func(): void { dial("small").readAll(5); }, "stream data exceeds 5 bytes");
+        this.assertEquals("small data", dial("small").readAll(0));
+        this.assertEquals("small data", dial("small").readAll());
+        this.assertThrows(func(): void { io.readLines(dial("lines").stream.handle, 1000); }, "stream data exceeds 1000 bytes");
+        this.assertEquals(30, io.readLines(dial("lines").stream.handle).length());
+        net.closeListener(srv["handle"]);
+
+        string path = io.tempDir("readallcap_") + "/f.txt";
+        io.writeText(path, "file contents");
+        let f = io.open(path, "r");
+        this.assertEquals("file contents", io.readAll(f));
+    }
+}

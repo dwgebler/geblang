@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -18,6 +19,12 @@ import (
 type TypedError interface {
 	error
 	ErrorClass() string
+}
+
+// ThrownError carries the Geblang error value a script threw.
+type ThrownError interface {
+	error
+	Thrown() Error
 }
 
 type ClassifiedError struct {
@@ -134,4 +141,14 @@ func recoverableErrorMessage(err error) string {
 		return msg
 	}
 	return err.Error()
+}
+
+// CallRecovering runs f and turns a Go panic into a RuntimeError so one failing task cannot take down the process.
+func CallRecovering(f func() (Value, error)) (value Value, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			value, err = Null{}, ClassifiedError{Class: "RuntimeError", Message: fmt.Sprintf("internal error: %v", r)}
+		}
+	}()
+	return f()
 }

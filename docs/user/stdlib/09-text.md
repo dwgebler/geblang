@@ -337,6 +337,27 @@ for a single hot pattern, and steadier when several patterns are
 used in the same loop (each compiled form is retained, where the
 plain functions share one most-recent-pattern cache slot).
 
+### Pattern sets (1.42.2)
+
+`re.set(patterns)` compiles a list of patterns into one `RegexSet` that
+scans text once, which is much faster than testing each pattern in turn
+when you need to know whether any of many signatures appear:
+
+```gb
+let signatures = re.set(["(?i)\\bunion\\s+select\\b", "(?i)<script\\b", "\\.\\./"]);
+let hit = signatures.match(input);   # index of the matching pattern, or -1
+if (hit >= 0) { io.println("matched pattern ${hit}"); }
+```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `match(text)` | `int` | Index of the pattern behind the leftmost match in `text`; when several match at the same position the lower index wins. `-1` when none match. |
+| `test(text)` | `bool` | True when any pattern matches. |
+| `size()` | `int` | Number of patterns. |
+
+Each pattern keeps its own flags and groups: a leading `(?i)` applies only
+to that pattern. Invalid patterns raise `ValueError` when the set is built.
+
 ### Match results
 
 `re.match` and `re.matchAll` return dicts in the same shape:

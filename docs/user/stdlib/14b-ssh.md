@@ -67,6 +67,11 @@ as `streams.IOStream` values - the same shape as
 `proc.Process`. Use it for long-running commands or when
 you need to stream input through stdin.
 
+Because the remote host controls what arrives on `stdout` and `stderr`,
+they have the same limits as sockets: a line read is capped at 1 MiB and
+`readAll` / `readLines` at 64 MiB in total (pass `maxBytes` to change it,
+`0` for no limit); going over raises `IOError`.
+
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `wait()` | `int` | Block until exit, return exit code |

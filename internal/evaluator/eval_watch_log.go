@@ -191,8 +191,7 @@ func (e *Evaluator) watchStart(call *ast.CallExpression, args []runtime.Value) (
 	}
 	handle := &watchHandle{watcher: watcher, done: make(chan struct{})}
 	e.watchMu.Lock()
-	e.nextWatchID++
-	id := e.nextWatchID
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.watches)[id] = handle
 	e.watchMu.Unlock()
 	handle.wg.Add(1)
@@ -222,7 +221,7 @@ func (e *Evaluator) dispatchWatchEvents(handle *watchHandle, callback runtime.Fu
 			eventDict := runtime.DictFromEntries(map[string]runtime.DictEntry{}, nil)
 			putDictV(eventDict, "path", runtime.String{Value: event.Name})
 			putDictV(eventDict, "type", runtime.String{Value: fsnotifyEventType(event.Op)})
-			_, _ = child.applyFunction(callback, []runtime.Value{eventDict})
+			_, _ = runtime.CallRecovering(func() (runtime.Value, error) { return child.applyFunction(callback, []runtime.Value{eventDict}) })
 		case _, ok := <-handle.watcher.Errors:
 			if !ok {
 				return
@@ -245,12 +244,10 @@ func (e *Evaluator) watchStop(call *ast.CallExpression, args []runtime.Value) (r
 	handle, ok := e.watches[id]
 	if ok {
 		delete(e.watches, id)
+		e.releaseHandle(id)
 	}
 	e.watchMu.Unlock()
 	if !ok {
-		if e.parent != nil {
-			return e.parent.watchStop(call, args)
-		}
 		return runtime.Null{}, nil
 	}
 	return runtime.Null{}, stopWatchHandle(handle)
@@ -274,14 +271,14 @@ func (e *Evaluator) logStdout(call *ast.CallExpression, args []runtime.Value) (r
 	if len(args) != 0 {
 		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
 	}
-	return e.registerLogger(&loggerHandle{target: "stdout", writer: e.stdout}), nil
+	return e.registerLogger(e.callOwner(call), &loggerHandle{target: "stdout", writer: e.stdout}), nil
 }
 
 func (e *Evaluator) logStderr(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
 	}
-	return e.registerLogger(&loggerHandle{target: "stderr", writer: e.stderr}), nil
+	return e.registerLogger(e.callOwner(call), &loggerHandle{target: "stderr", writer: e.stderr}), nil
 }
 
 func (e *Evaluator) logFile(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -293,7 +290,7 @@ func (e *Evaluator) logFile(call *ast.CallExpression, args []runtime.Value) (run
 	if err != nil {
 		return nil, err
 	}
-	return e.registerLogger(&loggerHandle{target: path, writer: file, closer: file}), nil
+	return e.registerLogger(e.callOwner(call), &loggerHandle{target: path, writer: file, closer: file}), nil
 }
 
 // logToStream returns a logger that writes JSON log lines to the
@@ -322,7 +319,7 @@ func (e *Evaluator) logToStream(call *ast.CallExpression, args []runtime.Value) 
 	if stream.writer == nil {
 		return nil, fmt.Errorf("%s stream is not writable", call.Callee.String())
 	}
-	return e.registerLogger(&loggerHandle{target: stream.name, writer: stream.writer}), nil
+	return e.registerLogger(e.callOwner(call), &loggerHandle{target: stream.name, writer: stream.writer}), nil
 }
 
 func (e *Evaluator) logCustom(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -336,7 +333,7 @@ func (e *Evaluator) logCustom(call *ast.CallExpression, args []runtime.Value) (r
 	if _, ok := lookupMethod(handler.Class, "handle"); !ok {
 		return nil, fmt.Errorf("%s handler must implement handle(level, message, fields)", call.Callee.String())
 	}
-	return e.registerLogger(&loggerHandle{target: handler.Class.Name, handler: handler}), nil
+	return e.registerLogger(e.callOwner(call), &loggerHandle{target: handler.Class.Name, handler: handler}), nil
 }
 
 func (e *Evaluator) logInfo(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -438,6 +435,7 @@ func (e *Evaluator) logClose(call *ast.CallExpression, args []runtime.Value) (ru
 	logger, ok := e.loggers[handle]
 	if ok {
 		delete(e.loggers, handle)
+		e.releaseHandle(handle)
 	}
 	e.logMu.Unlock()
 	if !ok {
@@ -449,12 +447,12 @@ func (e *Evaluator) logClose(call *ast.CallExpression, args []runtime.Value) (ru
 	return runtime.Null{}, nil
 }
 
-func (e *Evaluator) registerLogger(logger *loggerHandle) runtime.Value {
+func (e *Evaluator) registerLogger(owner *Evaluator, logger *loggerHandle) runtime.Value {
 	e.logMu.Lock()
 	defer e.logMu.Unlock()
-	e.nextLogID++
-	ensureMap(&e.loggers)[e.nextLogID] = logger
-	return runtime.NewInt64(e.nextLogID)
+	hid := e.newHandleIDFor(owner)
+	ensureMap(&e.loggers)[hid] = logger
+	return runtime.NewInt64(hid)
 }
 
 func (e *Evaluator) loggerHandle(value runtime.Value) (*loggerHandle, error) {
@@ -465,9 +463,6 @@ func (e *Evaluator) loggerHandle(value runtime.Value) (*loggerHandle, error) {
 	e.logMu.Lock()
 	logger, ok := e.loggers[handle]
 	e.logMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.loggerHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown logger handle %d", handle)
 	}

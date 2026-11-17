@@ -73,7 +73,7 @@ func httpRequestFromBuilder(this *runtime.Instance) (*http.Request, *http.Client
 			}
 		}
 	}
-	client := http.DefaultClient
+	client := defaultHTTPClient
 	if msField, ok := this.Fields["_timeoutMs"]; ok {
 		if ms, ok := native.AsInt64(msField); ok {
 			client = &http.Client{Timeout: time.Duration(ms) * time.Millisecond}
@@ -188,7 +188,7 @@ func (e *Evaluator) httpRequest(call *ast.CallExpression, args []runtime.Value) 
 			return nil, err
 		}
 	}
-	return doHTTPRequest(http.DefaultClient, req)
+	return doHTTPRequest(defaultHTTPClient, req)
 }
 
 func httpGet(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -208,7 +208,7 @@ func httpGet(call *ast.CallExpression, args []runtime.Value) (runtime.Value, err
 			return nil, err
 		}
 	}
-	return doHTTPRequest(http.DefaultClient, req)
+	return doHTTPRequest(defaultHTTPClient, req)
 }
 
 func (e *Evaluator) httpPost(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -232,7 +232,7 @@ func (e *Evaluator) httpPost(call *ast.CallExpression, args []runtime.Value) (ru
 			return nil, err
 		}
 	}
-	return doHTTPRequest(http.DefaultClient, req)
+	return doHTTPRequest(defaultHTTPClient, req)
 }
 
 func (e *Evaluator) httpPostJSON(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -257,7 +257,7 @@ func (e *Evaluator) httpPostJSON(call *ast.CallExpression, args []runtime.Value)
 			return nil, err
 		}
 	}
-	return doHTTPRequest(http.DefaultClient, req)
+	return doHTTPRequest(defaultHTTPClient, req)
 }
 
 func httpParseJSON(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -334,19 +334,62 @@ func (e *Evaluator) httpRequestWithOptions(call *ast.CallExpression, args []runt
 			return nil, err
 		}
 	}
-	timeout := 0
+	client := defaultHTTPClient
 	if value, ok := dictField(options, "timeoutMs"); ok {
 		n, ok := native.AsInt64(value)
-		if !ok {
-			return nil, fmt.Errorf("%s options.timeoutMs must be int", call.Callee.String())
+		if !ok || n < 0 {
+			return nil, fmt.Errorf("%s options.timeoutMs must be a non-negative int", call.Callee.String())
 		}
-		timeout = int(n)
+		client = &http.Client{Timeout: time.Duration(n) * time.Millisecond}
 	}
-	client := http.DefaultClient
-	if timeout > 0 {
-		client = &http.Client{Timeout: time.Duration(timeout) * time.Millisecond}
+	maxResponse, err := parseMaxResponseBytes(options, call.Callee.String())
+	if err != nil {
+		return nil, err
 	}
-	return doHTTPRequest(client, req)
+	applyDefaultUserAgent(req)
+	return doHTTPRequestWithRetries(client, req, httpRetryOptions{maxResponseBytes: maxResponse})
+}
+
+const (
+	defaultHTTPClientTimeout   = 30 * time.Second
+	defaultMaxHTTPResponseBody = 64 << 20
+)
+
+// defaultHTTPClient replaces http.DefaultClient so a stalled upstream cannot hang a caller forever.
+var defaultHTTPClient = &http.Client{Timeout: defaultHTTPClientTimeout}
+
+// parseMaxResponseBytes reads opts.maxResponseBytes; 0 lifts the cap (returned as -1), absent keeps the default (0).
+func parseMaxResponseBytes(opts runtime.Dict, label string) (int64, error) {
+	v, ok := dictField(opts, "maxResponseBytes")
+	if !ok {
+		return 0, nil
+	}
+	n, ok := toInt64(v)
+	if !ok || n < 0 {
+		return 0, fmt.Errorf("%s options.maxResponseBytes must be a non-negative int", label)
+	}
+	if n == 0 {
+		return -1, nil
+	}
+	return n, nil
+}
+
+// readResponseBody reads at most limit bytes (0 = default, negative = unlimited) and fails on anything longer.
+func readResponseBody(body io.Reader, limit int64) ([]byte, error) {
+	if limit == 0 {
+		limit = defaultMaxHTTPResponseBody
+	}
+	if limit < 0 {
+		return io.ReadAll(body)
+	}
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, runtime.ClassifiedError{Class: "IOError", Message: fmt.Sprintf("http response body exceeds %d bytes", limit)}
+	}
+	return data, nil
 }
 
 // DefaultHTTPUserAgent is the User-Agent header value Geblang sets on
@@ -386,11 +429,12 @@ func doHTTPRequest(client *http.Client, req *http.Request) (runtime.Value, error
 // errors are always retried up to attempts; only the listed status codes
 // trigger a retry for HTTP responses.
 type httpRetryOptions struct {
-	attempts        int   // total attempts (1 means no retry)
-	backoffMs       int64 // base backoff between retries
-	backoffMaxMs    int64 // upper bound on a single sleep
-	retryStatuses   map[int]struct{}
-	hasCustomStatus bool
+	attempts         int   // total attempts (1 means no retry)
+	backoffMs        int64 // base backoff between retries
+	backoffMaxMs     int64 // upper bound on a single sleep
+	retryStatuses    map[int]struct{}
+	hasCustomStatus  bool
+	maxResponseBytes int64
 }
 
 func defaultRetryStatuses() map[int]struct{} {
@@ -438,7 +482,7 @@ func doHTTPRequestWithRetries(client *http.Client, req *http.Request, opts httpR
 			}
 			return nil, err
 		}
-		responseBody, readErr := io.ReadAll(resp.Body)
+		responseBody, readErr := readResponseBody(resp.Body, opts.maxResponseBytes)
 		resp.Body.Close()
 		if readErr != nil {
 			lastErr = readErr
@@ -545,6 +589,11 @@ func httpRetryOptionsFromDict(opts runtime.Dict) (httpRetryOptions, error) {
 		out.retryStatuses = statuses
 		out.hasCustomStatus = true
 	}
+	maxResponse, err := parseMaxResponseBytes(opts, "Client.request")
+	if err != nil {
+		return out, err
+	}
+	out.maxResponseBytes = maxResponse
 	return out, nil
 }
 
@@ -574,9 +623,9 @@ func (e *Evaluator) websocketConnect(call *ast.CallExpression, args []runtime.Va
 	}
 	conn, _, err := websocket.DefaultDialer.Dial(url.Value, headers)
 	if err != nil {
-		return nil, err
+		return nil, websocketIOError(err)
 	}
-	return e.registerWebSocket(conn), nil
+	return e.registerWebSocket(e.callOwner(call), conn), nil
 }
 
 func websocketUpgradeResponse(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -606,30 +655,92 @@ func httpStreamResponse(call *ast.CallExpression, args []runtime.Value) (runtime
 }
 
 type wsHandle struct {
-	conn    *websocket.Conn
-	writeMu sync.Mutex
+	conn         *websocket.Conn
+	writeMu      sync.Mutex
+	idleTimeout  time.Duration
+	writeTimeout time.Duration
+	done         chan struct{}
+	closeOnce    sync.Once
 }
 
 func (h *wsHandle) writeMessage(messageType int, data []byte) error {
 	h.writeMu.Lock()
 	defer h.writeMu.Unlock()
+	if h.writeTimeout > 0 {
+		_ = h.conn.SetWriteDeadline(time.Now().Add(h.writeTimeout))
+	}
 	return h.conn.WriteMessage(messageType, data)
 }
 
-func (e *Evaluator) registerWebSocket(conn *websocket.Conn) runtime.Value {
-	e.wsMu.Lock()
-	defer e.wsMu.Unlock()
-	e.nextWSID++
-	ensureMap(&e.websockets)[e.nextWSID] = &wsHandle{conn: conn}
-	return runtime.NewInt64(e.nextWSID)
+// readMessage starts the idle window at the read so a handler that only sends is never cut off; pongs extend it.
+func (h *wsHandle) readMessage() (int, []byte, error) {
+	if h.idleTimeout > 0 {
+		_ = h.conn.SetReadDeadline(time.Now().Add(h.idleTimeout))
+	}
+	return h.conn.ReadMessage()
 }
 
-func (e *Evaluator) registerHTTPStream(w http.ResponseWriter, flusher http.Flusher) runtime.Value {
+func (h *wsHandle) close() error {
+	h.closeOnce.Do(func() {
+		if h.done != nil {
+			close(h.done)
+		}
+	})
+	return h.conn.Close()
+}
+
+func (h *wsHandle) startPings(interval time.Duration) {
+	writeTimeout := h.writeTimeout
+	if writeTimeout <= 0 {
+		writeTimeout = interval
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-h.done:
+				return
+			case <-ticker.C:
+				if err := h.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeTimeout)); err != nil {
+					return
+				}
+			}
+		}
+	}()
+}
+
+func (e *Evaluator) registerWebSocket(owner *Evaluator, conn *websocket.Conn) runtime.Value {
+	return e.storeWebSocket(owner, &wsHandle{conn: conn})
+}
+
+func (e *Evaluator) registerServerWebSocket(owner *Evaluator, conn *websocket.Conn, opts wsOptions) runtime.Value {
+	h := &wsHandle{conn: conn, idleTimeout: opts.idleTimeout, writeTimeout: opts.writeTimeout, done: make(chan struct{})}
+	if opts.idleTimeout > 0 {
+		conn.SetPongHandler(func(string) error {
+			return conn.SetReadDeadline(time.Now().Add(opts.idleTimeout))
+		})
+	}
+	if opts.pingInterval > 0 {
+		h.startPings(opts.pingInterval)
+	}
+	return e.storeWebSocket(owner, h)
+}
+
+func (e *Evaluator) storeWebSocket(owner *Evaluator, h *wsHandle) runtime.Value {
+	e.wsMu.Lock()
+	defer e.wsMu.Unlock()
+	hid := e.newHandleIDFor(owner)
+	ensureMap(&e.websockets)[hid] = h
+	return runtime.NewInt64(hid)
+}
+
+func (e *Evaluator) registerHTTPStream(owner *Evaluator, w http.ResponseWriter, flusher http.Flusher) runtime.Value {
 	e.httpStreamMu.Lock()
 	defer e.httpStreamMu.Unlock()
-	e.nextHTTPStreamID++
-	ensureMap(&e.httpStreams)[e.nextHTTPStreamID] = &httpStreamHandle{writer: w, flusher: flusher}
-	return runtime.NewInt64(e.nextHTTPStreamID)
+	hid := e.newHandleIDFor(owner)
+	ensureMap(&e.httpStreams)[hid] = &httpStreamHandle{writer: w, flusher: flusher}
+	return runtime.NewInt64(hid)
 }
 
 func (e *Evaluator) httpStreamHandle(value runtime.Value) (*httpStreamHandle, error) {
@@ -640,9 +751,6 @@ func (e *Evaluator) httpStreamHandle(value runtime.Value) (*httpStreamHandle, er
 	e.httpStreamMu.Lock()
 	handle, ok := e.httpStreams[id]
 	e.httpStreamMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.httpStreamHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown http stream handle %d", id)
 	}
@@ -655,11 +763,9 @@ func (e *Evaluator) closeHTTPStreamID(id int64) error {
 	if ok {
 		handle.closed = true
 		delete(e.httpStreams, id)
+		e.releaseHandle(id)
 	}
 	e.httpStreamMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.closeHTTPStreamID(id)
-	}
 	if !ok {
 		return fmt.Errorf("unknown http stream handle %d", id)
 	}
@@ -728,23 +834,32 @@ func (e *Evaluator) websocketSendText(call *ast.CallExpression, args []runtime.V
 	}
 	h, err := e.websocketHandle(args[0])
 	if err != nil {
-		return nil, fmt.Errorf("%s %w", call.Callee.String(), err)
+		return nil, websocketIOError(fmt.Errorf("%s %w", call.Callee.String(), err))
 	}
 	text, ok := args[1].(runtime.String)
 	if !ok {
 		return nil, fmt.Errorf("%s text must be string", call.Callee.String())
 	}
 	if err := h.writeMessage(websocket.TextMessage, []byte(text.Value)); err != nil {
-		return nil, err
+		return nil, websocketIOError(err)
 	}
 	return runtime.Null{}, nil
 }
 
 func websocketReadError(call *ast.CallExpression, err error) error {
 	if errors.Is(err, websocket.ErrReadLimit) {
-		return fmt.Errorf("%s: message exceeds the server's maxWebSocketMessageBytes limit; the connection was closed", call.Callee.String())
+		err = fmt.Errorf("%s: message exceeds the server's maxWebSocketMessageBytes limit; the connection was closed", call.Callee.String())
 	}
-	return err
+	return websocketIOError(err)
+}
+
+// websocketIOError reports any connection failure as IOError, keeping the TimeoutError and TlsError subclasses.
+func websocketIOError(err error) error {
+	switch runtime.RecoverableErrorClass(err) {
+	case "IOError", "TimeoutError", "TlsError":
+		return err
+	}
+	return runtime.ClassifiedError{Class: "IOError", Message: err.Error()}
 }
 
 func (e *Evaluator) websocketReadText(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -753,9 +868,9 @@ func (e *Evaluator) websocketReadText(call *ast.CallExpression, args []runtime.V
 	}
 	h, err := e.websocketHandle(args[0])
 	if err != nil {
-		return nil, fmt.Errorf("%s %w", call.Callee.String(), err)
+		return nil, websocketIOError(fmt.Errorf("%s %w", call.Callee.String(), err))
 	}
-	messageType, data, err := h.conn.ReadMessage()
+	messageType, data, err := h.readMessage()
 	if err != nil {
 		return nil, websocketReadError(call, err)
 	}
@@ -771,14 +886,14 @@ func (e *Evaluator) websocketSendBytes(call *ast.CallExpression, args []runtime.
 	}
 	h, err := e.websocketHandle(args[0])
 	if err != nil {
-		return nil, fmt.Errorf("%s %w", call.Callee.String(), err)
+		return nil, websocketIOError(fmt.Errorf("%s %w", call.Callee.String(), err))
 	}
 	data, ok := args[1].(runtime.Bytes)
 	if !ok {
 		return nil, fmt.Errorf("%s data must be bytes", call.Callee.String())
 	}
 	if err := h.writeMessage(websocket.BinaryMessage, data.Value); err != nil {
-		return nil, err
+		return nil, websocketIOError(err)
 	}
 	return runtime.Null{}, nil
 }
@@ -789,9 +904,9 @@ func (e *Evaluator) websocketReadBytes(call *ast.CallExpression, args []runtime.
 	}
 	h, err := e.websocketHandle(args[0])
 	if err != nil {
-		return nil, fmt.Errorf("%s %w", call.Callee.String(), err)
+		return nil, websocketIOError(fmt.Errorf("%s %w", call.Callee.String(), err))
 	}
-	_, data, err := h.conn.ReadMessage()
+	_, data, err := h.readMessage()
 	if err != nil {
 		return nil, websocketReadError(call, err)
 	}
@@ -806,7 +921,10 @@ func (e *Evaluator) websocketClose(call *ast.CallExpression, args []runtime.Valu
 	if err != nil {
 		return nil, fmt.Errorf("%s %w", call.Callee.String(), err)
 	}
-	return runtime.Null{}, e.closeWebSocketID(id)
+	if err := e.closeWebSocketID(id); err != nil {
+		return nil, websocketIOError(fmt.Errorf("%s %w", call.Callee.String(), err))
+	}
+	return runtime.Null{}, nil
 }
 
 func (e *Evaluator) closeWebSocketID(id int64) error {
@@ -814,12 +932,13 @@ func (e *Evaluator) closeWebSocketID(id int64) error {
 	h, ok := e.websockets[id]
 	if ok {
 		delete(e.websockets, id)
+		e.releaseHandle(id)
 	}
 	e.wsMu.Unlock()
 	if !ok {
 		return fmt.Errorf("unknown websocket connection %d", id)
 	}
-	return h.conn.Close()
+	return h.close()
 }
 
 func (e *Evaluator) websocketHandle(value runtime.Value) (*wsHandle, error) {
@@ -830,9 +949,6 @@ func (e *Evaluator) websocketHandle(value runtime.Value) (*wsHandle, error) {
 	e.wsMu.Lock()
 	h, ok := e.websockets[id]
 	e.wsMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.websocketHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown websocket connection %d", id)
 	}
@@ -852,7 +968,7 @@ func (e *Evaluator) httpNewClient(call *ast.CallExpression, args []runtime.Value
 		return nil, fmt.Errorf("%s expects optional options dict", call.Callee.String())
 	}
 	h := &httpClientHandle{
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: defaultHTTPClientTimeout},
 		headers: http.Header{},
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -867,6 +983,11 @@ func (e *Evaluator) httpNewClient(call *ast.CallExpression, args []runtime.Value
 				h.client.Timeout = time.Duration(ms) * time.Millisecond
 			}
 		}
+		maxResponse, err := parseMaxResponseBytes(opts, call.Callee.String())
+		if err != nil {
+			return nil, err
+		}
+		h.maxResponseBytes = maxResponse
 		if base, ok := dictStringField(opts, "baseUrl"); ok {
 			h.baseURL = base
 		}
@@ -923,8 +1044,7 @@ func (e *Evaluator) httpNewClient(call *ast.CallExpression, args []runtime.Value
 		h.client.Transport = transport
 	}
 	e.httpClientMu.Lock()
-	id := e.nextHTTPClientID
-	e.nextHTTPClientID++
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.httpClientHandles)[id] = h
 	e.httpClientMu.Unlock()
 	if e.httpClientClass == nil {
@@ -964,8 +1084,7 @@ func (e *Evaluator) cookieJarFromValue(v runtime.Value, label string) (http.Cook
 func (e *Evaluator) httpNewCookieJar(call *ast.CallExpression, _ []runtime.Value) (runtime.Value, error) {
 	jar, _ := cookiejar.New(nil)
 	e.httpCookieJarMu.Lock()
-	id := e.nextCookieJarID
-	e.nextCookieJarID++
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.httpCookieJars)[id] = jar
 	e.httpCookieJarMu.Unlock()
 	if e.httpCookieJarClass == nil {
@@ -1057,7 +1176,7 @@ func httpPrepareElement(el runtime.Value) (*http.Request, *http.Client, error) {
 	switch v := el.(type) {
 	case runtime.Dict:
 		req, _, err := httpBuildReqFromSpec(v)
-		return req, http.DefaultClient, err
+		return req, defaultHTTPClient, err
 	case *runtime.Instance:
 		if v.Class != nil && strings.EqualFold(v.Class.Name, "Builder") {
 			return httpRequestFromBuilder(v)
@@ -1146,7 +1265,7 @@ func (e *Evaluator) httpGetAll(call *ast.CallExpression, args []runtime.Value) (
 			return nil, nil, fmt.Errorf("getAll urls must be strings")
 		}
 		req, err := http.NewRequest(http.MethodGet, url.Value, nil)
-		return req, http.DefaultClient, err
+		return req, defaultHTTPClient, err
 	}
 	return httpRunBatch(list.Elements, httpBatchLimit(args, 1), prepare), nil
 }
@@ -1166,8 +1285,7 @@ func (e *Evaluator) httpFetchStream(call *ast.CallExpression, args []runtime.Val
 	ch := make(chan runtime.Value, len(specs))
 	sh := &httpFetchStreamHandle{ch: ch, total: len(specs)}
 	e.httpFetchStreamMu.Lock()
-	id := e.nextFetchStreamID
-	e.nextFetchStreamID++
+	id := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.httpFetchStreams)[id] = sh
 	e.httpFetchStreamMu.Unlock()
 	for i, specVal := range specs {

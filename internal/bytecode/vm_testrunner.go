@@ -218,7 +218,7 @@ func (vm *VM) invalidateNativeCache() {
 	}
 }
 
-func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value, error) {
+func (vm *VM) RunTestClass(classIndex int64, tagFilter []string, methodFilter []string) (runtime.Value, error) {
 	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
 		return nil, fmt.Errorf("class index out of range")
 	}
@@ -230,6 +230,10 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 	tagSet := map[string]bool{}
 	for _, t := range tagFilter {
 		tagSet[strings.ToLower(t)] = true
+	}
+	nameSet := map[string]bool{}
+	for _, n := range methodFilter {
+		nameSet[n] = true
 	}
 
 	// callKey is the lookup key; displayName is used in failure messages.
@@ -285,6 +289,9 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 						displayName = n
 					}
 				}
+			}
+			if len(nameSet) > 0 && !nameSet[displayName] {
+				continue
 			}
 			skip := false
 			skipReason := ""

@@ -221,7 +221,7 @@ func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Tas
 	runtime.AsyncEnter()
 	go func() {
 		defer runtime.AsyncLeave()
-		result, err := worker.CallFunctionBound(index, args, bindings, false)
+		result, err := runtime.CallRecovering(func() (runtime.Value, error) { return worker.CallFunctionBound(index, args, bindings, false) })
 		task.Complete(result, err)
 	}()
 	return task
@@ -287,7 +287,7 @@ func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generato
 			vm.enableGeneratorPersist(callVM)
 			go func() {
 				defer close(items)
-				_, err := callVM.CallFunctionBound(index, args, bindings, false)
+				_, err := runtime.CallRecovering(func() (runtime.Value, error) { return callVM.CallFunctionBound(index, args, bindings, false) })
 				vm.persistGeneratorGlobals(callVM)
 				if err != nil {
 					select {
@@ -335,7 +335,7 @@ func (vm *VM) lazyClosureGenerator(closure runtime.BytecodeClosure, args []runti
 			vm.enableGeneratorPersist(callVM)
 			go func() {
 				defer close(items)
-				_, err := callVM.callCallable(closure, args)
+				_, err := runtime.CallRecovering(func() (runtime.Value, error) { return callVM.callCallable(closure, args) })
 				vm.persistGeneratorGlobals(callVM)
 				if err != nil {
 					select {
@@ -385,7 +385,7 @@ func (vm *VM) startAsyncCallableWithForwardThis(fn runtime.Value, args []runtime
 	runtime.AsyncEnter()
 	go func() {
 		defer runtime.AsyncLeave()
-		result, err := worker.callCallable(fn, args)
+		result, err := runtime.CallRecovering(func() (runtime.Value, error) { return worker.callCallable(fn, args) })
 		task.Complete(result, err)
 	}()
 	return task
@@ -2021,11 +2021,26 @@ func serverHandlerArg(module, function string, argIndex int) bool {
 	return false
 }
 
-type visitedContainers struct{ ids map[unsafe.Pointer]bool }
+// visitedContainers keeps the first few ids inline because most native calls pass only one or two containers.
+type visitedContainers struct {
+	inline [4]unsafe.Pointer
+	n      int
+	ids    map[unsafe.Pointer]bool
+}
 
 func (v *visitedContainers) first(id unsafe.Pointer) bool {
+	for i := 0; i < v.n; i++ {
+		if v.inline[i] == id {
+			return false
+		}
+	}
 	if v.ids[id] {
 		return false
+	}
+	if v.n < len(v.inline) {
+		v.inline[v.n] = id
+		v.n++
+		return true
 	}
 	if v.ids == nil {
 		v.ids = map[unsafe.Pointer]bool{}
@@ -2061,6 +2076,16 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool, seen *
 				h, _ := host.(*VM)
 				return vm.callCallableSlowHosted(callable, args, h)
 			},
+			ScopedInvoke: func(caller any, args []runtime.Value) (runtime.Value, error) {
+				native, ok := caller.(StatefulNativeCaller)
+				if !ok {
+					if isolated {
+						return vm.callCallableIsolated(callable, args)
+					}
+					return vm.callCallableSlow(callable, args)
+				}
+				return vm.callScoped(callable, args, isolated, native)
+			},
 		}
 	case runtime.BytecodeClosure:
 		vm.bridgeActive.Store(true)
@@ -2082,6 +2107,16 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool, seen *
 				}
 				h, _ := host.(*VM)
 				return vm.callCallableSlowHosted(callable, args, h)
+			},
+			ScopedInvoke: func(caller any, args []runtime.Value) (runtime.Value, error) {
+				native, ok := caller.(StatefulNativeCaller)
+				if !ok {
+					if isolated {
+						return vm.callCallableIsolated(callable, args)
+					}
+					return vm.callCallableSlow(callable, args)
+				}
+				return vm.callScoped(callable, args, isolated, native)
 			},
 		}
 	case runtime.OverloadedFunction:
@@ -2393,10 +2428,15 @@ func (vm *VM) callCallableSlowHosted(fn runtime.Value, args []runtime.Value, ree
 // re-entrantly. Native handlers run directly; cross-module callables fall back.
 // CallIsolatedHandler runs a server-handler callback with per-request isolation; it is the exported entry the loader uses to re-isolate a cross-module handler on its home module's VM.
 func (vm *VM) CallIsolatedHandler(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
-	return vm.callCallableIsolated(fn, args)
+	return vm.callCallableIsolatedNative(fn, args, nil)
 }
 
 func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	return vm.callCallableIsolatedNative(fn, args, nil)
+}
+
+// callCallableIsolatedNative is callCallableIsolated with an optional native caller for the request scope.
+func (vm *VM) callCallableIsolatedNative(fn runtime.Value, args []runtime.Value, native StatefulNativeCaller) (runtime.Value, error) {
 	switch f := fn.(type) {
 	case runtime.Function:
 		if f.Native == nil {
@@ -2406,7 +2446,7 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 	case runtime.BytecodeFunction:
 		if f.Module != vm.moduleName || f.Raw {
 			if !f.Raw && vm.moduleLoader != nil {
-				return vm.moduleLoader.CallModuleHandlerIsolated(fn, f.Module, args, vm)
+				return vm.callModuleHandlerIsolated(fn, f.Module, args, native)
 			}
 			return vm.callCallableSlow(fn, args)
 		}
@@ -2419,11 +2459,11 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 		}
 		wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{f.Index, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapperWithRawCall(args, wrapper, -1, true, nil, nil)
+		return vm.runWrapperNative(args, wrapper, -1, true, nil, nil, native)
 	case runtime.BytecodeClosure:
 		if f.Module != vm.moduleName {
 			if vm.moduleLoader != nil {
-				return vm.moduleLoader.CallModuleHandlerIsolated(fn, f.Module, args, vm)
+				return vm.callModuleHandlerIsolated(fn, f.Module, args, native)
 			}
 			return vm.callCallableSlow(fn, args)
 		}
@@ -2434,10 +2474,28 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 		clonedGlobals, clonedF := runtime.CloneIsolated(snapshot, f)
 		f = clonedF.(runtime.BytecodeClosure)
 		constants, wrapper := invokeWrapper(f, args)
-		return vm.runWrapperWithRawCall(constants, wrapper, -1, true, nil, clonedGlobals)
+		return vm.runWrapperNative(constants, wrapper, -1, true, nil, clonedGlobals, native)
 	default:
 		return vm.callCallableSlow(fn, args)
 	}
+}
+
+func (vm *VM) callModuleHandlerIsolated(fn runtime.Value, module string, args []runtime.Value, native StatefulNativeCaller) (runtime.Value, error) {
+	if native != nil {
+		if scoped, ok := vm.moduleLoader.(scopedHandlerLoader); ok {
+			return scoped.CallModuleHandlerIsolatedScoped(fn, module, args, vm, native)
+		}
+	}
+	return vm.moduleLoader.CallModuleHandlerIsolated(fn, module, args, vm)
+}
+
+// callScoped runs a bridged callback on a worker whose natives go to native, so handles it opens belong to that caller's request scope.
+func (vm *VM) callScoped(fn runtime.Value, args []runtime.Value, isolated bool, native StatefulNativeCaller) (runtime.Value, error) {
+	if isolated {
+		return vm.callCallableIsolatedNative(fn, args, native)
+	}
+	constants, wrapper := invokeWrapper(fn, args)
+	return vm.runWrapperNative(constants, wrapper, -1, false, nil, nil, native)
 }
 
 func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
@@ -3530,10 +3588,15 @@ func (vm *VM) runWrapper(args []runtime.Value, wrapper []Instruction) (runtime.V
 }
 
 func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction, rawIndex int64, isolated bool, reentryHost *VM, preCloned []runtime.VMValue) (runtime.Value, error) {
+	return vm.runWrapperNative(args, wrapper, rawIndex, isolated, reentryHost, preCloned, nil)
+}
+
+// runWrapperNative is runWrapperWithRawCall with an optional native caller that overrides the parent's for this call.
+func (vm *VM) runWrapperNative(args []runtime.Value, wrapper []Instruction, rawIndex int64, isolated bool, reentryHost *VM, preCloned []runtime.VMValue, native StatefulNativeCaller) (runtime.Value, error) {
 	chunk := vm.chunk
 	meta := vm.chunk.sharedMeta
 	var callVM *VM
-	var wrapperPool *sync.Pool
+	var wrapperPool *wrapperVMPool
 	if meta != nil {
 		// Shared layout: the callVM reuses the parent's constants,
 		// functions, classes, and meta untouched. Call arguments live in
@@ -3557,7 +3620,7 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 		}
 		pool := meta.poolFor(wrapperShape{baseLen: len(base), wrapperLen: len(translated)})
 		wrapperPool = pool
-		if pooled, _ := pool.Get().(*VM); pooled != nil {
+		if pooled := pool.Get(); pooled != nil {
 			if sameInstructionBase(pooled.wrapperBase, base) {
 				copy(pooled.chunk.Instructions[len(base):], translated)
 			} else {
@@ -3652,8 +3715,10 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 		vm.globalsMu.Unlock()
 	}
 	callVM.SetModuleName(vm.moduleName)
-	if vm.statefulNative != nil {
-		callVM.SetStatefulNativeCaller(vm.statefulNative)
+	// Set unconditionally so a pooled worker never keeps an earlier request's scoped caller.
+	callVM.SetStatefulNativeCaller(vm.statefulNative)
+	if native != nil {
+		callVM.SetStatefulNativeCaller(native)
 	}
 	callVM.syncMode = true
 	callVM.forwardThis = vm.forwardThis
@@ -3715,12 +3780,20 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 }
 
 // invokeWrapper builds the constants and code for callee.__invoke(args...), with all operands in one backing array.
+var invokeConstant runtime.Value = runtime.String{Value: "__invoke"}
+
+// invokeWrappers caches the read-only call sequence per argument count; only the constants differ per call.
+var invokeWrappers sync.Map
+
 func invokeWrapper(callee runtime.Value, args []runtime.Value) ([]runtime.Value, []Instruction) {
 	n := len(args)
 	constants := make([]runtime.Value, 0, n+2)
 	constants = append(constants, callee)
 	constants = append(constants, args...)
-	constants = append(constants, runtime.String{Value: "__invoke"})
+	constants = append(constants, invokeConstant)
+	if cached, ok := invokeWrappers.Load(n); ok {
+		return constants, cached.([]Instruction)
+	}
 	operands := make([]int64, n+3)
 	wrapper := make([]Instruction, 0, n+3)
 	for i := 0; i <= n; i++ {
@@ -3729,6 +3802,7 @@ func invokeWrapper(callee runtime.Value, args []runtime.Value) ([]runtime.Value,
 	}
 	operands[n+1], operands[n+2] = int64(n+1), int64(n)
 	wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: operands[n+1 : n+3 : n+3]}, Instruction{Op: OpReturn})
+	invokeWrappers.Store(n, wrapper)
 	return constants, wrapper
 }
 

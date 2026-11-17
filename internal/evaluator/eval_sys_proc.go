@@ -164,6 +164,7 @@ func (e *Evaluator) processObjectClasses() []*runtime.Class {
 		proc, ok := e.processes[handle]
 		if ok {
 			delete(e.processes, handle)
+			e.releaseHandle(handle)
 		}
 		e.processMu.Unlock()
 		if !ok {
@@ -487,7 +488,7 @@ func (e *Evaluator) sysStart(call *ast.CallExpression, args []runtime.Value) (ru
 	if err != nil {
 		return nil, err
 	}
-	return e.startProcessSpec(spec)
+	return e.startProcessSpec(e.callOwner(call), spec)
 }
 
 func (e *Evaluator) sysStartWithOptions(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -495,10 +496,10 @@ func (e *Evaluator) sysStartWithOptions(call *ast.CallExpression, args []runtime
 	if err != nil {
 		return nil, err
 	}
-	return e.startProcessSpec(spec)
+	return e.startProcessSpec(e.callOwner(call), spec)
 }
 
-func (e *Evaluator) startProcessSpec(spec processSpec) (runtime.Value, error) {
+func (e *Evaluator) startProcessSpec(owner *Evaluator, spec processSpec) (runtime.Value, error) {
 	cmd, cancel, _ := commandFromSpec(spec)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -529,9 +530,9 @@ func (e *Evaluator) startProcessSpec(spec processSpec) (runtime.Value, error) {
 	}
 	e.processMu.Lock()
 	defer e.processMu.Unlock()
-	e.nextProcID++
-	ensureMap(&e.processes)[e.nextProcID] = &processHandle{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, cancel: cancel}
-	return runtime.NewInt64(e.nextProcID), nil
+	hid := e.newHandleIDFor(owner)
+	ensureMap(&e.processes)[hid] = &processHandle{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, cancel: cancel}
+	return runtime.NewInt64(hid), nil
 }
 
 func (e *Evaluator) sysProcessWrite(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -637,6 +638,7 @@ func (e *Evaluator) sysProcessWait(call *ast.CallExpression, args []runtime.Valu
 	process, ok := e.processes[handle]
 	if ok {
 		delete(e.processes, handle)
+		e.releaseHandle(handle)
 	}
 	e.processMu.Unlock()
 	if !ok {
@@ -736,9 +738,6 @@ func (e *Evaluator) processHandle(value runtime.Value) (*processHandle, error) {
 	e.processMu.Lock()
 	process, ok := e.processes[handle]
 	e.processMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.processHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown process handle %d", handle)
 	}
@@ -904,15 +903,14 @@ func (e *Evaluator) procSpawn(call *ast.CallExpression, args []runtime.Value) (r
 		stderrStream = &ioStreamHandle{name: "proc stderr", reader: stderr}
 	}
 	e.processMu.Lock()
-	e.nextProcID++
-	procID := e.nextProcID
+	procID := e.newHandleIDFor(e.callOwner(call))
 	ensureMap(&e.processes)[procID] = handle
 	e.processMu.Unlock()
-	stdinVal := e.registerIOStream(stdinStream)
-	stdoutVal := e.registerIOStream(stdoutStream)
+	stdinVal := e.registerIOStream(e.callOwner(call), stdinStream)
+	stdoutVal := e.registerIOStream(e.callOwner(call), stdoutStream)
 	var stderrVal runtime.Value = runtime.Null{}
 	if stderrStream != nil {
-		stderrVal = e.registerIOStream(stderrStream)
+		stderrVal = e.registerIOStream(e.callOwner(call), stderrStream)
 	}
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "handle", runtime.NewInt64(procID))

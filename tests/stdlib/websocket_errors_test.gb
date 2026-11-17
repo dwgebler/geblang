@@ -1,0 +1,105 @@
+/**
+ * @title WebSocket failures raise IOError (1.42.2)
+ * @summary Every way a WebSocket connection can fail raises IOError: the
+ * peer disconnecting, a local close ending a blocked read, use after
+ * close, a second close, a failed handshake, a refused connection and a
+ * message over the size limit. Only IOError is caught here, so any other
+ * class fails the test.
+ *
+ * Tagged "integration" (binds local ports).
+ */
+import test;
+import http;
+import async;
+import async.channel as ch;
+import web.websocket as ws;
+
+class WebSocketErrorsTest extends test.Test {
+    func raisesIOError(callable action): string {
+        try {
+            action();
+        } catch (IOError e) {
+            return "IOError";
+        }
+        return "returned";
+    }
+
+    @tag("integration")
+    @test
+    func peerDisconnectAndLocalCloseRaiseIOError(): void {
+        let results = ch.Channel<string>(2);
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return ws.upgrade(func(ws.Connection conn): void {
+                if (request["path"] == "/peer") {
+                    results.send(this.raisesIOError(func(): void { conn.readText(); }));
+                    return;
+                }
+                let closer = async.run(func(): void {
+                    await async.sleep(20);
+                    conn.close();
+                });
+                string read = this.raisesIOError(func(): void { conn.readText(); });
+                async.await(closer);
+                results.send(read + " " + this.raisesIOError(func(): void { conn.close(); }));
+            });
+        }, {"shareHandler": true});
+        let addr = http.serverAddr(server);
+        ws.connect("ws://${addr}/peer").close();
+        let peer = results.recv();
+        let local = ws.connect("ws://${addr}/local");
+        let localOutcome = results.recv();
+        local.close();
+        http.close(server);
+        this.assertEquals("IOError", peer);
+        this.assertEquals("IOError IOError", localOutcome);
+    }
+
+    @tag("integration")
+    @test
+    func useAfterCloseRaisesIOError(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return ws.upgrade(func(ws.Connection conn): void {
+                try {
+                    conn.readText();
+                } catch (IOError e) {
+                }
+            });
+        }, {"shareHandler": true});
+        let c = ws.connect("ws://${http.serverAddr(server)}/");
+        c.close();
+        this.assertEquals("IOError", this.raisesIOError(func(): void { c.sendText("x"); }));
+        this.assertEquals("IOError", this.raisesIOError(func(): void { c.readText(); }));
+        this.assertEquals("IOError", this.raisesIOError(func(): void { c.close(); }));
+        http.close(server);
+    }
+
+    @tag("integration")
+    @test
+    func failedConnectRaisesIOError(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return {"status": 200, "body": "not a websocket"};
+        });
+        let addr = http.serverAddr(server);
+        this.assertEquals("IOError", this.raisesIOError(func(): void { ws.connect("ws://${addr}/"); }));
+        http.close(server);
+        this.assertEquals("IOError", this.raisesIOError(func(): void { ws.connect("ws://${addr}/"); }));
+    }
+
+    @tag("integration")
+    @test
+    func oversizeMessageRaisesIOError(): void {
+        let results = ch.Channel<string>(1);
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return ws.upgrade(func(ws.Connection conn): void {
+                results.send(this.raisesIOError(func(): void { conn.readText(); }));
+            });
+        }, {"shareHandler": true, "maxWebSocketMessageBytes": 8});
+        let c = ws.connect("ws://${http.serverAddr(server)}/");
+        c.sendText("more than eight bytes");
+        let serverOutcome = results.recv();
+        let clientOutcome = this.raisesIOError(func(): void { c.readText(); });
+        http.close(server);
+        this.assertEquals("IOError", serverOutcome);
+        this.assertEquals("IOError", clientOutcome);
+    }
+}

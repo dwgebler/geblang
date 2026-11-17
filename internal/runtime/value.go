@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"geblang/internal/ast"
 )
@@ -245,7 +246,9 @@ type dictHeader struct {
 	data    *dictData
 	Entries map[string]DictEntry
 	Order   *[]string
-	Frozen  bool
+	// keyState caches HasOnlyStringKeys for Entries-backed dicts; shared by header copies of the same map.
+	keyState *atomic.Int32
+	Frozen   bool
 	// ElementTypes mirrors List.ElementTypes for dicts. When set, the
 	// slice has two entries: [keyType, valueType] for `dict<K, V>`.
 	ElementTypes []string
@@ -256,8 +259,14 @@ func NewDict() Dict {
 	return dictFromData(&s.header, &s.d)
 }
 
+const (
+	dictKeysUnknown int32 = iota
+	dictKeysAllString
+	dictKeysMixed
+)
+
 func DictFromEntries(entries map[string]DictEntry, order *[]string) Dict {
-	return Dict{&dictHeader{Entries: entries, Order: order}}
+	return Dict{&dictHeader{Entries: entries, Order: order, keyState: new(atomic.Int32)}}
 }
 
 func dictFromData(header *dictHeader, data *dictData) Dict {
@@ -310,12 +319,29 @@ func (v Dict) HasOnlyStringKeys() bool {
 	if v.data != nil {
 		return v.data.nonStringKeys == 0
 	}
-	for _, entry := range v.Entries {
-		if _, ok := entry.Key.(String); !ok {
+	if v.keyState != nil {
+		switch v.keyState.Load() {
+		case dictKeysAllString:
+			return true
+		case dictKeysMixed:
 			return false
 		}
 	}
-	return true
+	only := true
+	for _, entry := range v.Entries {
+		if _, ok := entry.Key.(String); !ok {
+			only = false
+			break
+		}
+	}
+	if v.keyState != nil {
+		state := dictKeysMixed
+		if only {
+			state = dictKeysAllString
+		}
+		v.keyState.Store(state)
+	}
+	return only
 }
 
 // AppendDistinctEntry adds a string-keyed entry the caller knows is not present yet, skipping the duplicate scan.
@@ -337,11 +363,21 @@ func (v Dict) PutEntry(key string, entry DictEntry) {
 	}
 	if v.Entries == nil {
 		v.Entries = map[string]DictEntry{}
+		// A fresh map must not share cached key state with header copies still holding the old one.
+		v.keyState = new(atomic.Int32)
 	}
-	if _, hit := v.Entries[key]; !hit && v.Order != nil {
+	_, hit := v.Entries[key]
+	if !hit && v.Order != nil {
 		*v.Order = append(*v.Order, key)
 	}
 	v.Entries[key] = entry
+	if v.keyState != nil {
+		if _, isString := entry.Key.(String); !isString {
+			v.keyState.Store(dictKeysMixed)
+		} else if hit {
+			v.keyState.Store(dictKeysUnknown)
+		}
+	}
 }
 
 func (v Dict) DelEntry(key string) {
@@ -359,6 +395,9 @@ func (v Dict) DelEntry(key string) {
 		return
 	}
 	delete(v.Entries, key)
+	if v.keyState != nil {
+		v.keyState.Store(dictKeysUnknown)
+	}
 	if v.Order == nil {
 		return
 	}
@@ -382,6 +421,9 @@ func (v Dict) Clear() {
 	if v.Entries != nil {
 		for k := range v.Entries {
 			delete(v.Entries, k)
+		}
+		if v.keyState != nil {
+			v.keyState.Store(dictKeysUnknown)
 		}
 	}
 	if v.Order != nil {
@@ -899,6 +941,8 @@ type Function struct {
 	DefinitionPath   string
 	// BridgeInvoke (host typed any to avoid a runtime->bytecode import cycle) runs a bridged callback threading the invoking worker as a synchronous re-entry host; nil for non-bridged functions.
 	BridgeInvoke func(host any, args []Value) (Value, error)
+	// ScopedInvoke runs a bridged callback with caller as its native caller, so handles it opens belong to the caller's cleanup scope; nil for non-bridged functions.
+	ScopedInvoke func(caller any, args []Value) (Value, error)
 	// Metadata carries the source bytecode function's reflection metadata when this is a module-boundary bridge wrapper; nil for genuine native functions.
 	Metadata *FunctionMetadata
 	// NativeNamed invokes a bridge wrapper with named-argument metadata so the home function's declared defaults engage; nil for genuine natives.

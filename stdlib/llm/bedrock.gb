@@ -27,6 +27,7 @@ export class BedrockClient implements contract.Client {
     string accessKey;
     string secretKey;
     string endpoint;
+    int timeoutMs;
     string controlEndpoint;
 
     func chat(list<dict<string, any>> messages, dict<string, any> opts): dict<string, any> {
@@ -270,6 +271,7 @@ export class BedrockClient implements contract.Client {
         string authHeader = "AWS4-HMAC-SHA256 Credential=" + this.accessKey + "/" + scope +
             ",SignedHeaders=" + signedHeaders + ",Signature=" + signature;
         let resp = http.requestWithOptions({
+            "timeoutMs": this.timeoutMs,
             "method":  method,
             "url":     this.endpoint + path,
             "headers": {
@@ -325,6 +327,7 @@ export class BedrockClient implements contract.Client {
         string authHeader = "AWS4-HMAC-SHA256 Credential=" + this.accessKey + "/" + scope +
             ",SignedHeaders=" + signedHeaders + ",Signature=" + signature;
         let resp = http.requestWithOptions({
+            "timeoutMs": this.timeoutMs,
             "method":  method,
             "url":     this.controlEndpoint + path,
             "headers": {
@@ -368,6 +371,7 @@ export func connect(dict<string, any> opts): BedrockClient {
     c.controlEndpoint = opts.contains("controlEndpoint")
         ? (opts["controlEndpoint"] as string)
         : ("https://bedrock." + c.region + ".amazonaws.com");
+    c.timeoutMs = opts.contains("timeoutMs") ? (opts["timeoutMs"] as int) : 600000;
     return c;
 }
 

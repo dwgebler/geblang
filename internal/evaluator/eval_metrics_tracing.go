@@ -555,9 +555,9 @@ func (e *Evaluator) traceStart(call *ast.CallExpression, args []runtime.Value) (
 	}
 	e.traceMu.Lock()
 	defer e.traceMu.Unlock()
-	e.nextTraceID++
-	ensureMap(&e.traces)[e.nextTraceID] = span
-	return runtime.NewInt64(e.nextTraceID), nil
+	hid := e.newDataID()
+	ensureMap(&e.traces)[hid] = span
+	return runtime.NewInt64(hid), nil
 }
 
 func (e *Evaluator) traceEvent(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

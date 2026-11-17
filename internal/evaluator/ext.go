@@ -56,12 +56,12 @@ type extHandle struct {
 // nextExtID int64
 // extConns  map[int64]*extHandle
 
-func (e *Evaluator) registerExtHandle(h *extHandle) runtime.Value {
+func (e *Evaluator) registerExtHandle(owner *Evaluator, h *extHandle) runtime.Value {
 	e.extMu.Lock()
 	defer e.extMu.Unlock()
-	e.nextExtID++
-	ensureMap(&e.extConns)[e.nextExtID] = h
-	return runtime.NewInt64(e.nextExtID)
+	hid := e.newHandleIDFor(owner)
+	ensureMap(&e.extConns)[hid] = h
+	return runtime.NewInt64(hid)
 }
 
 func (e *Evaluator) extHandle(value runtime.Value) (*extHandle, error) {
@@ -72,9 +72,6 @@ func (e *Evaluator) extHandle(value runtime.Value) (*extHandle, error) {
 	e.extMu.Lock()
 	h, ok := e.extConns[id]
 	e.extMu.Unlock()
-	if !ok && e.parent != nil {
-		return e.parent.extHandle(value)
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown ext handle %d", id)
 	}
@@ -112,7 +109,7 @@ func (e *Evaluator) extBuiltins() map[string]builtinFunc {
 }
 
 // ext.load("name") — managed extension, config from geblang.yaml
-func (e *Evaluator) extLoad(_ *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) extLoad(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("ext.load expects an extension name")
 	}
@@ -173,11 +170,11 @@ func (e *Evaluator) extLoad(_ *ast.CallExpression, args []runtime.Value) (runtim
 		_ = os.RemoveAll(sockDir)
 		return nil, fmt.Errorf("ext.load %q: handshake: %w", name.Value, err)
 	}
-	return e.registerExtHandle(h), nil
+	return e.registerExtHandle(e.callOwner(call), h), nil
 }
 
 // ext.connect(address) — pre-started extension
-func (e *Evaluator) extConnect(_ *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) extConnect(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("ext.connect expects an address (unix socket path or host:port)")
 	}
@@ -202,7 +199,7 @@ func (e *Evaluator) extConnect(_ *ast.CallExpression, args []runtime.Value) (run
 		conn.Close()
 		return nil, fmt.Errorf("ext.connect %q: handshake: %w", addr.Value, err)
 	}
-	return e.registerExtHandle(h), nil
+	return e.registerExtHandle(e.callOwner(call), h), nil
 }
 
 // ext.call(conn, "fn", arg1, arg2, ...) or ext.call(conn, "fn", namedArg: val)
@@ -356,14 +353,12 @@ func (e *Evaluator) closeExtID(id int64) bool {
 	h, ok := e.extConns[id]
 	if ok {
 		delete(e.extConns, id)
+		e.releaseHandle(id)
 	}
 	e.extMu.Unlock()
 	if ok {
 		closeExtHandle(h)
 		return true
-	}
-	if e.parent != nil {
-		return e.parent.closeExtID(id)
 	}
 	return false
 }
