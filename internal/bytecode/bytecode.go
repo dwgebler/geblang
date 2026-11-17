@@ -470,6 +470,14 @@ func (chunk *Chunk) consolidateOperands() {
 	chunk.operandPool = pool
 }
 
+// receiverOffset is 1 for an instance method, whose first parameter slot holds the receiver rather than a caller argument.
+func (f *FunctionInfo) receiverOffset() int {
+	if f.UpvalueCount == 0 && len(f.ParamNames) > 0 && f.ParamNames[0] == "this" {
+		return 1
+	}
+	return 0
+}
+
 type FunctionInfo struct {
 	Name                     string
 	Doc                      string

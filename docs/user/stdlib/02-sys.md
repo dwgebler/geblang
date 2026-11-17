@@ -171,7 +171,7 @@ parsing, help text, prompts, and terminal formatting.
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `sleep(ms)` | `void` | Block for the given milliseconds |
-| `exit(code)` | never | Exit the script with the given process status |
+| `exit(code)` | never | Exit the script with the given process status, after running every pending `defer` (innermost first) |
 
 ```gb
 sys.sleep(500);

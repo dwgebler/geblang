@@ -1,0 +1,22 @@
+module async_globals_donor;
+import async;
+
+export int donorCalls = 0;
+
+export async func bumpLater(): int {
+    donorCalls = donorCalls + 1;
+    return donorCalls;
+}
+
+export func bumpInTask(): int {
+    return async.await(async.run(func(): int { donorCalls = donorCalls + 1; return donorCalls; })) as int;
+}
+
+export func bumpingGenerator(): any {
+    donorCalls = donorCalls + 1;
+    yield donorCalls;
+}
+
+export func donorCount(): int {
+    return donorCalls;
+}

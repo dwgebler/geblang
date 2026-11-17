@@ -1,5 +1,65 @@
 # Release Notes
 
+## 1.42.3
+
+### Fixed
+
+- On the VM, calling a bound method value (`let m = obj.hit; m();`) or a
+  `reflect.method` handle now keeps the method's writes to module globals.
+  Previously the writes were silently lost when the method belonged to the
+  entry script, or to a module whose state was held further up the call (as in
+  a `geblang build` binary), so a counter or cache updated this way never
+  changed. Handlers that run isolated per request still keep their writes
+  per request.
+- On the VM, module-global assignments made inside an async task
+  (`async.run`), an `async func` or async method, or a generator are now kept.
+  Previously every such write was lost, so a counter bumped in a task was
+  unchanged after `await`. Writes land when the task or generator finishes,
+  so they are visible after `await` or once a generator is exhausted.
+- On the VM, a dict spread in a deferred call (`defer f(...opts)`) now works for
+  functions, methods and closures, ignoring keys the callee does not declare,
+  as a direct call does. Previously it failed with "spread argument must be a
+  list" after the function body had run.
+- On the VM, named arguments and dict spreads now reach a method a class
+  inherits from a class in another module (`class Sub extends lib.Base`,
+  `Sub().go(b: 2, a: 1)`), and a dict spread into a function value from
+  another module ignores undeclared keys. Previously these failed with
+  "unknown method" or "has no parameter".
+- On the VM, a spread into `io.println`, `io.print`, `io.stdoutWrite` or
+  `sys.exit` is now checked like any other call. Previously
+  `io.println(...["x"])` printed the list itself and `io.println(...5)` did
+  not fail.
+- A failing deferred call to a built-in function now keeps its error class
+  (an `IOError` stays catchable as `IOError`), has no extra message prefix,
+  and is reported at the `defer` statement's line on both runtimes.
+- `sys.exit(code)` now runs pending deferred calls in every active function,
+  innermost first, before exiting, on both runtimes. Previously the VM ran
+  none, and `defer sys.exit(...)` did nothing on the VM. A deferred call that
+  exits again replaces the code; one that throws replaces the exit with that
+  error.
+- Calling a method value with the wrong arguments now reports the method as
+  `Class.member` on both runtimes, for arity, missing, unknown and repeated
+  arguments, as type mismatches already did. On the VM the argument counts in
+  the message no longer include the bound receiver (`expects at most 2
+  arguments, got 3` instead of `3 ... got 4`).
+- On the VM, spreading arguments into an overloaded function, constructor or
+  static method (`pick(...xs)`, `Point(...opts)`, `Shape.make(...args)`),
+  including one imported from another module or called from a `defer`, now
+  selects the overload once the spread is expanded, as the evaluator does. A
+  dict spread prefers the overload that drops the fewest unknown keys.
+  Previously the VM rejected these calls ("cannot use spread with overloaded
+  function").
+- A spread call to an overloaded function is no longer rejected by type
+  checking when its result is assigned to a typed variable or returned from a
+  typed function (`string r = pick(...xs);`); only the return type is checked
+  there, since the overload is chosen at run time.
+- On the VM, a deferred constructor call (`defer Report(...)`) now works,
+  with positional, named and spread arguments. Previously it failed to compile
+  with "defer: unknown bytecode function".
+- On the VM, calling a class value with the wrong arguments (`let make = Point;
+  make();`) now raises an error whose message is just the failure, instead of
+  one that contained a rendered `uncaught ...` trace.
+
 ## 1.42.2
 
 ### Added

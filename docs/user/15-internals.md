@@ -709,11 +709,19 @@ that throws: the assignments it made before the throw are still written back,
 matching the evaluator's immediate mutation. A synchronous re-entrant call
 (host -> module -> callback -> back into the same module, all on one goroutine)
 shares the in-flight worker and so observes the outer call's pending
-assignments; a generator's module-global writes are written back when it
+assignments. A call into a module whose globals are live on a VM already on
+the call chain (the entry script, or a module running further up the chain)
+works on a copy of that VM's globals and writes its assignments back to it,
+so a bound method value or a `reflect.method` handle sees and updates the same
+state as a direct call; a generator's module-global writes are written back when it
 finishes. Snapshot and write-back copies are serialized, but execution occurs
-outside that lock, and an async task runs on its own goroutine against a
-committed snapshot rather than the live globals: contended writes have
-lost-update semantics. Module globals are therefore unsuitable for concurrent
+outside that lock, and an async task (including an `async func` call) runs on
+its own goroutine against a snapshot rather than the live globals. When it
+finishes, its assignments are written back to the code that started it if
+that call is still running, otherwise to the module, before the task resolves,
+so they are visible after `await`. A task started inside an isolated request
+handler writes back to that request only. Contended writes have lost-update
+semantics. Module globals are therefore unsuitable for concurrent
 or transactional coordination; share state across tasks through a thread-safe
 primitive such as `store.Store`.
 

@@ -538,7 +538,23 @@ Arguments to deferred calls are evaluated when the `defer` statement is
 executed. A spread argument (`defer f(...xs)`) freezes which list `xs`
 refers to at that point; a later reassignment of `xs` does not change what
 runs, but an in-place mutation of the same list does, since the deferred
-call reads the list's elements when it fires.
+call reads the list's elements when it fires. A dict spread
+(`defer f(...opts)`) works the same way and, as in a direct call, binds the
+keys as named arguments and ignores keys the callee does not declare.
+
+A deferred constructor call (`defer Report(...)`) builds the object when the
+deferred call runs, choosing among overloaded constructors the same way a
+direct construction does.
+
+If a deferred call fails, the error is reported at the `defer` statement's
+line and keeps its class, so `catch (IOError e)` catches a failed deferred
+file operation.
+
+`sys.exit(code)` also runs pending deferred calls: every function that is
+still active runs its deferred calls, innermost first, and then the program
+exits with `code`. A deferred call that calls `sys.exit` again replaces the
+code; one that throws replaces the exit with that error, which a surrounding
+`try` can catch.
 
 `defer` is especially useful with files, sockets, database transactions, and
 locks:

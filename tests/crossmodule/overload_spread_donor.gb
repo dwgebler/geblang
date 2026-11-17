@@ -1,0 +1,10 @@
+module overload_spread_donor;
+
+export func area(int side): string { return "square ${side}"; }
+export func area(int w, int h): string { return "rect ${w}x${h}"; }
+
+export class Shape {
+    string label = "";
+    func Shape(int side) { this.label = "square ${side}"; }
+    func Shape(int w, int h) { this.label = "rect ${w}x${h}"; }
+}

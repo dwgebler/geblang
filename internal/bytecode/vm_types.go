@@ -612,6 +612,74 @@ func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, in
 	return matches[0], nil
 }
 
+// selectSpreadOverload picks the overload that binds after dropping the fewest undeclared dict-spread keys; a tie is ambiguous.
+func (vm *VM) selectSpreadOverload(instruction Instruction, name string, indices []int64, args []runtime.Value, names []string, fromSpread []bool, paramOffset int) (int64, []runtime.Value, error) {
+	var matches []int64
+	var ordered [][]runtime.Value
+	var dropped []int
+	for _, index := range indices {
+		if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
+			return 0, nil, vm.runtimeError(instruction, "method index out of range")
+		}
+		function := vm.curMod.Chunk.Functions[index]
+		paramNames := function.ParamNames
+		if paramOffset <= len(paramNames) {
+			paramNames = paramNames[paramOffset:]
+		}
+		fa, fnames := dropUnknownSpreadNames(args, names, fromSpread, paramNames)
+		bound := fa
+		if slices.ContainsFunc(fnames, func(n string) bool { return n != "" }) {
+			var err error
+			if bound, err = vm.orderRuntimeArguments(instruction, function, fa, fnames, paramOffset); err != nil {
+				continue
+			}
+		}
+		minArgs, maxArgs, variadic := bytecodeFunctionArityRange(function, paramOffset)
+		if len(bound) < minArgs || (!variadic && len(bound) > maxArgs) {
+			continue
+		}
+		if !vm.runtimeArgumentsMatchWith(function, bound, paramOffset, nil) {
+			continue
+		}
+		matches = append(matches, index)
+		ordered = append(ordered, bound)
+		dropped = append(dropped, len(args)-len(fa))
+	}
+	if len(matches) == 0 {
+		return 0, nil, vm.runtimeError(instruction, "no matching overload for %s", vm.overloadLabel(name, indices))
+	}
+	best := slices.Min(dropped)
+	pick := -1
+	for i := range matches {
+		if dropped[i] != best {
+			continue
+		}
+		if pick >= 0 {
+			return 0, nil, vm.runtimeError(instruction, "ambiguous overload for %s", vm.overloadLabel(name, indices))
+		}
+		pick = i
+	}
+	return matches[pick], ordered[pick], nil
+}
+
+// CallOverloadedSpread selects among this chunk's overloads indices for a spread call and runs the winner.
+func (vm *VM) CallOverloadedSpread(indices []int64, name string, args []runtime.Value, names []string, fromSpread []bool) (runtime.Value, error) {
+	index, ordered, err := vm.selectSpreadOverload(Instruction{}, name, indices, args, names, fromSpread, 0)
+	if err != nil {
+		return nil, err
+	}
+	function := vm.curMod.Chunk.Functions[index]
+	return vm.callCallable(runtime.BytecodeFunction{Module: vm.moduleName, Index: index, Async: function.Async}, ordered)
+}
+
+// callOverloadedSpread runs a spread call on an overload set, in this chunk or the set's home module.
+func (vm *VM) callOverloadedSpread(set runtime.OverloadedFunction, args []runtime.Value, names []string, fromSpread []bool) (runtime.Value, error) {
+	if set.Module != vm.moduleName && vm.moduleLoader != nil {
+		return vm.moduleLoader.CallModuleOverloadedSpread(set.Module, set.Indices, set.Name, args, names, fromSpread, vm)
+	}
+	return vm.CallOverloadedSpread(set.Indices, set.Name, args, names, fromSpread)
+}
+
 func (vm *VM) selectRuntimeNamedFunction(instruction Instruction, name string, indices []int64, args []runtime.Value, names []string, paramOffset int, explicit ...[]string) (int64, []runtime.Value, error) {
 	matches := []int64{}
 	orderedMatches := [][]runtime.Value{}

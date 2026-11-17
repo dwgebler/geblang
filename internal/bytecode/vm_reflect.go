@@ -685,11 +685,33 @@ func (vm *VM) reflectedRuntimeInstanceMethod(fn, key string, instance *runtime.I
 				return loader.CallModuleMethodNamed(instance.Class.Module, instance.Class.Name, key, instance, args, names, nil)
 			},
 		}
+		if _, _, bytecodeMethod := methodFirstOverload(loader, instance, key); bytecodeMethod {
+			f := callable.(runtime.Function)
+			hosted := func(host any, args []runtime.Value, names []string) (runtime.Value, error) {
+				caller, _ := host.(*VM)
+				if len(names) > 0 {
+					return loader.CallModuleMethodNamed(instance.Class.Module, instance.Class.Name, key, instance, args, names, caller)
+				}
+				return loader.CallModuleMethod(instance.Class.Module, instance.Class.Name, key, instance, args, caller)
+			}
+			f.BridgeInvoke = func(host any, args []runtime.Value) (runtime.Value, error) { return hosted(host, args, nil) }
+			f.NativeTyped = func(host any, args []runtime.Value, names []string, _ []string) (runtime.Value, error) {
+				return hosted(host, args, names)
+			}
+			callable = f
+		}
 	}
 	if metadata.Name == "" {
 		metadata.Name = key
 	}
 	return runtime.DecoratorTarget{Target: "method", Decorators: decorators, Function: &metadata, Callable: callable}, true
+}
+
+func methodFirstOverload(loader ModuleLoader, instance *runtime.Instance, key string) (string, int64, bool) {
+	if loader == nil || instance.Class == nil {
+		return "", 0, false
+	}
+	return loader.MethodFirstOverload(instance.Class.Module, instance.Class.Name, key)
 }
 
 func (vm *VM) reflectStaticMethodCallable(class runtime.BytecodeClass, key string) runtime.Value {

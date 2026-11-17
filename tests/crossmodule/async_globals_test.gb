@@ -1,0 +1,60 @@
+/**
+ * @title Async tasks and generators keep module-global writes
+ * @summary Module-global assignments made in an async task, async function,
+ * async method or generator are visible once it finishes, in the entry script
+ * and in an imported module.
+ */
+import test;
+import async;
+import async_globals_donor as donor;
+
+int calls = 0;
+
+class Worker {
+    async func later(): int { calls = calls + 1; return calls; }
+    func steps(): any { calls = calls + 1; yield calls; calls = calls + 1; yield calls; }
+}
+
+class SubWorker extends Worker {}
+
+async func entryLater(): int {
+    calls = calls + 1;
+    return calls;
+}
+
+class AsyncGlobalsTest extends test.Test {
+    @test
+    func taskWritesAreVisibleAfterAwait(): void {
+        calls = 0;
+        async.await(async.run(func(): int { calls = calls + 1; return calls; }));
+        this.assertEquals(1, calls);
+    }
+
+    @test
+    func asyncFunctionsAndMethods(): void {
+        calls = 0;
+        await entryLater();
+        await Worker().later();
+        await SubWorker().later();
+        this.assertEquals(3, calls);
+    }
+
+    @test
+    func generatorWritesAreVisibleWhenItEnds(): void {
+        calls = 0;
+        let steps = SubWorker().steps;
+        list<int> seen = [];
+        for (v in steps()) { seen.push(v as int); }
+        this.assertEquals([1, 2], seen);
+        this.assertEquals(2, calls);
+    }
+
+    @test
+    func importedModuleTasksAndGenerators(): void {
+        int start = donor.donorCount();
+        await donor.bumpLater();
+        donor.bumpInTask();
+        for (v in donor.bumpingGenerator()) { }
+        this.assertEquals(start + 3, donor.donorCount());
+    }
+}

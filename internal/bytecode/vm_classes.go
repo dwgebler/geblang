@@ -1270,7 +1270,11 @@ func (vm *VM) callStaticMethodSpread(instruction Instruction, ip int) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	if hasNamed {
+	if indices, found := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], name); hasNamed && found && len(indices) > 1 {
+		if _, args, err = vm.selectSpreadOverload(instruction, name, indices, args, names, fromSpread, 0); err != nil {
+			return 0, err
+		}
+	} else if hasNamed {
 		indices, found := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], name)
 		if !found || len(indices) != 1 {
 			return 0, vm.runtimeError(instruction, "cannot use named arguments with spread on static method %s.%s", vm.curMod.Chunk.Classes[classIndex].Name, name)

@@ -1,0 +1,90 @@
+/**
+ * @title Dict spread in defer and named calls across modules
+ * @summary A dict spread in a defer is read when the call fires and drops
+ * unknown keys, for functions, methods, closures, imported functions,
+ * function values and methods inherited from another module; direct named
+ * and dict-spread calls reach those callees too, and spreads into io.println
+ * get normal argument checks.
+ */
+import test;
+import io;
+import defer_spread_donor as donor;
+
+list<string> events = [];
+
+func record(int a, int b = 7): void { events.push("record ${a} ${b}"); }
+
+class Local {
+    func record(int a, int b = 5): void { events.push("local ${a} ${b}"); }
+}
+
+class LocalSub extends Local {}
+
+class Inherits extends donor.Pairer {}
+
+func recordPair(string s): void { events.push(s); }
+
+class DeferSpreadTest extends test.Test {
+    func deferred(): void {
+        dict<string, any> d = {"a": 1, "unknown": 99};
+        let c = func(int a, int b = 3): void { events.push("closure ${a} ${b}"); };
+        defer record(...d);
+        defer LocalSub().record(...d);
+        defer c(...d);
+        defer record(0, ...{"b": 2});
+        d["a"] = 2;
+    }
+
+    @test
+    func deferredSpreadsReadAtFireTime(): void {
+        events = [];
+        this.deferred();
+        this.assertEquals(["record 0 2", "closure 2 3", "local 2 5", "record 2 7"], events);
+    }
+
+    @test
+    func crossModuleCallees(): void {
+        dict<string, any> d = {"a": 1, "unknown": 0};
+        let fv = donor.pair;
+        this.assertEquals("pair 1 4", fv(...d));
+        this.assertEquals("pairer 1 6", Inherits().pair(...d));
+        this.assertEquals("pairer 4 3", Inherits().pair(b: 3, a: 4));
+        let m = Inherits().pair;
+        this.assertEquals("pairer 6 5", m(b: 5, a: 6));
+    }
+
+    func deferredCrossModule(): void {
+        dict<string, any> d = {"a": 8, "unknown": 0};
+        let fv = donor.pair;
+        defer recordPair(fv(...d));
+        defer recordPair(Inherits().pair(...d));
+    }
+
+    @test
+    func deferredCrossModuleCallees(): void {
+        events = [];
+        this.deferredCrossModule();
+        this.assertEquals(["pairer 8 6", "pair 8 4"], events);
+    }
+
+    @test
+    func spreadIntoPrintlnIsChecked(): void {
+        this.assertThrows(func(): void { io.println(...5); });
+        this.assertThrows(func(): void { io.println(...["a", "b"]); });
+    }
+
+    func failingDefer(): void {
+        defer io.readText("/nonexistent/geblang-defer-spread-probe.txt");
+    }
+
+    @test
+    func deferredNativeKeepsItsErrorClass(): void {
+        string outcome = "none";
+        try {
+            this.failingDefer();
+        } catch (IOError e) {
+            outcome = "IOError";
+        }
+        this.assertEquals("IOError", outcome);
+    }
+}

@@ -8,6 +8,7 @@ import (
 	"geblang/internal/overload"
 	"geblang/internal/profiling"
 	"geblang/internal/runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -222,6 +223,7 @@ func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Tas
 	go func() {
 		defer runtime.AsyncLeave()
 		result, err := runtime.CallRecovering(func() (runtime.Value, error) { return worker.CallFunctionBound(index, args, bindings, false) })
+		worker.writeBackGlobals()
 		task.Complete(result, err)
 	}()
 	return task
@@ -246,6 +248,7 @@ func (parent *VM) spawnAsyncWorker() *VM {
 	}
 	worker.syncMode = true
 	worker.forwardThis = parent.forwardThis
+	worker.applyWriteBack(parent.writeBackTargets())
 	worker.decoratedFuncs = copyRuntimeValueMap(parent.decoratedFuncs)
 	worker.decoratedClasses = copyRuntimeValueMap(parent.decoratedClasses)
 	worker.decoratorsApplied = true
@@ -254,22 +257,9 @@ func (parent *VM) spawnAsyncWorker() *VM {
 	return worker
 }
 
-// enableGeneratorPersist turns on dirty-global tracking for a module worker's generator so its module-global writes can be written back when it finishes.
-func (vm *VM) enableGeneratorPersist(callVM *VM) {
-	if vm.moduleLoader != nil && callVM.ModuleName() != "" {
-		callVM.SetPersistGlobals(true)
-	}
-}
-
-// persistGeneratorGlobals writes a finished generator worker's dirty module globals back to its module record, matching the evaluator's shared-environment semantics.
-func (vm *VM) persistGeneratorGlobals(callVM *VM) {
-	if vm.moduleLoader != nil && callVM.ModuleName() != "" {
-		vm.moduleLoader.PersistModuleGlobals(callVM)
-	}
-}
-
 func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generator {
 	vm.noteEscape()
+	targets := vm.writeBackTargets()
 	bindings := vm.pendingTypeBindings
 	vm.pendingTypeBindings = nil
 	items := make(chan vmGeneratorItem)
@@ -281,14 +271,14 @@ func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generato
 	return runtime.NewClosableGenerator(func() (runtime.Value, bool, error) {
 		start.Do(func() {
 			callVM := vm.spawnAsyncWorker()
+			callVM.applyWriteBack(targets)
 			callVM.generatorExecution = true
 			callVM.generatorYield = items
 			callVM.generatorDone = doneCh
-			vm.enableGeneratorPersist(callVM)
 			go func() {
 				defer close(items)
 				_, err := runtime.CallRecovering(func() (runtime.Value, error) { return callVM.CallFunctionBound(index, args, bindings, false) })
-				vm.persistGeneratorGlobals(callVM)
+				callVM.writeBackGlobals()
 				if err != nil {
 					select {
 					case items <- vmGeneratorItem{err: err}:
@@ -320,6 +310,7 @@ func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generato
 
 func (vm *VM) lazyClosureGenerator(closure runtime.BytecodeClosure, args []runtime.Value) *runtime.Generator {
 	vm.noteEscape()
+	targets := vm.writeBackTargets()
 	items := make(chan vmGeneratorItem)
 	doneCh := make(chan struct{})
 	stop := sync.Once{}
@@ -329,14 +320,14 @@ func (vm *VM) lazyClosureGenerator(closure runtime.BytecodeClosure, args []runti
 	return runtime.NewClosableGenerator(func() (runtime.Value, bool, error) {
 		start.Do(func() {
 			callVM := vm.spawnAsyncWorker()
+			callVM.applyWriteBack(targets)
 			callVM.generatorExecution = true
 			callVM.generatorYield = items
 			callVM.generatorDone = doneCh
-			vm.enableGeneratorPersist(callVM)
 			go func() {
 				defer close(items)
 				_, err := runtime.CallRecovering(func() (runtime.Value, error) { return callVM.callCallable(closure, args) })
-				vm.persistGeneratorGlobals(callVM)
+				callVM.writeBackGlobals()
 				if err != nil {
 					select {
 					case items <- vmGeneratorItem{err: err}:
@@ -386,6 +377,7 @@ func (vm *VM) startAsyncCallableWithForwardThis(fn runtime.Value, args []runtime
 	go func() {
 		defer runtime.AsyncLeave()
 		result, err := runtime.CallRecovering(func() (runtime.Value, error) { return worker.callCallable(fn, args) })
+		worker.writeBackGlobals()
 		task.Complete(result, err)
 	}()
 	return task
@@ -966,7 +958,8 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			argc = len(provided)
 		}
 	} else if argc > len(function.ParamSlots) {
-		return 0, vm.runtimeError(instruction, "%s expects at most %d arguments, got %d", function.Name, len(function.ParamSlots), argc)
+		offset := function.receiverOffset()
+		return 0, vm.runtimeError(instruction, "%s expects at most %d arguments, got %d", function.Name, len(function.ParamSlots)-offset, argc-offset)
 	}
 	required := len(function.ParamSlots)
 	if function.Variadic && required > 0 {
@@ -1573,34 +1566,76 @@ func (vm *VM) collectDeferSpreadArgs(instruction Instruction, meta []int64) ([]r
 	return args, names, mask, nil
 }
 
-// expandDeferredSpreadArgs splices each frozen spread reference's current elements in place, returning the flat (args, names) plus whether any arg is named.
-func expandDeferredSpreadArgs(action deferredAction) ([]runtime.Value, []string, bool, error) {
-	args := make([]runtime.Value, 0, len(action.args))
-	names := make([]string, 0, len(action.args))
-	hasNamed := false
+// deferredSpreadArgs is a spread defer's arguments as read when it fires; fromSpread marks the named args a dict spread supplied.
+type deferredSpreadArgs struct {
+	args       []runtime.Value
+	names      []string
+	fromSpread []bool
+	hasNamed   bool
+}
+
+// expandDeferredSpreadArgs splices each frozen spread reference's current contents in place; a dict spread becomes named args.
+func expandDeferredSpreadArgs(action deferredAction, allowDict bool) (deferredSpreadArgs, error) {
+	out := deferredSpreadArgs{
+		args:       make([]runtime.Value, 0, len(action.args)),
+		names:      make([]string, 0, len(action.args)),
+		fromSpread: make([]bool, 0, len(action.args)),
+	}
 	for i, v := range action.args {
 		if action.spreadMask[i] {
-			list, ok := v.(*runtime.List)
-			if !ok {
-				return nil, nil, false, fmt.Errorf("spread argument must be a list")
-			}
-			for _, el := range list.Elements {
-				args = append(args, el)
-				names = append(names, "")
+			switch spread := v.(type) {
+			case *runtime.List:
+				for _, el := range spread.Elements {
+					out.args = append(out.args, el)
+					out.names = append(out.names, "")
+					out.fromSpread = append(out.fromSpread, false)
+				}
+			case runtime.Dict:
+				if !allowDict {
+					return out, fmt.Errorf("spread argument must be a list")
+				}
+				dargs, dnames, err := spreadDictNamedArguments(spread, nil, nil)
+				if err != nil {
+					return out, err
+				}
+				out.args = append(out.args, dargs...)
+				out.names = append(out.names, dnames...)
+				for range dargs {
+					out.fromSpread = append(out.fromSpread, true)
+				}
+				out.hasNamed = out.hasNamed || len(dargs) > 0
+			default:
+				if allowDict {
+					return out, fmt.Errorf("spread argument must be a list or dict")
+				}
+				return out, fmt.Errorf("spread argument must be a list")
 			}
 			continue
 		}
-		args = append(args, v)
+		out.args = append(out.args, v)
 		name := ""
 		if i < len(action.names) {
 			name = action.names[i]
 		}
 		if name != "" {
-			hasNamed = true
+			out.hasNamed = true
 		}
-		names = append(names, name)
+		out.names = append(out.names, name)
+		out.fromSpread = append(out.fromSpread, false)
 	}
-	return args, names, hasNamed, nil
+	return out, nil
+}
+
+// dropUnknownFor drops dict-spread keys the callee does not declare; an unresolvable signature leaves the args as they are.
+func (vm *VM) dropUnknownFor(instruction Instruction, callee runtime.Value, method string, spread deferredSpreadArgs) ([]runtime.Value, []string) {
+	if !slices.Contains(spread.fromSpread, true) {
+		return spread.args, spread.names
+	}
+	paramNames, err := vm.receiverParamNames(instruction, callee, method)
+	if err != nil {
+		return spread.args, spread.names
+	}
+	return dropUnknownSpreadNames(spread.args, spread.names, spread.fromSpread, paramNames)
 }
 
 // dropUnknownSpreadNames removes dict-spread named args whose key is not a declared parameter, matching the evaluator's fromSpread silent drop.
@@ -2593,6 +2628,11 @@ func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value,
 				return res, vm.stitchHofCallbackError(err)
 			}
 		}
+		if f.NativeTyped != nil && vm.moduleLoader != nil {
+			// A method value needs its caller so its home worker shares the calling VM's globals.
+			res, err := f.NativeTyped(vm, args, nil, nil)
+			return res, vm.stitchHofCallbackError(err)
+		}
 		if f.Native == nil {
 			return nil, fmt.Errorf("runtime function is not callable by VM")
 		}
@@ -3229,6 +3269,50 @@ func (vm *VM) ConstructClass(index int64, args []runtime.Value) (runtime.Value, 
 // parent dispatch where the subclass instance is declared in
 // another chunk: `instance.Class.Name` would point at the subclass,
 // which doesn't exist in the parent module's chunk.
+// CallMethodAsNamed binds named arguments against className's method (following a parent into its own module) and then calls it positionally.
+func (vm *VM) CallMethodAsNamed(className string, instance *runtime.Instance, name string, args []runtime.Value, names []string) (runtime.Value, error) {
+	classInfo, ok := vm.classInfo(className)
+	if !ok {
+		return nil, fmt.Errorf("unknown class %s", className)
+	}
+	indices, ok := vm.lookupMethod(classInfo, name)
+	if !ok {
+		if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {
+			if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
+				return vm.moduleLoader.CallParentInModuleNamed(module, parentClass, name, instance, args, names, vm)
+			}
+		}
+		return nil, &runtime.MethodNotFoundError{Class: className, Method: name}
+	}
+	_, ordered, err := vm.selectRuntimeNamedFunction(Instruction{}, name, indices, args, names, 1)
+	if err != nil {
+		return nil, err
+	}
+	return vm.CallMethodAs(className, instance, name, ordered)
+}
+
+// callInstanceMethodNamed calls a method with named arguments wherever it is declared: this chunk, the instance's own module, or a parent's module.
+func (vm *VM) callInstanceMethodNamed(instruction Instruction, instance *runtime.Instance, name string, args []runtime.Value, names []string) (runtime.Value, error) {
+	if instance.Class != nil && instance.Class.Module != vm.moduleName && vm.moduleLoader != nil {
+		return vm.moduleLoader.CallModuleMethodNamed(instance.Class.Module, instance.Class.Name, name, instance, args, names, vm)
+	}
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if ok {
+		if _, found := vm.lookupMethod(classInfo, name); !found {
+			if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {
+				if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
+					return vm.moduleLoader.CallParentInModuleNamed(module, parentClass, name, instance, args, names, vm)
+				}
+			}
+		}
+	}
+	reordered, err := vm.reorderMethodNamedArgs(instruction, instance, name, args, names)
+	if err != nil {
+		return nil, err
+	}
+	return vm.CallMethod(instance, name, reordered)
+}
+
 func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name string, args []runtime.Value) (runtime.Value, error) {
 	classInfo, ok := vm.classInfo(className)
 	if !ok {
@@ -3715,6 +3799,10 @@ func (vm *VM) runWrapperNative(args []runtime.Value, wrapper []Instruction, rawI
 		vm.globalsMu.Unlock()
 	}
 	callVM.SetModuleName(vm.moduleName)
+	callVM.isolatedGlobals = isolated
+	if !isolated {
+		callVM.globalsOwner = vm
+	}
 	// Set unconditionally so a pooled worker never keeps an earlier request's scoped caller.
 	callVM.SetStatefulNativeCaller(vm.statefulNative)
 	if native != nil {
@@ -3754,19 +3842,9 @@ func (vm *VM) runWrapperNative(args []runtime.Value, wrapper []Instruction, rawI
 	// their state stays per-request, which is what keeps concurrent handlers
 	// from racing the shared host globals.
 	if !isolated {
-		vm.globalsMu.Lock()
-		for _, i := range callVM.dirtySlots {
-			if i >= len(callVM.globals) || i >= len(vm.globals) {
-				continue
-			}
-			vm.globals[i] = callVM.globals[i]
-			vm.globalsStamp = 0
-			if i < len(vm.dirtyGlobals) {
-				vm.markDirtySlot(i)
-			}
-		}
-		vm.globalsMu.Unlock()
+		vm.MergeDirtyGlobalsFrom(callVM)
 	}
+	callVM.EndActivation()
 	var result runtime.Value = runtime.Null{}
 	var popErr error
 	if len(callVM.stack) > 0 {
@@ -4056,6 +4134,9 @@ func (vm *VM) bindCallableTypeArgs(value runtime.Value, args []string) runtime.V
 			}
 			f.BridgeInvoke = func(host any, values []runtime.Value) (runtime.Value, error) {
 				return typed(host, values, nil, args)
+			}
+			f.NativeTyped = func(host any, values []runtime.Value, names []string, _ []string) (runtime.Value, error) {
+				return typed(host, values, names, args)
 			}
 		}
 		return f

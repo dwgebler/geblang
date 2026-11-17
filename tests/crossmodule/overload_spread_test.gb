@@ -1,0 +1,80 @@
+/**
+ * @title Spread into overloaded functions, constructors and statics
+ * @summary The overload is selected once the spread is expanded: list spreads
+ * pick by argument count and type, dict spreads by parameter names (fewest
+ * undeclared keys wins, a tie is ambiguous), for local and imported
+ * overloads, constructors, statics, typed results and deferred calls,
+ * including deferred constructions.
+ */
+import test;
+import overload_spread_donor as donor;
+
+list<string> events = [];
+
+func pick(int a): string { return "one ${a}"; }
+func pick(int a, int b): string { return "two ${a} ${b}"; }
+func opt(int a, int b = 0): string { return "opt ${a} ${b}"; }
+func opt(string s): string { return "str ${s}"; }
+func tie(int a, int x = 0): string { return "tie1"; }
+func tie(int b, string y = ""): string { return "tie2"; }
+
+class Box {
+    string label = "";
+    func Box(int a) { this.label = "box ${a}"; }
+    func Box(int a, int b) { this.label = "box ${a} ${b}"; }
+    static func make(int a): string { return "make ${a}"; }
+    static func make(int a, int b): string { return "make ${a} ${b}"; }
+}
+
+class Logged {
+    func Logged(int a, int b = 9) { events.push("logged ${a} ${b}"); }
+}
+
+func record(int a): void { events.push("record ${a}"); }
+func record(int a, int b): void { events.push("record ${a} ${b}"); }
+
+class OverloadSpreadTest extends test.Test {
+    @test
+    func functions(): void {
+        list<int> xs = [1, 2];
+        this.assertEquals("two 1 2", pick(...xs));
+        this.assertEquals("one 5", pick(...[5]));
+        this.assertEquals("two 3 4", pick(...{"a": 3, "b": 4}));
+        this.assertEquals("opt 5 0", opt(...{"a": 5, "unknown": 1}));
+        this.assertEquals("str q", opt(...{"s": "q"}));
+        this.assertEquals("tie1", tie(...{"a": 1, "x": 2, "unknown": 0}));
+        this.assertThrows(func(): void { tie(...{"a": 1, "b": 2}); });
+        this.assertThrows(func(): void { pick(...[1, 2, 3]); });
+        string typed = pick(...xs);
+        this.assertEquals("two 1 2", typed);
+    }
+
+    @test
+    func constructorsAndStatics(): void {
+        this.assertEquals("box 1 2", Box(...[1, 2]).label);
+        this.assertEquals("box 7", Box(...{"a": 7}).label);
+        this.assertEquals("make 1 2", Box.make(...{"a": 1, "b": 2}));
+    }
+
+    @test
+    func importedOverloads(): void {
+        this.assertEquals("rect 2x3", donor.area(...[2, 3]));
+        this.assertEquals("square 4", donor.area(...{"side": 4}));
+        this.assertEquals("rect 5x6", donor.Shape(...[5, 6]).label);
+    }
+
+    func deferring(): void {
+        dict<string, any> d = {"a": 1, "unknown": 0};
+        defer record(...[3, 4]);
+        defer record(...d);
+        defer Logged(2);
+        defer Logged(...{"b": 5, "a": 6});
+    }
+
+    @test
+    func deferredCallsAndConstructions(): void {
+        events = [];
+        this.deferring();
+        this.assertEquals(["logged 6 5", "logged 2 9", "record 1", "record 3 4"], events);
+    }
+}

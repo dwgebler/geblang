@@ -509,7 +509,17 @@ func (g *fuzzGen) spreadArgBlock() (decls string, calls []string) {
 	var d strings.Builder
 	d.WriteString("func spread3(int a, int b, int c): string { return \"${a}|${b}|${c}\"; }\n")
 	d.WriteString("func spreadVar(int a, int ...rest): string { return \"${a}:${rest}\"; }\n")
+	d.WriteString("func spreadOv(int a): string { return \"ov1 ${a}\"; }\n")
+	d.WriteString("func spreadOv(int a, int b, int c = 0): string { return \"ov2 ${a} ${b} ${c}\"; }\n")
+	d.WriteString("class SpreadOvBox { func SpreadOvBox(int a) { io.println(\"box1 ${a}\"); } func SpreadOvBox(int a, int b) { io.println(\"box2 ${a} ${b}\"); } }\n")
+	d.WriteString("func spreadOvDefer(): void { defer spreadOv(...{\"b\": " + y + ", \"a\": " + x + ", \"skip\": 0}); defer SpreadOvBox(...{\"a\": " + a + "}); }\n")
 	calls = append(calls,
+		"io.println(spreadOv(...["+a+"]));",
+		"io.println(spreadOv(...["+a+", "+b+"]));",
+		"io.println(spreadOv(...{\"a\": "+x+", \"b\": "+y+", \"skip\": 1}));",
+		"string spreadTyped = spreadOv(...["+c+", "+x+", "+y+"]); io.println(spreadTyped);",
+		"SpreadOvBox(...["+b+", "+c+"]);",
+		"spreadOvDefer();",
 		"io.println(spread3(...["+a+"], "+b+", "+c+"));",
 		"io.println(spread3("+a+", ...["+b+"], "+c+"));",
 		"io.println(spread3(c: "+c+", ...["+a+", "+b+"]));",
@@ -582,11 +592,20 @@ func (g *fuzzGen) deferFormsBlock() (decls string, calls []string) {
 	d.WriteString("class DfInner { func ping(): void { io.println(\"ping\"); } }\n")
 	d.WriteString("class DfOuter { DfInner inner; func DfOuter() { this.inner = DfInner(); } }\n")
 	d.WriteString("func dfShow(int a, int b): void { io.println(\"${a}|${b}\"); }\n")
+	d.WriteString("class DfShow { func show(int a, int b = 0): void { io.println(\"m${a}|${b}\"); } }\n")
+	d.WriteString("class DfSub extends DfShow {}\n")
 	d.WriteString("func dfRun(): void {\n")
 	d.WriteString("  let o = DfOuter();\n")
 	d.WriteString("  let xs = [" + a + ", " + b + "];\n")
+	d.WriteString("  let kw = {\"b\": " + b + ", \"a\": " + a + ", \"skip\": 1};\n")
+	d.WriteString("  let dfc = func(int a, int b = 1): void { io.println(\"c${a}|${b}\"); };\n")
 	d.WriteString("  defer o.inner.ping();\n")
 	d.WriteString("  defer dfShow(...xs);\n")
+	d.WriteString("  defer dfShow(...kw);\n")
+	d.WriteString("  defer DfSub().show(...kw);\n")
+	d.WriteString("  defer dfc(...kw);\n")
+	d.WriteString("  defer DfSub().show(b: " + a + ", a: " + b + ");\n")
+	d.WriteString("  kw[\"a\"] = " + b + ";\n")
 	d.WriteString("  defer io.println(\"modq\");\n")
 	d.WriteString("  for (i in 0..<2) { defer io.println(\"loop${i}\"); }\n")
 	d.WriteString("  io.println(\"body\");\n")
@@ -653,14 +672,40 @@ func (g *fuzzGen) reflectTypesBlock() (decls string, calls []string) {
 	return d.String(), calls
 }
 
+// globalWritesBlock writes a module global through method values, tasks, async calls and generators; each runs on a worker whose writes must reach the main VM.
+func (g *fuzzGen) globalWritesBlock() (decls string, calls []string) {
+	step := g.intLit()
+	var d strings.Builder
+	d.WriteString("int gw = 0;\n")
+	d.WriteString("class GwBox {\n")
+	d.WriteString("  func hit(): int { gw = gw + " + step + "; return gw; }\n")
+	d.WriteString("  async func ahit(): int { gw = gw + 1; return gw; }\n")
+	d.WriteString("  func steps(): any { gw = gw + 1; yield gw; gw = gw + 1; yield gw; }\n")
+	d.WriteString("}\n")
+	d.WriteString("class GwSub extends GwBox {}\n")
+	d.WriteString("async func gwLater(): int { gw = gw + 2; return gw; }\n")
+	forms := []string{
+		"let gwm = GwSub().hit; gwm(); io.println(gw);",
+		"async.await(async.run(func(): int { gw = gw + 3; return gw; })); io.println(gw);",
+		"await gwLater(); io.println(gw);",
+		"await GwSub().ahit(); io.println(gw);",
+		"let gws = GwBox().steps; for (v in gws()) { io.println(v); } io.println(gw);",
+		"async.await(async.run(func(): int { return GwBox().hit(); })); io.println(gw);",
+		"io.println(\"${[1, 2].map(func(int x): int { gw = gw + x; return x; })}\"); io.println(gw);",
+	}
+	g.rng.Shuffle(len(forms), func(i, j int) { forms[i], forms[j] = forms[j], forms[i] })
+	calls = append(calls, forms[:3+g.rng.Intn(len(forms)-2)]...)
+	return d.String(), calls
+}
+
 func (g *fuzzGen) program() string {
 	var b strings.Builder
-	b.WriteString("import io;\n")
+	b.WriteString("import io;\nimport async;\n")
 	// Pick at most one structural section per program so the generated
 	// declarations cannot collide; the rest of the budget is scalar
 	// expressions and fault statements.
 	var sectionCalls []string
-	switch g.rng.Intn(13) {
+	switch g.rng.Intn(14) {
 	case 0:
 		decls, calls := g.classBlock()
 		b.WriteString(decls)
@@ -711,6 +756,10 @@ func (g *fuzzGen) program() string {
 		sectionCalls = calls
 	case 12:
 		decls, calls := g.reflectTypesBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 13:
+		decls, calls := g.globalWritesBlock()
 		b.WriteString(decls)
 		sectionCalls = calls
 	}

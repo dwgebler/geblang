@@ -16,7 +16,9 @@ import (
 // HasDefault are parallel; when Variadic is set the final parameter
 // collects surplus positional arguments and cannot be named.
 type Signature struct {
-	FuncName   string
+	FuncName string
+	// Owner qualifies FuncName as Owner.FuncName in errors; built only on failure.
+	Owner      string
 	ParamNames []string
 	HasDefault []bool
 	Variadic   bool
@@ -44,6 +46,13 @@ type Result struct {
 	TailArgs []int
 }
 
+func (sig Signature) displayName() string {
+	if sig.Owner != "" && sig.FuncName != "" {
+		return sig.Owner + "." + sig.FuncName
+	}
+	return DisplayName(sig.FuncName)
+}
+
 // DisplayName is the function name used in binding errors, with the
 // VM's established fallback for anonymous callables.
 func DisplayName(name string) string {
@@ -64,7 +73,7 @@ func NativeArgOrder(sig Signature, result Result) ([]int, error) {
 		}
 		if slot >= 0 {
 			if gapAt >= 0 {
-				return nil, fmt.Errorf("%s missing argument %s", DisplayName(sig.FuncName), sig.ParamNames[gapAt])
+				return nil, fmt.Errorf("%s missing argument %s", sig.displayName(), sig.ParamNames[gapAt])
 			}
 			indices = append(indices, slot)
 		} else if gapAt < 0 {
@@ -73,7 +82,7 @@ func NativeArgOrder(sig Signature, result Result) ([]int, error) {
 	}
 	if variadicIndex >= 0 && result.Slots[variadicIndex] >= 0 {
 		if gapAt >= 0 {
-			return nil, fmt.Errorf("%s missing argument %s", DisplayName(sig.FuncName), sig.ParamNames[gapAt])
+			return nil, fmt.Errorf("%s missing argument %s", sig.displayName(), sig.ParamNames[gapAt])
 		}
 		indices = append(indices, result.Slots[variadicIndex])
 	}
@@ -121,13 +130,13 @@ func Order(sig Signature, args []Arg) (Result, error) {
 			fixedCount--
 		}
 		if len(args) > fixedCount && variadicIndex < 0 {
-			return Result{}, fmt.Errorf("%s expects at most %d arguments, got %d", DisplayName(sig.FuncName), fixedCount, len(args))
+			return Result{}, fmt.Errorf("%s expects at most %d arguments, got %d", sig.displayName(), fixedCount, len(args))
 		}
 		for i := 0; i < fixedCount; i++ {
 			if i < len(args) {
 				result.Slots[i] = i
 			} else if !sig.hasDefaultAt(i) {
-				return Result{}, fmt.Errorf("%s missing argument %s", DisplayName(sig.FuncName), sig.ParamNames[i])
+				return Result{}, fmt.Errorf("%s missing argument %s", sig.displayName(), sig.ParamNames[i])
 			}
 		}
 		for i := fixedCount; i < len(args); i++ {
@@ -150,7 +159,7 @@ func Order(sig Signature, args []Arg) (Result, error) {
 				nextPositional++
 			}
 			if nextPositional >= paramCount {
-				return Result{}, fmt.Errorf("%s expects at most %d arguments, got %d", DisplayName(sig.FuncName), paramCount, len(args))
+				return Result{}, fmt.Errorf("%s expects at most %d arguments, got %d", sig.displayName(), paramCount, len(args))
 			}
 			result.Slots[nextPositional] = argIndex
 			nextPositional++
@@ -158,10 +167,10 @@ func Order(sig Signature, args []Arg) (Result, error) {
 		}
 		position, ok := positions[strings.ToLower(arg.Name)]
 		if !ok {
-			return Result{}, fmt.Errorf("%s has no parameter %s", DisplayName(sig.FuncName), arg.Name)
+			return Result{}, fmt.Errorf("%s has no parameter %s", sig.displayName(), arg.Name)
 		}
 		if result.Slots[position] != DefaultSlot {
-			return Result{}, fmt.Errorf("%s parameter %s passed more than once", DisplayName(sig.FuncName), arg.Name)
+			return Result{}, fmt.Errorf("%s parameter %s passed more than once", sig.displayName(), arg.Name)
 		}
 		result.Slots[position] = argIndex
 	}
@@ -170,7 +179,7 @@ func Order(sig Signature, args []Arg) (Result, error) {
 			continue
 		}
 		if !sig.hasDefaultAt(i) {
-			return Result{}, fmt.Errorf("%s missing argument %s", DisplayName(sig.FuncName), sig.ParamNames[i])
+			return Result{}, fmt.Errorf("%s missing argument %s", sig.displayName(), sig.ParamNames[i])
 		}
 	}
 	return result, nil

@@ -311,6 +311,14 @@ func (l fakeModuleLoader) CallParentInModule(module string, className string, me
 	return runtime.Null{}, fmt.Errorf("unexpected cross-module parent call %s.%s", className, methodName)
 }
 
+func (l fakeModuleLoader) CallModuleOverloadedSpread(module string, indices []int64, name string, args []runtime.Value, names []string, fromSpread []bool, caller *bytecode.VM) (runtime.Value, error) {
+	return runtime.Null{}, fmt.Errorf("unexpected cross-module overloaded spread call %s", name)
+}
+
+func (l fakeModuleLoader) CallParentInModuleNamed(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, names []string, caller *bytecode.VM) (runtime.Value, error) {
+	return runtime.Null{}, fmt.Errorf("unexpected cross-module parent call %s.%s", className, methodName)
+}
+
 func (l fakeModuleLoader) ImmutableFieldsForModuleClass(module string, className string) []string {
 	return nil
 }

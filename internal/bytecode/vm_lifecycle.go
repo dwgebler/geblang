@@ -375,6 +375,115 @@ func (vm *VM) PersistDirtyGlobals(dst []runtime.VMValue) {
 	}
 }
 
+// MergeDirtyGlobalsFrom writes back only the global slots worker reassigned, so unrelated slots are never overwritten with a stale snapshot.
+func (vm *VM) MergeDirtyGlobalsFrom(worker *VM) {
+	vm.globalsMu.Lock()
+	vm.mergeDirtyGlobalsLocked(worker)
+	vm.globalsMu.Unlock()
+}
+
+func (vm *VM) mergeDirtyGlobalsLocked(worker *VM) {
+	for _, i := range worker.dirtySlots {
+		if i >= len(worker.globals) || i >= len(vm.globals) {
+			continue
+		}
+		vm.globals[i] = worker.globals[i]
+		vm.globalsStamp = 0
+		vm.markGlobalDirtyLocked(i)
+	}
+}
+
+type globalsTarget struct {
+	vm         *VM
+	activation uint64
+}
+
+// EndActivation marks this VM's current call as over, so writes still in flight for it go further up the chain.
+func (vm *VM) EndActivation() {
+	vm.globalsMu.Lock()
+	vm.activation++
+	vm.globalsMu.Unlock()
+}
+
+type writeBackTargets struct {
+	chain    []globalsTarget
+	isolated bool
+}
+
+// writeBackTargets lists where a task or generator started from vm should merge its global writes; it runs on vm's goroutine while vm's call is live.
+func (vm *VM) writeBackTargets() writeBackTargets {
+	var out writeBackTargets
+	for h, steps := vm, 0; h != nil && steps < 64; h, steps = h.globalsOwner, steps+1 {
+		h.MarkBridgeActive()
+		h.globalsMu.Lock()
+		out.chain = append(out.chain, globalsTarget{vm: h, activation: h.activation})
+		h.globalsMu.Unlock()
+		if h.isolatedGlobals {
+			out.isolated = true
+			break
+		}
+	}
+	return out
+}
+
+func (worker *VM) applyWriteBack(targets writeBackTargets) {
+	worker.SetPersistGlobals(true)
+	worker.writeBackChain = targets.chain
+	worker.isolatedGlobals = targets.isolated
+}
+
+// writeBackGlobals merges a finished worker's global writes into the first target still running the same activation, else its module record.
+func (worker *VM) writeBackGlobals() {
+	if !worker.HasDirtyGlobals() {
+		return
+	}
+	for _, t := range worker.writeBackChain {
+		t.vm.globalsMu.Lock()
+		if t.vm.activation == t.activation {
+			t.vm.mergeDirtyGlobalsLocked(worker)
+			t.vm.globalsMu.Unlock()
+			return
+		}
+		t.vm.globalsMu.Unlock()
+	}
+	if !worker.isolatedGlobals && worker.moduleLoader != nil && worker.ModuleName() != "" {
+		worker.moduleLoader.PersistModuleGlobals(worker)
+	}
+}
+
+// AdoptGlobalsFrom gives this worker owner's globals and records owner as the VM its writes merge back into.
+func (vm *VM) AdoptGlobalsFrom(owner *VM) {
+	owner.MarkBridgeActive()
+	vm.SetPersistGlobals(true)
+	owner.CopyGlobalsTo(vm)
+	vm.globalsOwner = owner
+}
+
+// MergeGlobalsToOwner writes this worker's reassigned globals back to the VM it adopted them from.
+func (vm *VM) MergeGlobalsToOwner() {
+	if vm.globalsOwner != nil && vm.globalsOwner != vm {
+		vm.globalsOwner.MergeDirtyGlobalsFrom(vm)
+	}
+}
+
+// GlobalsOwnerFor returns the nearest VM on vm's call chain running module, or nil.
+func (vm *VM) GlobalsOwnerFor(module string) *VM {
+	steps := 0
+	for h := vm; h != nil && steps < 4096; h = h.reentryHost {
+		if h.moduleName == module {
+			return h
+		}
+		steps++
+	}
+	return nil
+}
+
+// HasGlobalsOwner reports whether this worker merges its globals into another VM rather than a module record.
+func (vm *VM) HasGlobalsOwner() bool { return vm.globalsOwner != nil }
+
+// MarkBridgeActive makes this VM's global writes take the locked path, since a worker may merge into its globals.
+func (vm *VM) MarkBridgeActive() { vm.bridgeActive.Store(true) }
+
 // GlobalsSnapshotVM returns a copy of the raw VM globals, avoiding the VMValue<->Value round-trip a loader pays restoring an immutable module snapshot every cross-module call.
 func (vm *VM) GlobalsSnapshotVM() []runtime.VMValue {
 	out := make([]runtime.VMValue, len(vm.globals))
@@ -559,6 +668,10 @@ func (vm *VM) resetForReuse() {
 		}
 	}
 	vm.dirtySlots = vm.dirtySlots[:0]
+	vm.globalsOwner = nil
+	vm.writeBackChain = nil
+	vm.isolatedGlobals = false
+	vm.EndActivation()
 	vm.pendingThrow = nil
 	vm.exceptionHandlers = vm.exceptionHandlers[:0]
 	vm.constantsExtra = nil

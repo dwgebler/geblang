@@ -1,0 +1,5 @@
+module method_value_errors_donor;
+
+export class Remote {
+    func go(int a, int b): int { return a + b; }
+}

@@ -1920,6 +1920,16 @@ func (a *Analyzer) validateCallExpression(expr ast.Expression, expected typeInfo
 		if arg.Name != nil {
 			return
 		}
+		// A spread's argument count is only known at run time, where the overload is selected; only the return type can be checked here.
+		if arg.Spread {
+			for _, overload := range overloads {
+				if len(overload.typeParams) > 0 || a.returnTypeCompatible(expected, overload.returnType) {
+					return
+				}
+			}
+			a.errorf("no matching overload for %s returning %s", ident.Value, expected.display())
+			return
+		}
 		argType := a.expressionTypeName(arg.Value)
 		if !argType.known || strings.EqualFold(argType.name, "any") {
 			return

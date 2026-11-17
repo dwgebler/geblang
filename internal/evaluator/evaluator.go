@@ -395,6 +395,7 @@ type loggerHandle struct {
 type deferredCall struct {
 	expr ast.Expression
 	env  *runtime.Environment
+	line int
 }
 
 type deferFrame struct {
@@ -1386,7 +1387,7 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 			if err != nil {
 				return signal{}, err
 			}
-			e.registerDefer(frozen, env)
+			e.registerDefer(frozen, env, stmt.Token.Line)
 			return signal{}, nil
 		case "throw":
 			if stmt.Token.Line > 0 {
@@ -5565,6 +5566,7 @@ func bindEvaluatedFunctionCallArgumentsErr(fn runtime.Function, provided []evalu
 	provided = filtered
 	sig := binding.Signature{
 		FuncName:   fn.Name,
+		Owner:      functionOwnerName(fn),
 		ParamNames: paramNames,
 		HasDefault: hasDefault,
 		Variadic:   variadic,
@@ -5702,6 +5704,22 @@ func functionArgumentsMatchError(fn runtime.Function, args []runtime.Value, rece
 	return nil
 }
 
+// functionDisplayName names a function in argument errors; methods report as Class.method, matching VM compiled names.
+func functionDisplayName(fn runtime.Function) string {
+	if owner := functionOwnerName(fn); owner != "" {
+		return owner + "." + fn.Name
+	}
+	return binding.DisplayName(fn.Name)
+}
+
+// functionOwnerName is the class a method is reported under, or "" for functions and constructors.
+func functionOwnerName(fn runtime.Function) string {
+	if fn.OwnerClass != nil && fn.Name != "" && fn.OwnerClass.Name != fn.Name {
+		return fn.OwnerClass.Name
+	}
+	return ""
+}
+
 func parameterMismatchError(fn runtime.Function, param ast.Parameter, arg runtime.Value, typeParams map[string]bool, inherited map[string]string) error {
 	if matchValueToTypeRefWith(typeParams, inherited, arg, param.Type) {
 		return nil
@@ -5710,14 +5728,7 @@ func parameterMismatchError(fn runtime.Function, param ast.Parameter, arg runtim
 	if param.Type != nil {
 		paramTypeName = param.Type.String()
 	}
-	name := fn.Name
-	if name == "" {
-		name = "<closure>"
-	}
-	// Methods report as Class.method, matching VM compiled names.
-	if fn.OwnerClass != nil && fn.OwnerClass.Name != fn.Name {
-		name = fn.OwnerClass.Name + "." + fn.Name
-	}
+	name := functionDisplayName(fn)
 	suffix := collectionMismatchSuffix(arg, param.Type)
 	gotName := descriptiveTypeName(arg)
 	if suffix != "" {
@@ -6033,7 +6044,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	}
 	isVariadic := len(fn.Parameters) > 0 && fn.Parameters[len(fn.Parameters)-1].Variadic
 	if !isVariadic && len(args) > len(fn.Parameters) {
-		return nil, fmt.Errorf("%s expects at most %d arguments, got %d", binding.DisplayName(fn.Name), len(fn.Parameters), len(args))
+		return nil, fmt.Errorf("%s expects at most %d arguments, got %d", functionDisplayName(fn), len(fn.Parameters), len(args))
 	}
 	if err := functionArgumentsMatchError(fn, args, this); err != nil {
 		return nil, err
@@ -6109,7 +6120,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 			}
 			value = evaluated
 		} else {
-			return nil, fmt.Errorf("%s missing argument %s", binding.DisplayName(fn.Name), param.Name.Value)
+			return nil, fmt.Errorf("%s missing argument %s", functionDisplayName(fn), param.Name.Value)
 		}
 		if param.Const {
 			value = runtime.FreezeShallowCopy(value)
@@ -6370,12 +6381,12 @@ func (e *Evaluator) pushDeferFrame() {
 	e.deferFrames = append(e.deferFrames, &deferFrame{})
 }
 
-func (e *Evaluator) registerDefer(expr ast.Expression, env *runtime.Environment) {
+func (e *Evaluator) registerDefer(expr ast.Expression, env *runtime.Environment, line int) {
 	if len(e.deferFrames) == 0 {
 		e.pushDeferFrame()
 	}
 	frame := e.deferFrames[len(e.deferFrames)-1]
-	frame.calls = append(frame.calls, deferredCall{expr: expr, env: env})
+	frame.calls = append(frame.calls, deferredCall{expr: expr, env: env, line: line})
 }
 
 // freezeDeferredCall freezes a deferred call's arguments and callee to their registration-time values via PrecomputedValue nodes on a shallow copy (the original AST is never mutated so loop bodies re-freeze per iteration); non-call defer expressions pass through.
@@ -6470,10 +6481,19 @@ func (e *Evaluator) runAndPopDefers(sig signal) (signal, error) {
 	for i := len(frame.calls) - 1; i >= 0; i-- {
 		value, err := e.evalExpression(frame.calls[i].expr, frame.calls[i].env)
 		if err != nil {
-			return signal{}, err
+			var thrown thrownError
+			if errors.As(err, &thrown) || errors.Is(err, ErrDebugEvaluationCancelled) {
+				return signal{}, err
+			}
+			// Stamp a native failure's trace here, while the deferring function's frame is still live.
+			if line := frame.calls[i].line; line > 0 {
+				e.currentLine = line
+			}
+			return signal{}, thrownError{value: e.withTrace(runtime.NewRecoverableError(err))}
 		}
 		if exit, ok := value.(exitValue); ok {
-			return signal{exited: true, exitCode: exit.code}, nil
+			// The remaining defers still run; a later exit or error replaces this one.
+			sig = signal{exited: true, exitCode: exit.code}
 		}
 	}
 	return sig, nil

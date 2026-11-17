@@ -1054,6 +1054,9 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 	}
 	// Plain identifier call: defer someFunc(args)
 	if ident, ok := call.Callee.(*ast.Identifier); ok {
+		if c.namesLocalClass(ident.Value) {
+			return c.compileDeferThunk(stmt, call)
+		}
 		if _, hasSpread := callSpreadIndex(call.Arguments); hasSpread {
 			return c.compileDeferIdentifierSpread(stmt, call, ident)
 		}
@@ -1203,6 +1206,18 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 	return nil
 }
 
+// namesLocalClass reports whether name refers to a class declared in this chunk rather than a variable or function.
+func (c *Compiler) namesLocalClass(name string) bool {
+	if _, isVar := c.resolveName(name); isVar {
+		return false
+	}
+	if len(c.funcs[strings.ToLower(name)]) > 0 {
+		return false
+	}
+	classIndex, found := c.classes[strings.ToLower(name)]
+	return found && int(classIndex) < len(c.chunk.Classes) && c.chunk.Classes[classIndex].Name == name
+}
+
 // compileDeferThunk defers a module-qualified / nested-selector / local-static call by freezing the callee value and its arguments at registration time (a closure thunk would instead capture them by execution-time reference).
 func (c *Compiler) compileDeferThunk(stmt *ast.SimpleStatement, call *ast.CallExpression) error {
 	if err := c.compileExpression(call.Callee); err != nil {
@@ -1240,6 +1255,18 @@ func (c *Compiler) compileDeferThunk(stmt *ast.SimpleStatement, call *ast.CallEx
 
 // compileDeferIdentifierSpread handles `defer someFunc(...xs)`: a compile-time-resolved function uses OpDeferFuncCallSpread; a variable holding a callable falls back to OpDeferCallableCallSpread, matching the non-spread branch's precedence.
 func (c *Compiler) compileDeferIdentifierSpread(stmt *ast.SimpleStatement, call *ast.CallExpression, ident *ast.Identifier) error {
+	if _, isVar := c.resolveName(ident.Value); !isVar {
+		if indices := c.funcs[strings.ToLower(ident.Value)]; len(indices) > 1 {
+			c.emitAt(OpMakeOverloaded, stmt.Token.Line, stmt.Token.Column, indices...)
+			meta, err := c.compileSpreadCallArguments(call.Arguments)
+			if err != nil {
+				return err
+			}
+			operands := append([]int64{int64(len(call.Arguments))}, meta...)
+			c.emitAt(OpDeferCallableCallSpread, stmt.Token.Line, stmt.Token.Column, operands...)
+			return nil
+		}
+	}
 	funcIdx, err := c.selectFunctionCallSpread(ident.Value)
 	if err == nil {
 		meta, compileErr := c.compileSpreadCallArguments(call.Arguments)

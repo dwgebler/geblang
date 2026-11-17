@@ -1,16 +1,10 @@
 package bytecode_test
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"geblang/internal/bytecode"
-	"geblang/internal/evaluator"
-	"geblang/internal/lexer"
-	"geblang/internal/parser"
 )
 
 // overloadDonorModule exports an overloaded free function selectable by arity and argument type.
@@ -132,50 +126,15 @@ func TestParityCrossModuleOverloadAmbiguous(t *testing.T) {
 	}
 }
 
-// The VM rejects spread into a cross-module overloaded function to stay consistent with the same-module rejection (ISSUE-030); the evaluator accepts it.
-func TestCrossModuleOverloadSpreadRejectedOnVM(t *testing.T) {
-	modules := map[string]string{"helpers": overloadDonorModule}
-	mainSrc := "import io;\nimport helpers;\nlet xs = [3, 4];\nio.println(helpers.over(...xs));\n"
+// A spread into another module's overloaded function selects the overload at call time on both backends (ISSUE-030).
+func TestCrossModuleOverloadSpreadParity(t *testing.T) {
 	dir := t.TempDir()
-	for name, src := range modules {
-		if err := os.WriteFile(filepath.Join(dir, name+".gb"), []byte(src), 0o644); err != nil {
-			t.Fatalf("write module %s: %v", name, err)
-		}
+	if err := os.WriteFile(filepath.Join(dir, "helpers.gb"), []byte(overloadDonorModule), 0o644); err != nil {
+		t.Fatalf("write module helpers: %v", err)
 	}
-	p := parser.New(lexer.New(mainSrc))
-	program := p.ParseProgram()
-	if len(p.Errors()) != 0 {
-		t.Fatalf("parse errors: %v", p.Errors())
-	}
-
-	var evOut bytes.Buffer
-	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
-	if _, err := ev.Eval(program); err != nil {
-		t.Fatalf("evaluator: expected spread accepted, got %v", err)
-	}
-	if evOut.String() != "two:3,4\n" {
-		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), "two:3,4\n")
-	}
-
-	chunk, err := bytecode.Compile(program, []byte(mainSrc), "parity")
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
-	var vmOut bytes.Buffer
-	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newHarnessLoader(&vmOut, stateful)
-	loader.SetModulePaths([]string{dir})
-	loader.SetMainChunk(chunk)
-	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
-	loader.SetMainVM(vm)
-	vm.SetModulePaths([]string{dir})
-	vm.SetStatefulNativeCaller(stateful)
-	vmErr := vm.Run()
-	if vmErr == nil {
-		t.Fatalf("vm: expected spread rejection, got none (stdout %q)", vmOut.String())
-	}
-	if !strings.Contains(vmErr.Error(), "cannot use spread with overloaded function over") {
-		t.Fatalf("vm: wrong rejection: %v", vmErr)
+	ev, vm := parityOutputsModulesDir(t, dir, "import io;\nimport helpers;\nlet xs = [3, 4];\nio.println(helpers.over(...xs));\n")
+	if ev != "two:3,4\n" || vm != ev {
+		t.Fatalf("evaluator=%q VM=%q want %q", ev, vm, "two:3,4\n")
 	}
 }
 

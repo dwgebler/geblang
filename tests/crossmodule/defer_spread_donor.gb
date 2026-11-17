@@ -1,0 +1,11 @@
+module defer_spread_donor;
+
+export func pair(int a, int b = 4): string {
+    return "pair ${a} ${b}";
+}
+
+export class Pairer {
+    func pair(int a, int b = 6): string {
+        return "pairer ${a} ${b}";
+    }
+}

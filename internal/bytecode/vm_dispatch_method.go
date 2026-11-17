@@ -26,19 +26,18 @@ func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// The compiler rejects a same-module overloaded + spread call; a cross-module one is only known here, so reject it the same way (ISSUE-030).
-	for _, m := range instruction.Operands[2:] {
-		if m != spreadArgMeta {
-			continue
-		}
-		if receiver, perr := vm.peek(); perr == nil {
-			if module, ok := receiver.(*runtime.Module); ok {
-				if set, overloaded := module.Exports[name].(runtime.OverloadedFunction); overloaded && len(set.Callables) == 0 {
-					return 0, vm.runtimeError(instruction, "cannot use spread with overloaded function %s", name)
-				}
+	if hasNamed {
+		if set, ok := vm.spreadOverloadSet(name); ok {
+			if _, perr := vm.pop(); perr != nil {
+				return 0, vm.callPropagate(instruction, perr)
 			}
+			result, cerr := vm.callOverloadedSpread(set, args, names, fromSpread)
+			if cerr != nil {
+				return vm.propagateModuleError(instruction, ip, cerr)
+			}
+			vm.push(result)
+			return ip, nil
 		}
-		break
 	}
 	if !hasNamed {
 		for _, a := range args {
@@ -116,6 +115,31 @@ func orderNamedByParamNames(fnName string, args []runtime.Value, names []string,
 // receiverParamNames returns a callable receiver's parameter names
 // (sans receiver slot) so dict spread can drop unknown keys before
 // named dispatch.
+// spreadOverloadSet is the overload set a spread call targets: an overloaded function value or a module's overloaded export.
+func (vm *VM) spreadOverloadSet(name string) (runtime.OverloadedFunction, bool) {
+	receiver, err := vm.peek()
+	if err != nil {
+		return runtime.OverloadedFunction{}, false
+	}
+	var set runtime.OverloadedFunction
+	switch r := receiver.(type) {
+	case runtime.OverloadedFunction:
+		if name != "__invoke" {
+			return set, false
+		}
+		set = r
+	case *runtime.Module:
+		exported, ok := r.Exports[name].(runtime.OverloadedFunction)
+		if !ok {
+			return set, false
+		}
+		set = exported
+	default:
+		return set, false
+	}
+	return set, len(set.Callables) == 0 && len(set.Indices) > 0
+}
+
 func (vm *VM) receiverParamNames(instruction Instruction, receiver runtime.Value, methodName string) ([]string, error) {
 	switch r := receiver.(type) {
 	case runtime.DecoratorTarget:
@@ -149,6 +173,15 @@ func (vm *VM) receiverParamNames(instruction Instruction, receiver runtime.Value
 			return nil, vm.runtimeError(instruction, "unknown class %s", r.Class.Name)
 		}
 		indices, ok := vm.lookupMethod(classInfo, methodName)
+		if !ok {
+			if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {
+				names, err := vm.moduleLoader.ModuleMethodParamNames(module, parentClass, methodName)
+				if err != nil {
+					return nil, vm.callPropagate(instruction, err)
+				}
+				return names, nil
+			}
+		}
 		if !ok || len(indices) != 1 {
 			return nil, vm.runtimeError(instruction, "cannot use dict spread with method %s.%s", r.Class.Name, methodName)
 		}
@@ -159,7 +192,14 @@ func (vm *VM) receiverParamNames(instruction Instruction, receiver runtime.Value
 		return nil, nil
 	case runtime.BytecodeFunction:
 		if r.Module != vm.moduleName {
-			return nil, vm.runtimeError(instruction, "cannot use dict spread with a cross-module function value")
+			if vm.moduleLoader == nil {
+				return nil, vm.runtimeError(instruction, "cannot use dict spread with a cross-module function value")
+			}
+			names, err := vm.moduleLoader.ModuleFunctionParamNames(r.Module, r.Index)
+			if err != nil {
+				return nil, vm.callPropagate(instruction, err)
+			}
+			return names, nil
 		}
 		if int(r.Index) >= len(vm.curMod.Chunk.Functions) {
 			return nil, vm.runtimeError(instruction, "function index out of range")
@@ -167,7 +207,14 @@ func (vm *VM) receiverParamNames(instruction Instruction, receiver runtime.Value
 		return vm.curMod.Chunk.Functions[r.Index].ParamNames, nil
 	case runtime.BytecodeClosure:
 		if r.Module != vm.moduleName {
-			return nil, vm.runtimeError(instruction, "cannot use dict spread with a cross-module closure")
+			if vm.moduleLoader == nil {
+				return nil, vm.runtimeError(instruction, "cannot use dict spread with a cross-module closure")
+			}
+			names, err := vm.moduleLoader.ModuleFunctionParamNames(r.Module, r.FunctionIndex)
+			if err != nil {
+				return nil, vm.callPropagate(instruction, err)
+			}
+			return names[min(len(r.Upvalues), len(names)):], nil
 		}
 		if int(r.FunctionIndex) >= len(vm.curMod.Chunk.Functions) {
 			return nil, vm.runtimeError(instruction, "closure function index out of range")
@@ -183,6 +230,11 @@ func (vm *VM) receiverParamNames(instruction Instruction, receiver runtime.Value
 		for _, p := range r.Parameters {
 			if p.Name != nil {
 				names = append(names, p.Name.Value)
+			}
+		}
+		if len(names) == 0 && r.Metadata != nil {
+			for _, p := range r.Metadata.Parameters {
+				names = append(names, p.Name)
 			}
 		}
 		if len(names) > 0 {
@@ -892,7 +944,7 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 			}
 			result, err := vm.ConstructClassWithTypeArgs(class.Index, args, callTypeArgs)
 			if err != nil {
-				return 0, vm.callPropagate(instruction, err)
+				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -1518,6 +1570,19 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 	}
 	indices, ok := vm.lookupMethod(classInfo, methodName)
 	if !ok {
+		if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {
+			if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
+				result, cerr := vm.moduleLoader.CallParentInModuleNamed(module, parentClass, methodName, instance, args, names, vm)
+				var notFound *runtime.MethodNotFoundError
+				if cerr == nil || !errors.As(cerr, &notFound) {
+					if cerr != nil {
+						return vm.propagateModuleError(instruction, ip, cerr)
+					}
+					vm.push(result)
+					return ip, nil
+				}
+			}
+		}
 		return vm.throwTyped(instruction, ip, "RuntimeError", fmt.Sprintf("unknown method %s.%s", instance.Class.Name, methodName))
 	}
 	functionIndex, ordered, err := vm.selectRuntimeNamedFunction(instruction, methodName, indices, args, names, 1, callTypeArgs)

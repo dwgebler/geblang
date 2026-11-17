@@ -1,0 +1,25 @@
+module method_value_globals_donor;
+import reflect;
+
+export int donorCalls = 0;
+
+export class DonorCounter {
+    func hit(): int { donorCalls = donorCalls + 1; return donorCalls; }
+}
+
+export func callIt(callable f): any {
+    return f();
+}
+
+export func callByReflection(any obj, string name): any {
+    let h = reflect.method(obj, name);
+    return h();
+}
+
+export func handleFor(any obj, string name): callable {
+    return reflect.method(obj, name);
+}
+
+export func donorCount(): int {
+    return donorCalls;
+}

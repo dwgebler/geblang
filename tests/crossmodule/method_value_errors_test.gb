@@ -1,0 +1,52 @@
+/**
+ * @title Method-value misuse messages
+ * @summary Calling a method value with the wrong arguments names the method
+ * as Class.member and counts only the caller's arguments, for own,
+ * inherited and imported methods, named arguments, and constructor values.
+ */
+import test;
+import method_value_errors_donor as donor;
+
+class Counter {
+    func add(int a, int b = 1): int { return a + b; }
+}
+
+class SubCounter extends Counter {}
+
+class Point {
+    func Point(int x) {}
+}
+
+class MethodValueErrorsTest extends test.Test {
+    func messageOf(callable f): string {
+        try {
+            f();
+        } catch (Error e) {
+            return e.message;
+        }
+        return "no error";
+    }
+
+    @test
+    func ownAndInheritedMethodValues(): void {
+        let add = Counter().add;
+        let inherited = SubCounter().add;
+        this.assertEquals("Counter.add expects at most 2 arguments, got 3", this.messageOf(func(): void { add(1, 2, 3); }));
+        this.assertEquals("Counter.add missing argument a", this.messageOf(func(): void { add(); }));
+        this.assertEquals("Counter.add has no parameter zz", this.messageOf(func(): void { add(a: 1, zz: 2); }));
+        this.assertEquals("Counter.add expects at most 2 arguments, got 3", this.messageOf(func(): void { inherited(1, 2, 3); }));
+    }
+
+    @test
+    func importedMethodValues(): void {
+        let go = donor.Remote().go;
+        this.assertEquals("Remote.go expects at most 2 arguments, got 3", this.messageOf(func(): void { go(1, 2, 3); }));
+        this.assertEquals("Remote.go missing argument b", this.messageOf(func(): void { go(1); }));
+    }
+
+    @test
+    func constructorValues(): void {
+        let make = Point;
+        this.assertEquals("no matching overload for Point", this.messageOf(func(): void { make(); }));
+    }
+}

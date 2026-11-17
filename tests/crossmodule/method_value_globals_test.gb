@@ -1,0 +1,71 @@
+/**
+ * @title Method values keep their module-global writes
+ * @summary A bound method value writes its defining module's globals when it
+ * is called in the same module, passed to another module, or obtained through
+ * reflect.method, including inherited methods and imported classes.
+ */
+import test;
+import method_value_globals_donor as donor;
+
+int calls = 0;
+
+class Tally {
+    func hit(): int { calls = calls + 1; return calls; }
+}
+
+class SubTally extends Tally {
+    func own(): int { calls = calls + 10; return calls; }
+}
+
+class LocalCounter extends donor.DonorCounter {}
+
+class MethodValueGlobalsTest extends test.Test {
+    @test
+    func sameModuleValueWritesTheGlobal(): void {
+        calls = 0;
+        let m = Tally().hit;
+        m();
+        m();
+        this.assertEquals(2, calls);
+    }
+
+    @test
+    func subclassOwnAndInheritedValues(): void {
+        calls = 0;
+        let s = SubTally();
+        let inherited = s.hit;
+        let own = s.own;
+        inherited();
+        own();
+        this.assertEquals(11, calls);
+    }
+
+    @test
+    func valuePassedToAnotherModule(): void {
+        calls = 0;
+        let t = Tally();
+        this.assertEquals(1, donor.callIt(t.hit));
+        this.assertEquals(2, donor.callIt(t.hit));
+        this.assertEquals(2, calls);
+    }
+
+    @test
+    func reflectedHandles(): void {
+        calls = 0;
+        let t = Tally();
+        this.assertEquals(1, donor.callByReflection(t, "hit"));
+        let h = donor.handleFor(t, "hit");
+        this.assertEquals(2, h());
+        this.assertEquals(3, donor.callIt(h));
+        this.assertEquals(3, calls);
+    }
+
+    @test
+    func importedClassValueWritesItsModule(): void {
+        int start = donor.donorCount();
+        let m = LocalCounter().hit;
+        m();
+        m();
+        this.assertEquals(start + 2, donor.donorCount());
+    }
+}

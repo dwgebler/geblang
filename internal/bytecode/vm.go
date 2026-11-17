@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"math/big"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,6 +43,11 @@ type VM struct {
 	dirtySlots []int
 	// persistGlobals makes the lock-free setGlobal fast path record dirty slots so a loader worker's module-global writes can be written back (cross-module module-global persistence).
 	persistGlobals bool
+	globalsOwner   *VM
+	// activation changes when a VM's call ends or it is reset, so a late write-back can tell its target has moved on.
+	activation      uint64
+	writeBackChain  []globalsTarget
+	isolatedGlobals bool
 	// Cached bound-method closures re-registered every reset; taking the bound method per call allocates.
 	instanceInvokerFn   native.InstanceInvokerFunc
 	classDeserializerFn native.ClassDeserializerFunc
@@ -259,6 +265,10 @@ type ModuleLoader interface {
 	// subclass declared in another chunk.
 	CallInheritedConstructorInModule(module string, className string, instance *runtime.Instance, caller *VM) error
 	CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *VM) (runtime.Value, error)
+	// CallModuleOverloadedSpread selects and runs one of a module's overloads indices for a spread call, in its home chunk.
+	CallModuleOverloadedSpread(module string, indices []int64, name string, args []runtime.Value, names []string, fromSpread []bool, caller *VM) (runtime.Value, error)
+	// CallParentInModuleNamed is CallParentInModule with named-argument metadata, bound against the parent's signature in its home chunk.
+	CallParentInModuleNamed(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, names []string, caller *VM) (runtime.Value, error)
 	// ImmutableFieldsForModuleClass returns the set-once `@immutable`
 	// field names declared on a class in another module, so a subclass
 	// can lock them after its cross-module parent constructor runs.
@@ -705,6 +715,13 @@ func (vm *VM) Run() (err error) {
 		loopErr := vm.dispatchLoop(instructions, inlineExitDepth)
 		if loopErr == nil {
 			return nil
+		}
+		var exit ExitError
+		if errors.As(loopErr, &exit) {
+			var caught bool
+			if loopErr, caught = vm.unwindForExit(exit); !caught {
+				return loopErr
+			}
 		}
 		resumeIP, fatal, routeErr := vm.routeRuntimeFault(loopErr)
 		if routeErr != nil {
@@ -2616,8 +2633,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return err
 			}
-			if hasNamed {
-				classInfo := vm.curMod.Chunk.Classes[classIndex]
+			if classInfo := vm.curMod.Chunk.Classes[classIndex]; hasNamed && len(classInfo.ConstructorIndices) > 1 {
+				if _, args, err = vm.selectSpreadOverload(*instruction, classInfo.Name, classInfo.ConstructorIndices, args, names, fromSpread, 1); err != nil {
+					return err
+				}
+			} else if hasNamed {
 				if len(classInfo.ConstructorIndices) != 1 {
 					return vm.runtimeError(*instruction, "cannot use named arguments with spread without a single constructor on %s", classInfo.Name)
 				}
@@ -3471,6 +3491,36 @@ func (vm *VM) withErrorStackTrace(err runtime.Error, line int) runtime.Error {
 		err.TopLevelLine = topLevel
 	}
 	return err
+}
+
+// unwindForExit runs this run's defers frame by frame for sys.exit; caught reports a deferred throw that a live try here can handle.
+func (vm *VM) unwindForExit(exit ExitError) (error, bool) {
+	var result error = exit
+	for len(vm.defers) > vm.runDeferBaseline {
+		derr := vm.runDefers(Instruction{})
+		for len(vm.frames) > 0 && len(vm.frames) >= len(vm.defers) {
+			idx := len(vm.frames) - 1
+			slot := &vm.frames[idx]
+			vm.popLocalsStackFrame(slot)
+			*slot = callFrame{}
+			vm.frames = vm.frames[:idx]
+		}
+		if derr == nil {
+			continue
+		}
+		result = derr
+		var next ExitError
+		if errors.As(derr, &next) {
+			continue
+		}
+		for len(vm.exceptionHandlers) > vm.runHandlerBaseline && vm.exceptionHandlers[len(vm.exceptionHandlers)-1].frameDepth > len(vm.frames) {
+			vm.exceptionHandlers = vm.exceptionHandlers[:len(vm.exceptionHandlers)-1]
+		}
+		if len(vm.exceptionHandlers) > vm.runHandlerBaseline {
+			return derr, true
+		}
+	}
+	return result, false
 }
 
 func (vm *VM) throwTyped(instruction Instruction, ip int, class, message string) (int, error) {
@@ -5685,6 +5735,10 @@ func (vm *VM) popExitCode(instruction Instruction) (int, error) {
 	if err != nil {
 		return 0, vm.callPropagate(instruction, err)
 	}
+	return vm.exitCode(instruction, value)
+}
+
+func (vm *VM) exitCode(instruction Instruction, value runtime.Value) (int, error) {
 	switch v := value.(type) {
 	case runtime.SmallInt:
 		return int(v.Value), nil
@@ -5721,7 +5775,67 @@ func (vm *VM) wrapDeferError(instruction Instruction, deferLine int, err error, 
 	if fault, ok := boundaryFaultToError(err); ok {
 		return vm.uncaughtThrowError(instruction, vm.mergeBoundaryFrames(fault, deferLine))
 	}
-	return vm.runtimeError(instruction, format, args...)
+	return vm.runtimeError(atDeferLine(instruction, deferLine), format, args...)
+}
+
+// constructDeferred builds a deferred `ClassName(...)`, binding named and dict-spread arguments like a direct construction.
+func (vm *VM) constructDeferred(instruction Instruction, action deferredAction, class runtime.BytecodeClass) (runtime.Value, error) {
+	spread := deferredSpreadArgs{args: action.args, names: action.names}
+	if action.spreadMask != nil {
+		var err error
+		if spread, err = expandDeferredSpreadArgs(action, true); err != nil {
+			return nil, err
+		}
+	}
+	named := slices.ContainsFunc(spread.names, func(n string) bool { return n != "" })
+	if class.Module != vm.moduleName && vm.moduleLoader != nil {
+		if !named {
+			return vm.moduleLoader.ConstructModuleClass(class, spread.args, nil, vm)
+		}
+		args, names := spread.args, spread.names
+		if slices.Contains(spread.fromSpread, true) {
+			if params, err := vm.moduleLoader.ModuleConstructorParamNames(class.Module, class.Name); err == nil {
+				args, names = dropUnknownSpreadNames(args, names, spread.fromSpread, params)
+			}
+		}
+		return vm.moduleLoader.ConstructModuleClassNamed(class, args, names, nil, vm)
+	}
+	if !named {
+		return vm.ConstructClassWithTypeArgs(class.Index, spread.args, nil)
+	}
+	ctors := vm.curMod.Chunk.Classes[class.Index].ConstructorIndices
+	if len(ctors) > 1 && slices.Contains(spread.fromSpread, true) {
+		_, ordered, err := vm.selectSpreadOverload(instruction, class.Name, ctors, spread.args, spread.names, spread.fromSpread, 1)
+		if err != nil {
+			return nil, err
+		}
+		return vm.ConstructClassWithTypeArgs(class.Index, ordered, nil)
+	}
+	args, names := spread.args, spread.names
+	if len(ctors) == 1 && slices.Contains(spread.fromSpread, true) {
+		params := vm.curMod.Chunk.Functions[ctors[0]].ParamNames
+		if len(params) > 0 {
+			params = params[1:]
+		}
+		args, names = dropUnknownSpreadNames(args, names, spread.fromSpread, params)
+	}
+	return vm.ConstructClassFastNamed(class.Index, args, names, nil)
+}
+
+// deferNativeError raises a deferred native call's failure with its classified error type, as the same call made directly would.
+func (vm *VM) deferNativeError(instruction Instruction, deferLine int, err error) error {
+	if fault, ok := boundaryFaultToError(err); ok {
+		return vm.uncaughtThrowError(instruction, vm.mergeBoundaryFrames(fault, deferLine))
+	}
+	return vm.uncaughtThrowError(atDeferLine(instruction, deferLine), runtime.NewRecoverableError(err))
+}
+
+// atDeferLine reports a deferred call's own failure at its defer statement rather than the function exit.
+func atDeferLine(instruction Instruction, deferLine int) Instruction {
+	if deferLine > 0 {
+		instruction.Line = int32(deferLine)
+	}
+	return instruction
 }
 
 // hofCallLine != 0 only while a native HOF dispatches a separate-VM callback, whose uncaught throw drops the host caller frames; splice them back on.
@@ -5743,140 +5857,174 @@ func (vm *VM) runDefers(instruction Instruction) error {
 	actions := vm.defers[current]
 	defer clear(actions)
 	vm.defers = vm.defers[:current]
+	var exit error
 	for i := len(actions) - 1; i >= 0; i-- {
-		action := actions[i]
-		switch action.kind {
-		case deferKindPrint:
-			text, err := vm.displayString(action.value)
-			if err != nil {
+		if err := vm.runDeferredAction(instruction, actions[i]); err != nil {
+			// A deferred sys.exit still lets the remaining defers run; a later exit or error replaces it.
+			var ex ExitError
+			if errors.As(err, &ex) {
+				exit = err
+				continue
+			}
+			return err
+		}
+	}
+	return exit
+}
+
+func (vm *VM) runDeferredAction(instruction Instruction, action deferredAction) error {
+	switch action.kind {
+	case deferKindPrint:
+		text, err := vm.displayString(action.value)
+		if err != nil {
+			return vm.runtimeError(instruction, "deferred print: %v", err)
+		}
+		if vm.shouldRouteDirectPrint() {
+			if _, err := vm.statefulNativeCall("io", "print", []runtime.Value{runtime.String{Value: text}}, nil); err != nil {
 				return vm.runtimeError(instruction, "deferred print: %v", err)
 			}
-			if vm.shouldRouteDirectPrint() {
-				if _, err := vm.statefulNativeCall("io", "print", []runtime.Value{runtime.String{Value: text}}, nil); err != nil {
-					return vm.runtimeError(instruction, "deferred print: %v", err)
-				}
-				continue
-			}
-			if _, err := fmt.Fprint(vm.stdout, text); err != nil {
-				return err
-			}
-		case deferKindPrintln:
-			text, err := vm.displayString(action.value)
-			if err != nil {
+			return nil
+		}
+		if _, err := fmt.Fprint(vm.stdout, text); err != nil {
+			return err
+		}
+	case deferKindPrintln:
+		text, err := vm.displayString(action.value)
+		if err != nil {
+			return vm.runtimeError(instruction, "deferred println: %v", err)
+		}
+		if vm.shouldRouteDirectPrint() {
+			if _, err := vm.statefulNativeCall("io", "println", []runtime.Value{runtime.String{Value: text}}, nil); err != nil {
 				return vm.runtimeError(instruction, "deferred println: %v", err)
 			}
-			if vm.shouldRouteDirectPrint() {
-				if _, err := vm.statefulNativeCall("io", "println", []runtime.Value{runtime.String{Value: text}}, nil); err != nil {
-					return vm.runtimeError(instruction, "deferred println: %v", err)
-				}
-				continue
+			return nil
+		}
+		if _, err := fmt.Fprintln(vm.stdout, text); err != nil {
+			return err
+		}
+	case deferKindNative:
+		args := action.args
+		if action.spreadMask != nil {
+			spread, err := expandDeferredSpreadArgs(action, false)
+			if err != nil {
+				return vm.runtimeError(atDeferLine(instruction, action.line), "%v", err)
 			}
-			if _, err := fmt.Fprintln(vm.stdout, text); err != nil {
+			if spread.hasNamed {
+				// The evaluator rejects named args mixed with spread on natives.
+				return vm.deferNativeError(instruction, action.line, fmt.Errorf("named arguments are only supported for Geblang functions and methods"))
+			}
+			args = spread.args
+		}
+		if action.name == "sys.exit" && len(args) == 1 && len(action.names) == 0 {
+			code, err := vm.exitCode(atDeferLine(instruction, action.line), args[0])
+			if err != nil {
 				return err
 			}
-		case deferKindNative:
-			args := action.args
-			if action.spreadMask != nil {
-				expanded, _, hasNamed, err := expandDeferredSpreadArgs(action)
-				if err != nil {
-					return vm.runtimeError(instruction, "deferred call %s: %v", action.name, err)
-				}
-				if hasNamed {
-					// The evaluator rejects named args mixed with spread on natives.
-					err := fmt.Errorf("named arguments are only supported for Geblang functions and methods")
-					return vm.wrapDeferError(instruction, action.line, err, "deferred call %s: %v", action.name, err)
-				}
-				args = expanded
+			return ExitError{Code: code}
+		}
+		if len(action.names) > 0 && action.spreadMask == nil {
+			if _, err := vm.evalNativeCallWithNames(action.name, args, action.names); err != nil {
+				return vm.deferNativeError(instruction, action.line, err)
 			}
-			if len(action.names) > 0 && action.spreadMask == nil {
-				if _, err := vm.evalNativeCallWithNames(action.name, args, action.names); err != nil {
-					return vm.wrapDeferError(instruction, action.line, err, "deferred call %s: %v", action.name, err)
-				}
-			} else if _, err := vm.evalNativeCall(action.name, args); err != nil {
-				return vm.wrapDeferError(instruction, action.line, err, "deferred call %s: %v", action.name, err)
+		} else if _, err := vm.evalNativeCall(action.name, args); err != nil {
+			return vm.deferNativeError(instruction, action.line, err)
+		}
+	case deferKindFunc:
+		args := action.args
+		if action.spreadMask != nil {
+			spread, err := expandDeferredSpreadArgs(action, true)
+			if err != nil {
+				return vm.runtimeError(atDeferLine(instruction, action.line), "%v", err)
 			}
-		case deferKindFunc:
-			args := action.args
-			if action.spreadMask != nil {
-				expanded, names, hasNamed, err := expandDeferredSpreadArgs(action)
-				if err != nil {
-					return vm.runtimeError(instruction, "deferred call: %v", err)
+			args = spread.args
+			if spread.hasNamed {
+				fn := vm.curMod.Chunk.Functions[action.funcIdx]
+				fa, fnames := dropUnknownSpreadNames(spread.args, spread.names, spread.fromSpread, fn.ParamNames)
+				ordered, oerr := vm.orderRuntimeArguments(instruction, fn, fa, fnames, 0)
+				if oerr != nil {
+					return oerr
 				}
-				if hasNamed {
-					ordered, oerr := vm.orderRuntimeArguments(instruction, vm.curMod.Chunk.Functions[action.funcIdx], expanded, names, 0)
-					if oerr != nil {
-						return oerr
-					}
-					expanded = ordered
-				}
-				args = expanded
+				args = ordered
 			}
-			// A nested function that shares its parent's frame resolves outer locals against currentFrameBP, so it must run inline on the still-live parent frame, not through CallFunction's wrapper VM.
-			deferFn := &vm.curMod.Chunk.Functions[action.funcIdx]
-			if deferFn.SharesParentFrame && !deferFn.IsGenerator && !deferFn.Async {
-				if _, err := vm.callBytecodeInline(action.funcIdx, args); err != nil {
-					return vm.wrapDeferError(instruction, action.line, err, "deferred call: %v", err)
-				}
-			} else if _, err := vm.CallFunction(action.funcIdx, args); err != nil {
+		}
+		// A nested function that shares its parent's frame resolves outer locals against currentFrameBP, so it must run inline on the still-live parent frame, not through CallFunction's wrapper VM.
+		deferFn := &vm.curMod.Chunk.Functions[action.funcIdx]
+		if deferFn.SharesParentFrame && !deferFn.IsGenerator && !deferFn.Async {
+			if _, err := vm.callBytecodeInline(action.funcIdx, args); err != nil {
 				return vm.wrapDeferError(instruction, action.line, err, "deferred call: %v", err)
 			}
-		case deferKindMethod:
-			args := action.args
-			names := action.names
-			if action.spreadMask != nil {
-				expanded, expandedNames, hasNamed, err := expandDeferredSpreadArgs(action)
-				if err != nil {
-					return vm.runtimeError(instruction, "deferred method call %s: %v", action.name, err)
-				}
-				args = expanded
-				if hasNamed {
-					names = expandedNames
-				} else {
-					names = nil
-				}
+		} else if _, err := vm.CallFunction(action.funcIdx, args); err != nil {
+			return vm.wrapDeferError(instruction, action.line, err, "deferred call: %v", err)
+		}
+	case deferKindMethod:
+		args := action.args
+		names := action.names
+		if action.spreadMask != nil {
+			spread, err := expandDeferredSpreadArgs(action, true)
+			if err != nil {
+				return vm.runtimeError(atDeferLine(instruction, action.line), "%v", err)
 			}
-			if instance, ok := action.receiver.(*runtime.Instance); ok {
-				if len(names) > 0 {
-					reordered, err := vm.reorderMethodNamedArgs(instruction, instance, action.name, args, names)
-					if err != nil {
-						return vm.runtimeError(instruction, "deferred method call %s: %v", action.name, err)
-					}
-					args = reordered
-				}
-				if _, err := vm.CallMethod(instance, action.name, args); err != nil {
+			args, names = spread.args, nil
+			if spread.hasNamed {
+				args, names = vm.dropUnknownFor(instruction, action.receiver, action.name, spread)
+			}
+		}
+		if instance, ok := action.receiver.(*runtime.Instance); ok {
+			if len(names) > 0 {
+				if _, err := vm.callInstanceMethodNamed(instruction, instance, action.name, args, names); err != nil {
 					return vm.wrapDeferError(instruction, action.line, err, "deferred method call %s: %v", action.name, err)
 				}
-			} else if _, err := vm.callDeferredValueMethod(instruction, action.receiver, action.name, args); err != nil {
+				return nil
+			}
+			if _, err := vm.CallMethod(instance, action.name, args); err != nil {
 				return vm.wrapDeferError(instruction, action.line, err, "deferred method call %s: %v", action.name, err)
 			}
-		case deferKindCallable:
-			args := action.args
-			names := action.names
-			if action.spreadMask != nil {
-				expanded, expandedNames, hasNamed, err := expandDeferredSpreadArgs(action)
-				if err != nil {
-					return vm.runtimeError(instruction, "deferred callable call: %v", err)
-				}
-				args = expanded
-				if hasNamed {
-					names = expandedNames
-				} else {
-					names = nil
-				}
+		} else if _, err := vm.callDeferredValueMethod(instruction, action.receiver, action.name, args); err != nil {
+			return vm.wrapDeferError(instruction, action.line, err, "deferred method call %s: %v", action.name, err)
+		}
+	case deferKindCallable:
+		if class, ok := action.value.(runtime.BytecodeClass); ok {
+			if _, err := vm.constructDeferred(instruction, action, class); err != nil {
+				return vm.wrapDeferError(instruction, action.line, err, "deferred construction: %v", err)
 			}
-			if len(names) > 0 {
-				reordered, err := vm.reorderCallableNamedArgs(instruction, action.value, args, names)
-				if err != nil {
-					return vm.runtimeError(instruction, "deferred callable call: %v", err)
-				}
-				args = reordered
+			return nil
+		}
+		args := action.args
+		names := action.names
+		if action.spreadMask != nil {
+			spread, err := expandDeferredSpreadArgs(action, true)
+			if err != nil {
+				return vm.runtimeError(atDeferLine(instruction, action.line), "%v", err)
 			}
-			if _, err := vm.callCallable(action.value, args); err != nil {
+			args, names = spread.args, nil
+			if set, ok := action.value.(runtime.OverloadedFunction); ok && spread.hasNamed && len(set.Callables) == 0 && len(set.Indices) > 0 {
+				if _, err := vm.callOverloadedSpread(set, spread.args, spread.names, spread.fromSpread); err != nil {
+					return vm.wrapDeferError(instruction, action.line, err, "deferred callable call: %v", err)
+				}
+				return nil
+			}
+			if spread.hasNamed {
+				args, names = vm.dropUnknownFor(instruction, action.value, "", spread)
+			}
+		}
+		if fn, isFn := action.value.(runtime.Function); isFn && len(names) > 0 && fn.NativeNamed != nil {
+			if _, err := fn.NativeNamed(nil, args, names); err != nil {
 				return vm.wrapDeferError(instruction, action.line, err, "deferred callable call: %v", err)
 			}
-		default:
-			return vm.runtimeError(instruction, "unknown deferred action kind")
+			return nil
 		}
+		if len(names) > 0 {
+			reordered, err := vm.reorderCallableNamedArgs(instruction, action.value, args, names)
+			if err != nil {
+				return vm.runtimeError(instruction, "deferred callable call: %v", err)
+			}
+			args = reordered
+		}
+		if _, err := vm.callCallable(action.value, args); err != nil {
+			return vm.wrapDeferError(instruction, action.line, err, "deferred callable call: %v", err)
+		}
+	default:
+		return vm.runtimeError(instruction, "unknown deferred action kind")
 	}
 	return nil
 }

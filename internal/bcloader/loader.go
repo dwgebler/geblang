@@ -297,6 +297,19 @@ func (l *Loader) ifaceFallbackStateFor(module string) bytecode.InterfaceFallback
 }
 
 // restoreModuleGlobals loads a worker's globals: the entry chunk reads live from the main VM; a sub-module restores its live module globals (mutations persist via releaseModuleVM's write-back).
+// globalsOwner picks the live VM whose globals a worker for module must share: the nearest same-module VM on the call chain, else the entry VM for its own module.
+func (l *Loader) globalsOwner(module string, caller *bytecode.VM) *bytecode.VM {
+	if caller != nil {
+		if owner := caller.GlobalsOwnerFor(module); owner != nil {
+			return owner
+		}
+	}
+	if l.mainVM != nil && (module == "" || l.mainVM.ModuleName() == module) {
+		return l.mainVM
+	}
+	return nil
+}
+
 func (l *Loader) restoreModuleGlobals(vm *bytecode.VM, module string, rec *moduleRecord) {
 	if module == "" && l.mainVM != nil {
 		l.mainVM.CopyGlobalsTo(vm)
@@ -392,7 +405,11 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.
 		}
 	}
 	rec, _ := l.recordFor(module)
-	l.restoreModuleGlobals(vm, module, rec)
+	if owner := l.globalsOwner(module, caller); owner != nil && owner != vm {
+		vm.AdoptGlobalsFrom(owner)
+	} else {
+		l.restoreModuleGlobals(vm, module, rec)
+	}
 	var decorators bytecode.FunctionDecoratorState
 	if rec != nil {
 		decorators = rec.decorators
@@ -416,11 +433,14 @@ func (l *Loader) releaseModuleVM(pool *vmPool, vm *bytecode.VM, err error) {
 		return
 	}
 	// Persist module-global writes even when the call threw: the evaluator mutates its live environment immediately, so a write before a throw must survive (the dirty slots already hold only the pre-throw writes).
-	if module := vm.ModuleName(); module != "" {
+	if vm.HasGlobalsOwner() {
+		vm.MergeGlobalsToOwner()
+	} else if module := vm.ModuleName(); module != "" {
 		if rec, ok := l.recordFor(module); ok {
 			persistModuleGlobals(vm, rec)
 		}
 	}
+	vm.EndActivation()
 	vm.SetReentryActive(false)
 	vm.SetReentryHost(nil)
 	vm.SetProfileParent(nil)
@@ -784,6 +804,51 @@ func (l *Loader) CallParentInModule(module string, className string, methodName 
 	}
 	vm, pool := l.moduleVM(module, chunk, caller)
 	result, err := vm.CallMethodAs(className, instance, methodName, args)
+	l.adoptDestructibles(pool, vm, caller)
+	l.releaseModuleVM(pool, vm, err)
+	return result, err
+}
+
+func (l *Loader) CallModuleOverloadedSpread(module string, indices []int64, name string, args []runtime.Value, names []string, fromSpread []bool, caller *bytecode.VM) (runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script overload %s called without a main chunk", name)
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunkValue(module)
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	vm, pool := l.moduleVM(module, chunk, caller)
+	result, err := vm.CallOverloadedSpread(indices, name, args, names, fromSpread)
+	l.adoptDestructibles(pool, vm, caller)
+	l.releaseModuleVM(pool, vm, err)
+	return result, err
+}
+
+func (l *Loader) CallParentInModuleNamed(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, names []string, caller *bytecode.VM) (runtime.Value, error) {
+	if _, ok := l.nativeClassFor(module, className); ok {
+		return nil, fmt.Errorf("named arguments are only supported for Geblang functions and methods")
+	}
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script parent dispatch called without a main chunk")
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunkValue(module)
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	vm, pool := l.moduleVM(module, chunk, caller)
+	result, err := vm.CallMethodAsNamed(className, instance, methodName, args, names)
 	l.adoptDestructibles(pool, vm, caller)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err

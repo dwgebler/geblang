@@ -706,9 +706,6 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					return nil
 				}
 				if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
-					if len(classInfo.ConstructorIndices) > 1 {
-						return fmt.Errorf("cannot use spread with overloaded constructor %s", classInfo.Name)
-					}
 					meta, err := c.compileSpreadCallArguments(expr.Arguments)
 					if err != nil {
 						return err
@@ -841,6 +838,9 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				return nil
 			}
 			if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+				if indices := c.funcs[strings.ToLower(ident.Value)]; len(indices) > 1 {
+					return c.compileOverloadedSpreadCall(indices, expr)
+				}
 				index, err := c.selectFunctionCallSpread(ident.Value)
 				if err != nil {
 					return err
@@ -987,9 +987,6 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok && c.chunk.Classes[classIndex].Name == object.Value && !c.namedCallToInheritedStatic(classIndex, selector.Name.Value, expr.Arguments) {
 						indices, ok := c.lookupStaticMethod(c.chunk.Classes[classIndex], selector.Name.Value)
 						if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
-							if ok && len(indices) > 1 {
-								return fmt.Errorf("cannot use spread with overloaded static method %s", selector.Name.Value)
-							}
 							meta, err := c.compileSpreadCallArguments(expr.Arguments)
 							if err != nil {
 								return err
@@ -1915,7 +1912,11 @@ func (c *Compiler) compileBuiltinCall(expr *ast.CallExpression, module, name str
 	if module == "reflect" {
 		return c.compileReflectCall(expr, name)
 	}
+	_, hasSpread := callSpreadIndex(expr.Arguments)
 	switch {
+	case hasSpread && isSingleArgumentOpcodeBuiltin(module, name):
+		// A spread call keeps native argument checking rather than the single-argument opcode.
+		return c.compileNativeSpreadCall(expr, module, name)
 	case module == "io" && name == "println":
 		args, err := c.singleBuiltinArgument(expr, module, name)
 		if err != nil {
@@ -1947,16 +1948,8 @@ func (c *Compiler) compileBuiltinCall(expr *ast.CallExpression, module, name str
 		c.emitAt(OpExit, expr.Token.Line, expr.Token.Column)
 		return nil
 	case native.IsPureBuiltin(module, name), isStatefulBytecodeBuiltin(module, name):
-		if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
-			meta, err := c.compileSpreadCallArguments(expr.Arguments)
-			if err != nil {
-				return err
-			}
-			nameIndex := int64(len(c.chunk.Constants))
-			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: module + "." + name})
-			operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
-			c.emitAt(OpNativeCallSpread, expr.Token.Line, expr.Token.Column, operands...)
-			return nil
+		if hasSpread {
+			return c.compileNativeSpreadCall(expr, module, name)
 		}
 		hasNamedArgs := false
 		for _, arg := range expr.Arguments {
@@ -2488,6 +2481,22 @@ func expressionLocation(expr ast.Expression) (int, int) {
 	default:
 		return 0, 0
 	}
+}
+
+func isSingleArgumentOpcodeBuiltin(module, name string) bool {
+	return (module == "io" && (name == "println" || name == "print" || name == "stdoutWrite")) || (module == "sys" && name == "exit")
+}
+
+func (c *Compiler) compileNativeSpreadCall(expr *ast.CallExpression, module, name string) error {
+	meta, err := c.compileSpreadCallArguments(expr.Arguments)
+	if err != nil {
+		return err
+	}
+	nameIndex := int64(len(c.chunk.Constants))
+	c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: module + "." + name})
+	operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+	c.emitAt(OpNativeCallSpread, expr.Token.Line, expr.Token.Column, operands...)
+	return nil
 }
 
 func (c *Compiler) singleBuiltinArgument(expr *ast.CallExpression, module, name string) ([]ast.Expression, error) {
@@ -4045,6 +4054,20 @@ func (c *Compiler) emitPlantIntLiteralArgs(expr *ast.CallExpression, allowNamed 
 
 func isAmbiguousOverload(err error) bool {
 	return IsParityError(err) && strings.HasPrefix(err.Error(), "ambiguous overload for ")
+}
+
+// compileOverloadedSpreadCall invokes an overload set as a value with spread arguments; the VM picks the overload once the spread is expanded.
+func (c *Compiler) compileOverloadedSpreadCall(indices []int64, expr *ast.CallExpression) error {
+	c.emitAt(OpMakeOverloaded, expr.Token.Line, expr.Token.Column, indices...)
+	meta, err := c.compileSpreadCallArguments(expr.Arguments)
+	if err != nil {
+		return err
+	}
+	nameIndex := int64(len(c.chunk.Constants))
+	c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+	operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
+	c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
+	return nil
 }
 
 // compileRuntimeOverloadedCall invokes an overload set as a value so the VM picks the overload from the runtime arguments.
