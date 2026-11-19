@@ -8,12 +8,12 @@ import (
 
 func TestStringToInt(t *testing.T) {
 	cases := map[string]int64{
-		"42":     42,
-		"-7":     -7,
-		"0x1F":   31,
-		"0b101":  5,
-		"0o17":   15,
-		"1_000":  1000,
+		"42":    42,
+		"-7":    -7,
+		"0x1F":  31,
+		"0b101": 5,
+		"0o17":  15,
+		"1_000": 1000,
 	}
 	for in, want := range cases {
 		if got := StringToInt(in); got != want {
@@ -123,7 +123,7 @@ func TestToStringForms(t *testing.T) {
 	if FloatToString(2.5) != "2.5" {
 		t.Error("FloatToString")
 	}
-	if DecimalToString(big.NewRat(25, 2)) != "12.5000000000" {
+	if DecimalToString(big.NewRat(25, 2)) != "12.5" {
 		t.Errorf("DecimalToString = %q", DecimalToString(big.NewRat(25, 2)))
 	}
 	if BoolToString(false) != "false" {

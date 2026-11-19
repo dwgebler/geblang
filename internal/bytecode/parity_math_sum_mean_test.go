@@ -23,7 +23,7 @@ io.println(math.mean([1.5, 2.5f]));
 io.println(math.mean({2, 4}));
 io.println(math.mean([7]));
 `)
-	want := "6\nint\n3.5000000000\ndecimal\n3.5\nfloat\n0\n9223372036854775808\n6\n15\n5\n2.5\nfloat\n2\n3\n7\n"
+	want := "6\nint\n3.5\ndecimal\n3.5\nfloat\n0\n9223372036854775808\n6\n15\n5\n2.5\nfloat\n2\n3\n7\n"
 	if ev != vm || ev != want {
 		t.Fatalf("evaluator %q\nvm        %q\nwant      %q", ev, vm, want)
 	}

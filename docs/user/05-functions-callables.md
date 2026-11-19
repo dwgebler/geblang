@@ -1,4 +1,4 @@
-# Functions And Callables
+# Functions and callables
 
 ## Functions
 
@@ -30,8 +30,12 @@ func minMax(list<int> xs): list<int> {
     int lo = xs[0];
     int hi = xs[0];
     for (x in xs) {
-        if (x < lo) { lo = x; }
-        if (x > hi) { hi = x; }
+        if (x < lo) {
+            lo = x;
+        }
+        if (x > hi) {
+            hi = x;
+        }
     }
     return lo, hi;        # returns the two values
 }
@@ -102,6 +106,7 @@ func collect(list<int> xs = []): list<int> {
     xs.append(1);
     return xs;
 }
+
 io.println(collect());   # [1]
 io.println(collect());   # [1]   (a fresh list, not [1, 1])
 ```
@@ -115,9 +120,11 @@ the called function:
 
 ```gb
 int base = 10;
+
 func window(int start, int end = start + base): string {
     return "${start}..${end}";
 }
+
 io.println(window(5));       # 5..15
 io.println(window(5, 7));    # 5..7
 ```
@@ -126,8 +133,13 @@ Named arguments also feed overload resolution. When overloads share
 an arity, naming an argument can pick the intended one:
 
 ```gb
-func area(decimal w, decimal h): decimal { return w * h; }
-func area(decimal radius): decimal       { return 3.14159 * radius * radius; }
+func area(decimal w, decimal h): decimal {
+    return w * h;
+}
+
+func area(decimal radius): decimal {
+    return 3.14159 * radius * radius;
+}
 
 area(radius: 5.0);                            # picks the one-arg overload
 ```
@@ -154,6 +166,7 @@ func addOne(list<int> xs): void {
     xs.push(1);       # mutates the caller's list in place
     xs = [99];        # rebinds the local only; caller is unaffected
 }
+
 let nums = [1, 2, 3];
 addOne(nums);
 io.println(nums);     # [1, 2, 3, 1]
@@ -177,7 +190,9 @@ receives a frozen shallow copy, not the original):
 ```gb
 func sum(const list<int> xs): int {
     int total = 0;
-    for (x in xs) { total = total + x; }
+    for (x in xs) {
+        total = total + x;
+    }
     # xs.append(0);   # would raise ImmutableError
     return total;
 }
@@ -198,7 +213,7 @@ A variadic parameter collects trailing arguments into a list inside
 the function:
 
 ```gb
-func sum(int ...values): int {
+func sum(int ... values): int {
     int total = 0;
     for (v in values) {
         total += v;
@@ -216,8 +231,10 @@ Defaulted parameters may sit before the variadic slot; the defaults
 engage when the call leaves them unfilled:
 
 ```gb
-func tag(string base, string sep = "-", string ...parts): string {
-    if (parts.isEmpty()) { return base; }
+func tag(string base, string sep = "-", string ... parts): string {
+    if (parts.isEmpty()) {
+        return base;
+    }
     return base + sep + parts.join(sep);
 }
 
@@ -311,8 +328,13 @@ chains read left-to-right as a transformation pipeline.
 ```gb
 import io;
 
-func double(int x): int     { return x * 2; }
-func add(int a, int b): int { return a + b; }
+func double(int x): int {
+    return x * 2;
+}
+
+func add(int a, int b): int {
+    return a + b;
+}
 
 io.println(5 |> double);                 # 10  (bare callable form)
 io.println(5 |> double());               # 10  (explicit-paren form)
@@ -348,7 +370,9 @@ function; it returns a new callable with those positions left open. Supplying
 the missing arguments later fills the holes left to right.
 
 ```gb
-func add(int a, int b): int { return a + b; }
+func add(int a, int b): int {
+    return a + b;
+}
 
 let add10 = add(_, 10);   # a function of one argument: add(x, 10)
 io.println(add10(3));     # 13
@@ -361,7 +385,10 @@ Holes may appear in any position, more than once, and as a named argument's
 value:
 
 ```gb
-func wrap(string a, string b, string c): string { return a + b + c; }
+func wrap(string a, string b, string c): string {
+    return a + b + c;
+}
+
 let f = wrap(_, "-", _);  # a function of two arguments
 io.println(f("L", "R"));  # L-R
 
@@ -396,13 +423,21 @@ overload:
 ```gb
 import io;
 
-func describe(string s): string { return "string: " + s; }
-func describe(int n): string    { return "int: " + n; }
-func describe(any x): string    { return "other: " + x; }
+func describe(string s): string {
+    return "string: " + s;
+}
+
+func describe(int n): string {
+    return "int: ${n}";
+}
+
+func describe(bool b): string {
+    return "bool: ${b}";
+}
 
 io.println(describe("hello"));  # string: hello
 io.println(describe(42));       # int: 42
-io.println(describe(true));     # other: true
+io.println(describe(true));     # bool: true
 ```
 
 Overload resolution rules:
@@ -411,9 +446,11 @@ Overload resolution rules:
    parameter types.
 2. If no overload matches, or more than one overload matches, a runtime error is
    raised.
-3. The `any` type matches any value. Avoid mixing an `any` overload with more
-   specific overloads of the same arity unless the call site provides enough
-   context to avoid ambiguity.
+3. The `any` type matches any value, so an `any` overload makes every other
+   overload of the same arity ambiguous: `describe("hello")` would match both
+   `describe(string)` and `describe(any)` and raise "ambiguous overload". The
+   same applies to a class overload and an interface overload that one value
+   satisfies at once.
 
 When overloads differ only by return type, Geblang needs an expected type from
 the surrounding context. A typed assignment, typed argument, or explicit cast can
@@ -421,8 +458,13 @@ select the intended overload. A bare call with no expected return type is
 ambiguous:
 
 ```gb
-func load(string id): User { return findUser(id); }
-func load(string id): Order { return findOrder(id); }
+func load(string id): User {
+    return findUser(id);
+}
+
+func load(string id): Order {
+    return findOrder(id);
+}
 
 User user = load("u-123");      # expected type selects User overload
 Order order = load("o-123");    # expected type selects Order overload
@@ -435,19 +477,25 @@ arguments supplied at runtime, including arity, defaults, variadics, unions,
 nullability, and exact runtime type names:
 
 ```gb
-func scale(int x): int        { return x * 2; }
-func scale(int x, int y): int { return x + y; }
+func scale(int x): int {
+    return x * 2;
+}
 
-func apply(any f, int v): int { return f(v); }
+func scale(int x, int y): int {
+    return x + y;
+}
+
+func apply(any f, int v): int {
+    return f(v);
+}
 
 apply(scale, 5);   # 10 - the one-argument overload is selected at the call
 ```
 
 A callable value has no named-argument syntax or surrounding expected return
-type, so those direct-call tie breakers are unavailable. Class/interface
-subtype matching for an overloaded callback is also currently less complete on
-the bytecode backend than direct-call matching; prefer an exact parameter type
-or a non-overloaded adapter when passing such a callback.
+type, so those direct-call tie breakers are unavailable. Otherwise a call
+through the value selects exactly as a direct call would, including class and
+interface parameter types.
 
 Overloading works in the same way for class methods (see the Classes chapter).
 Named overloads improve error messages: when a call fails you will see which
@@ -456,9 +504,7 @@ name and which expected types did not match.
 ## Anonymous Functions And Closures
 
 ```gb
-let inc = func(int x): int {
-    return x + 1;
-};
+let inc = func(int x): int { return x + 1; };
 
 func makeCounter(): callable {
     int n = 0;
@@ -482,6 +528,70 @@ io.println(next()); # 2
 Use closures for callbacks, collection helpers, middleware, decorators, and
 small pieces of behavior that do not need a full class.
 
+A function literal without a return type returns whatever its `return`
+statements return, unchecked, and `null` if it ends without returning.
+
+## Arrow Functions
+
+An arrow function is a short form of a function literal. The body is either
+a single expression, whose value is returned, or a block:
+
+```gb
+let double = (int n) => n * 2;
+let label = (string name, int age) => {
+    let group = age >= 18 ? "adult" : "minor";
+    return "${name}: ${group}";
+};
+let greeting = () => "hello";
+let later = async (int n) => n + 1;
+
+io.println(double(21));        # 42
+io.println(label("Ada", 36));  # Ada: adult
+io.println(await later(41));   # 42
+```
+
+Arrow functions are closures like any other function literal: they capture
+outer variables by reference and can be stored, passed and returned.
+
+A parameter may leave out its type when the arrow is passed straight to a
+callback method of a list whose element type is known, such as `map`,
+`filter`, `find`, `any`, `all`, `sortBy`, `groupBy`, `sumBy` or `flatMap`.
+The parameter then takes the element type:
+
+```gb
+let prices = [12, 7, 30];
+
+io.println(prices.map((p) => p * 2));          # [24, 14, 60]
+io.println(prices.filter((p) => p > 10));      # [12, 30]
+io.println(prices.sorted((a, b) => b - a));    # [30, 12, 7]
+io.println(prices.reduce((sum, p) => sum + p, 0));   # 49
+```
+
+`sort` and `sorted` comparators take two elements, `zipWith` takes an
+element of each list, and `reduce` and `scan` take the accumulator (typed
+from the initial value) and an element. The type is filled in before the
+program runs and is checked at run time exactly as if you had written it.
+
+Everywhere else a parameter needs a type. An untyped parameter the checker
+cannot type is an error before the program runs, on both runtimes and in
+`geblang check`:
+
+```gb
+let f = (x) => x * 2;   # error: arrow parameter x needs a type here; write (Type x) => ...
+let g = (int x) => x * 2;
+```
+
+The element type is known for a variable declared with a type or initialised
+from a literal, a class field, and the result of a string or list method;
+for anything else, such as the result of `json.parseAs`, write the type:
+`(Order o) => o.total`. In the REPL, a variable from an earlier line keeps the type it was
+declared with or inferred as, so `let xs = [1, 2, 3];` on one line lets
+`xs.map((x) => x * 2)` infer `x` on the next.
+
+Arrow parameters cannot have default values or be variadic, and the return
+type is never written: like a function literal without a return type, the
+returned value is not checked. Use `func(...)` when you need those.
+
 ## Callable Objects
 
 Objects can be callable with `__invoke`:
@@ -489,8 +599,12 @@ Objects can be callable with `__invoke`:
 ```gb
 class Prefixer {
     string prefix;
-    func Prefixer(string prefix) { this.prefix = prefix; }
-    func __invoke(string name): string { return this.prefix + name; }
+    func Prefixer(string prefix) {
+        this.prefix = prefix;
+    }
+    func __invoke(string name): string {
+        return this.prefix + name;
+    }
 }
 
 let hello = Prefixer("hello ");
@@ -549,7 +663,9 @@ naive recursive definitions become efficient.
 ```gb
 @memoize
 func fib(int n): int {
-    if (n < 2) { return n; }
+    if (n < 2) {
+        return n;
+    }
     return fib(n - 1) + fib(n - 2);  # each fib(n) body runs once
 }
 ```

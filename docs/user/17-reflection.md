@@ -61,12 +61,18 @@ interface Greeter {
 
 class Animal {
     string name;
-    func Animal(string name) { this.name = name; }
+    func Animal(string name) {
+        this.name = name;
+    }
 }
 
 class Dog extends Animal implements Greeter {
-    func Dog(string name) { parent(name); }
-    func greet(): string { return "Woof"; }
+    func Dog(string name) {
+        parent(name);
+    }
+    func greet(): string {
+        return "Woof";
+    }
 }
 
 let d = Dog("Rex");
@@ -88,8 +94,11 @@ io.println(xs instanceof list<string>);  # false
 
 class Box<T> {
     T value;
-    func Box(T v) { this.value = v; }
+    func Box(T v) {
+        this.value = v;
+    }
 }
+
 let b = Box<string>("hi");
 io.println(b instanceof Box<string>);    # true
 io.println(b instanceof Box<int>);       # false
@@ -102,7 +111,9 @@ and wrappers discover what they were parameterized with:
 ```gb
 class Box<T> {
     T value;
-    func Box(T v) { this.value = v; }
+    func Box(T v) {
+        this.value = v;
+    }
 }
 
 let b = Box<int>(5);
@@ -152,7 +163,9 @@ Pass the handle to `reflect.parameters`, `reflect.returnType`,
 `reflect.decorators`, and the other introspection calls below:
 
 ```gb
-func helper(int n, string s = "a"): int { return n; }
+func helper(int n, string s = "a"): int {
+    return n;
+}
 
 let f = reflect.function("helper");
 io.println(reflect.returnType(f));    # int
@@ -207,8 +220,12 @@ fields (see below).
 class Animal {
     string name;
     int legs = 4;
-    func Animal(string name) { this.name = name; }
-    func describe(): string { return this.name; }
+    func Animal(string name) {
+        this.name = name;
+    }
+    func describe(): string {
+        return this.name;
+    }
 }
 
 class Dog extends Animal implements Greeter {
@@ -217,7 +234,9 @@ class Dog extends Animal implements Greeter {
         parent(name);
         this.breed = breed;
     }
-    func greet(): string { return "Woof"; }
+    func greet(): string {
+        return "Woof";
+    }
 }
 ```
 
@@ -275,7 +294,7 @@ list of parameter dicts (see [parameter metadata](#parameter-metadata) below):
 ```gb
 io.println(reflect.constructors(Dog));
 # [[{"class": null, "elementClass": null, "hasDefault": false, "name": "name", "type": "string", "variadic": false},
-#   {"class": null, "elementClass": null, "hasDefault": false, "name": "breed", "type": "?string", "variadic": false}]]
+# {"class": null, "elementClass": null, "hasDefault": false, "name": "breed", "type": "?string", "variadic": false}]]
 ```
 
 `reflect.parent(class)` returns the parent class name as a string, or `null`
@@ -312,11 +331,13 @@ while (current != null) {
 type arguments (`list<int>`, `?Box<string>`):
 
 ```gb
-func handler(int id, string name = "anon"): string { return name; }
+func handler(int id, string name = "anon"): string {
+    return name;
+}
 
 io.println(reflect.parameters(handler));
 # [{"class": null, "elementClass": null, "hasDefault": false, "name": "id", "type": "int", "variadic": false},
-#  {"class": null, "elementClass": null, "hasDefault": true, "name": "name", "type": "string", "variadic": false}]
+# {"class": null, "elementClass": null, "hasDefault": true, "name": "name", "type": "string", "variadic": false}]
 
 io.println(reflect.returnType(handler));   # string
 ```
@@ -396,11 +417,13 @@ the `target` kind, and the source `line` / `column`:
 
 ```gb
 @tag("admin")
-func handler(int id): string { return ""; }
+func handler(int id): string {
+    return "";
+}
 
 io.println(reflect.decorators(handler));
 # [{"args": ["admin"], "column": 1, "line": 1, "name": "tag",
-#   "namedArgs": {}, "overload": 0, "position": 0, "target": "function"}]
+# "namedArgs": {}, "overload": 0, "position": 0, "target": "function"}]
 ```
 
 `reflect.hasDecorator(target, name)` reports whether a target carries a named
@@ -417,7 +440,7 @@ io.println(reflect.hasDecorator(Widget, "immutable"));   # true
 io.println(reflect.hasDecorator(Widget, "sealed"));      # false
 io.println(reflect.decorator(Widget, "immutable"));
 # {"args": [], "column": 1, "line": 1, "name": "immutable",
-#  "namedArgs": {}, "overload": 0, "position": 0, "target": "class"}
+# "namedArgs": {}, "overload": 0, "position": 0, "target": "class"}
 ```
 
 All three accept any function value, however it was obtained. A function
@@ -441,7 +464,9 @@ class, or interface, or `null` when it has none:
 
 ```gb
 /** Greets a person by name. */
-func greet(string name): string { return "hi " + name; }
+func greet(string name): string {
+    return "hi " + name;
+}
 
 io.println(reflect.doc(greet));   # Greets a person by name.
 ```
@@ -467,9 +492,9 @@ classes):
 
 ```gb
 # in mymod.gb:
-#   export func add(int a, int b): int { return a + b; }
-#   export func sub(int a, int b): int { return a - b; }
-#   export class Thing { int n; func Thing(int n) { this.n = n; } }
+# export func add(int a, int b): int { return a + b; }
+# export func sub(int a, int b): int { return a - b; }
+# export class Thing { int n; func Thing(int n) { this.n = n; } }
 
 import mymod;
 import io;

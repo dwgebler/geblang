@@ -1,0 +1,5 @@
+/**
+ * @category Tests
+ * @summary A generator function literal's yields are checked against its iterable<T> element type.
+ */
+let make = func(): iterable<int> { yield "two"; };

@@ -44,7 +44,7 @@ let sentences = [
     "A kitten dozed in the afternoon sun.",
     "Quantum entanglement connects particles across vast distances.",
     "Physicists describe spooky action at a distance.",
-    "She poured a fresh cup of coffee before the meeting."
+    "She poured a fresh cup of coffee before the meeting.",
 ];
 
 /* Embed each sentence into a 384-dim vector with the local model. */

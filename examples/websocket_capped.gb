@@ -14,26 +14,24 @@ let id = http.listen(":8080", func(Request req): any {
         return websocket.upgrade(func(int conn): void {
             while (true) {
                 let msg = websocket.readText(conn);
-                if (msg == null) { break; }
+                if (msg == null) {
+                    break;
+                }
                 websocket.sendText(conn, "echo: " + (msg as string));
             }
         });
     }
     return http.response("not found", 404);
-}, {
-    "maxConcurrent": 1000,
-    "queueSize":     0,
-    "onOverload":    "reject"
-});
+}, {"maxConcurrent": 1000, "queueSize": 0, "onOverload": "reject"});
 
 io.println("ws echo server listening with cap=1000");
 
 async.run(func(): void {
     while (true) {
-        async.sleep(5000);
+        await async.sleep(5000);
         io.println("ws stats: " + http.serverStats(id).toString());
     }
 });
 
-async.sleep(86400000);
+await async.sleep(86400000);
 http.close(id);

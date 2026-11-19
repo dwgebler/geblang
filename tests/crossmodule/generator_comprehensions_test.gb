@@ -1,0 +1,23 @@
+/**
+ * @title Generator comprehensions across modules
+ * @summary Generator comprehensions returned from another module, or from an inherited method, stay lazy and compose with local ones.
+ */
+import test;
+import gencomp_source;
+
+class Local extends gencomp_source.Source {
+    func Local(list<int> items) { parent(items); }
+}
+
+class GeneratorComprehensionsCrossModuleTest extends test.Test {
+    @test
+    func importedComprehensions(): void {
+        this.assertEquals([1, 4, 9], [v for v in gencomp_source.squares([1, 2, 3])]);
+        this.assertEquals([5], [v for v in (x + 1 for x in gencomp_source.squares([2]))]);
+    }
+
+    @test
+    func inheritedMethodReturningAComprehension(): void {
+        this.assertEquals([8], [v for v in Local([4]).doubled()]);
+    }
+}

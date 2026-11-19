@@ -1,0 +1,46 @@
+/**
+ * @title Native call forms
+ * @summary Every argument count a native accepts at run time is accepted before the program runs too, on both runtimes.
+ */
+import test;
+import random;
+import collections;
+import watch;
+import errors;
+import datetime;
+
+class NativeCallFormsTest extends test.Test {
+    @test
+    func randomTakesAnOptionalGeneratorFirst(): void {
+        let a = random.Generator(7);
+        let b = random.Generator(7);
+        this.assertEquals(random.next(a), random.next(b));
+        this.assertEquals(random.float(a), random.float(b));
+        this.assertEquals(random.bool(a), random.bool(b));
+        this.assertEquals(random.choice(a, [1, 2, 3]), random.choice(b, [1, 2, 3]));
+        this.assertEquals(random.shuffle(a, [1, 2, 3]), random.shuffle(b, [1, 2, 3]));
+        this.assertEquals(5, random.choice([5]));
+    }
+
+    @test
+    func rangeWithOnlyAnEnd(): void {
+        this.assertEquals([0, 1, 2, 3], [x for x in collections.range(4)]);
+    }
+
+    @test
+    func watchWaitWithOnlyATimeout(): void {
+        let result = watch.wait("does-not-exist-native-forms", 10);
+        this.assertFalse(result["changed"] as bool);
+    }
+
+    @test
+    func errorsNewWithOnlyAClass(): void {
+        let e = errors.new("ValueError");
+        this.assertEquals("ValueError", e.class);
+    }
+
+    @test
+    func toLocalTakesAZone(): void {
+        this.assertEquals("1970-01-01T00:00:00Z", datetime.toLocal(0, "UTC"));
+    }
+}

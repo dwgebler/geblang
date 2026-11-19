@@ -1,0 +1,51 @@
+/**
+ * @title Calling function values exported by another module
+ * @summary A function literal, an arrow function or a callable object stored in
+ * an exported variable can be called through the module with positional, named
+ * and spread arguments, and from a defer, on both runtimes.
+ */
+import test;
+import exported_callables_donor as donor;
+
+list<string> deferred = [];
+
+func deferTwice(): void {
+    defer deferred.push("${donor.twice(5)}");
+}
+
+class ExportedCallablesTest extends test.Test {
+    @test
+    func callsExportedFunctionLiteral(): void {
+        this.assertEquals([2, 4], donor.evens([1, 2, 3, 4]));
+    }
+
+    @test
+    func callsExportedArrowFunction(): void {
+        this.assertEquals(42, donor.twice(21));
+    }
+
+    @test
+    func passesNamedAndSpreadArguments(): void {
+        this.assertEquals(42, donor.twice(n: 21));
+        this.assertEquals([6], donor.evens(xs: [6, 7]));
+        this.assertEquals([2], donor.evens(...[[2, 3]]));
+    }
+
+    @test
+    func closureKeepsModuleState(): void {
+        let first = donor.bump();
+        this.assertEquals(first + 1, donor.bump());
+    }
+
+    @test
+    func callsExportedCallableObject(): void {
+        this.assertEquals(8, donor.doubler(4));
+        this.assertEquals(10, donor.doubler(n: 5));
+    }
+
+    @test
+    func callsFromDefer(): void {
+        deferTwice();
+        this.assertEquals(["10"], deferred);
+    }
+}

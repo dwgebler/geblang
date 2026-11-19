@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown method inside a ternary: dicts
+ * have `hasKey`, not `has`.
+ */
+func label(dict<string, int> counts): string {
+    return counts.has("a") ? "yes" : "no";
+}

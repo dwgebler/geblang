@@ -36,15 +36,15 @@ class FloorDivisionTest extends test.Test {
         /* Same-kind policy: decimal // decimal -> decimal with
          * integer numerator (not a collapse to int). */
         let q = 7.5 // 2.0;
-        this.assertEquals("3.0000000000", q as string);
+        this.assertEquals("3.0", q as string);
         let neg = (-7.5) // 2.0;
-        this.assertEquals("-4.0000000000", neg as string);
+        this.assertEquals("-4.0", neg as string);
     }
 
     @test
     func decimalModulo(): void {
         let r = 10.0 % 3.0;
-        this.assertEquals("1.0000000000", r as string);
+        this.assertEquals("1.0", r as string);
     }
 }
 
@@ -92,9 +92,9 @@ class TrueDivisionTypingTest extends test.Test {
     func intDivisionIsDecimal(): void {
         /* `/` is true division: int / int is a decimal even when it divides evenly. */
         decimal q = 7 / 2;
-        this.assertEquals("3.5000000000", q as string);
+        this.assertEquals("3.5", q as string);
         decimal exact = 50000 / 1000;
-        this.assertEquals("50.0000000000", exact as string);
+        this.assertEquals("50.0", exact as string);
     }
 
     @test

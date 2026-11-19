@@ -19,8 +19,7 @@ export class Service {
     bool gpu;               /* reserve an NVIDIA GPU (+ CUDA base for Python) */
     string hostname;        /* reverse-proxy host, e.g. "app.localhost" (empty = none) */
 
-    func Service(string name, string language, string version,
-                 string runtime, string packageManager, int port) {
+    func Service(string name, string language, string version, string runtime, string packageManager, int port) {
         this.name = name;
         this.language = language;
         this.version = version;

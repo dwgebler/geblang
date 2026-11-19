@@ -16,13 +16,15 @@ import time;
 ## log("a"); log("b"); log("c");  # only one io.println in 200ms
 ## ```
 export func throttle(func fn, int ms): func {
+    bool called = false;
     int lastAt = 0;
     any lastResult = null;
     return func(any ...args): any {
-        let now = time.now();
-        if (now - lastAt < ms) {
+        let now = time.monotonic();
+        if (called && now - lastAt < ms) {
             return lastResult;
         }
+        called = true;
         lastAt = now;
         lastResult = fn(...args);
         return lastResult;

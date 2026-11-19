@@ -1,4 +1,4 @@
-# Syntax Basics
+# Syntax basics
 
 ## Comments
 
@@ -278,9 +278,9 @@ error.
 Three numeric types:
 
 ```gb
-int     count  = 10;
-decimal money  = 12.50;
-float   ratio  = 0.25f;
+int     count = 10;
+decimal money = 12.50;
+float   ratio = 0.25f;
 ```
 
 Use `int` for counts, indexes, and whole-number values. Use `decimal` for
@@ -317,7 +317,7 @@ floating-point approximation:
 decimal a = 0.1;
 decimal b = 0.2;
 decimal c = a + b;
-io.println(c);   # 0.3000000000 (exact)
+io.println(c);   # 0.3 (exact)
 ```
 
 Because values are stored as fractions, dividing `1` by `3` produces the
@@ -325,13 +325,15 @@ exact fraction `1/3`, not a truncated approximation:
 
 ```gb
 decimal third = 1.0 / 3.0;
-io.println(third);   # 0.3333333333  (displayed to 10 decimal places)
-io.println(third * 3);  # 1.0000000000  (exactly 1, no rounding error)
+io.println(third);   # 0.3333333333  (rounded to 10 places for display)
+io.println(third * 3);  # 1.0  (exactly 1, no rounding error)
 ```
 
-The default display always uses 10 decimal places, rounding the last digit
-where needed. The stored value is always exact regardless of what the display
-shows.
+The default display shows up to 10 decimal places: trailing zeros are dropped,
+a whole value keeps one place (`3.0`), and a value that needs more than 10
+places is rounded at the tenth. The stored value is always exact regardless of
+what the display shows. Printing, string interpolation, `as string`, JSON and
+other data formats all use this form.
 
 #### Controlling decimal places
 
@@ -341,16 +343,16 @@ of decimal places:
 ```gb
 decimal price = 4.0 / 3.0;
 
-io.println(price.toString());    # 1.3333333333  (default: 10 dp)
+io.println(price.toString());    # 1.3333333333  (default display)
 io.println(price.toString(2));   # 1.33
 io.println(price.toString(4));   # 1.3333
 io.println(price.format(2));     # 1.33  (same result; format requires scale)
 ```
 
-`toString()` with no argument is equivalent to `toString(10)`. `format(scale)`
-always requires the scale argument.
+`toString()` with no argument gives the default display; `toString(10)` always
+shows exactly ten places. `format(scale)` always requires the scale argument.
 
-Casting to `string` also uses 10 decimal places:
+Casting to `string` also uses the default display:
 
 ```gb
 let s = price as string;   # "1.3333333333"
@@ -418,7 +420,7 @@ decimal result = d * (f as decimal);
 decimal d = 3.75;
 int     i = d as int;     # 3  (truncates toward zero)
 float   f = d as float;   # 3.75 (approximate; may lose precision)
-string  s = d as string;  # "3.7500000000"
+string  s = d as string;  # "3.75"
 
 # Convert from string or int
 decimal fromStr = "12.50" as decimal;
@@ -584,7 +586,9 @@ import io;
 
 class Point {
     int x;
-    func Point(int x) { this.x = x; }
+    func Point(int x) {
+        this.x = x;
+    }
 }
 
 let a = Point(1);
@@ -623,9 +627,18 @@ io.println(score > 90 ? "A" : (score > 70 ? "B" : "C"));
 Compound assignment operators are available for all binary operators:
 
 ```gb
-x += 1;    x -= 1;    x *= 2;    x /= 4;    x //= 3;
-x %= 10;   x **= 2;
-x &= 0xff; x |= 0x01; x ^= mask; x <<= 2;   x >>= 1;
+x += 1;
+x -= 1;
+x *= 2;
+x /= 4;
+x //= 3;
+x %= 10;
+x **= 2;
+x &= 0xff;
+x |= 0x01;
+x ^= mask;
+x <<= 2;
+x >>= 1;
 n ??= "default";   # assigns only if n is null
 ```
 

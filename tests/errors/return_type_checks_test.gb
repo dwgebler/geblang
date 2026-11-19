@@ -70,7 +70,7 @@ class ReturnTypeChecksTest extends test.Test {
         this.assertEquals("float", "${typeof(f)}");
         this.assertEquals("decimal", "${typeof(d)}");
         this.assertEquals("float", "${typeof(nf)}");
-        this.assertEquals("3.0000000000", "${d}");
+        this.assertEquals("3.0", "${d}");
     }
 
     @test

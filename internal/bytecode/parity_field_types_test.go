@@ -159,7 +159,7 @@ Shadow<string>().setItem(5);
 let p = json.parseAs("{\"amount\": 10, \"rate\": 1, \"qty\": 3.0, \"weights\": [1]}", Priced);
 io.println("${typeof(p.amount)} ${typeof(p.rate)} ${typeof(p.qty)} ${typeof(p.weights[0])}");
 `)
-	want := "decimal 1 float -2.0000000000 float\n" +
+	want := "decimal 1 float -2.0 float\n" +
 		"cannot assign decimal to int | string field Wallet.tag\n" +
 		"cannot assign string to int field Counters.count\n" +
 		"cannot assign string to T field Shadow.item\n" +
@@ -294,7 +294,7 @@ io.println("${typeof(viaCoalesce)} ${typeof(ret(f, d1))} ${take(f ? d1 : 8)}");
 any count = 9;
 try { b.amount = f ? d1 : count; } catch (TypeError e) { io.println(e.message); }
 `)
-	want := "decimal\ndecimal 3.0000000000\ndecimal 2.0000000000\ndecimal 4.0000000000\ndecimal 2.5000000000\ndecimal 6.0000000000\ndecimal decimal decimal\ncannot assign int to decimal field Box.amount\n"
+	want := "decimal\ndecimal 3.0\ndecimal 2.0\ndecimal 4.0\ndecimal 2.5\ndecimal 6.0\ndecimal decimal decimal\ncannot assign int to decimal field Box.amount\n"
 	if ev != want {
 		t.Fatalf("evaluator output:\n%s\nwant:\n%s", ev, want)
 	}

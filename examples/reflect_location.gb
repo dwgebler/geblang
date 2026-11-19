@@ -13,7 +13,9 @@ func handler(): string {
 
 class Service {
     int id;
-    func Service(int id) { this.id = id; }
+    func Service(int id) {
+        this.id = id;
+    }
 }
 
 let h = reflect.location(handler);

@@ -109,8 +109,17 @@ func StringToBool(s string) bool {
 // toString helpers use the interpreter's Inspect representation per type.
 func IntToString(v int64) string     { return strconv.FormatInt(v, 10) }
 func FloatToString(v float64) string { return fmt.Sprintf("%g", v) }
+
+// DecimalToString is the default decimal rendering: ten places with trailing zeros dropped, keeping one fractional digit.
 func DecimalToString(v *big.Rat) string {
-	return v.FloatString(10)
+	text := strings.TrimRight(v.FloatString(10), "0")
+	if strings.HasSuffix(text, ".") {
+		text += "0"
+	}
+	if text == "-0.0" {
+		return "0.0"
+	}
+	return text
 }
 func BoolToString(v bool) string {
 	if v {
@@ -120,14 +129,14 @@ func BoolToString(v bool) string {
 }
 
 // Numeric cross-conversions matching castValue (truncate toward zero, etc.).
-func FloatToInt(v float64) int64       { return int64(math.Trunc(v)) }
-func DecimalToInt(v *big.Rat) int64    { return new(big.Int).Quo(v.Num(), v.Denom()).Int64() }
-func IntToFloat(v int64) float64       { return float64(v) }
+func FloatToInt(v float64) int64    { return int64(math.Trunc(v)) }
+func DecimalToInt(v *big.Rat) int64 { return new(big.Int).Quo(v.Num(), v.Denom()).Int64() }
+func IntToFloat(v int64) float64    { return float64(v) }
 func DecimalToFloat(v *big.Rat) float64 {
 	f, _ := v.Float64()
 	return f
 }
-func IntToDecimal(v int64) *big.Rat   { return new(big.Rat).SetInt64(v) }
+func IntToDecimal(v int64) *big.Rat { return new(big.Rat).SetInt64(v) }
 func FloatToDecimal(v float64) *big.Rat {
 	return StringToDecimal(strconv.FormatFloat(v, 'g', -1, 64))
 }

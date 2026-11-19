@@ -64,7 +64,7 @@ func TestEncodeDecodeChunk(t *testing.T) {
 	if !bytes.Equal(decoded.SourceHash[:], chunk.SourceHash[:]) {
 		t.Fatalf("source hash mismatch")
 	}
-	if len(decoded.Constants) != 5 || decoded.Constants[0].Inspect() != "7" || decoded.Constants[1].Inspect() != "hello" || decoded.Constants[2].Inspect() != "1.2500000000" || decoded.Constants[3].Inspect() != "3.5" {
+	if len(decoded.Constants) != 5 || decoded.Constants[0].Inspect() != "7" || decoded.Constants[1].Inspect() != "hello" || decoded.Constants[2].Inspect() != "1.25" || decoded.Constants[3].Inspect() != "3.5" {
 		t.Fatalf("decoded constants mismatch: %#v", decoded.Constants)
 	}
 	target, ok := decoded.Constants[4].(runtime.DecoratorTarget)
@@ -2741,7 +2741,7 @@ io.println(("true" as bool) && true);
 	if err := bytecode.NewVM(chunk, &out).Run(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if out.String() != "int\ntrue\nfalse\n3.5000000000\n43\ntrue\n" {
+	if out.String() != "int\ntrue\nfalse\n3.5\n43\ntrue\n" {
 		t.Fatalf("output: got %q", out.String())
 	}
 }
@@ -2833,7 +2833,7 @@ io.println(nums.get(1));
 	if err := bytecode.NewVM(chunk, &out).Run(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	want := "Geblang\ngeblang\nGEBLANG\ntrue\ntrue\ntrue\n__Geblang  \n3\n2\nname=Ada age=37 hex=ff price=12.50\n7\ntrue\n-7\n-7.00\n-7\n3.5000000000\nfalse\n-4\n-3.500\n-3.5\n-3.5\n2.5\nfalse\n-2.50\nfalse\ntrue\n43\n3.25\n2.5\ntrue\n2\n2\n2\n2\n9\n"
+	want := "Geblang\ngeblang\nGEBLANG\ntrue\ntrue\ntrue\n__Geblang  \n3\n2\nname=Ada age=37 hex=ff price=12.50\n7\ntrue\n-7\n-7.00\n-7\n3.5\nfalse\n-4\n-3.500\n-3.5\n-3.5\n2.5\nfalse\n-2.50\nfalse\ntrue\n43\n3.25\n2.5\ntrue\n2\n2\n2\n2\n9\n"
 	if out.String() != want {
 		t.Fatalf("output: got %q, want %q", out.String(), want)
 	}
@@ -2860,7 +2860,7 @@ io.println(2 ** 5);
 	if err := bytecode.NewVM(chunk, &out).Run(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if out.String() != "1.5000000000\n3\n1\n-3\n2\n-3\n-2\n32\n" {
+	if out.String() != "1.5\n3\n1\n-3\n2\n-3\n-2\n32\n" {
 		t.Fatalf("output: got %q", out.String())
 	}
 }
@@ -2899,7 +2899,7 @@ io.println(-(factor ** 2.0f));
 	/* `5.5 // 2.0` is decimal//decimal -> decimal (same-kind rule;
 	 * see release notes for 1.0.2). The `5.5f % 2.0f` produces a
 	 * float since both operands are float. */
-	if out.String() != "2.0000000000\ntrue\n1.5000000000\n2.0000000000\n2.2500000000\n3\n1.5\n-2.25\n" {
+	if out.String() != "2.0\ntrue\n1.5\n2.0\n2.25\n3\n1.5\n-2.25\n" {
 		t.Fatalf("output: got %q", out.String())
 	}
 }

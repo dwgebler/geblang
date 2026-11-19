@@ -23,10 +23,10 @@ import image;
 
 let img = image.blank(240, 160, "white");
 img.rect(10, 10, 80, 40, {"fill": "#3366ff"})
-   .circle(150, 60, 30, {"color": "red", "width": 3})
-   .line(0, 0, 239, 159, {"color": "black"})
-   .polygon([[10, 100], [60, 70], [90, 110]], {"fill": "#00aa0080", "color": "green"})
-   .text("Hello", 100, 120, {"size": 18, "font": "bold", "color": "#222"});
+    .circle(150, 60, 30, {"color": "red", "width": 3})
+    .line(0, 0, 239, 159, {"color": "black"})
+    .polygon([[10, 100], [60, 70], [90, 110]], {"fill": "#00aa0080", "color": "green"})
+    .text("Hello", 100, 120, {"size": 18, "font": "bold", "color": "#222"});
 img.save("out.png", "png");
 ```
 
@@ -279,7 +279,7 @@ works without any font file.
 ```gb
 let brand = image.loadFont("fonts/Brand.ttf");
 img.text("Invoice 1042", 20, 20, {"font": brand, "size": 28})
-   .text("due in 30 days", 20, 56, {"font": "italic", "color": "#666"});
+    .text("due in 30 days", 20, 56, {"font": "italic", "color": "#666"});
 ```
 
 ## Supported formats

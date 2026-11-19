@@ -1,0 +1,9 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown method inside a list
+ * comprehension: strings have `length`, not `size`.
+ */
+func sizes(list<string> names): list<int> {
+    string first = names[0];
+    return [first.size() for n in names];
+}

@@ -14,6 +14,6 @@ io.println("status delivered: ${statusOk}");
 
 systemd.journal("example started", {
     "PRIORITY":          "6",
-    "SYSLOG_IDENTIFIER": "clib_systemd_example"
+    "SYSLOG_IDENTIFIER": "clib_systemd_example",
 });
 io.println("journal entry sent");

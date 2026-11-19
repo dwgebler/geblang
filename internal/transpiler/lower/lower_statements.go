@@ -6,6 +6,7 @@ import (
 	"geblang/internal/native"
 	"geblang/internal/transpiler/emit"
 	"geblang/internal/transpiler/types"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -290,6 +291,57 @@ func (l *Lowerer) emitLoopReplay(sig, code, retGo string) {
 
 // bodyEndsWithTry reports whether the last statement is a try; Go cannot prove
 // such a body terminates, so a typed function needs an explicit trailing return.
+func bodyEndsWithReturn(body *ast.BlockStatement) bool {
+	if body == nil || len(body.Statements) == 0 {
+		return false
+	}
+	_, ok := body.Statements[len(body.Statements)-1].(*ast.ReturnStatement)
+	return ok
+}
+
+// returnsValue reports whether a function body returns a value, ignoring returns inside nested function literals.
+func returnsValue(body *ast.BlockStatement) bool {
+	found := false
+	var walk func(v reflect.Value)
+	walk = func(v reflect.Value) {
+		if found {
+			return
+		}
+		switch v.Kind() {
+		case reflect.Ptr, reflect.Interface:
+			if v.IsNil() {
+				return
+			}
+			switch n := v.Interface().(type) {
+			case *ast.FunctionLiteral:
+				return
+			case *ast.ReturnStatement:
+				if n.Value != nil {
+					found = true
+					return
+				}
+			}
+			walk(v.Elem())
+		case reflect.Struct:
+			for i := 0; i < v.NumField(); i++ {
+				if v.Type().Field(i).IsExported() {
+					walk(v.Field(i))
+				}
+			}
+		case reflect.Slice, reflect.Array:
+			for i := 0; i < v.Len(); i++ {
+				walk(v.Index(i))
+			}
+		}
+	}
+	if body != nil {
+		for _, stmt := range body.Statements {
+			walk(reflect.ValueOf(stmt))
+		}
+	}
+	return found
+}
+
 func bodyEndsWithTry(body *ast.BlockStatement) bool {
 	if body == nil || len(body.Statements) == 0 {
 		return false

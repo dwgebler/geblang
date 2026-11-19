@@ -100,7 +100,7 @@ func NewDecimalLiteral(lit string) (Decimal, error) {
 }
 
 func (v Decimal) TypeName() string { return "decimal" }
-func (v Decimal) Inspect() string  { return v.Value.FloatString(10) }
+func (v Decimal) Inspect() string  { return FormatDecimal(v.Value) }
 
 type Float struct {
 	Value float64
@@ -1660,4 +1660,16 @@ func IsCallableValue(value Value) bool {
 	default:
 		return false
 	}
+}
+
+// FormatDecimal is the default decimal rendering: ten places with trailing zeros dropped, keeping one fractional digit.
+func FormatDecimal(r *big.Rat) string {
+	text := strings.TrimRight(r.FloatString(10), "0")
+	if strings.HasSuffix(text, ".") {
+		text += "0"
+	}
+	if text == "-0.0" {
+		return "0.0"
+	}
+	return text
 }

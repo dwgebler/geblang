@@ -1,4 +1,4 @@
-# Tooling And Examples
+# Tooling and examples
 
 ## Command-Line Tools
 
@@ -10,7 +10,7 @@ import sys;
 
 let parsed = cli.parseArgs(sys.args(), {
     "name": {"type": "string", "required": true},
-    "verbose": {"type": "bool", "short": "v"}
+    "verbose": {"type": "bool", "short": "v"},
 });
 
 let password = cli.password("Password: ");
@@ -45,8 +45,8 @@ so this is valid API documentation syntax:
 
 ```gb
 ## Lists users for an API endpoint.
-export @route("GET", "/users")
-func listUsers(): list<string> {
+@route("GET", "/users")
+export func listUsers(): list<string> {
     return ["Ada"];
 }
 ```
@@ -136,6 +136,30 @@ $ geblang check app.gb
 app.gb:1:5: error[semantic]: string has no method fooBar
 ```
 
+So is calling a built-in method with an argument count it does not accept,
+when the receiver's type is known:
+
+```sh
+$ geblang check app.gb
+app.gb:2:10: error[semantic]: string.substring does not accept 0 argument(s); expected substring(start, [end])
+```
+
+A receiver typed `any` is checked only when the program runs. These checks
+apply wherever the call appears, including conditions, ternaries, string
+interpolation, comprehensions, match arms, and closures.
+
+The argument count of a call to a method, an imported function, or an
+imported constructor is checked even when an argument is typed `any`: an `any`
+argument picks its overload when the program runs, but no overload takes the
+wrong number of arguments. The assertions a test class inherits from
+`test.Test` are checked the same way, so `this.assertTrue(ok, "message")` is
+reported (use `this.fail(message)` for a failure message).
+
+Passing arguments to a class that declares no constructor is an error too,
+since both runtimes reject it. The check stays silent when an ancestor
+outside the module, such as a built-in error class, may supply the
+constructor, and for decorated classes such as dataclasses.
+
 Calling a function that is not defined - not a top-level function,
 imported name, class constructor, in-scope variable, or built-in - is an
 error as well:
@@ -208,6 +232,20 @@ app.gb:5:12: warning[match-nonexhaustive]: match on enum 'Color' is not exhausti
 It is a warning, not an error: the code still runs and throws `MatchError` only
 if an unhandled value reaches the match. See chapter 4 for the exhaustiveness
 rules (guards do not count as covering a variant).
+
+Calling `async.sleep`, `async.all`, `async.race` or `async.timeout` as a
+statement without `await` is reported as `discarded-task`. Each returns a task
+whose only purpose is to be waited on, so dropping it means the program does
+not wait at all:
+
+```sh
+$ geblang check app.gb
+app.gb:4:7: warning[discarded-task]: async.sleep(...) returns a task that is never awaited, so nothing waits for it; write await async.sleep(...)
+```
+
+Starting work with `async.run(...)`, or calling an `async` function, without
+`await` is not reported: that is the fire-and-forget form, and the task still
+runs.
 
 ## Introspection Builtins
 

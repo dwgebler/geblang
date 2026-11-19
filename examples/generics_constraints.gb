@@ -24,8 +24,12 @@ class Score implements Sortable {
 
     func compareTo(any other): int {
         Score o = other as Score;
-        if (this.value < o.value) { return -1; }
-        if (this.value > o.value) { return 1; }
+        if (this.value < o.value) {
+            return -1;
+        }
+        if (this.value > o.value) {
+            return 1;
+        }
         return 0;
     }
 }
@@ -53,11 +57,15 @@ interface Runner {
 }
 
 class Duck implements Swimmer {
-    func swim(): string { return "quack+splash"; }
+    func swim(): string {
+        return "quack+splash";
+    }
 }
 
 class Rabbit implements Runner {
-    func run(): string { return "hop"; }
+    func run(): string {
+        return "hop";
+    }
 }
 
 func exercise<T implements Swimmer | Runner>(T animal): void {

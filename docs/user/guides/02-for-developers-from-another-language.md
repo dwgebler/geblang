@@ -79,7 +79,7 @@ Things to notice:
 | Function definition | `def add(a: int, b: int) -> int:` | `function add(a, b) { }` | `func add(a, b int) int { }` | `int add(int a, int b) { }` | `function add(int $a, int $b): int { }` | `func add(int a, int b): int { }` |
 | Default parameters | `def f(x=0):` | `function f(x = 0) { }` | (not supported) | (overloads) | `function f($x = 0) { }` | `func f(int x = 0): void { }` |
 | Named arguments | (positional or keyword: `f(x=1)`) | (not built in) | (not supported) | (not supported) | `f(x: 1)` (PHP 8+) | `f(x: 1)` |
-| Lambda / anonymous func | `lambda x: x + 1` | `x => x + 1` | `func(x int) int { return x + 1 }` | `x -> x + 1` | `fn($x) => $x + 1` | `func(int x): int { return x + 1; }` |
+| Lambda / anonymous func | `lambda x: x + 1` | `x => x + 1` | `func(x int) int { return x + 1 }` | `x -> x + 1` | `fn($x) => $x + 1` | `(int x) => x + 1` or `func(int x): int { return x + 1; }` |
 | Class definition | `class User:` | `class User { }` | (no classes; structs) | `class User { }` | `class User { }` | `class User { }` |
 | Constructor | `def __init__(self, name):` | `constructor(name) { }` | (struct literal / factory) | `User(String name) { }` | `function __construct($name) { }` | `func User(string name) { }` |
 | Inheritance | `class Admin(User):` | `class Admin extends User { }` | (embedding) | `class Admin extends User { }` | `class Admin extends User { }` | `class Admin extends User { }` |
@@ -126,8 +126,12 @@ Use an explicit type when it documents intent or narrows a nullable:
 import io;
 
 func clamp(int value, int lo, int hi): int {
-    if (value < lo) { return lo; }
-    if (value > hi) { return hi; }
+    if (value < lo) {
+        return lo;
+    }
+    if (value > hi) {
+        return hi;
+    }
     return value;
 }
 
@@ -191,13 +195,21 @@ import io;
 
 class Animal {
     string name;
-    func Animal(string name) { this.name = name; }
-    func speak(): string { return this.name + " makes a sound"; }
+    func Animal(string name) {
+        this.name = name;
+    }
+    func speak(): string {
+        return this.name + " makes a sound";
+    }
 }
 
 class Dog extends Animal {
-    func Dog(string name) { parent(name); }
-    func speak(): string { return parent.speak() + ", then barks"; }
+    func Dog(string name) {
+        parent(name);
+    }
+    func speak(): string {
+        return parent.speak() + ", then barks";
+    }
 }
 
 let d = Dog("Rex");
@@ -211,8 +223,12 @@ import io;
 
 class Box<T> {
     T value;
-    func Box(T value) { this.value = value; }
-    func get(): T { return this.value; }
+    func Box(T value) {
+        this.value = value;
+    }
+    func get(): T {
+        return this.value;
+    }
 }
 
 let b = Box<string>("hello");
@@ -247,7 +263,9 @@ Errors must extend `Error`. Use `try`/`catch`/`finally`:
 import io;
 
 class ParseFailure extends RuntimeError {
-    func ParseFailure(string msg) { parent(msg); }
+    func ParseFailure(string msg) {
+        parent(msg);
+    }
 }
 
 func parseAge(string raw): int {
@@ -330,14 +348,16 @@ import io;
 let a = 7;
 let b = 2;
 io.println(a // b);   /* 3 - floor division, not a comment */
-io.println(a / b);    /* 3.5000000000 - true division, returns decimal */
+io.println(a / b);    /* 3.5 - true division, returns decimal */
 ```
 
 **Type-first parameter syntax**
 Parameters are declared as `type name`, not `name: type`:
 
 ```gb
-func add(int a, int b): int { return a + b; }   /* correct */
+func add(int a, int b): int {   /* correct */
+    return a + b;
+}
 /* func add(a: int, b: int): int - this is NOT valid Geblang syntax */
 ```
 
@@ -380,7 +400,7 @@ import io;
 
 decimal d = 1.5;
 float   f = 2.0f;
-io.println(d * (f as decimal));   /* 3.0000000000 */
+io.println(d * (f as decimal));   /* 3.0 */
 ```
 
 **`/` returns `decimal`; use `//` for integer division**

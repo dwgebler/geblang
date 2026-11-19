@@ -295,7 +295,7 @@ func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (r
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "status", runtime.NewInt64(404))
 	putDict(entries, "body", runtime.String{Value: "not found"})
-	return runtime.DictFromEntries(entries, nil), nil
+	return e.runWebAfterMiddlewares(middlewares, request, runtime.DictFromEntries(entries, nil))
 }
 
 func normalizeWebResponse(response runtime.Value) runtime.Value {

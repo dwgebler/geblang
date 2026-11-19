@@ -36,12 +36,12 @@ func TestShowScalars(t *testing.T) {
 
 func TestShowDecimal(t *testing.T) {
 	r, _ := new(big.Rat).SetString("3.14")
-	if got := Show(r); got != "3.1400000000" {
-		t.Errorf("Show(decimal 3.14) = %q, want %q", got, "3.1400000000")
+	if got := Show(r); got != "3.14" {
+		t.Errorf("Show(decimal 3.14) = %q, want %q", got, "3.14")
 	}
 	one, _ := new(big.Rat).SetString("1")
-	if got := Show(one); got != "1.0000000000" {
-		t.Errorf("Show(decimal 1) = %q, want %q", got, "1.0000000000")
+	if got := Show(one); got != "1.0" {
+		t.Errorf("Show(decimal 1) = %q, want %q", got, "1.0")
 	}
 }
 

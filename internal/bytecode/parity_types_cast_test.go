@@ -220,7 +220,7 @@ io.println(xs.length() as float);
 any v = xs.length();
 io.println(v as decimal);
 io.println(v as float);
-`, "3.0000000000\n3\n3.0000000000\n3\n")
+`, "3.0\n3\n3.0\n3\n")
 }
 
 // TestParityCrossTypeCastsForBytesAndCollections guards the 1.0.2
@@ -325,7 +325,7 @@ io.println(b as bool);
 io.println(b as decimal);
 io.println((b as bytes) as string);
 io.println(Box(0) as bool);
-`, "Box(42)\n42\n42\ntrue\n42.0000000000\nBox(42)\nfalse\n")
+`, "Box(42)\n42\n42\ntrue\n42.0\nBox(42)\nfalse\n")
 }
 
 // TestParityUnionTypeAcceptsAndRejects walks T | U | V at

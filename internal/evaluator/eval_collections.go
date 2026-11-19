@@ -352,7 +352,14 @@ func (e *Evaluator) collectionsLazyFilter(call *ast.CallExpression, args []runti
 				}
 				return nil, false, err
 			}
-			if isTruthy(keep) {
+			predOK, err := native.PredicateResult("collections.lazyFilter", keep)
+			if err != nil {
+				if source.close != nil {
+					source.close()
+				}
+				return nil, false, err
+			}
+			if predOK {
 				return next, true, nil
 			}
 		}

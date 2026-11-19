@@ -6,6 +6,7 @@
 package check
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"geblang/internal/ast"
 	"geblang/internal/bytecode"
+	"geblang/internal/desugar"
 	"geblang/internal/embedfold"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
@@ -201,7 +203,7 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 	}
 	diags = append(diags, CrossModuleAnalysis(file, analysisProgram, opts)...)
 	if _, compileErr := bytecode.CompileWithOptions(analysisProgram, []byte(source), file, bytecode.CompileOptions{NativeSymbols: opts.NativeSymbols, TypeAliasLookup: TypeAliasLookup(analysisProgram, opts.Resolver, opts.ModuleCache)}); compileErr != nil {
-		if d, ok := compileDiagnostic(file, compileErr); ok {
+		if d, ok := compileDiagnostic(file, compileErr); ok && !restatesDiagnostic(diags, d) {
 			diags = append(diags, d)
 		}
 	}
@@ -315,7 +317,7 @@ func CanonicalModuleName(file, name string, resolver *modules.Resolver) string {
 	}
 	manifest, err := resolver.FindManifest(file)
 	if err != nil || manifest == nil || manifest.Name == "" {
-		return name
+		return pathCanonicalName(file, name, resolver)
 	}
 	canonical := manifest.Name + "." + name
 	resolved, err := resolver.Resolve(canonical)
@@ -326,6 +328,34 @@ func CanonicalModuleName(file, name string, resolver *modules.Resolver) string {
 	resolvedAbs, resolvedErr := filepath.Abs(resolved)
 	if fileErr == nil && resolvedErr == nil && fileAbs == resolvedAbs {
 		return canonical
+	}
+	return name
+}
+
+// pathCanonicalName names a manifest-less file by its path under a module root (a bundle's flattened src/pkg/x.gb is pkg.x), when that name resolves back to the file.
+func pathCanonicalName(file, name string, resolver *modules.Resolver) string {
+	fileAbs, err := filepath.Abs(file)
+	if err != nil {
+		return name
+	}
+	for _, root := range resolver.ModulePaths {
+		rootAbs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(rootAbs, fileAbs)
+		if err != nil || strings.HasPrefix(rel, "..") || !strings.HasSuffix(rel, ".gb") {
+			continue
+		}
+		candidate := strings.ReplaceAll(strings.TrimSuffix(filepath.ToSlash(rel), ".gb"), "/", ".")
+		if candidate == name || !strings.HasSuffix(candidate, "."+name) {
+			continue
+		}
+		if resolved, err := resolver.Resolve(candidate); err == nil {
+			if resolvedAbs, err := filepath.Abs(resolved); err == nil && resolvedAbs == fileAbs {
+				return candidate
+			}
+		}
 	}
 	return name
 }
@@ -373,12 +403,32 @@ func compileDiagnostic(file string, compileErr error) (Diagnostic, bool) {
 			Message:  compileErr.Error(),
 		}, true
 	}
+	var positioned *desugar.PositionError
+	if errors.As(compileErr, &positioned) {
+		return Diagnostic{File: file, Line: positioned.Line, Column: positioned.Column, Severity: SeverityError, Rule: "type", Message: positioned.Message}, true
+	}
 	return Diagnostic{
 		File:     file,
 		Severity: SeverityError,
 		Rule:     "type",
 		Message:  compileErr.Error(),
 	}, true
+}
+
+// restatesDiagnostic reports whether the compiler's error repeats one the analyzer already gave; the compiler prefixes its own "line N:M: " position.
+func restatesDiagnostic(diags []Diagnostic, d Diagnostic) bool {
+	message := d.Message
+	if strings.HasPrefix(message, "line ") {
+		if i := strings.Index(message, ": "); i >= 0 {
+			message = message[i+2:]
+		}
+	}
+	for _, existing := range diags {
+		if existing.Severity == SeverityError && existing.Message == message {
+			return true
+		}
+	}
+	return false
 }
 
 // suppressRedundantOverloadErrors drops a function's overload-mismatch error

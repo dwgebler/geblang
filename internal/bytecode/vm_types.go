@@ -240,10 +240,10 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 			return false
 		}
 		if len(v.ElementTypes) >= 1 {
-			return vmTypeNameSatisfies(elementTagBase(v.ElementTypes[0]), args[0])
+			return elementTagSatisfies(v.ElementTypes[0], args[0])
 		}
 		for _, el := range v.Elements {
-			if !vmValueMatchesSimpleType(el, args[0]) {
+			if !elementValueMatches(el, args[0]) {
 				return false
 			}
 		}
@@ -253,10 +253,10 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 			return false
 		}
 		if len(v.ElementTypes) >= 1 {
-			return vmTypeNameSatisfies(elementTagBase(v.ElementTypes[0]), args[0])
+			return elementTagSatisfies(v.ElementTypes[0], args[0])
 		}
 		for _, e := range v.Elements {
-			if !vmValueMatchesSimpleType(e.Value, args[0]) {
+			if !elementValueMatches(e.Value, args[0]) {
 				return false
 			}
 		}
@@ -266,11 +266,11 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 			return false
 		}
 		if len(v.ElementTypes) >= 2 {
-			return vmTypeNameSatisfies(elementTagBase(v.ElementTypes[0]), args[0]) && vmTypeNameSatisfies(elementTagBase(v.ElementTypes[1]), args[1])
+			return elementTagSatisfies(v.ElementTypes[0], args[0]) && elementTagSatisfies(v.ElementTypes[1], args[1])
 		}
 		matches := true
 		v.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
-			if !vmValueMatchesSimpleType(e.Key, args[0]) || !vmValueMatchesSimpleType(e.Value, args[1]) {
+			if !elementValueMatches(e.Key, args[0]) || !elementValueMatches(e.Value, args[1]) {
 				matches = false
 				return false
 			}
@@ -369,6 +369,37 @@ func elementSpecTag(a vmTypeSpec) string {
 		return "?" + a.base
 	}
 	return a.base
+}
+
+// elementTagSatisfies reports whether a stored element tag meets an instanceof argument; a nullable tag needs a nullable argument.
+func elementTagSatisfies(tag, want string) bool {
+	if want == "any" || want == "?any" {
+		return true
+	}
+	if strings.HasPrefix(tag, "?") && !elementArgAllowsNull(want) {
+		return false
+	}
+	return vmTypeNameSatisfies(strings.TrimPrefix(tag, "?"), strings.TrimPrefix(want, "?"))
+}
+
+// elementValueMatches checks one element of an untagged collection; null meets a nullable argument.
+func elementValueMatches(value runtime.Value, want string) bool {
+	if _, isNull := value.(runtime.Null); isNull {
+		return want == "any" || elementArgAllowsNull(want)
+	}
+	return vmValueMatchesSimpleType(value, strings.TrimPrefix(want, "?"))
+}
+
+func elementArgAllowsNull(want string) bool {
+	if strings.HasPrefix(want, "?") {
+		return true
+	}
+	for _, arm := range strings.Split(want, "|") {
+		if strings.TrimSpace(arm) == "null" {
+			return true
+		}
+	}
+	return false
 }
 
 // elementTagBase drops a stored tag's nullable marker; instanceof and
@@ -1072,11 +1103,28 @@ func vmTypeKindForBase(baseLower string) vmTypeKind {
 		return vmTypeDict
 	case "func":
 		return vmTypeCallable
-	case "generator", "iterable":
+	case "generator":
 		return vmTypeGenerator
+	case "iterable":
+		return vmTypeIterable
 	default:
 		return vmTypeOther
 	}
+}
+
+// forInAccepts reports whether a for-in loop could iterate value, without calling any user code.
+func (vm *VM) forInAccepts(value runtime.Value) bool {
+	switch v := value.(type) {
+	case *runtime.List, *runtime.Generator, runtime.Range, runtime.Dict, runtime.Set, runtime.String:
+		return true
+	case *runtime.Instance:
+		if v.Class == nil {
+			return false
+		}
+		hasIter, hasNext := vm.instanceIteratorHooks(v)
+		return hasIter || hasNext
+	}
+	return false
 }
 
 func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Value, spec vmTypeSpec) bool {
@@ -1124,6 +1172,16 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 		return true
 	}
 	switch spec.baseLower {
+	case "iterable":
+		elemSpec := spec.args[0]
+		if elemSpec.kind == vmTypeAny || typeParams[elemSpec.baseLower] {
+			break
+		}
+		for _, elem := range runtime.IterableElementsToCheck(value) {
+			if !vm.matchValueToTypeSpec(typeParams, elem, elemSpec) {
+				return false
+			}
+		}
 	case "list":
 		elemSpec := spec.args[0]
 		if elemSpec.kind == vmTypeAny || typeParams[elemSpec.baseLower] {
@@ -1297,6 +1355,8 @@ func (vm *VM) runtimeValueMatchesTypeSpec(value runtime.Value, spec vmTypeSpec) 
 	case vmTypeGenerator:
 		_, ok := value.(*runtime.Generator)
 		return ok
+	case vmTypeIterable:
+		return vm.forInAccepts(value)
 	}
 	if value.TypeName() == spec.base {
 		return true

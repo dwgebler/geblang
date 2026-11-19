@@ -1,0 +1,37 @@
+/**
+ * @title Generators consuming imported generators
+ * @summary A generator that iterates a generator from another module, or an inherited generator method, gets its values lazily, and an imported generator that consumes its own module's generators works too.
+ */
+import test;
+import nested_gen_source;
+
+class Sub extends nested_gen_source.Source {
+    func Sub() { parent(); }
+}
+
+func scaled(any source): generator<int> {
+    for (v in source) {
+        yield v * 10;
+    }
+}
+
+func drain(any source): list {
+    list out = [];
+    for (x in source) {
+        out.push(x);
+    }
+    return out;
+}
+
+class NestedGeneratorsCrossModuleTest extends test.Test {
+    @test
+    func importedAndInheritedInnerGenerators(): void {
+        this.assertEquals([10, 20, 30], drain(scaled(nested_gen_source.counted(3))));
+        this.assertEquals([10, 20], drain(scaled(Sub().each())));
+    }
+
+    @test
+    func importedGeneratorConsumingItsOwnModule(): void {
+        this.assertEquals([1000, 2000], drain(nested_gen_source.relay()));
+    }
+}

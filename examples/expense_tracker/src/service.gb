@@ -4,7 +4,6 @@
  * @category Expense Tracker
  */
 module expense.tracker.service;
-
 import expense.tracker.domain as domain;
 import schema;
 
@@ -22,8 +21,8 @@ export class ExpenseService {
             "properties": {
                 "category": {"type": "string"},
                 "description": {"type": "string"},
-                "cents": {"type": "int"}
-            }
+                "cents": {"type": "int"},
+            },
         });
         if (!validation["valid"]) {
             return {"ok": false, "errors": validation["errors"]};

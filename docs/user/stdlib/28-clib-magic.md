@@ -1,4 +1,4 @@
-# File Type and MIME Detection (`clib.magic`)
+# File type and MIME detection (`clib.magic`)
 
 `import clib.magic as magic;` provides content-based file type and
 MIME type detection backed by libmagic (the library that powers the

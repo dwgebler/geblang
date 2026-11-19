@@ -1,0 +1,11 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST warn when async.sleep is called without await:
+ * the returned task is discarded, so the program does not pause at all.
+ */
+import async;
+import io;
+
+io.println("before");
+async.sleep(1000);
+io.println("after");

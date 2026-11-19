@@ -1,0 +1,88 @@
+/**
+ * @title Runtime errors inside generators
+ * @summary A runtime fault inside a generator body reaches the consumer with its own class and message, however the generator is consumed.
+ */
+import test;
+import collections;
+
+class Box {
+    func Box() {}
+    func each(int x): generator<decimal> { yield 10 / x; }
+}
+
+class SubBox extends Box {
+    func SubBox() { parent(); }
+}
+
+func named(int x): generator<decimal> {
+    yield 1;
+    yield 10 / x;
+}
+
+func relay(int x): generator<decimal> {
+    for (v in named(x)) {
+        yield v;
+    }
+}
+
+func badIndex(): generator<int> {
+    list<int> xs = [];
+    yield xs[3];
+}
+
+func failure(func body): string {
+    try {
+        body();
+    } catch (Error e) {
+        return e.class + ": " + e.message;
+    }
+    return "no error";
+}
+
+class GeneratorRuntimeErrorsTest extends test.Test {
+    @test
+    func forInSeesTheOriginalMessage(): void {
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { for (v in named(0)) {} }));
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { for (v in Box().each(0)) {} }));
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { for (v in SubBox().each(0)) {} }));
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { for (v in relay(0)) {} }));
+    }
+
+    @test
+    func closureGenerators(): void {
+        let make = func(int x): generator<decimal> { yield 10 / x; };
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { for (v in make(0)) {} }));
+    }
+
+    @test
+    func manualSteppingSeesTheOriginalMessage(): void {
+        let g = named(0);
+        this.assertEquals(1, g.next());
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { g.next(); }));
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { Box().each(0).done(); }));
+    }
+
+    @test
+    func drainingHelpersSeeTheOriginalMessage(): void {
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { for (v in collections.lazyMap(named(0), (any v) => v)) {} }));
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { any l = [v for v in named(0)]; }));
+    }
+
+    @test
+    func otherRuntimeFaultsKeepTheirClass(): void {
+        string expected = "";
+        try {
+            list<int> xs = [];
+            any v = xs[3];
+        } catch (Error e) {
+            expected = e.class + ": " + e.message;
+        }
+        string got = "";
+        try {
+            for (v in badIndex()) {}
+        } catch (Error e) {
+            got = e.class + ": " + e.message;
+        }
+        this.assertEquals(expected, got);
+    }
+}

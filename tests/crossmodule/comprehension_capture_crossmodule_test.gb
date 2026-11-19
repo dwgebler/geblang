@@ -1,0 +1,61 @@
+/**
+ * @title Comprehension closures capture each item
+ * @summary A closure created inside a comprehension sees the item it was
+ * created for, on both backends, whether the comprehension sits at top level,
+ * in a function, in a method, or in another module; tasks started from a
+ * comprehension each get their own item. A `for` loop variable stays shared.
+ */
+import test;
+import async;
+import comprehension_capture_donor as donor;
+
+func local(list<int> xs): list<callable> {
+    return [() => x + 100 for x in xs];
+}
+
+func callAll(list<callable> fns): list<any> {
+    return fns.map((callable f) => f());
+}
+
+class ComprehensionCaptureTest extends test.Test {
+    @test
+    func topLevelAndLocalComprehensions(): void {
+        this.assertEquals([1, 2, 3], callAll([() => n for n in [1, 2, 3]]));
+        this.assertEquals([101, 102], callAll(local([1, 2])));
+    }
+
+    @test
+    func comprehensionsInAnotherModule(): void {
+        this.assertEquals([2, 4, 6], callAll(donor.makers([1, 2, 3])));
+        this.assertEquals(["#a", "#b"], callAll(donor.Builder().labels(["a", "b"])));
+    }
+
+    @test
+    func pairsNestedClausesAndDictComprehensions(): void {
+        this.assertEquals(
+            ["a=1", "b=2"],
+            callAll([() => "${k}=${v}" for k, v in {"a": 1, "b": 2}.items()])
+        );
+        this.assertEquals(
+            [13, 14, 23, 24],
+            callAll([() => x * 10 + y for x in [1, 2] for y in [3, 4]])
+        );
+        let byKey = {k: () => k.upper() for k in ["m", "n"]};
+        this.assertEquals("M", (byKey["m"] as callable)());
+    }
+
+    @test
+    func tasksStartedFromAComprehension(): void {
+        let tasks = [async.run(() => n * n) for n in [2, 3, 4]];
+        this.assertEquals([4, 9, 16], await async.all(tasks));
+    }
+
+    @test
+    func forLoopVariableStaysShared(): void {
+        let fns = [];
+        for (i in [1, 2, 3]) {
+            fns.push(() => i);
+        }
+        this.assertEquals([3, 3, 3], callAll(fns));
+    }
+}

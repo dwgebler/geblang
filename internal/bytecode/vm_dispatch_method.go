@@ -669,7 +669,7 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 	if gen, ok := receiver.(*runtime.Generator); ok {
 		result, err := native.GeneratorMethod(gen, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.callPropagate(instruction, err)
+			return 0, vm.raiseIteratorFault(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -897,6 +897,14 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 			vm.literalHandoff = literalArgs
 			result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args), callTypeArgs, vm)
 			vm.literalHandoff = nil
+			if err != nil {
+				return vm.propagateModuleError(instruction, ip, err)
+			}
+			vm.push(result)
+			return ip, nil
+		}
+		if runtime.IsCallableValue(value) {
+			result, err := vm.callCallable(value, args)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -1503,7 +1511,10 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 			}
 			return vm.dispatchCrossModuleNamedConstruct(instruction, ip, class, args, names, callTypeArgs)
 		}
-		return 0, vm.runtimeError(instruction, "named method arguments are only supported for class instances")
+		if runtime.IsCallableValue(value) {
+			return vm.dispatchNamedCall(instruction, ip, value, "__invoke", args, names)
+		}
+		return 0, vm.runtimeError(instruction, "%s", runtime.NamedArgsUnsupported)
 	}
 	if class, ok := receiver.(runtime.BytecodeClass); ok && methodName == "__invoke" && class.Module != vm.moduleName && vm.moduleLoader != nil {
 		return vm.dispatchCrossModuleNamedConstruct(instruction, ip, class, args, names, callTypeArgs)
@@ -1553,7 +1564,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 				return ip, nil
 			}
 		}
-		return 0, vm.runtimeError(instruction, "named method arguments are only supported for class instances")
+		return 0, vm.runtimeError(instruction, "%s", runtime.NamedArgsUnsupported)
 	}
 	if instance.Class != nil && instance.Class.Module != vm.moduleName && vm.moduleLoader != nil {
 		// Bind names in the home chunk so declared defaults engage, including for an omitted middle parameter that positional ordering cannot express.

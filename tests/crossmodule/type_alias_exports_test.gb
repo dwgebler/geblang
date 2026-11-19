@@ -41,7 +41,7 @@ class TypeAliasExportsTest extends test.Test {
 
     @test
     func aliasedPrimitivesAndCollectionsAreChecked(): void {
-        this.assertEquals("1.5000000000", cost(1.5));
+        this.assertEquals("1.5", cost(1.5));
         list bad = ["x"];
         this.assertThrowsOf(func(): void { cost(bad[0]); }, "TypeError", "cost expects decimal for parameter 'm', got string");
         this.assertThrowsOf(func(): void { ids(["a"]); }, "TypeError", "ids expects list<int> return, got list<string>");

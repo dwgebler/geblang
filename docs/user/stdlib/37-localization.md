@@ -1,4 +1,4 @@
-# Localization And Translation
+# Localization and translation
 
 Import `locale` for formatting and collation, and `i18n` for message catalogs.
 Every call takes an explicit BCP 47 locale tag. The initial supported language
@@ -97,7 +97,7 @@ import io;
 
 let messages = {
     "en": {"files": {"one": "{count} file", "other": "{count} files"}},
-    "fr": {"files": {"one": "{count} fichier", "other": "{count} fichiers"}}
+    "fr": {"files": {"one": "{count} fichier", "other": "{count} fichiers"}},
 };
 let french = i18n.catalog(messages, "fr-CA");
 io.println(french.plural("files", 2)); /* 2 fichiers */

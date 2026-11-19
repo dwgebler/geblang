@@ -38,7 +38,7 @@ server.close();
 
 io.println("server received: " + (received.length() as string) + " lines");
 # Expected output:
-#   listening at 127.0.0.1:<port>
-#   echo: hello
-#   echo: world
-#   server received: 2 lines
+# listening at 127.0.0.1:<port>
+# echo: hello
+# echo: world
+# server received: 2 lines

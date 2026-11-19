@@ -1,4 +1,4 @@
-# Reflection And Testing
+# Reflection and testing
 
 ## Reflect
 
@@ -90,12 +90,14 @@ func handler(): string {
 
 class Service {
     int id;
-    func Service(int id) { this.id = id; }
+    func Service(int id) {
+        this.id = id;
+    }
 }
 
 io.println(reflect.location(handler));   # {column: 1, line: 4, module: ""}
 io.println(reflect.location(Service));   # {column: 1, line: 8, module: ""}
-io.println(reflect.location(Service(1)));# {column: 1, line: 8, module: ""}
+io.println(reflect.location(Service(1))); # {column: 1, line: 8, module: ""}
 ```
 
 The `module` field is the canonical module name as imported (empty for the
@@ -286,7 +288,9 @@ import test;
 import ffi;
 
 class CustomError extends RuntimeError {
-    func CustomError(string msg) { parent(msg); }
+    func CustomError(string msg) {
+        parent(msg);
+    }
 }
 
 class ThrowsTest extends test.Test {
@@ -371,9 +375,7 @@ import crypt;
 class TokenTest extends test.Test {
     @test
     func usesFrozenClock(): void {
-        test.mock("datetime", {
-            "nowUnix": func(): int { return 1_700_000_000; }
-        });
+        test.mock("datetime", {"nowUnix": func(): int { return 1_700_000_000; }});
         let token = generateToken("ada");
         /* Token now embeds the mocked timestamp deterministically. */
         this.assertTrue(token.contains("1700000000"));
@@ -386,7 +388,7 @@ Patch multiple functions on the same module in one call:
 ```gb
 test.mock("http", {
     "get":  func(string url): dict<string, any> { return {"status": 200, "body": "{\"ok\":true}"}; },
-    "post": func(string url, any body): dict<string, any> { return {"status": 201}; }
+    "post": func(string url, any body): dict<string, any> { return {"status": 201}; },
 });
 ```
 

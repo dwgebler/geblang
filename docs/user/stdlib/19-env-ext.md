@@ -84,18 +84,18 @@ files at startup.
 ```gb
 import secrets;
 
-let token  = secrets.requireEnv("API_TOKEN");     # throws if not set
-let key    = secrets.getEnv("OPTIONAL_KEY");      # returns null if not set
-let cert   = secrets.readFile("/run/secrets/tls.crt");   # read from filesystem
+let token = secrets.requireEnv("API_TOKEN");     # throws if not set
+let key   = secrets.getEnv("OPTIONAL_KEY");      # returns null if not set
+let cert  = secrets.readFile("/run/secrets/tls.crt");   # read from filesystem
 ```
 
 ### Random values
 
 ```gb
-let bytes  = secrets.randomBytes(32);         # returns bytes value
-let n      = secrets.randomInt(1, 100);       # inclusive range int
-let hex    = secrets.randomHex(16);           # 32-char hex string
-let b64    = secrets.randomBase64(32);        # base64-encoded string
+let bytes = secrets.randomBytes(32);         # returns bytes value
+let n     = secrets.randomInt(1, 100);       # inclusive range int
+let hex   = secrets.randomHex(16);           # 32-char hex string
+let b64   = secrets.randomBase64(32);        # base64-encoded string
 ```
 
 ### Constant-time comparison
@@ -144,7 +144,7 @@ let handle = ext.connect("/tmp/my-extension.sock");
 let result = ext.call(handle, "process_image", {
     "path":   "/tmp/photo.jpg",
     "width":  800,
-    "height": 600
+    "height": 600,
 });
 
 io.println(result["output_path"]);
@@ -159,7 +159,7 @@ ext.close(handle);
 let handle = ext.load({
     "command": "python3",
     "args":    ["-m", "myextension"],
-    "cwd":     "/opt/extensions"
+    "cwd":     "/opt/extensions",
 });
 
 let fns = ext.functions(handle);   # list of function names the extension exposes
@@ -175,9 +175,7 @@ Use `ext.callWithOptions` when you need a per-call timeout or frame size limit.
 Options are passed as a dict before the extension arguments:
 
 ```gb
-let result = ext.callWithOptions(handle, "slow_op", {"input": data}, {
-    "timeoutMs": 5000
-});
+let result = ext.callWithOptions(handle, "slow_op", {"input": data}, {"timeoutMs": 5000});
 ```
 
 `maxResponseBytes` limits how large any single response frame may be:
@@ -185,7 +183,7 @@ let result = ext.callWithOptions(handle, "slow_op", {"input": data}, {
 ```gb
 let result = ext.callWithOptions(handle, "generate", {"prompt": prompt}, {
     "timeoutMs":        10000,
-    "maxResponseBytes": 4194304   # 4 MiB per frame
+    "maxResponseBytes": 4194304,   # 4 MiB per frame
 });
 ```
 
@@ -250,7 +248,9 @@ io.writeBytes("/tmp/result.jpg", output);
 Named-argument binary works exactly the same way:
 
 ```gb
-let result = ext.call(conn, "resize",
+let result = ext.call(
+    conn,
+    "resize",
     data:   io.readBytes("/tmp/photo.jpg"),
     width:  800,
     height: 600

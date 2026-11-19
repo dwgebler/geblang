@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	rootembed "geblang"
 	"geblang/internal/ast"
@@ -185,7 +186,16 @@ func (r *Resolver) searchPaths() []string {
 	return cleanExistingSearchPaths(paths)
 }
 
+// bundledStdlib, once set by a running bundle, is the only stdlib location; nothing on disk around the binary is consulted.
+var bundledStdlib atomic.Pointer[string]
+
+// UseBundledStdlib makes dir (the extracted bundle's stdlib) the sole stdlib root for this process.
+func UseBundledStdlib(dir string) { bundledStdlib.Store(&dir) }
+
 func DefaultStdlibPaths() []string {
+	if dir := bundledStdlib.Load(); dir != nil {
+		return cleanExistingSearchPaths([]string{*dir})
+	}
 	disk := cleanExistingSearchPaths(gatherStdlibDiskPaths())
 	if len(disk) > 0 {
 		return disk

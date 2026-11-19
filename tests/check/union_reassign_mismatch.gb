@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary Reassigning a union-typed parameter checks the new value against the union.
+ */
+func describe(int | string id): string {
+    id = true;
+    return "";
+}

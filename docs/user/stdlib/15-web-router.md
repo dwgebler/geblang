@@ -1,4 +1,4 @@
-# Web Modules
+# Web modules
 
 The native `web` module provides a small router. Source modules split higher
 level web application support by responsibility:
@@ -58,9 +58,10 @@ router.get(app, "/hello/:name", func(dict<string, any> request): dict<string, an
     return wh.jsonStatus({"hello": ctx.param("name")}, 200);
 });
 
-http.serve("127.0.0.1:8080", func(dict<string, any> request): dict<string, any> {
-    return router.handle(app, request);
-});
+http.serve(
+    "127.0.0.1:8080",
+    func(dict<string, any> request): dict<string, any> { return router.handle(app, request); }
+);
 ```
 
 Use `web.http` for request builders and response helpers such as `request`,
@@ -134,6 +135,11 @@ The router supports three middleware shapes:
 - `router.after(app, middleware)`: alias for response middleware, useful when
   the application wants the intent to read as an after hook.
 
+Response middleware runs on every response: a matched route's, a response
+returned by `before` middleware, and the `404` for a path no route matches, so
+headers such as security or CORS headers apply to missing pages too, and a
+response middleware can replace the `404` with a custom page.
+
 Route handlers receive `(request)` and may return a response dictionary, a
 string, or `null`. `web.http.normalize(value)` applies the same normalization
 rules used by the router: dictionaries pass through, strings become `200`
@@ -156,9 +162,10 @@ router.get(app, "/users/:id", func(Request req): Response {
     return http.jsonResponse({"id": id, "ua": req.header("User-Agent")});
 });
 
-router.after(app, func(Request req, Response resp): Response {
-    return resp.withHeader("X-Path", req.path);
-});
+router.after(
+    app,
+    func(Request req, Response resp): Response { return resp.withHeader("X-Path", req.path); }
+);
 ```
 
 This is opt-in by parameter type: handlers and middleware typed
@@ -175,10 +182,13 @@ request input rather than parsing details:
 ```gb
 import web.validation as validation;
 
-let userRules = validation.object({
-    "name": validation.stringField(),
-    "age": validation.numberField()
-}, ["name"]);
+let userRules = validation.object(
+    {
+        "name": validation.stringField(),
+        "age": validation.numberField(),
+    },
+    ["name"]
+);
 
 router.post(app, "/users", func(dict<string, any> request): dict<string, any> {
     let result = validation.json(request, userRules);
@@ -206,9 +216,7 @@ flash-friendly redirects:
 import web.forms as forms;
 import web.validation as validation;
 
-let rules = validation.object({
-    "name": validation.stringField()
-}, ["name"]);
+let rules = validation.object({"name": validation.stringField()}, ["name"]);
 
 router.post(app, "/settings", func(dict<string, any> request): dict<string, any> {
     let result = forms.validate(request, rules);
@@ -258,7 +266,7 @@ router.get(app, "/events", func(dict<string, any> request): dict<string, any> {
         sse.comment("ready"),
         sse.named("ping", "ok"),
         sse.event("user.created", "{\"id\":42}", {"id": "42"}),
-        sse.retry(5000)
+        sse.retry(5000),
     ]);
 });
 ```

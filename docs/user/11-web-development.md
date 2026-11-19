@@ -1,4 +1,4 @@
-# Web Development
+# Web development
 
 Geblang's web story supports APIs and server-rendered applications without
 trying to become a large full-stack framework.
@@ -16,17 +16,18 @@ import web;
 
 let app = web.new();
 
-web.before(app, func(Request req): ?Response {
-    return null;
-});
+web.before(app, func(Request req): ?Response { return null; });
 
-web.get(app, "/users/:id", func(Request req): Response {
-    return http.jsonResponse({"id": req.routeParam("id")});
-});
+web.get(
+    app,
+    "/users/:id",
+    func(Request req): Response { return http.jsonResponse({"id": req.routeParam("id")}); }
+);
 
-http.serve("127.0.0.1:8080", func(dict<string, any> request): dict<string, any> {
-    return web.handle(app, request);
-});
+http.serve(
+    "127.0.0.1:8080",
+    func(dict<string, any> request): dict<string, any> { return web.handle(app, request); }
+);
 ```
 
 Middleware registered with `web.before` can short-circuit before the route
@@ -54,9 +55,12 @@ web.before(app, func(Request req): ?Response {
     return null;
 });
 
-web.use(app, func(Request req, Response response): Response {
-    return response.withHeader("X-App", "Geblang");
-});
+web.use(
+    app,
+    func(Request req, Response response): Response {
+        return response.withHeader("X-App", "Geblang");
+    }
+);
 ```
 
 ## Source Web Modules
@@ -175,9 +179,10 @@ web.get(app, "/", func(Request req): Response {
     return http.jsonResponse({"visits": n});
 });
 
-http.serve("127.0.0.1:8080", func(dict<string, any> request): dict<string, any> {
-    return web.handle(app, request);
-});
+http.serve(
+    "127.0.0.1:8080",
+    func(dict<string, any> request): dict<string, any> { return web.handle(app, request); }
+);
 ```
 
 Per-request state, by contrast, lives in the request object and in local
@@ -192,10 +197,13 @@ handlers. Validation results include `valid`, `errors`, and parsed `data`.
 ```gb
 import web.validation as validation;
 
-let userRules = validation.object({
-    "name": validation.stringField(),
-    "roles": validation.arrayOf(validation.stringField())
-}, ["name"]);
+let userRules = validation.object(
+    {
+        "name": validation.stringField(),
+        "roles": validation.arrayOf(validation.stringField()),
+    },
+    ["name"]
+);
 
 router.post(api, "/users", func(dict<string, any> request): dict<string, any> {
     let result = validation.json(request, userRules);
@@ -219,9 +227,7 @@ server-rendered form workflows:
 import web.forms as forms;
 import web.validation as validation;
 
-let profileRules = validation.object({
-    "name": validation.stringField()
-}, ["name"]);
+let profileRules = validation.object({"name": validation.stringField()}, ["name"]);
 
 router.post(app, "/profile", func(dict<string, any> request): dict<string, any> {
     let result = forms.validate(request, profileRules);
@@ -266,7 +272,7 @@ router.get(app, "/events", func(dict<string, any> request): dict<string, any> {
     return sse.response([
         sse.comment("ready"),
         sse.event("user.created", "{\"id\":42}", {"id": "42"}),
-        sse.retry(5000)
+        sse.retry(5000),
     ]);
 });
 ```
@@ -340,7 +346,14 @@ more important than raw session throughput.
 Flash messages and CSRF helpers are included for server-rendered forms:
 
 ```gb
-let response = session.withFlash(sessionStore, wh.redirect("/settings"), request, "success", "Saved", {});
+let response = session.withFlash(
+    sessionStore,
+    wh.redirect("/settings"),
+    request,
+    "success",
+    "Saved",
+    {}
+);
 response = auth.withCsrf(response, secret, {});
 ```
 
@@ -408,9 +421,7 @@ class UserController {
 let app = router.newRouter();
 let api = router.group(app, "/api");
 
-router.mountWithOptions(api, UserController(), {
-    "sessionStore": sessions
-});
+router.mountWithOptions(api, UserController(), {"sessionStore": sessions});
 ```
 
 The goal is not to make decorators mandatory. Direct registration remains the

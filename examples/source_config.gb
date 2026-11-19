@@ -9,20 +9,16 @@ import io;
 let defaults = {
     "app": {
         "name": "Geblang",
-        "debug": false
+        "debug": false,
     },
     "server": {
         "host": "127.0.0.1",
-        "port": 8080
-    }
+        "port": 8080,
+    },
 };
 
 let file = config.parse("yaml", "app:\n  debug: true\nserver:\n  port: 9000\n");
-let env = {
-    "server": {
-        "host": "0.0.0.0"
-    }
-};
+let env = {"server": {"host": "0.0.0.0"}};
 
 let loaded = config.Config(config.layer([defaults, file.toDict(), env]));
 

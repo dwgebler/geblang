@@ -35,7 +35,9 @@ io.println(returnsWithFinally() as string);
 
 # User-defined error classes
 class AppError extends Error {}
+
 class NetworkError extends RuntimeError {}
+
 class DatabaseError extends RuntimeError {}
 
 try {

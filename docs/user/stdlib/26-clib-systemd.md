@@ -91,10 +91,10 @@ systemd.status("migration complete");
 import clib.systemd as systemd;
 
 systemd.journal("request handled", {
-    "PRIORITY":            "6",
-    "SYSLOG_IDENTIFIER":   "myapp",
-    "REQUEST_ID":          requestId,
-    "HTTP_STATUS":         "200"
+    "PRIORITY":          "6",
+    "SYSLOG_IDENTIFIER": "myapp",
+    "REQUEST_ID":        requestId,
+    "HTTP_STATUS":       "200",
 });
 ```
 

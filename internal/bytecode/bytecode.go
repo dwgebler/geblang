@@ -361,6 +361,8 @@ const (
 	OpLocalSubIntConst
 	// OpJumpIfLocalCmpIntConst {target, slot, literal, compareJumpOp} is an int local load and literal fused with a compare-and-branch opcode.
 	OpJumpIfLocalCmpIntConst
+	// OpCheckIterable raises a TypeError unless the value on top of the stack is one for-in accepts; it leaves the value in place.
+	OpCheckIterable
 )
 
 // Method IDs carried by OpPrimMethod.

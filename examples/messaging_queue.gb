@@ -24,5 +24,7 @@ try {
 
     q.close();
 } catch (Error e) {
-    io.println("messaging needs a running broker (RabbitMQ/Kafka/STOMP/SQS/SNS); skipped: ${e.message}");
+    io.println(
+        "messaging needs a running broker (RabbitMQ/Kafka/STOMP/SQS/SNS); skipped: ${e.message}"
+    );
 }

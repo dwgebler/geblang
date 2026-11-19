@@ -147,7 +147,7 @@ try {
     io.println(e.message);
 }
 `)
-	want := "1 3\ntrue 2 5 7 t 1.5000000000 true\n7\n9\ncannot assign string to int field Leaf.level\n"
+	want := "1 3\ntrue 2 5 7 t 1.5 true\n7\n9\ncannot assign string to int field Leaf.level\n"
 	if ev != vm || ev != want {
 		t.Fatalf("parseAs inherited mismatch:\n  evaluator: %q\n  vm:        %q\n  want:      %q", ev, vm, want)
 	}
@@ -188,7 +188,7 @@ for (v in [p, m, {"items": [p, m]}, [1, "<b>", 2.5], label]) {
 	want := `{"x":1,"z":3} true
 {"amount":250} true
 {"items":[{"x":1,"z":3},{"amount":250}]} true
-[1,"<b>",2.5000000000] true
+[1,"<b>",2.5] true
 {"text":"<b>&"} true
 `
 	if ev != vm || ev != want {

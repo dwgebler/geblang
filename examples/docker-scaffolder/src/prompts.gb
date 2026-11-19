@@ -6,7 +6,6 @@
  * @category Docker Scaffolder
  */
 module docker.scaffolder.prompts;
-
 import cli;
 import docker.scaffolder.model as model;
 
@@ -17,13 +16,14 @@ let nodeBases = ["alpine", "bookworm"];
 export func gather(): model.Project {
     string name = cli.prompt("Project name: ", "app");
     let project = model.Project(name);
-    let langs = cli.multiChoose("Languages (space toggles, enter confirms):",
-        ["PHP", "Python", "Node", "Go", "Geblang"]);
+    let langs = cli.multiChoose(
+        "Languages (space toggles, enter confirms):",
+        ["PHP", "Python", "Node", "Go", "Geblang"]
+    );
     for (lang in langs) {
         project.services.push(gatherService(lang as string));
     }
-    project.database = cli.choose("Database:",
-        ["none", "postgres", "mysql", "mariadb", "mongodb", "sqlite"]);
+    project.database = cli.choose("Database:", ["none", "postgres", "mysql", "mariadb", "mongodb", "sqlite"]);
     project.cache = cli.confirm("Add a Redis cache? ", false);
     project.mail = cli.confirm("Add a Mailpit mail catcher? ", false);
     return project;

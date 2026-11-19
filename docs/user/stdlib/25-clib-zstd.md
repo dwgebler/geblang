@@ -1,4 +1,4 @@
-# Zstd Compression (`clib.zstd`)
+# Zstd compression (`clib.zstd`)
 
 `import clib.zstd as zstd;` gives Geblang programs fast compression
 and decompression backed by libzstd. It fills a gap left by the

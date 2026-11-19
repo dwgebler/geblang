@@ -1,0 +1,15 @@
+module iterable_source;
+
+export class Shelf {
+    list<int> items;
+    func Shelf(list<int> items) { this.items = items; }
+    func __iter(): any { return this.items; }
+}
+
+export func total(iterable<int> xs): int {
+    int sum = 0;
+    for (x in xs) {
+        sum += x;
+    }
+    return sum;
+}

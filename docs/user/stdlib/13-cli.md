@@ -14,10 +14,10 @@ import sys;
 import io;
 
 let opts = cli.parseArgs(sys.args(), {
-    "name":    {"type": "string",  "short": "n", "required": true},
-    "verbose": {"type": "bool",    "short": "v"},
-    "port":    {"type": "int",     "default": 8080},
-    "tag":     {"type": "string"}
+    "name":    {"type": "string", "short": "n", "required": true},
+    "verbose": {"type": "bool", "short": "v"},
+    "port":    {"type": "int", "default": 8080},
+    "tag":     {"type": "string"},
 });
 
 io.println(opts["name"]);
@@ -58,9 +58,13 @@ number, re-prompting after invalid text or a rejected value:
 
 ```gb
 let count = cli.promptInt("Tosses (q to stop): ", {
-    "min": 1, "max": 1000000, "cancel": ["q", "quit", "exit"]
+    "min": 1,
+    "max": 1000000,
+    "cancel": ["q", "quit", "exit"],
 });
-if (count != null) { io.println("Simulating ${count} tosses"); }
+if (count != null) {
+    io.println("Simulating ${count} tosses");
+}
 ```
 
 Entering `no`, `0`, then `10` prints a parsing error, then a minimum error,
@@ -76,10 +80,10 @@ text; defaults accept decimals or integers (returned as decimals). Floats and
 numeric strings are not accepted as defaults.
 
 ```gb
-let amount = cli.promptDecimal("Amount (q to stop): ", {
-    "min": 0, "max": 1000.00, "cancel": ["q"]
-});
-if (amount != null) { io.println(amount.format(2)); }
+let amount = cli.promptDecimal("Amount (q to stop): ", {"min": 0, "max": 1000.00, "cancel": ["q"]});
+if (amount != null) {
+    io.println(amount.format(2));
+}
 ```
 
 Shared rules work in both typed prompts and each `cli.parseArgs` option:
@@ -95,9 +99,7 @@ configuration or an invalid default raises an error. Argument validation
 returns a message in the parser's existing `error` entry:
 
 ```gb
-let parsed = cli.parseArgs(["--count", "0"], {
-    "count": {"type": "int", "min": 1, "max": 1000000}
-});
+let parsed = cli.parseArgs(["--count", "0"], {"count": {"type": "int", "min": 1, "max": 1000000}});
 io.println(parsed["error"]); /* option --count: must be at least 1 */
 ```
 
@@ -114,9 +116,10 @@ streams/files), `quiet` (suppress prompts and retry messages), and `terminal`
 
 ```gb
 let captured = io.memory();
-let value = cli.withContext({"stdin": "bad\n12\n", "stdout": captured}, func(): ?int {
-    return cli.promptInt("Count: ", {"min": 1});
-});
+let value = cli.withContext(
+    {"stdin": "bad\n12\n", "stdout": captured},
+    func(): ?int { return cli.promptInt("Count: ", {"min": 1}); }
+);
 io.println(value); /* 12 */
 io.println(io.toString(captured)); /* prompts and the parsing error */
 ```
@@ -140,9 +143,11 @@ comma-separated choices, so scripts and tests keep working. An optional third
 argument pre-checks options by index:
 
 ```gb
-let picked = cli.multiChoose("Pick services:",
+let picked = cli.multiChoose(
+    "Pick services:",
     ["web", "db", "cache", "queue"],
-    [0, 1]);   # web and db checked to start
+    [0, 1]   # web and db checked to start
+);
 ```
 
 ## Text styling
@@ -153,8 +158,8 @@ removes all escape sequences.
 ```gb
 io.println(cli.style("Success", {"fg": "green", "bold": true}));
 io.println(cli.style("Warning", {"fg": "yellow"}));
-io.println(cli.style("Error",   {"fg": "red",   "bold": true}));
-io.println(cli.style("Info",    {"fg": "cyan",  "italic": true}));
+io.println(cli.style("Error", {"fg": "red", "bold": true}));
+io.println(cli.style("Info", {"fg": "cyan", "italic": true}));
 ```
 
 Style options:
@@ -183,15 +188,17 @@ and returns the formatted string:
 
 ```gb
 let rows = [
-    {"name": "Alice", "role": "admin",  "active": "yes"},
-    {"name": "Bob",   "role": "viewer", "active": "no"},
-    {"name": "Carol", "role": "editor", "active": "yes"}
+    {"name": "Alice", "role": "admin", "active": "yes"},
+    {"name": "Bob", "role": "viewer", "active": "no"},
+    {"name": "Carol", "role": "editor", "active": "yes"},
 ];
 
-io.println(cli.table(rows, {
-    "columns": ["name", "role", "active"],
-    "headers": ["Name", "Role", "Active"]
-}));
+io.println(
+    cli.table(rows, {
+        "columns": ["name", "role", "active"],
+        "headers": ["Name", "Role", "Active"],
+    })
+);
 ```
 
 Output:
@@ -218,10 +225,14 @@ defaults to that key; `align` is `left` (default), `right` or `center`;
 `format` uses the same format specification as string interpolation:
 
 ```gb
-io.println(cli.table([{"outcome": "Heads", "share": 0.5}], {"columns": [
-    {"key": "outcome", "header": "Outcome"},
-    {"key": "share", "header": "Share", "align": "right", "format": ".2%"}
-]}));
+io.println(
+    cli.table([{"outcome": "Heads", "share": 0.5}], {
+        "columns": [
+            {"key": "outcome", "header": "Outcome"},
+            {"key": "share", "header": "Share", "align": "right", "format": ".2%"},
+        ],
+    })
+);
 /* Outcome   Share
    -------  ------
    Heads    50.00% */
@@ -239,10 +250,15 @@ two, and ANSI styling from `cli.style` or `cli.color` as none. A styled or
 non-ASCII cell therefore lines up with plain ones:
 
 ```gb
-io.println(cli.table([
-    {"check": "build", "result": cli.style("ok", {"fg": "green"})},
-    {"check": "café",  "result": cli.style("failed", {"fg": "red"})}
-], {"columns": ["check", "result"]}));
+io.println(
+    cli.table(
+        [
+            {"check": "build", "result": cli.style("ok", {"fg": "green"})},
+            {"check": "café", "result": cli.style("failed", {"fg": "red"})},
+        ],
+        {"columns": ["check", "result"]}
+    )
+);
 ```
 
 ## `cli.command` - command builders
@@ -256,9 +272,9 @@ import io;
 import sys;
 
 let deploy = cmd.newCommand("deploy", "Deploy the application")
-    .option(cmd.newOption("env",  "string").required().help("Target environment"))
-    .option(cmd.newOption("dry",  "bool").help("Dry run, no changes"))
-    .option(cmd.newOption("tag",  "string").help("Image tag to deploy"));
+    .option(cmd.newOption("env", "string").required().help("Target environment"))
+    .option(cmd.newOption("dry", "bool").help("Dry run, no changes"))
+    .option(cmd.newOption("tag", "string").help("Image tag to deploy"));
 
 let parsed = deploy.parse(sys.args());
 if (parsed["error"] != null) {

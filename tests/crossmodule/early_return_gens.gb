@@ -1,0 +1,23 @@
+module early_return_gens;
+
+export func upTo(int limit): generator<int> {
+    for (n in [1, 2, 3, 4]) {
+        if (n > limit) {
+            return;
+        }
+        yield n;
+    }
+}
+
+export class Lines {
+    list<string> items;
+    func Lines(list<string> items) { this.items = items; }
+    func untilBlank(): generator<string> {
+        for (line in this.items) {
+            if (line == "") {
+                return;
+            }
+            yield line;
+        }
+    }
+}

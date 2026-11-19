@@ -19,16 +19,16 @@ io.println(metrics.duration(start) >= 0);
 /* Prometheus-shaped labelled metrics. */
 metrics.counter("http_requests_total", {
     "help":   "Total HTTP requests",
-    "labels": ["path", "status"]
+    "labels": ["path", "status"],
 });
 metrics.inc("http_requests_total", 1, {"path": "/api", "status": "200"});
 metrics.inc("http_requests_total", 2, {"path": "/api", "status": "200"});
 
 metrics.histogram("request_seconds", {
     "labels":  ["path"],
-    "buckets": [0.01, 0.05, 0.1, 0.5, 1]
+    "buckets": [0.01, 0.05, 0.1, 0.5, 1],
 });
 metrics.observe("request_seconds", 0.012, {"path": "/api"});
-metrics.observe("request_seconds", 0.08,  {"path": "/api"});
+metrics.observe("request_seconds", 0.08, {"path": "/api"});
 
 io.println(metrics.toPrometheus());

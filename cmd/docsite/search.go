@@ -209,6 +209,12 @@ const searchScript = `(function () {
   document.addEventListener("click", function (event) {
     if (!box.contains(event.target)) { panel.hidden = true; }
   });
+  var preset = new URLSearchParams(window.location.search).get("q");
+  if (preset) {
+    input.value = preset;
+    input.focus();
+    load(function () { render(search(preset)); });
+  }
 })();
 `
 

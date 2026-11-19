@@ -37,5 +37,5 @@ for (e in events) {
     io.println(e);
 }
 # Expected on Linux:
-#   write /tmp/geb_watch_example.txt
-#   write /tmp/geb_watch_example.txt
+# write /tmp/geb_watch_example.txt
+# write /tmp/geb_watch_example.txt

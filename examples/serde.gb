@@ -11,6 +11,6 @@ io.println(jsonData["name"]);
 
 let yamlText = serde.stringify("yaml", {
     "name": "Geblang",
-    "enabled": true
+    "enabled": true,
 });
 io.println(yamlText.contains("enabled: true"));

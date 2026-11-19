@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"geblang/internal/ast"
+	"geblang/internal/native"
 	"geblang/internal/runtime"
 	"geblang/internal/typealias"
 	"sort"
@@ -396,32 +397,7 @@ func (e *Evaluator) installBuiltinTypes(env *runtime.Environment) error {
 		Methods: map[string][]runtime.Function{},
 		Env:     env.MarkShared(),
 	}
-	for _, methodName := range []string{
-		"equal",
-		"assertEqual",
-		"assertEquals",
-		"assertNotEqual",
-		"assertNotEquals",
-		"isTrue",
-		"assertTrue",
-		"isFalse",
-		"assertFalse",
-		"assertNull",
-		"notNull",
-		"assertNotNull",
-		"assertContains",
-		"assertNotContains",
-		"assertEmpty",
-		"assertNotEmpty",
-		"assertGreaterThan",
-		"assertGreaterThanOrEqual",
-		"assertLessThan",
-		"assertLessThanOrEqual",
-		"assertThrows",
-		"assertThrowsOf",
-		"fail",
-		"skip",
-	} {
+	for methodName := range native.TestBaseMethods {
 		testClass.Methods[strings.ToLower(methodName)] = []runtime.Function{{Name: methodName, Native: e.nativeTestAssertion(methodName)}}
 	}
 	e.testClass = testClass
@@ -554,7 +530,7 @@ func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment)
 			if err := checkEnumMethodCollision(enum, member.Name.Value); err != nil {
 				return nil, err
 			}
-			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: typeParameterNames(member.Generics), TypeParamConstraints: typeParamConstraints(member.Generics), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env.MarkShared(), Decorators: member.Decorators, Target: "method", Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: true}
+			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: typeParameterNames(member.Generics), TypeParamConstraints: typeParamConstraints(member.Generics), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env.MarkShared(), Decorators: member.Decorators, Target: "method", Async: member.Async, IsGenerator: ast.BlockContainsYield(member.Body), ForwardThis: true}
 			fn.DefinitionPath = e.currentDebugPath()
 			fn.DefinitionModule, fn.DefinitionLine, fn.DefinitionColumn = e.currentModule, member.Token.Line, member.Token.Column
 			if len(member.Decorators) > 0 {
@@ -642,7 +618,7 @@ func (e *Evaluator) foldInterfaceDefaultsIntoEnum(enum *runtime.EnumDef, iface *
 		if err := checkEnumMethodCollision(enum, def.Name.Value); err != nil {
 			return err
 		}
-		fn := runtime.Function{Name: def.Name.Value, Doc: def.Doc, TypeParameters: typeParameterNames(def.Generics), TypeParamConstraints: typeParamConstraints(def.Generics), Parameters: e.resolveParameters(def.Parameters, env), ReturnType: e.resolveTypeRef(def.ReturnType, env), Body: def.Body, Env: env.MarkShared(), Decorators: def.Decorators, Target: "method", Async: def.Async, IsGenerator: blockContainsYield(def.Body), ForwardThis: true}
+		fn := runtime.Function{Name: def.Name.Value, Doc: def.Doc, TypeParameters: typeParameterNames(def.Generics), TypeParamConstraints: typeParamConstraints(def.Generics), Parameters: e.resolveParameters(def.Parameters, env), ReturnType: e.resolveTypeRef(def.ReturnType, env), Body: def.Body, Env: env.MarkShared(), Decorators: def.Decorators, Target: "method", Async: def.Async, IsGenerator: ast.BlockContainsYield(def.Body), ForwardThis: true}
 		fn.DefinitionPath = e.currentDebugPath()
 		fn.DefinitionModule, fn.DefinitionLine, fn.DefinitionColumn = iface.Module, def.Token.Line, def.Token.Column
 		if iface.DefinitionPath != "" {
@@ -884,7 +860,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 				target = "staticMethod"
 			}
 			methodTypeParams := append(typeParameterNames(member.Generics), classTypeParams...)
-			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(member.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env.MarkShared(), Decorators: member.Decorators, Target: target, Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: !member.Static}
+			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(member.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(member.Parameters, env), ReturnType: e.resolveTypeRef(member.ReturnType, env), Body: member.Body, Env: env.MarkShared(), Decorators: member.Decorators, Target: target, Async: member.Async, IsGenerator: ast.BlockContainsYield(member.Body), ForwardThis: !member.Static}
 			fn.DefinitionPath = e.currentDebugPath()
 			fn.DefinitionModule, fn.DefinitionLine, fn.DefinitionColumn = e.currentModule, member.Token.Line, member.Token.Column
 			if owner := defaultOwners[member]; owner != nil {

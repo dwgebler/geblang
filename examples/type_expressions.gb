@@ -21,6 +21,7 @@ io.println(string.type);             # string
 
 # Works with user-defined classes
 class Animal {}
+
 class Dog extends Animal {}
 
 Dog d = Dog();

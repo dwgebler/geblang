@@ -1,0 +1,48 @@
+/**
+ * @title Named arguments on primitive methods
+ * @summary Methods on lists, strings and dicts take positional arguments only;
+ * a named argument raises the same error on both runtimes.
+ */
+import test;
+
+const MESSAGE = "named arguments are only supported for Geblang functions and methods";
+
+class NamedArgsPrimitiveMethodsTest extends test.Test {
+    func failure(func call): string {
+        try {
+            call();
+        } catch (Error e) {
+            return e.message;
+        }
+        return "no error";
+    }
+
+    @test
+    func listMethodRejectsNamedArgs(): void {
+        let xs = [1, 2, 3];
+        this.assertEquals(MESSAGE, this.failure(func(): void {
+            xs.reduce(fn: func(int a, int b): int { return a + b; }, initial: 0);
+        }));
+    }
+
+    @test
+    func stringMethodRejectsNamedArgs(): void {
+        this.assertEquals(MESSAGE, this.failure(func(): void {
+            "a,b".split(separator: ",");
+        }));
+    }
+
+    @test
+    func dictMethodRejectsNamedArgs(): void {
+        let d = {"k": 1};
+        this.assertEquals(MESSAGE, this.failure(func(): void {
+            d.get(key: "k");
+        }));
+    }
+
+    @test
+    func positionalCallsStillWork(): void {
+        let xs = [1, 2, 3];
+        this.assertEquals(16, xs.reduce(func(int a, int b): int { return a + b; }, 10));
+    }
+}

@@ -222,6 +222,8 @@ func (c *bindingCollector) enter(node any, ctx bindingContext) bindingContext {
 		ctx.scope = nodeSpan(n)
 	case *ast.DictComprehension:
 		ctx.scope = nodeSpan(n)
+	case *ast.GeneratorComprehension:
+		ctx.scope = nodeSpan(n)
 	case *ast.ComprehensionFor:
 		c.bind(n.VarName, ctx.scope, true, false)
 		for _, name := range n.VarNames {

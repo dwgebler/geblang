@@ -1,0 +1,64 @@
+/**
+ * @title Predicate results test
+ * @summary A predicate passed to filter, find, any, all and the other list
+ * predicate methods must return bool; anything else is a TypeError.
+ */
+import test;
+import collections;
+
+func loose(int x): any {
+    return x;
+}
+
+class PredicateResultsTest extends test.Test {
+    @test
+    func boolPredicatesWork(): void {
+        let xs = [1, 2, 3, 4];
+        this.assertEquals([2, 4], xs.filter((int x) => x % 2 == 0));
+        this.assertEquals(2, xs.find((int x) => x > 1));
+        this.assertTrue(xs.any((int x) => x > 3));
+        this.assertFalse(xs.all((int x) => x > 3));
+        this.assertEquals(2, xs.count((int x) => x > 2));
+        this.assertEquals([1, 2], xs.takeWhile((int x) => x < 3));
+        this.assertEquals([3, 4], xs.dropWhile((int x) => x < 3));
+        this.assertEquals(2, xs.indexBy((int x) => x == 3));
+        this.assertEquals(-1, xs.indexBy((int x) => x == 9));
+    }
+
+    @test
+    func nonBoolResultIsTypeError(): void {
+        let xs = [1, 2, 3];
+        let calls = [
+            () => xs.filter(loose),
+            () => xs.find(loose),
+            () => xs.findLast(loose),
+            () => xs.any(loose),
+            () => xs.all(loose),
+            () => xs.count(loose),
+            () => xs.partition(loose),
+            () => xs.takeWhile(loose),
+            () => xs.dropWhile(loose),
+            () => xs.indexBy(loose),
+            () => collections.filter(xs, loose),
+        ];
+        for (call in calls) {
+            this.assertThrowsOf(call, "TypeError", "predicate must return bool");
+        }
+    }
+
+    @test
+    func messageNamesTheMethodAndType(): void {
+        try {
+            [1].all(loose);
+            this.fail("expected a TypeError");
+        } catch (TypeError e) {
+            this.assertEquals("list.all predicate must return bool, got int", e.message);
+        }
+    }
+
+    @test
+    func emptyListNeverCallsThePredicate(): void {
+        this.assertTrue([].all(loose));
+        this.assertFalse([].any(loose));
+    }
+}

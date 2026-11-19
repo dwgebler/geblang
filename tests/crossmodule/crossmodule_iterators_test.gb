@@ -1,0 +1,37 @@
+/**
+ * @title Iterating caller-defined subclasses inside an imported module
+ * @summary A subclass defined in the caller that inherits __iter or __next/__done from an imported class can be iterated by that module's own code.
+ */
+import test;
+import iter_donor;
+
+class BigShelf extends iter_donor.Shelf {
+    func BigShelf(list<int> items) { parent(items); }
+}
+
+class BigCounter extends iter_donor.Counter {
+    func BigCounter() { parent(); }
+}
+
+class Own {
+    func Own() {}
+    func __iter(): any { return [4]; }
+}
+
+class CrossModuleIteratorsTest extends test.Test {
+    @test
+    func inheritedIterIsIteratedInTheDeclaringModule(): void {
+        this.assertEquals(5, iter_donor.total(BigShelf([2, 3])));
+        this.assertEquals([5], iter_donor.listed(BigShelf([5])));
+    }
+
+    @test
+    func inheritedNextAndDoneAreIteratedInTheDeclaringModule(): void {
+        this.assertEquals(3, iter_donor.total(BigCounter()));
+    }
+
+    @test
+    func callerOwnedIteratorsStillWork(): void {
+        this.assertEquals(4, iter_donor.total(Own()));
+    }
+}

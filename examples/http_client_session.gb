@@ -38,25 +38,29 @@ io.println("auto    /me -> " + auto.get(base + "/me").text());
 # 3. Explicit jar lets you inspect and persist cookies across runs.
 let jar = http.newCookieJar();
 let session = http.newClient({
-    "cookieJar":  jar,
-    "baseUrl":    base,
-    "timeoutMs":  5000,
-    "keepAlive":  true,
-    "maxIdleConns": 16
+    "cookieJar": jar,
+    "baseUrl":   base,
+    "timeoutMs": 5000,
+    "keepAlive": true,
+    "maxIdleConns": 16,
 });
 session.get("/login");
 io.println("session /me -> " + session.get("/me").text());
 
 for (cookie in jar.cookies(base)) {
-    io.println("  cookie " + cookie["name"] + "=" + cookie["value"]
-               + " (path=" + cookie["path"] + ")");
+    io.println("  cookie "
+        + cookie["name"]
+        + "="
+        + cookie["value"]
+        + " (path="
+        + cookie["path"]
+        + ")");
 }
 
 # 4. Proxy options - proxyFromEnv honours HTTP_PROXY/HTTPS_PROXY/NO_PROXY.
-#    Use "proxy": "http://host:port" to hard-code a proxy URL instead.
+# Use "proxy": "http://host:port" to hard-code a proxy URL instead.
 let viaProxy = http.newClient({"proxyFromEnv": true});
-io.println("proxyFromEnv /login -> "
-           + (viaProxy.get(base + "/login").status() as string));
+io.println("proxyFromEnv /login -> " + (viaProxy.get(base + "/login").status() as string));
 
 http.shutdown(server, 1000);
 http.close(server);

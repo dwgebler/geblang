@@ -16,8 +16,10 @@ let label = match (value) {
 io.println(label);
 
 match (Error("bad")) {
-    case ValueError e:
+    case ValueError e: {
         io.println("value");
-    case Error e:
+    }
+    case Error e: {
         io.println(e);
+    }
 }

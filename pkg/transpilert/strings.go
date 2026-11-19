@@ -21,6 +21,26 @@ func StringTrim(s string) string  { return strings.TrimSpace(s) }
 func StringTrimStart(s string) string { return strings.TrimLeftFunc(s, unicode.IsSpace) }
 func StringTrimEnd(s string) string   { return strings.TrimRightFunc(s, unicode.IsSpace) }
 
+func StringTrimSet(s, cutset string) string      { return strings.Trim(s, cutset) }
+func StringTrimStartSet(s, cutset string) string { return strings.TrimLeft(s, cutset) }
+func StringTrimEndSet(s, cutset string) string   { return strings.TrimRight(s, cutset) }
+
+func StringUpperN(s string, n int64) string { return caseN(s, n, strings.ToUpper) }
+func StringLowerN(s string, n int64) string { return caseN(s, n, strings.ToLower) }
+
+// caseN converts the first n code points, or the last -n when n is negative.
+func caseN(s string, n int64, convert func(string) string) string {
+	r := []rune(s)
+	size := int64(len(r))
+	if n >= size || -n >= size {
+		return convert(s)
+	}
+	if n >= 0 {
+		return convert(string(r[:n])) + string(r[n:])
+	}
+	return string(r[:size+n]) + convert(string(r[size+n:]))
+}
+
 func StringContains(s, sub string) bool { return strings.Contains(s, sub) }
 func StringStartsWith(s, p string) bool { return strings.HasPrefix(s, p) }
 func StringEndsWith(s, p string) bool   { return strings.HasSuffix(s, p) }
@@ -206,9 +226,9 @@ func StringLines(s string) []string {
 	return parts
 }
 
-func StringRemovePrefix(s, prefix string) string  { return strings.TrimPrefix(s, prefix) }
-func StringRemoveSuffix(s, suffix string) string  { return strings.TrimSuffix(s, suffix) }
-func StringEqualsIgnoreCase(a, b string) bool     { return strings.EqualFold(a, b) }
+func StringRemovePrefix(s, prefix string) string { return strings.TrimPrefix(s, prefix) }
+func StringRemoveSuffix(s, suffix string) string { return strings.TrimSuffix(s, suffix) }
+func StringEqualsIgnoreCase(a, b string) bool    { return strings.EqualFold(a, b) }
 func StringContainsIgnoreCase(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }

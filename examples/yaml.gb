@@ -14,8 +14,8 @@ let text = yaml.stringify({
     "title": "Geblang",
     "server": {
         "port": 8080,
-        "enabled": true
-    }
+        "enabled": true,
+    },
 });
 
 io.println(text.contains("server:"));

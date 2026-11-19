@@ -50,7 +50,7 @@ func render(v any, nested bool) string {
 		return x.show()
 	case *big.Rat:
 		// decimal renders to 10 fractional places, matching Decimal.Inspect.
-		return x.FloatString(10)
+		return DecimalToString(x)
 	case *big.Int:
 		return x.String()
 	case []byte:

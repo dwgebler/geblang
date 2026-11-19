@@ -1,0 +1,12 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown method inside a with block:
+ * strings have `trim`, not `strip`.
+ */
+import io;
+
+func show(string path, string text): void {
+    with (f = io.open(path)) {
+        io.println(text.strip());
+    }
+}

@@ -396,6 +396,9 @@ func (e *Evaluator) parseAnalyzedModule(canonical string, path string) (*ast.Pro
 	if err := desugar.Memoize(program); err != nil {
 		return nil, fmt.Errorf("desugar module %s: %w", canonical, err)
 	}
+	if err := desugar.Arrows(program); err != nil {
+		return nil, fmt.Errorf("module %s: %w", canonical, err)
+	}
 	e.modulePrograms[path] = program
 	return program, nil
 }

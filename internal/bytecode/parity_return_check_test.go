@@ -31,7 +31,7 @@ io.println(typeof(g10()));
 		"null\n" +
 		"g6 expects list<int> | string return, got list<decimal>\n" +
 		"g7 expects list<int> return, got list<string>\n" +
-		"null\n2\n2.0000000000\n[1, 2]\n" +
+		"null\n2\n2.0\n[1, 2]\n" +
 		"K.m expects int return, got string\n" +
 		"K.m expects int return, got string\n" +
 		"float\ndecimal\n"
@@ -54,7 +54,7 @@ io.println("${f} ${typeof(f)} ${d} ${typeof(d)}");
 io.println("${nf} ${typeof(nf)} ${nd} ${typeof(nd)}");
 io.println(half() / 2);
 `)
-	want := "3 float 3.0000000000 decimal\n4 float 4.0000000000 decimal\n0.5\n"
+	want := "3 float 3.0 decimal\n4 float 4.0 decimal\n0.5\n"
 	if ev != want {
 		t.Fatalf("evaluator output:\n%s\nwant:\n%s", ev, want)
 	}

@@ -11,7 +11,9 @@ let d = stats.normal(0.0, 1.0);
 d.pdf(0.0);               /* 0.3989... */
 d.cdf(1.96);              /* 0.9750... */
 d.ppf(0.975);             /* 1.9599... */
-d.mean(); d.variance(); d.std();
+d.mean();
+d.variance();
+d.std();
 
 d.sample(1000);                   /* 1-D ndarray of 1000 draws */
 d.sample(1000, {"seed": 42});     /* reproducible draw */
@@ -94,7 +96,7 @@ let b = stats.normal(0.0, 1.0).sample(5, {"seed": 1});
 try {
     stats.normal(0.0, -1.0);
 } catch (RuntimeError e) {
-    io.println(e.message); /* sigma must be > 0 */
+    io.println(e.message); /* stats.normal: sigma must be positive */
 }
 ```
 

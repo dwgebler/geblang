@@ -1,0 +1,10 @@
+module faulting_gens;
+
+export func ratios(int x): generator<decimal> {
+    yield 10 / x;
+}
+
+export class Source {
+    func Source() {}
+    func each(int x): generator<decimal> { yield 10 / x; }
+}

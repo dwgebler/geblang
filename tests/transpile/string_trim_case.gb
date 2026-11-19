@@ -1,0 +1,14 @@
+import io;
+
+func slug(string path): string {
+    let trimmed = path.trim("/");
+    return trimmed == "" ? "home" : trimmed.replace("/", "-");
+}
+
+io.println(slug("/compare/go/"));
+io.println(slug("/"));
+io.println("-_x_-".trimStart("-_") + " " + "-_x_-".trimEnd("-_"));
+io.println("  hi  ".trimStart() + "|" + "  hi  ".trimEnd() + "|");
+io.println("geblang".upper(1) + " " + "geblang".upper(-4) + " " + "geblang".upper(0));
+io.println("HELLO".lower(2) + " " + "HELLO".lower(-2) + " " + "HELLO".lower(50));
+io.println("éclair".upper(1));

@@ -82,7 +82,7 @@ are declared up front and label values pick a per-combo slot:
 ```gb
 metrics.counter("http_requests_total", {
     "help":   "Total HTTP requests",
-    "labels": ["path", "status"]
+    "labels": ["path", "status"],
 });
 
 metrics.inc("http_requests_total", 1, {"path": "/api", "status": "200"});
@@ -90,7 +90,7 @@ metrics.inc("http_requests_total", 2, {"path": "/api", "status": "200"});
 
 metrics.histogram("request_seconds", {
     "labels":  ["path"],
-    "buckets": [0.005, 0.01, 0.025, 0.05, 0.1, 0.5, 1]
+    "buckets": [0.005, 0.01, 0.025, 0.05, 0.1, 0.5, 1],
 });
 metrics.observe("request_seconds", 0.012, {"path": "/api"});
 
@@ -210,7 +210,7 @@ trace.end(span);
 
 let result = trace.exportOtlp("http://localhost:4318", {
     "serviceName": "checkout-service",
-    "headers":     {"Authorization": "Bearer ..."}
+    "headers":     {"Authorization": "Bearer ..."},
 });
 if (!result["ok"]) {
     log.error(stderr, "OTLP export failed", {"status": result["status"]});
@@ -235,9 +235,9 @@ debugging memory-heavy scripts and checking allocation pressure.
 
 ```gb
 let mem = profile.memStats();
-io.println("heap alloc bytes: " + mem["heapAlloc"] as string);
-io.println("sys bytes: " + mem["sys"] as string);
-io.println("gc cycles: " + mem["numGC"] as string);
+io.println("heap alloc bytes: ${mem["heapAlloc"]}");
+io.println("sys bytes: ${mem["sys"]}");
+io.println("gc cycles: ${mem["numGC"]}");
 ```
 
 Common `memStats` fields include `heapAlloc`, `heapSys`, `heapInuse`,
@@ -254,7 +254,7 @@ Common `memStats` fields include `heapAlloc`, `heapSys`, `heapInuse`,
 let start = profile.now();
 # work
 let ms = profile.elapsed(start);
-io.println("elapsed ms: " + ms as string);
+io.println("elapsed ms: ${ms}");
 ```
 
 ## Profiler
@@ -296,11 +296,11 @@ for (i in range(0, 1000000)) {
 }
 
 let d = profiler.delta(snap);
-io.println("elapsed: " + d["elapsed_ms"] as string + " ms");
-io.println("cpu: " + d["cpu_ms"] as string + " ms");
-io.println("heap delta: " + d["heap_alloc"] as string + " bytes");
-io.println("allocations: " + d["allocs"] as string + " bytes total");
-io.println("gc cycles: " + d["gc_count"] as string);
+io.println("elapsed: ${d["elapsed_ms"]} ms");
+io.println("cpu: ${d["cpu_ms"]} ms");
+io.println("heap delta: ${d["heap_alloc"]} bytes");
+io.println("allocations: ${d["allocs"]} bytes total");
+io.println("gc cycles: ${d["gc_count"]}");
 ```
 
 For a one-off memory check including peak:
@@ -310,9 +310,9 @@ import profiler;
 import io;
 
 let mem = profiler.memory();
-io.println("heap in use: " + mem["heap_alloc"] as string + " bytes");
-io.println("peak heap:   " + mem["peak_alloc"] as string + " bytes");
-io.println("heap from OS: " + mem["heap_sys"] as string + " bytes");
+io.println("heap in use: ${mem["heap_alloc"]} bytes");
+io.println("peak heap:   ${mem["peak_alloc"]} bytes");
+io.println("heap from OS: ${mem["heap_sys"]} bytes");
 ```
 
 To check peak memory at the end of a script (similar to `memory_get_peak_usage()` in PHP):
@@ -324,7 +324,7 @@ import io;
 # ... script work ...
 
 let p = profiler.peak();
-io.println("peak memory: " + p["peak_alloc"] as string + " bytes");
+io.println("peak memory: ${p["peak_alloc"]} bytes");
 ```
 
 ### Context Managers (1.14.0)

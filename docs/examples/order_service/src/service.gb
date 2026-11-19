@@ -5,7 +5,6 @@
  * @description Services coordinate domain objects and repositories while keeping the entrypoint small.
  */
 module order_service.src.service;
-
 import order_service.src.domain as domain;
 
 export class OrderService {

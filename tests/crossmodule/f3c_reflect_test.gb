@@ -82,7 +82,7 @@ class F3cCrossModuleReflectTest extends test.Test {
     @test
     func decoratorArgsPreserved(): void {
         this.assertEquals(
-            "Assert.choice=[[\"a\", \"b\", \"c\"]] Assert.greaterThan=[18.0000000000] ",
+            "Assert.choice=[[\"a\", \"b\", \"c\"]] Assert.greaterThan=[18.0] ",
             donor.decoratorArgs(Model()));
     }
 

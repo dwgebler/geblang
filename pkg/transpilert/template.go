@@ -204,7 +204,7 @@ func templateScalar(v any) any {
 		}
 		return x.String()
 	case *big.Rat:
-		return json.Number(x.FloatString(10))
+		return json.Number(DecimalToString(x))
 	case []byte:
 		return base64.StdEncoding.EncodeToString(x)
 	default:

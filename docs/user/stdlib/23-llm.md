@@ -13,12 +13,13 @@ let article = "Geblang is a typed scripting language with a dual-backend runtime
 
 let c = llm.client({
     "provider": "anthropic",
-    "apiKey":   sys.getenv("ANTHROPIC_API_KEY") as string
+    "apiKey":   sys.getenv("ANTHROPIC_API_KEY") as string,
 });
 
-let resp = c.chat([
-    {"role": "user", "content": "Summarise this in one sentence: " + article}
-], {"model": "claude-opus-4-8", "maxTokens": 256});
+let resp = c.chat([{"role": "user", "content": "Summarise this in one sentence: " + article}], {
+    "model": "claude-opus-4-8",
+    "maxTokens": 256,
+});
 
 io.println(resp["content"]);
 io.println("tokens: " + ((resp["usage"] as dict<string, any>)["totalTokens"] as string));
@@ -54,12 +55,14 @@ prompt).
 ## Picking a provider
 
 ```gb
-let openai    = llm.client({"provider": "openai",    "apiKey": "..."});
+let openai    = llm.client({"provider": "openai", "apiKey": "..."});
 let anthropic = llm.client({"provider": "anthropic", "apiKey": "..."});
-let bedrock   = llm.client({"provider": "bedrock",
+let bedrock   = llm.client({
+    "provider": "bedrock",
     "region":    "us-east-1",
     "accessKey": "...",
-    "secretKey": "..."});
+    "secretKey": "...",
+});
 ```
 
 Provider-specific options:
@@ -154,7 +157,7 @@ let png = io.readBytes("./screenshot.png");
 let resp = c.analyzeImage(png, "What error message is visible?", {
     "model":     "claude-opus-4-8",
     "mimeType":  "image/png",   /* optional; default image/png */
-    "maxTokens": 512
+    "maxTokens": 512,
 });
 io.println(resp["content"]);
 ```
@@ -165,7 +168,7 @@ io.println(resp["content"]);
 let resp = c.generateImage("a photorealistic red square on a black background", {
     "model": "dall-e-3",
     "size":  "1024x1024",
-    "n":     1
+    "n":     1,
 });
 let images = resp["images"] as list<any>;
 for (img in images) {
@@ -185,9 +188,7 @@ the method returns the assembled `{content, model, stopReason, usage}` once the
 stream ends. Same `opts` as `chat` (including `tools`).
 
 ```gb
-let full = c.chatStream([{"role": "user", "content": "Write a haiku."}],
-                        {"model": "gpt-5"},
-                        func(string delta): void {
+let full = c.chatStream([{"role": "user", "content": "Write a haiku."}], {"model": "gpt-5"}, func(string delta): void {
     io.print(delta);   /* render tokens as they arrive */
 });
 io.println("");
@@ -216,25 +217,36 @@ toolCallId, content}` message. The same neutral shape works on
 every provider.
 
 ```gb
-let tools = [{
-    "name":        "get_weather",
-    "description": "Get the current weather for a city",
-    "parameters":  {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}
-}];
+let tools = [
+    {
+        "name":        "get_weather",
+        "description": "Get the current weather for a city",
+        "parameters":  {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+    },
+];
 
-let first = c.chat([{"role": "user", "content": "Weather in Paris?"}],
-                   {"model": "gpt-5", "tools": tools});
+let first = c.chat(
+    [{"role": "user", "content": "Weather in Paris?"}],
+    {"model": "gpt-5", "tools": tools}
+);
 
 if (first.contains("toolCalls")) {
     let call = (first["toolCalls"] as list<any>)[0] as dict<string, any>;
     let city = (call["arguments"] as dict<string, any>)["city"] as string;
     let result = lookupWeather(city);   /* your function */
 
-    let final = c.chat([
-        {"role": "user",      "content": "Weather in Paris?"},
-        {"role": "assistant", "content": "", "toolCalls": first["toolCalls"]},
-        {"role": "tool",      "toolCallId": call["id"], "content": result}
-    ], {"model": "gpt-5", "tools": tools});
+    let final = c.chat(
+        [
+            {"role": "user", "content": "Weather in Paris?"},
+            {"role": "assistant", "content": "", "toolCalls": first["toolCalls"]},
+            {"role": "tool", "toolCallId": call["id"], "content": result},
+        ],
+        {"model": "gpt-5", "tools": tools}
+    );
     io.println(final["content"]);
 }
 ```

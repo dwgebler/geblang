@@ -236,7 +236,7 @@ let result = sys.runWithOptions({
     "args": ["run", "build"],
     "cwd": "/app",
     "env": {"NODE_ENV": "production"},
-    "timeoutMs": 30000
+    "timeoutMs": 30000,
 });
 
 if (result["timedOut"] as bool) {
@@ -254,7 +254,7 @@ env["PATH"] = "/usr/local/bin:" + env["PATH"];
 let result = sys.runWithOptions({
     "command": "node",
     "args": ["server.js"],
-    "env": env
+    "env": env,
 });
 ```
 
@@ -301,13 +301,9 @@ blocking work concurrently:
 import async;
 import sys;
 
-let lintTask = async.run(func(): dict {
-    return sys.run("eslint", ["src/"]);
-});
+let lintTask = async.run(func(): dict { return sys.run("eslint", ["src/"]); });
 
-let testTask = async.run(func(): dict {
-    return sys.run("pytest", ["tests/"]);
-});
+let testTask = async.run(func(): dict { return sys.run("pytest", ["tests/"]); });
 
 let lintResult = await lintTask;
 let testResult = await testTask;

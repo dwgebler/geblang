@@ -1,4 +1,4 @@
-# Data Formats
+# Data formats
 
 Geblang includes native parsers and serializers for common data formats.
 
@@ -69,7 +69,9 @@ import streams;
 let output = streams.open("report.json", "w");
 try {
     let written = json.write({"ok": true, "amount": 1.25}, output);
-} finally { output.close(); }
+} finally {
+    output.close();
+}
 ```
 
 The destination remains borrowed: the helper never calls its flush or close
@@ -224,7 +226,10 @@ class Person {
     Address home;
 }
 
-let p = xml.parseAs("<person id=\"p1\"><age>36</age><tags>a</tags><tags>b</tags><home><city>Leeds</city></home></person>", Person);
+let p = xml.parseAs(
+    "<person id=\"p1\"><age>36</age><tags>a</tags><tags>b</tags><home><city>Leeds</city></home></person>",
+    Person
+);
 io.println("${p.id} ${p.age} ${p.tags} ${p.home.city}");   # p1 36 ["a", "b"] Leeds
 io.println(xml.stringify(p));
 # <Person><age>36</age><home><city>Leeds</city></home><id>p1</id><tags>a</tags><tags>b</tags></Person>
@@ -254,7 +259,11 @@ class Point {
     int x;
     int y;
     int _secret;
-    func Point(int x, int y) { this.x = x; this.y = y; this._secret = 99; }
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+        this._secret = 99;
+    }
 }
 
 io.println(json.stringify(Point(3, 4)));
@@ -277,7 +286,10 @@ class (or a `list` / `dict` of one) is itself deserialized into an
 instance, so a whole object tree comes back fully typed.
 
 ```gb
-class Address { string postcode; }
+class Address {
+    string postcode;
+}
+
 class Order {
     string customer;
     Address shipTo;            # nested object
@@ -286,7 +298,8 @@ class Order {
 
 let o = json.parseAs(
     "{\"customer\":\"Ada\",\"shipTo\":{\"postcode\":\"EC1\"},\"stops\":[{\"postcode\":\"W1\"}]}",
-    Order);
+    Order
+);
 io.println(o.shipTo.postcode);   # EC1
 io.println(o.stops[0].postcode); # W1
 ```
@@ -346,7 +359,7 @@ The `msgpack` module encodes Geblang values to MessagePack 5 bytes
 and back. The codec is hand-rolled (no Go dependency) and covers
 the common cases: nil, bool, signed integers, float, str, bin,
 array, and map. Ext types and the timestamp extension are not
-supported in 1.6.0.
+supported.
 
 ```gb
 import msgpack;
@@ -380,7 +393,7 @@ let value = msgpack.decode(bytes);
 
 `decimal` values round-trip as MessagePack strings because the
 spec has no decimal type. Round-tripping `1.50` yields the string
-`"1.5000000000"`; cast with `(value as string) as decimal` to
+`"1.5"`; cast with `(value as string) as decimal` to
 recover the typed Decimal.
 
 ### Limitations
@@ -469,9 +482,9 @@ let userSchema = {
         "age":   {"type": "number", "minimum": 0, "maximum": 150},
         "roles": {
             "type": "array",
-            "items": {"type": "string"}
-        }
-    }
+            "items": {"type": "string"},
+        },
+    },
 };
 
 let result = schema.validate({"name": "Ada", "email": "ada@example.com"}, userSchema);

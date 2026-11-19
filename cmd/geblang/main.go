@@ -35,7 +35,7 @@ import (
 )
 
 const version = geblangver.Geblang
-const bannerString = "Geblang Version %s, ©2026 David Gebler.\n==========================================\n"
+const bannerString = "Geblang Version %s, ©2026 David Gebler.\n===========================================\n"
 
 type executionMode int
 

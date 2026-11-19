@@ -1259,8 +1259,18 @@ func (l *Lowerer) lowerFunctionLiteral(e *ast.FunctionLiteral) {
 	savedW := l.w
 	l.w = bodyWriter
 	litRetGo := ""
-	if e.ReturnType != nil {
-		litRetGo = types.ToGo(l.resolveTypeRef(e.ReturnType), l.Module.IntMode).Source
+	var retType *types.Type
+	untypedReturn := false
+	switch {
+	case e.ReturnType != nil:
+		retType = l.resolveTypeRef(e.ReturnType)
+	case l.callbackReturns[e] != nil:
+		retType, untypedReturn = l.callbackReturns[e], true
+	case returnsValue(e.Body):
+		retType, untypedReturn = types.Any(), true
+	}
+	if retType != nil {
+		litRetGo = types.ToGo(retType, l.Module.IntMode).Source
 	}
 	l.withNestedFunc(func() {
 		l.withReturnGo(litRetGo, func() {
@@ -1277,7 +1287,7 @@ func (l *Lowerer) lowerFunctionLiteral(e *ast.FunctionLiteral) {
 					l.lowerBlock(e.Body.Statements)
 				}
 			})
-			if litRetGo != "" && bodyEndsWithTry(e.Body) {
+			if litRetGo != "" && (bodyEndsWithTry(e.Body) || (untypedReturn && !bodyEndsWithReturn(e.Body))) {
 				l.w.WriteLine("return " + zeroValue(litRetGo))
 			}
 		})
@@ -1287,8 +1297,8 @@ func (l *Lowerer) lowerFunctionLiteral(e *ast.FunctionLiteral) {
 	l.w.WriteString("func(")
 	l.emitParamList(l.w, e.Parameters, l.resolveParamTypes(e.Parameters))
 	l.w.WriteString(") ")
-	if e.ReturnType != nil {
-		goRet := types.ToGo(l.resolveTypeRef(e.ReturnType), l.Module.IntMode)
+	if retType != nil {
+		goRet := types.ToGo(retType, l.Module.IntMode)
 		l.Module.AddTypeImports(goRet)
 		l.w.WriteString(goRet.Source)
 		l.w.WriteString(" ")

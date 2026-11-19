@@ -15,6 +15,8 @@ type Session struct {
 	stdout    io.Writer
 	args      []string
 	paths     []string
+	// staticTypes are the checker's types for untyped `let` declarations on earlier lines.
+	staticTypes map[string]*ast.TypeRef
 }
 
 type SessionResult struct {
@@ -163,6 +165,30 @@ func (s *Session) TypeBindings() map[string]string {
 			t = "any"
 		}
 		out[name] = t
+	}
+	return out
+}
+
+// RecordStaticTypes remembers the inferred types of variables declared without one, for later lines.
+func (s *Session) RecordStaticTypes(types map[string]*ast.TypeRef) {
+	if s.staticTypes == nil {
+		s.staticTypes = map[string]*ast.TypeRef{}
+	}
+	for name, t := range types {
+		s.staticTypes[name] = t
+	}
+}
+
+// DeclaredTypes maps each session variable to its written type, or else to the type recorded when it was declared.
+func (s *Session) DeclaredTypes() map[string]*ast.TypeRef {
+	out := map[string]*ast.TypeRef{}
+	for name, t := range s.staticTypes {
+		out[name] = t
+	}
+	for _, name := range s.env.Names() {
+		if t := s.env.DeclaredType(name); t != nil {
+			out[name] = t
+		}
 	}
 	return out
 }

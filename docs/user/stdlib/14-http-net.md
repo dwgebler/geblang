@@ -152,11 +152,7 @@ When every request is a plain GET, pass the URLs directly:
 import async;
 import http;
 
-let pages = await http.getAll([
-    "https://example.com/page/1",
-    "https://example.com/page/2",
-    "https://example.com/page/3"
-], {"limit": 4});
+let pages = await http.getAll(["https://example.com/page/1", "https://example.com/page/2", "https://example.com/page/3"], {"limit": 4});
 ```
 
 When the requests differ, build each one with the request builder, bind it
@@ -221,7 +217,7 @@ Failed requests follow the same `isError()` rules as `fetchAll`.
 ```gb
 let stream = http.fetchStream([
     http.request(usersUrl),
-    {"method": "GET", "url": teamsUrl}
+    {"method": "GET", "url": teamsUrl},
 ]);
 while (!stream.done()) {
     let response = stream.next();
@@ -257,7 +253,7 @@ does not hold up others. `close()` may be called from another task; a
 let stream = http.requestStream({
     "method":  "GET",
     "url":     "https://example.com/events",
-    "headers": {"Accept": "text/event-stream"}
+    "headers": {"Accept": "text/event-stream"},
 });
 if (stream.status() != 200) {
     stream.close();
@@ -329,9 +325,11 @@ instead of disabling verification - write it to a file with
 import http;
 import io;
 
-let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
-    return {"status": 200, "body": "secure"};
-}, {"tls": {"selfSigned": true}});
+let server = http.listen(
+    "127.0.0.1:0",
+    func(dict<string, any> req): dict<string, any> { return {"status": 200, "body": "secure"}; },
+    {"tls": {"selfSigned": true}}
+);
 
 let url = "https://" + http.serverAddr(server) + "/";
 
@@ -386,11 +384,13 @@ certificates automatically with `autoCert`:
 ```gb
 http.serve(":443", handler, {"tls": {"autoCert": "example.com"}});
 
-http.serve(":443", handler, {"tls": {
-    "autoCert": ["example.com", "www.example.com"],
-    "autoCertCacheDir": "/var/lib/geblang/acme",
-    "autoCertEmail": "ops@example.com"
-}});
+http.serve(":443", handler, {
+    "tls": {
+        "autoCert": ["example.com", "www.example.com"],
+        "autoCertCacheDir": "/var/lib/geblang/acme",
+        "autoCertEmail": "ops@example.com",
+    },
+});
 ```
 
 Certificates are issued on the first TLS connection for an allowlisted host
@@ -414,8 +414,11 @@ to maintain a session (login, CSRF tokens, server-stored basket, etc.).
 let jar     = http.newCookieJar();
 let session = http.newClient({"cookieJar": jar, "baseUrl": "https://api.example.com"});
 
-session.post("/login", "{\"user\":\"ada\",\"password\":\"...\"}",
-             {"Content-Type": "application/json"});
+session.post(
+    "/login",
+    "{\"user\":\"ada\",\"password\":\"...\"}",
+    {"Content-Type": "application/json"}
+);
 
 # the session cookie is automatically sent on subsequent requests
 let me = session.get("/me");
@@ -441,7 +444,7 @@ let client = http.newClient({
     "proxy":        "http://proxy.example.com:3128",
     "keepAlive":    true,
     "maxIdleConns": 32,
-    "timeoutMs":    10000
+    "timeoutMs":    10000,
 });
 ```
 
@@ -469,7 +472,7 @@ let resp = client.request({
     "url": "https://example.com/flaky",
     "retries": 5,
     "retryBackoffMs": 200,
-    "retryStatuses": [502, 503, 504, 429, 500]
+    "retryStatuses": [502, 503, 504, 429, 500],
 });
 ```
 
@@ -505,7 +508,7 @@ opt-in.
 let id = http.listen(":8080", handler, {
     "maxConcurrent": 1000,    # at most 1000 active handlers; 0 = unbounded
     "queueSize":     500,     # requests waiting for a slot
-    "onOverload":    "reject" # "reject" | "wait" | "drop"
+    "onOverload":    "reject", # "reject" | "wait" | "drop"
 });
 ```
 
@@ -632,7 +635,7 @@ let id = http.listen(":8080", func(Request req): Response {
         "path": req.path,
         "page": page,
         "user": req.cookie("user"),            # ?string
-        "secure": req.isSecure()
+        "secure": req.isSecure(),
     });
 });
 ```
@@ -682,11 +685,9 @@ balancer, list the proxy addresses in `trustedProxies` so the forwarded
 headers are honored only for connections coming from those addresses:
 
 ```gb
-http.listen(":8080", handler, {
-    "trustedProxies": ["10.0.0.0/8", "127.0.0.1"]
-});
+http.listen(":8080", handler, {"trustedProxies": ["10.0.0.0/8", "127.0.0.1"]});
 # common shorthand for any private / loopback peer:
-http.listen(":8080", handler, { "trustedProxies": ["private"] });
+http.listen(":8080", handler, {"trustedProxies": ["private"]});
 ```
 
 Entries are IPs or CIDRs; the keyword `"private"` expands to loopback,
@@ -704,7 +705,7 @@ answered with `413 Request Entity Too Large` before the handler runs.
 The default is 10 MiB (10485760 bytes); `0` means unlimited:
 
 ```gb
-http.listen(":8080", handler, { "maxBodyBytes": 50 * 1024 * 1024 });
+http.listen(":8080", handler, {"maxBodyBytes": 50 * 1024 * 1024});
 ```
 
 #### Read and write timeouts
@@ -723,7 +724,7 @@ are in milliseconds and `0` disables that timeout:
 http.listen(":8080", handler, {
     "readHeaderTimeoutMs": 5000,
     "readBodyTimeoutMs":   300000,   # allow slow uploads up to 5 minutes
-    "idleTimeoutMs":       60000
+    "idleTimeoutMs":       60000,
 });
 ```
 
@@ -780,7 +781,7 @@ option, or set the `GEBLANG_DEBUG` environment variable to any
 non-empty value other than `0`:
 
 ```gb
-http.listen(":8080", handler, { "debug": true });
+http.listen(":8080", handler, {"debug": true});
 ```
 
 ```sh
@@ -812,11 +813,9 @@ error. Pass an `onError` callback in the server options to observe them (for
 logging, metrics, or alerting):
 
 ```gb
-http.listen(":8080", handler, {
-    "onError": func(string msg): void {
-        io.println("server error: " + msg);
-    }
-});
+http.listen(":8080", handler, {"onError": func(string msg): void {
+    io.println("server error: " + msg);
+}});
 ```
 
 The callback receives one message string per failure and runs on the
@@ -900,7 +899,9 @@ let allow = ["10.0.0.0/8", "192.168.0.0/16", "127.0.0.1/32"];
 
 func isInternal(string ip): bool {
     for (cidr in allow) {
-        if (net.cidrContains(cidr, ip)) { return true; }
+        if (net.cidrContains(cidr, ip)) {
+            return true;
+        }
     }
     return false;
 }

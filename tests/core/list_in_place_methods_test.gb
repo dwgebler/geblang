@@ -64,6 +64,13 @@ class ListInPlaceMethodsTest extends test.Test {
     }
 
     @test
+    func clearRejectsArguments(): void {
+        any xs = [1, 2, 3];
+        this.assertThrows(() => xs.clear(1), "list.clear expects no arguments");
+        this.assertEquals([1, 2, 3], xs);
+    }
+
+    @test
     func clearIsVisibleThroughAliases(): void {
         let xs = [1, 2, 3];
         let ys = xs;

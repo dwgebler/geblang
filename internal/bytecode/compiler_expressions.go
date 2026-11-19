@@ -205,6 +205,14 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		return c.compileExpression(call)
 	case *ast.PartialExpression:
 		return c.compileExpression(ast.LowerPartial(expr))
+	case *ast.GeneratorComprehension:
+		return c.compileExpression(ast.LowerGeneratorComprehension(expr))
+	case *ast.IterableSource:
+		if err := c.compileExpression(expr.Value); err != nil {
+			return err
+		}
+		c.emitAt(OpCheckIterable, expr.Token.Line, expr.Token.Column)
+		return nil
 	case *ast.ListComprehension:
 		return c.compileExpression(desugarListComprehension(expr))
 	case *ast.SetComprehension:
@@ -1607,6 +1615,10 @@ func (s *freeVarSet) scanExpr(expr ast.Expression) {
 		s.scanExpr(desugarSetComprehension(expr))
 	case *ast.DictComprehension:
 		s.scanExpr(desugarDictComprehension(expr))
+	case *ast.GeneratorComprehension:
+		s.scanExpr(ast.LowerGeneratorComprehension(expr))
+	case *ast.IterableSource:
+		s.scanExpr(expr.Value)
 	}
 }
 
@@ -1720,10 +1732,12 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 	fn.UpvalueCount = upvalueCount
 	fn.Variadic = len(expr.Parameters) > 0 && expr.Parameters[len(expr.Parameters)-1].Variadic
 	fn.Async = expr.Async
-	fn.IsGenerator = blockContainsYield(expr.Body)
+	fn.IsGenerator = ast.BlockContainsYield(expr.Body)
 
 	c.inFunc++
 	c.returnTypes = append(c.returnTypes, fn.ReturnType)
+	c.yieldTypes = append(c.yieldTypes, c.yieldTypeFor(expr.ReturnType))
+	defer func() { c.yieldTypes = c.yieldTypes[:len(c.yieldTypes)-1] }()
 	// Isolate finalizers (see compileFunctionWithPrologue).
 	savedLoops, savedFinalizers := c.loops, c.finalizers
 	c.loops, c.finalizers = nil, nil
@@ -3149,10 +3163,10 @@ func (c *Compiler) staticTypeAssignable(target string, actual string) bool {
 	if strings.EqualFold(baseTarget, baseActual) || strings.EqualFold(c.staticCanonicalTypeName(baseTarget), c.staticCanonicalTypeName(baseActual)) {
 		return true
 	}
-	// generator and iterable are interchangeable type names: a function
-	// declared to return generator<T> may be passed where iterable<T> is
-	// expected, and vice versa. Mirrors isGeneratorTypeName at runtime.
 	if isGeneratorTypeName(baseTarget) && isGeneratorTypeName(baseActual) {
+		return true
+	}
+	if strings.EqualFold(baseTarget, "iterable") && staticIterableSource(baseActual) {
 		return true
 	}
 	return c.staticClassAssignable(baseTarget, baseActual)

@@ -1,0 +1,139 @@
+/**
+ * @title Generator early return and block forms
+ * @summary A bare return ends a generator early, running any finally and with cleanup, and a yield inside with or select makes the function a generator.
+ */
+import test;
+import async.channel as ch;
+
+list events = [];
+
+class Res {
+    func Res() {}
+    func __enter(): Res {
+        events.push("enter");
+        return this;
+    }
+    func __exit(): void {
+        events.push("exit");
+    }
+}
+
+func upTo(int limit): generator<int> {
+    for (let int i = 1; i < 100; i++) {
+        if (i > limit) {
+            return;
+        }
+        yield i;
+    }
+}
+
+func untyped() {
+    yield "a";
+    return;
+}
+
+func withFinally(): generator<int> {
+    try {
+        yield 1;
+        return;
+    } finally {
+        events.push("finally");
+    }
+}
+
+func insideWith(): generator<int> {
+    with (r = Res()) {
+        yield 1;
+        yield 2;
+    }
+}
+
+func stopInsideWith(): generator<int> {
+    with (r = Res()) {
+        yield 1;
+        return;
+    }
+}
+
+func insideSelect(): generator<string> {
+    let c = ch.Channel<string>(1);
+    c.send("ready");
+    select {
+        case let v = c.recv(): {
+            yield v;
+        }
+        default: {
+            yield "default";
+        }
+    }
+}
+
+class Counter {
+    func Counter() {}
+    func until(int limit): generator<int> {
+        for (n in [1, 2, 3, 4]) {
+            if (n > limit) {
+                return;
+            }
+            yield n;
+        }
+    }
+}
+
+class SubCounter extends Counter {
+    func SubCounter() { parent(); }
+}
+
+func drain(any source): list {
+    list out = [];
+    for (x in source) {
+        out.push(x);
+    }
+    return out;
+}
+
+class GeneratorEarlyReturnTest extends test.Test {
+    func setUp(): void {
+        events.clear();
+    }
+
+    @test
+    func bareReturnEndsTheGenerator(): void {
+        this.assertEquals([1, 2, 3], drain(upTo(3)));
+        this.assertEquals([], drain(upTo(0)));
+        this.assertEquals(["a"], drain(untyped()));
+    }
+
+    @test
+    func bareReturnInMethodsAndClosures(): void {
+        this.assertEquals([1, 2], drain(Counter().until(2)));
+        this.assertEquals([1], drain(SubCounter().until(1)));
+        let lit = func(): iterable<string> {
+            yield "x";
+            return;
+        };
+        this.assertEquals(["x"], drain(lit()));
+    }
+
+    @test
+    func earlyReturnRunsCleanup(): void {
+        this.assertEquals([1], drain(withFinally()));
+        this.assertEquals(["finally"], events);
+        events.clear();
+        this.assertEquals([1], drain(stopInsideWith()));
+        this.assertEquals(["enter", "exit"], events);
+    }
+
+    @test
+    func yieldInsideWithMakesAGenerator(): void {
+        let g = insideWith();
+        this.assertEquals([], events);
+        this.assertEquals([1, 2], drain(g));
+        this.assertEquals(["enter", "exit"], events);
+    }
+
+    @test
+    func yieldInsideSelectMakesAGenerator(): void {
+        this.assertEquals(["ready"], drain(insideSelect()));
+    }
+}

@@ -252,7 +252,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		return nil
 	case *ast.YieldStatement:
 		if stmt.Value != nil {
-			if err := c.compileExpression(stmt.Value); err != nil {
+			if err := c.compileExpressionWithExpected(stmt.Value, c.currentYieldType()); err != nil {
 				return err
 			}
 		} else {
@@ -770,7 +770,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	c.chunk.Functions[index].ReturnType = c.bytecodeReturnType(stmt.ReturnType)
 	c.chunk.Functions[index].ReturnCheckType = c.bytecodeReturnCheckType(stmt.ReturnType)
 	c.chunk.Functions[index].DefaultConstants = defaultConstants
-	c.chunk.Functions[index].IsGenerator = blockContainsYield(stmt.Body)
+	c.chunk.Functions[index].IsGenerator = ast.BlockContainsYield(stmt.Body)
 	target := "function"
 	if receiverName != "" {
 		target = "method"
@@ -791,6 +791,8 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	}
 	c.inFunc++
 	c.returnTypes = append(c.returnTypes, c.chunk.Functions[index].ReturnType)
+	c.yieldTypes = append(c.yieldTypes, c.yieldTypeFor(stmt.ReturnType))
+	defer func() { c.yieldTypes = c.yieldTypes[:len(c.yieldTypes)-1] }()
 	// Isolate finalizers so a `return` here emits only this function's, not an
 	// enclosing for-loop's iterator close (whose slot lives in another frame).
 	savedLoops, savedFinalizers := c.loops, c.finalizers

@@ -1,4 +1,4 @@
-# Mailer And SMTP
+# Mailer and SMTP
 
 Geblang includes two layers for email:
 
@@ -151,9 +151,9 @@ let message = {
         {
             "filename": "welcome.txt",
             "contentType": "text/plain",
-            "content": "Thanks for trying Geblang."
-        }
-    ]
+            "content": "Thanks for trying Geblang.",
+        },
+    ],
 };
 
 let raw = smtp.message(message);
@@ -162,14 +162,17 @@ let raw = smtp.message(message);
 `smtp.send(config, message)` sends through an SMTP server and returns a dict:
 
 ```gb
-let result = smtp.send({
-    "host": "smtp.example.com",
-    "port": 587,
-    "username": "user",
-    "password": "secret",
-    "from": "App <noreply@example.com>",
-    "startTLS": true
-}, message);
+let result = smtp.send(
+    {
+        "host": "smtp.example.com",
+        "port": 587,
+        "username": "user",
+        "password": "secret",
+        "from": "App <noreply@example.com>",
+        "startTLS": true,
+    },
+    message
+);
 
 io.println(result["ok"]);
 io.println(result["recipients"]);

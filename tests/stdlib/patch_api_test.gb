@@ -6,7 +6,6 @@ import bytes;
 import json;
 import streams;
 import web.cache as cache;
-import async;
 
 class ShortJSONWriter {
     string text = "";
@@ -28,7 +27,8 @@ class PatchApiTest extends test.Test {
         this.assertEquals(1, "\u{20ac}".length());
         this.assertEquals(3, "\u{20ac}".byteLength());
         this.assertEquals(2, bytes.rawString(bytes.fromHex("ff61")).byteLength());
-        this.assertThrows(func(): void { "x".byteLength(1); });
+        any text = "x";
+        this.assertThrows(func(): void { text.byteLength(1); });
     }
     @test
     func moneyTotalsExactMinorUnitsAndChecksCurrency(): void {

@@ -1,4 +1,4 @@
-# Headless Browser (`browser`)
+# Headless browser (`browser`)
 
 > Experimental (1.25.0, extended in 1.38.0). Drives a headless Chrome/Chromium
 > over the Chrome DevTools Protocol for functional/E2E testing, visual
@@ -282,10 +282,17 @@ import test;
 class LookTest extends test.Test {
     @test
     func headerLooksTheSame(): void {
-        let b = browser.launch({"args": ["--no-sandbox"], "viewport": {"width": 1280, "height": 720}});
+        let b = browser.launch({
+            "args": ["--no-sandbox"],
+            "viewport": {"width": 1280, "height": 720},
+        });
         let p = b.newPage();
         p.goto("https://app.example.com/");
-        let r = p.matchScreenshot("baselines/header.png", {"selector": "header", "maxDiffRatio": 0.001, "diffPath": "out/header-diff.png"});
+        let r = p.matchScreenshot("baselines/header.png", {
+            "selector": "header",
+            "maxDiffRatio": 0.001,
+            "diffPath": "out/header-diff.png",
+        });
         this.assertTrue(r["matched"]);
         b.close();
     }
@@ -325,8 +332,11 @@ let b = browser.launch({"args": ["--no-sandbox"]});
 let p = b.newPage();
 p.route("*/api/*", func(dict<string, any> req): ?dict<string, any> {
     if ((req["url"] as string).contains("/api/users")) {
-        return {"status": 200, "headers": {"Content-Type": "application/json"},
-                "body": "[{\"id\":1,\"name\":\"Ada\"}]"};
+        return {
+            "status": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": "[{\"id\":1,\"name\":\"Ada\"}]",
+        };
     }
     return null;
 });

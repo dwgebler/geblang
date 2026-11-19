@@ -84,9 +84,10 @@ Simple GET (the example uses a local server so it runs without network access):
 import io;
 import http;
 
-let server = http.listen("127.0.0.1:0", func(Request req): Response {
-    return http.jsonResponse({"id": 1, "name": "Ada"});
-});
+let server = http.listen(
+    "127.0.0.1:0",
+    func(Request req): Response { return http.jsonResponse({"id": 1, "name": "Ada"}); }
+);
 let addr = http.serverAddr(server);
 
 let r = http.get("http://" + addr + "/users/1");
@@ -112,9 +113,10 @@ and JSON bodies:
 import io;
 import http;
 
-let server = http.listen("127.0.0.1:0", func(Request req): Response {
-    return http.jsonResponse({"created": true});
-});
+let server = http.listen(
+    "127.0.0.1:0",
+    func(Request req): Response { return http.jsonResponse({"created": true}); }
+);
 let addr = http.serverAddr(server);
 let token = "secret-token";
 
@@ -146,9 +148,10 @@ explicitly:
 import io;
 import http;
 
-let server = http.listen("127.0.0.1:0", func(Request req): Response {
-    return http.response("not found", 404);
-});
+let server = http.listen(
+    "127.0.0.1:0",
+    func(Request req): Response { return http.response("not found", 404); }
+);
 let addr = http.serverAddr(server);
 
 try {
@@ -181,16 +184,17 @@ A reusable client with a base URL and connection pool:
 import io;
 import http;
 
-let server = http.listen("127.0.0.1:0", func(Request req): Response {
-    return http.jsonResponse({"ok": true});
-});
+let server = http.listen(
+    "127.0.0.1:0",
+    func(Request req): Response { return http.jsonResponse({"ok": true}); }
+);
 let addr = http.serverAddr(server);
 let token = "secret-token";
 
 let api = http.newClient({
     "baseUrl":   "http://" + addr,
     "timeoutMs": 5000,
-    "headers":   {"Authorization": "Bearer " + token}
+    "headers":   {"Authorization": "Bearer " + token},
 });
 
 let users = api.get("/users");
@@ -306,9 +310,10 @@ router.post(app, "/echo", func(dict<string, any> request): dict<string, any> {
     return wh.jsonStatus({"echoed": ctx.body()}, 200);
 });
 
-let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
-    return router.handle(app, request);
-});
+let server = http.listen(
+    "127.0.0.1:0",
+    func(dict<string, any> request): dict<string, any> { return router.handle(app, request); }
+);
 
 let addr = http.serverAddr(server);
 
@@ -491,8 +496,8 @@ let requestSchema = {
     "properties": {
         "name":  {"type": "string"},
         "email": {"type": "string"},
-        "age":   {"type": "number", "minimum": 0, "maximum": 150}
-    }
+        "age":   {"type": "number", "minimum": 0, "maximum": 150},
+    },
 };
 
 let good = json.parse('{"name":"Ada","email":"ada@example.com","age":37}');
@@ -527,10 +532,13 @@ import web.validation as validation;
 
 let app = router.newRouter();
 
-let userRules = validation.object({
-    "name": validation.stringField(),
-    "age":  validation.intField()
-}, ["name"]);
+let userRules = validation.object(
+    {
+        "name": validation.stringField(),
+        "age":  validation.intField(),
+    },
+    ["name"]
+);
 
 router.post(app, "/users", func(dict<string, any> request): dict<string, any> {
     let result = validation.json(request, userRules);
@@ -541,9 +549,10 @@ router.post(app, "/users", func(dict<string, any> request): dict<string, any> {
     return wh.jsonCreated({"created": data["name"]});
 });
 
-let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
-    return router.handle(app, request);
-});
+let server = http.listen(
+    "127.0.0.1:0",
+    func(dict<string, any> request): dict<string, any> { return router.handle(app, request); }
+);
 
 let addr = http.serverAddr(server);
 
@@ -584,15 +593,13 @@ import io;
 import http;
 import async;
 
-let server = http.listen("127.0.0.1:0", func(Request req): Response {
-    return http.jsonResponse({"ok": true});
-});
+let server = http.listen(
+    "127.0.0.1:0",
+    func(Request req): Response { return http.jsonResponse({"ok": true}); }
+);
 let addr = http.serverAddr(server);
 
-let responses = await http.getAll([
-    "http://" + addr + "/users",
-    "http://" + addr + "/teams"
-]);
+let responses = await http.getAll(["http://" + addr + "/users", "http://" + addr + "/teams"]);
 
 for (r in responses) {
     if (r.isError()) {

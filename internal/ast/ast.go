@@ -57,6 +57,23 @@ type TypeRef struct {
 	ResolvedModule string
 	// CanonicalName keeps nominal identity separate from the source spelling used in diagnostics.
 	CanonicalName string
+	// Inferred marks an arrow parameter written without a type; it reads as any until inference fills it in.
+	Inferred bool
+}
+
+// GeneratorElementType is T in a generator<T> or iterable<T> annotation, or nil when yields are unchecked.
+func GeneratorElementType(t *TypeRef) *TypeRef {
+	if t == nil || t.Operator != "" || len(t.Arguments) != 1 {
+		return nil
+	}
+	if !strings.EqualFold(t.Name, "generator") && !strings.EqualFold(t.Name, "iterable") {
+		return nil
+	}
+	elem := t.Arguments[0]
+	if elem == nil || (elem.Operator == "" && strings.EqualFold(elem.Name, "any")) {
+		return nil
+	}
+	return elem
 }
 
 func (t *TypeRef) String() string {
@@ -301,12 +318,15 @@ func (s *TypeAliasStatement) String() string {
 }
 
 type DeclarationStatement struct {
-	Token token.Token
-	Kind  string
-	Type  *TypeRef
-	Name  *Identifier
-	Value Expression
-	Doc   string
+	Token  token.Token
+	Kind   string
+	Type   *TypeRef
+	Name   *Identifier
+	Assign token.Token // the `=`, when there is a value
+	// ImplicitLet marks `static int x` written without `let`.
+	ImplicitLet bool
+	Value       Expression
+	Doc         string
 	// Decorators applies only to declarations that live inside a
 	// class body (`@Assert.email string x;`). It is metadata only -
 	// pure annotations consulted by reflection, never executed
@@ -552,6 +572,7 @@ type ClassStatement struct {
 	Extends    *TypeRef
 	Implements []*TypeRef
 	Members    []Statement
+	End        token.Token // closing brace
 	// Destructor is the optional `func ~ClassName()` declaration.
 	// Stored alongside Members so the executor can invoke it
 	// specifically at instance cleanup (with-block exit, for now).
@@ -587,6 +608,7 @@ type InterfaceStatement struct {
 	Methods  []*FunctionSignature
 	Defaults []*FunctionStatement
 	Fields   []*DeclarationStatement
+	End      token.Token // closing brace
 }
 
 func (*InterfaceStatement) statementNode()         {}
@@ -622,6 +644,7 @@ func (s *TryStatement) String() string       { return "try " + s.Body.String() }
 type EnumVariantDef struct {
 	Name         *Identifier
 	FieldTypes   []*TypeRef
+	Assign       token.Token // the `=` before a backing value
 	BackingValue Expression
 }
 
@@ -632,6 +655,7 @@ type EnumStatement struct {
 	Variants    []EnumVariantDef
 	Implements  []*TypeRef
 	Methods     []*FunctionStatement
+	End         token.Token // closing brace
 }
 
 func (*EnumStatement) statementNode()         {}
@@ -667,6 +691,7 @@ type MatchCase struct {
 	// literals, enum variants without payload, and bare types. Empty
 	// when the case has no `|` alternation.
 	Alternates []Expression
+	Arrow      token.Token // the `=>` of an arrow-form case
 }
 
 // ListPatternMatch describes a list-shape match pattern such as
@@ -688,6 +713,7 @@ type MatchStatement struct {
 	Token token.Token
 	Expr  Expression
 	Cases []MatchCase
+	End   token.Token // closing brace
 }
 
 func (*MatchStatement) statementNode()         {}
@@ -1334,6 +1360,8 @@ type FunctionLiteral struct {
 	Parameters []Parameter
 	ReturnType *TypeRef
 	Body       *BlockStatement
+	Arrow      bool // written `(params) => ...`
+	ExprBody   bool // arrow body is a single expression, held as a return statement
 }
 
 func (*FunctionLiteral) expressionNode()        {}
@@ -1344,6 +1372,7 @@ type MatchExpression struct {
 	Token token.Token
 	Expr  Expression
 	Cases []MatchCase
+	End   token.Token // closing brace
 }
 
 func (*MatchExpression) expressionNode()        {}

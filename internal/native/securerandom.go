@@ -290,10 +290,44 @@ func makeMessage(clientSeed string, nonce int64, method string, args []runtime.V
 	return string(argsJSON), nil
 }
 
+// protocolArgJSON encodes draw arguments for the message; decimals keep their original ten-place form so recorded draws replay identically whatever the display default.
+func protocolArgJSON(value runtime.Value) (any, error) {
+	switch v := value.(type) {
+	case runtime.Decimal:
+		return json.Number(v.Value.FloatString(10)), nil
+	case *runtime.List:
+		items := make([]any, 0, len(v.Elements))
+		for _, item := range v.Elements {
+			converted, err := protocolArgJSON(item)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, converted)
+		}
+		return items, nil
+	case runtime.Dict:
+		items := map[string]any{}
+		for _, dk := range v.EntryKeys() {
+			entry, _ := v.GetEntry(dk)
+			key, ok := entry.Key.(runtime.String)
+			if !ok {
+				return ValueToJSON(value)
+			}
+			converted, err := protocolArgJSON(entry.Value)
+			if err != nil {
+				return nil, err
+			}
+			items[key.Value] = converted
+		}
+		return items, nil
+	}
+	return ValueToJSON(value)
+}
+
 func mustValuesToJSON(args []runtime.Value) []any {
 	out := make([]any, 0, len(args))
 	for _, a := range args {
-		v, err := ValueToJSON(a)
+		v, err := protocolArgJSON(a)
 		if err != nil {
 			v = nil
 		}

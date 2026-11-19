@@ -1,0 +1,99 @@
+/**
+ * @title Arrow functions
+ * @summary `(params) => expr` and `(params) => { ... }` are function literals.
+ * A parameter may omit its type when the arrow is passed to a callback method
+ * of a list with a known element type; the inferred type is checked at run
+ * time like a written one.
+ */
+import test;
+
+list<int> scores = [4, -2, 9];
+
+class Basket {
+    list<int> prices;
+
+    func Basket(list<int> prices) {
+        this.prices = prices.filter((p) => p > 0);
+    }
+
+    func total(): int {
+        return this.prices.reduce((sum, p) => sum + p, 0);
+    }
+}
+
+func positives(list<int> values): list<int> {
+    return values.filter((v) => v > 0);
+}
+
+class ArrowFunctionsTest extends test.Test {
+    @test
+    func expressionAndBlockBodies(): void {
+        let double = (int n) => n * 2;
+        let describe = (string name, int age) => {
+            let group = age >= 18 ? "adult" : "minor";
+            return "${name}: ${group}";
+        };
+        let none = () => "none";
+        this.assertEquals(42, double(21));
+        this.assertEquals("Ada: adult", describe("Ada", 36));
+        this.assertEquals("none", none());
+    }
+
+    @test
+    func asyncArrow(): void {
+        let later = async (int n) => n + 1;
+        this.assertEquals(42, await later(41));
+    }
+
+    @test
+    func curriedAndCapturing(): void {
+        let add = (int a) => (int b) => a + b;
+        this.assertEquals(5, add(2)(3));
+        let offset = 10;
+        let shift = (int n) => n + offset;
+        offset = 20;
+        this.assertEquals(21, shift(1));
+    }
+
+    @test
+    func infersFromListCallbacks(): void {
+        let xs = [3, 1, 2];
+        this.assertEquals([6, 2, 4], xs.map((x) => x * 2));
+        this.assertEquals([3, 2], xs.filter((x) => x > 1));
+        this.assertEquals(3, xs.find((x) => x > 2));
+        this.assertTrue(xs.any((x) => x == 1));
+        this.assertEquals([3, 2, 1], xs.sorted((a, b) => b - a));
+        this.assertEquals(16, xs.reduce((acc, x) => acc + x, 10));
+        this.assertEquals([0, 3, 4, 6], xs.scan(0, (acc, x) => acc + x));
+        this.assertEquals(["3a", "1b", "2c"], xs.zipWith(["a", "b", "c"], (n, s) => "${n}${s}"));
+        this.assertEquals([2, 0, 1], xs.map((x) => xs.filter((y) => y < x).length()));
+    }
+
+    @test
+    func infersFromDeclaredFieldAndMethodResults(): void {
+        this.assertEquals([4, 9], scores.filter((s) => s > 0));
+        this.assertEquals([-2, 4, 9], [-2, 9, 4].sorted((a, b) => a - b));
+        this.assertEquals(["A", "B"], "a,b".split(",").map((w) => w.upper()));
+        this.assertEquals(13, Basket([4, -1, 9]).total());
+        this.assertEquals([1, 5], positives([1, -3, 5]));
+    }
+
+    @test
+    func inferredTypeIsEnforced(): void {
+        let xs = [1, 2];
+        let caught = "";
+        try {
+            xs.reduce((acc, x) => "text", 0);
+        } catch (TypeError e) {
+            caught = "TypeError";
+        }
+        this.assertEquals("TypeError", caught);
+    }
+
+    @test
+    func arrowsAreFunctionValues(): void {
+        let ops = [(int n) => n + 1, (int n) => n * 3];
+        this.assertEquals([3, 6], ops.map((op) => op(2)));
+        this.assertEquals("func", "${typeof((int n) => n)}");
+    }
+}

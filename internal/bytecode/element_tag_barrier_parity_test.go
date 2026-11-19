@@ -85,8 +85,8 @@ io.println(typeof(dogs[0]));
 
 func TestParityNullableElementTagAcceptsNull(t *testing.T) {
 	// A ?T element tag accepts null on every write surface, while a
-	// non-nullable tag still rejects it; instanceof and reflect read
-	// the base type unchanged.
+	// non-nullable tag still rejects it; instanceof needs a nullable
+	// argument, and reflect reports the base type.
 	runParity(t, `import io;
 import reflect;
 list<?int> xs = [1, null];
@@ -110,7 +110,7 @@ try {
 } catch (TypeError e) {
     io.println("caught: " + e.message);
 }
-`, "4\n2\n2\ntrue\n{\"T\": \"int\"}\ncaught: cannot push null to list<int>\n")
+`, "4\n2\n2\nfalse\n{\"T\": \"int\"}\ncaught: cannot push null to list<int>\n")
 }
 
 func TestParityNestedElementTagShallow(t *testing.T) {

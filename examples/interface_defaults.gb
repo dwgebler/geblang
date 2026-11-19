@@ -47,11 +47,22 @@ class Loud implements Greetable {
 io.println(User("ada", 36).greet());
 io.println(Loud("bo", 4).greet());
 
-interface A { func foo(): string { return "A"; } }
-interface B { func foo(): string { return "B"; } }
+interface A {
+    func foo(): string {
+        return "A";
+    }
+}
+
+interface B {
+    func foo(): string {
+        return "B";
+    }
+}
 
 class C implements A, B {
-    func foo(): string { return "C"; }
+    func foo(): string {
+        return "C";
+    }
 }
 
 io.println(C().foo());

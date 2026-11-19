@@ -75,6 +75,9 @@ type Analyzer struct {
 	importedNames map[string]bool
 	// import aliases (module names): legal only in qualified access, dir, reflect.module.
 	moduleAliases map[string]bool
+	// aliasModules maps an import alias to its module path; fromImports maps a from-import local name to "module.name".
+	aliasModules map[string]string
+	fromImports  map[string]string
 	// every name bound by any declaration in the file; backs the
 	// unknown-bare-callee check without lexical-scope false positives.
 	declaredNames map[string]struct{}
@@ -148,6 +151,7 @@ type typeInfo struct {
 
 type classInfo struct {
 	name       string
+	decorated  bool
 	parent     string
 	implements []string
 	typeParams []string
@@ -241,7 +245,7 @@ func (a *Analyzer) checkBuiltinModuleShadow(name *ast.Identifier, declaredType *
 }
 
 func New() *Analyzer {
-	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]enumInfo{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}, importedNames: map[string]bool{}, moduleAliases: map[string]bool{}, declaredNames: map[string]struct{}{}}
+	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]enumInfo{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}, importedNames: map[string]bool{}, moduleAliases: map[string]bool{}, aliasModules: map[string]string{}, fromImports: map[string]string{}, declaredNames: map[string]struct{}{}}
 }
 
 func (a *Analyzer) Analyze(program *ast.Program) []Diagnostic {
@@ -416,7 +420,7 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 			key := strings.ToLower(info.name)
 			a.functions[key] = append(a.functions[key], info)
 		case *ast.ClassStatement:
-			info := classInfo{name: stmt.Name.Value, methods: map[string][]methodInfo{}}
+			info := classInfo{name: stmt.Name.Value, decorated: len(stmt.Decorators) > 0, methods: map[string][]methodInfo{}}
 			for _, generic := range stmt.Generics {
 				info.typeParams = append(info.typeParams, generic.Name.Value)
 			}
@@ -475,10 +479,14 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 			a.enums[stmt.Name.Value] = info
 		case *ast.ImportStatement:
 			a.moduleAliases[stmt.ModuleName()] = true
+			a.aliasModules[stmt.ModuleName()] = strings.Join(stmt.Path, ".")
 		case *ast.FromImportStatement:
 			for _, item := range stmt.Names {
 				if local := item.Local(); local != "" {
 					a.importedNames[local] = true
+					if item.Name != nil {
+						a.fromImports[local] = strings.Join(stmt.Path, ".") + "." + item.Name.Value
+					}
 				}
 			}
 		}
@@ -834,6 +842,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 	case *ast.ExpressionStatement:
 		a.analyzeExpression(stmt.Expression)
 		a.validateCallStatementArgs(stmt.Expression)
+		a.checkDiscardedWaitTask(stmt.Expression)
 	case *ast.ExportStatement:
 		a.analyzeStatement(stmt.Statement, fn)
 	case *ast.FunctionStatement:
@@ -844,6 +853,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		for _, param := range stmt.Parameters {
 			if param.Default != nil {
 				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
+				a.analyzeExpression(param.Default)
 			}
 			/* Parameter names are scoped to one function body and
 			 * tend to use common labels like `args`, `path`, `io`
@@ -861,6 +871,10 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 	case *ast.YieldStatement:
 		if stmt.Value != nil {
 			a.analyzeExpression(stmt.Value)
+			if elem := ast.GeneratorElementType(fnReturnType(fn)); elem != nil {
+				a.validateCallExpression(stmt.Value, a.typeInfoFromRef(elem))
+				a.checkAssignableBranches(elem, stmt.Value, fmt.Sprintf("cannot yield %%s from %s yielding %s", fn.Name.Value, elem.String()))
+			}
 		}
 	case *ast.SimpleStatement:
 		if stmt.Value != nil {
@@ -869,14 +883,17 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 	case *ast.InitStatement:
 		a.analyzeBlock(stmt.Body, fn)
 	case *ast.IfStatement:
+		a.analyzeExpression(stmt.Condition)
 		consequenceNarrowing, alternativeNarrowing := a.narrowingsForCondition(stmt.Condition)
 		a.analyzeBlockWithNarrowing(stmt.Consequence, fn, consequenceNarrowing)
 		for _, elseif := range stmt.ElseIfs {
+			a.analyzeExpression(elseif.Condition)
 			elseifCons, _ := a.narrowingsForCondition(elseif.Condition)
 			a.analyzeBlockWithNarrowing(elseif.Body, fn, elseifCons)
 		}
 		a.analyzeBlockWithNarrowing(stmt.Alternative, fn, alternativeNarrowing)
 	case *ast.WhileStatement:
+		a.analyzeExpression(stmt.Condition)
 		consequenceNarrowing, _ := a.narrowingsForCondition(stmt.Condition)
 		a.analyzeBlockWithNarrowing(stmt.Body, fn, consequenceNarrowing)
 	case *ast.ForStatement:
@@ -888,6 +905,9 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 			a.analyzeStatement(stmt.Init, fn)
 		}
 		a.checkForInBinder(stmt)
+		a.analyzeExpression(stmt.Iterable)
+		a.analyzeExpression(stmt.Step)
+		a.analyzeExpression(stmt.Condition)
 		if stmt.Update != nil {
 			a.analyzeStatement(stmt.Update, fn)
 		}
@@ -916,18 +936,50 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		}
 		a.analyzeBlock(stmt.Finally, fn)
 	case *ast.MatchStatement:
+		a.analyzeExpression(stmt.Expr)
 		a.checkMatchExhaustiveness(stmt.Expr, stmt.Cases, stmt.Token)
-		for _, matchCase := range stmt.Cases {
-			a.analyzeBlock(matchCase.Body, fn)
+		for i := range stmt.Cases {
+			a.analyzeMatchCase(&stmt.Cases[i], fn)
 		}
 	case *ast.ClassStatement:
+		a.checkQualifiedTypeImported(stmt.Extends)
+		for _, iface := range stmt.Implements {
+			a.checkQualifiedTypeImported(iface)
+		}
 		a.declare(stmt.Name.Value, typeInfo{name: stmt.Name.Value, known: true})
 		a.analyzeClassMembers(stmt)
 	case *ast.InterfaceStatement:
+		for _, parent := range stmt.Parents {
+			a.checkQualifiedTypeImported(parent)
+		}
 		a.declare(stmt.Name.Value, typeInfo{name: stmt.Name.Value, known: true})
+		a.analyzeInterfaceDefaults(stmt)
 	case *ast.EnumStatement:
+		for _, iface := range stmt.Implements {
+			a.checkQualifiedTypeImported(iface)
+		}
 		a.declare(stmt.Name.Value, typeInfo{name: stmt.Name.Value, known: true})
 		a.analyzeEnumMembers(stmt)
+	case *ast.WithStatement:
+		a.analyzeExpression(stmt.Value)
+		a.pushScope()
+		if stmt.Name != nil {
+			a.declare(stmt.Name.Value, typeInfo{})
+		}
+		a.analyzeBlock(stmt.Body, fn)
+		a.popScope()
+	case *ast.SelectStatement:
+		for _, sc := range stmt.Cases {
+			a.analyzeExpression(sc.Channel)
+			a.analyzeExpression(sc.Value)
+			a.pushScope()
+			if sc.Binding != "" {
+				a.declare(sc.Binding, typeInfo{})
+			}
+			a.analyzeBlock(sc.Body, fn)
+			a.popScope()
+		}
+		a.analyzeBlock(stmt.Default, fn)
 	case *ast.DelStatement:
 		if stmt.Target == nil {
 			return
@@ -945,6 +997,90 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 	}
 }
 
+func (a *Analyzer) analyzeInterfaceDefaults(stmt *ast.InterfaceStatement) {
+	popTypeParams := a.pushTypeParams(stmt.Generics)
+	defer popTypeParams()
+	for _, field := range stmt.Fields {
+		a.analyzeExpression(field.Value)
+	}
+	for _, method := range stmt.Defaults {
+		a.pushScope()
+		a.declare("this", typeInfo{name: stmt.Name.Value, known: true})
+		for _, param := range method.Parameters {
+			if param.Default != nil {
+				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
+				a.analyzeExpression(param.Default)
+			}
+			a.declare(param.Name.Value, a.parameterBindingType(param))
+		}
+		a.analyzeBlock(method.Body, method)
+		a.popScope()
+	}
+}
+
+func (a *Analyzer) analyzeExpressionWithNarrowing(expr ast.Expression, narrowing map[string]typeInfo) {
+	if expr == nil {
+		return
+	}
+	a.pushScope()
+	defer a.popScope()
+	for name, typ := range narrowing {
+		if prev, ok := a.lookup(name); ok {
+			typ.declaredNullable = prev.nullable || prev.declaredNullable
+		}
+		a.declare(name, typ)
+	}
+	a.analyzeExpression(expr)
+}
+
+// analyzeComprehension scopes each clause's loop variables over the later clauses and the bodies.
+func (a *Analyzer) analyzeComprehension(clauses []ast.ComprehensionClause, bodies ...ast.Expression) {
+	a.pushScope()
+	defer a.popScope()
+	for _, clause := range clauses {
+		switch c := clause.(type) {
+		case *ast.ComprehensionFor:
+			a.analyzeExpression(c.Iterable)
+			names := c.VarNames
+			if c.VarName != nil {
+				names = []*ast.Identifier{c.VarName}
+			}
+			var t typeInfo
+			if c.VarType != nil {
+				t = a.typeInfoFromRef(c.VarType)
+			}
+			for _, name := range names {
+				if name != nil {
+					a.declare(name.Value, t)
+				}
+			}
+		case *ast.ComprehensionIf:
+			a.analyzeExpression(c.Filter)
+		}
+	}
+	for _, body := range bodies {
+		a.analyzeExpression(body)
+	}
+}
+
+// analyzeMatchCase binds a typed case name over its guard and arm; fn is nil for a match expression.
+func (a *Analyzer) analyzeMatchCase(mc *ast.MatchCase, fn *ast.FunctionStatement) {
+	a.pushScope()
+	defer a.popScope()
+	if mc.Name != nil {
+		var t typeInfo
+		if mc.Type != nil {
+			t = a.typeInfoFromRef(mc.Type)
+		}
+		a.declare(mc.Name.Value, t)
+	}
+	a.analyzeExpression(mc.Guard)
+	a.analyzeExpression(mc.Value)
+	if mc.Body != nil {
+		a.analyzeBlock(mc.Body, fn)
+	}
+}
+
 // analyzeFunctionLiteral checks a closure body like a named function body.
 func (a *Analyzer) analyzeFunctionLiteral(lit *ast.FunctionLiteral) {
 	fn := &ast.FunctionStatement{Token: lit.Token, Async: lit.Async, Name: &ast.Identifier{Token: lit.Token, Value: "<closure>"},
@@ -954,6 +1090,7 @@ func (a *Analyzer) analyzeFunctionLiteral(lit *ast.FunctionLiteral) {
 	for _, param := range lit.Parameters {
 		if param.Default != nil {
 			a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
+			a.analyzeExpression(param.Default)
 		}
 		a.declare(param.Name.Value, a.parameterBindingType(param))
 	}
@@ -1002,6 +1139,10 @@ func (a *Analyzer) analyzeClassMembers(stmt *ast.ClassStatement) {
 		members = append(append([]ast.Statement{}, members...), stmt.Destructor)
 	}
 	for _, member := range members {
+		if field, isField := member.(*ast.DeclarationStatement); isField {
+			a.analyzeExpression(field.Value)
+			continue
+		}
 		method, ok := member.(*ast.FunctionStatement)
 		if !ok {
 			continue
@@ -1013,6 +1154,7 @@ func (a *Analyzer) analyzeClassMembers(stmt *ast.ClassStatement) {
 		for _, param := range method.Parameters {
 			if param.Default != nil {
 				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
+				a.analyzeExpression(param.Default)
 			}
 			a.declare(param.Name.Value, a.parameterBindingType(param))
 		}
@@ -1036,6 +1178,7 @@ func (a *Analyzer) analyzeEnumMembers(stmt *ast.EnumStatement) {
 		for _, param := range method.Parameters {
 			if param.Default != nil {
 				a.checkAssignableBranches(param.Type, param.Default, fmt.Sprintf("cannot use %%s default for %s parameter %s", param.Type.String(), param.Name.Value))
+				a.analyzeExpression(param.Default)
 			}
 			a.declare(param.Name.Value, a.parameterBindingType(param))
 		}
@@ -1363,13 +1506,30 @@ func (a *Analyzer) checkPrimitiveMethodCall(call *ast.CallExpression) {
 		return
 	}
 	isPrimitive, exists := primitiveMethodLookup(recv.name, selector.Name.Value)
-	if !isPrimitive || exists {
+	if !isPrimitive {
+		return
+	}
+	if exists {
+		a.checkPrimitiveMethodArity(call, recv.name, selector)
 		return
 	}
 	// native.PrimitiveMethods is the authoritative built-in method set,
 	// guarded against phantoms (every entry callable) and completeness
 	// drift (the tripwire test), so an unlisted method is a real typo.
 	a.errorAt(selector.Name.Token, "%s has no method %s", recv.name, selector.Name.Value)
+}
+
+func (a *Analyzer) checkPrimitiveMethodArity(call *ast.CallExpression, typeName string, selector *ast.SelectorExpression) {
+	for _, arg := range call.Arguments {
+		if arg.Spread || arg.Name != nil || arg.Hole {
+			return
+		}
+	}
+	method := selector.Name.Value
+	if fits, ok := native.PrimitiveArityFits(typeName, method, len(call.Arguments)); !ok || fits {
+		return
+	}
+	a.errorAt(selector.Name.Token, "%s.%s does not accept %d argument(s); expected %s", typeName, method, len(call.Arguments), strings.Join(native.PrimitiveCallForms(typeName, method), " or "))
 }
 
 // checkClassMethodCall flags `obj.method(...)` when obj is a typed
@@ -1437,13 +1597,23 @@ func (a *Analyzer) checkMethodCallArgs(call *ast.CallExpression, selector *ast.S
 		if arg.Name != nil || arg.Spread {
 			return
 		}
+	}
+	countFits := sigsAcceptCount(sigs, len(call.Arguments))
+	for _, arg := range call.Arguments {
 		argType := a.expressionTypeName(arg.Value)
-		// An `any` argument picks its overload at run time.
+		// An `any` argument picks its overload at run time, but no overload takes the wrong argument count.
 		if !argType.known || argType.name == "any" {
+			if !countFits {
+				a.errorAt(selector.Name.Token, "no matching overload for %s.%s: no signature takes %d argument(s)", receiverType.name, selector.Name.Value, len(call.Arguments))
+			}
 			return
 		}
 		args = append(args, argType)
 		literals = append(literals, ast.IsIntegerLiteral(arg.Value))
+	}
+	if !countFits {
+		a.errorAt(selector.Name.Token, "no matching overload for %s.%s: got (%s)", receiverType.name, selector.Name.Value, displayTypeInfos(args))
+		return
 	}
 	for _, sig := range sigs {
 		if a.methodOverloadPossible(args, sig, classTypeParams) {
@@ -1457,6 +1627,15 @@ func (a *Analyzer) checkMethodCallArgs(call *ast.CallExpression, selector *ast.S
 }
 
 // checkImportedCallArgs flags a call to a function or constructor of another source module (`alias.f(...)`, `alias.Class(...)`, or a `from`-imported name) when no overload can accept the arguments. Same conservative rules as checkMethodCallArgs: named/spread/unknown/any arguments, variadic overloads and generic parameters stay silent.
+func sigsAcceptCount(sigs []MethodSignature, n int) bool {
+	for _, sig := range sigs {
+		if n >= sig.Required && (sig.Variadic || n <= len(sig.Params)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Analyzer) checkImportedCallArgs(call *ast.CallExpression) {
 	if a.moduleFuncSigs == nil {
 		return
@@ -1495,12 +1674,22 @@ func (a *Analyzer) checkImportedCallArgs(call *ast.CallExpression) {
 		if arg.Name != nil || arg.Spread {
 			return
 		}
+	}
+	countFits := sigsAcceptCount(sigs, len(call.Arguments))
+	for _, arg := range call.Arguments {
 		argType := a.expressionTypeName(arg.Value)
 		if !argType.known || argType.name == "any" {
+			if !countFits {
+				a.errorAt(tok, "no matching overload for %s: no signature takes %d argument(s)", display, len(call.Arguments))
+			}
 			return
 		}
 		args = append(args, argType)
 		literals = append(literals, ast.IsIntegerLiteral(arg.Value))
+	}
+	if !countFits {
+		a.errorAt(tok, "no matching overload for %s: got (%s)", display, displayTypeInfos(args))
+		return
 	}
 	for _, sig := range sigs {
 		// Parameter types naming the other module's own classes, interfaces or aliases can't be resolved here; only built-in types are checked.
@@ -1741,8 +1930,25 @@ func (a *Analyzer) checkValueAgainstType(target typeInfo, expr ast.Expression, m
 	}
 }
 
+func fnReturnType(fn *ast.FunctionStatement) *ast.TypeRef {
+	if fn == nil {
+		return nil
+	}
+	return fn.ReturnType
+}
+
 func (a *Analyzer) analyzeReturn(stmt *ast.ReturnStatement, fn *ast.FunctionStatement) {
+	if fn != nil && ast.BlockContainsYield(fn.Body) {
+		if stmt.Value != nil {
+			a.analyzeExpression(stmt.Value)
+			a.errorAt(stmt.Token, "generator %s cannot return a value; yield it, or use a bare return to stop", fn.Name.Value)
+		}
+		return
+	}
 	if fn == nil || fn.ReturnType == nil {
+		if stmt.Value != nil {
+			a.analyzeExpression(stmt.Value)
+		}
 		return
 	}
 	if stmt.Value == nil {
@@ -1830,6 +2036,12 @@ func (a *Analyzer) checkAssignableActual(target *ast.TypeRef, expr ast.Expressio
 	}
 	targetInfo := a.typeInfoFromRef(target)
 	if !actual.known {
+		return
+	}
+	if len(targetInfo.union) > 0 {
+		if !a.unionAccepts(targetInfo.union, actual) && !unionWidensLiteral(targetInfo.union, expr) {
+			a.errorf("%s", message)
+		}
 		return
 	}
 	if actual.name == "null" {
@@ -2022,6 +2234,39 @@ func applyOverloadBindings(overload methodInfo, bindings map[string]typeInfo, pa
 // checkConstructorTypeArgs flags Box<string>(42): explicit bindings
 // substitute into bare type-param params, then the normal compatibility
 // walk runs (covariant passing stays accepted; opaque args defer to runtime).
+// checkConstructorlessCall flags arguments to a class that declares no constructor; both runtimes reject them unless an ancestor outside this module (a built-in error, say) supplies one.
+func (a *Analyzer) checkConstructorlessCall(call *ast.CallExpression) {
+	ident, ok := call.Callee.(*ast.Identifier)
+	if !ok || len(call.Arguments) == 0 {
+		return
+	}
+	for _, arg := range call.Arguments {
+		if arg.Spread {
+			return
+		}
+	}
+	cls, ok := a.classes[ident.Value]
+	if !ok || cls.decorated {
+		return
+	}
+	if bound, found := a.lookup(ident.Value); found && bound.name != cls.name {
+		return
+	}
+	if _, has := cls.methods[strings.ToLower(cls.name)]; has {
+		return
+	}
+	seen := map[string]bool{}
+	for c := cls; c.parent != ""; {
+		parent, local := a.classes[c.parent]
+		if !local || seen[parent.name] {
+			return
+		}
+		seen[parent.name] = true
+		c = parent
+	}
+	a.errorAt(ident.Token, "%s constructor expects no arguments", cls.name)
+}
+
 func (a *Analyzer) checkConstructorTypeArgs(call *ast.CallExpression) {
 	if len(call.TypeArguments) == 0 {
 		return
@@ -2486,6 +2731,15 @@ func (a *Analyzer) unionMembers(ref *ast.TypeRef) []typeInfo {
 }
 
 // unionAccepts reports whether arg fits some member of a union parameter; an unknown member may accept anything.
+func unionWidensLiteral(members []typeInfo, expr ast.Expression) bool {
+	for _, member := range members {
+		if isNumericLiteralWidening(member.name, expr) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Analyzer) unionAccepts(members []typeInfo, arg typeInfo) bool {
 	for _, member := range members {
 		if !member.known || member.name == "any" {
@@ -2636,8 +2890,16 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		a.analyzeFunctionLiteral(expr)
 	case *ast.InfixExpression:
 		a.analyzeExpression(expr.Left)
+		switch expr.Operator {
 		// instanceof's right operand is a type reference, not a value.
-		if expr.Operator != "instanceof" {
+		case "instanceof":
+		case "&&":
+			cons, _ := a.narrowingsForCondition(expr.Left)
+			a.analyzeExpressionWithNarrowing(expr.Right, cons)
+		case "||":
+			_, alt := a.narrowingsForCondition(expr.Left)
+			a.analyzeExpressionWithNarrowing(expr.Right, alt)
+		default:
 			a.analyzeExpression(expr.Right)
 		}
 		a.checkDecimalFloatMix(expr)
@@ -2652,7 +2914,53 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	case *ast.PostfixExpression:
 		a.analyzeExpression(expr.Left)
 	case *ast.MatchExpression:
+		a.analyzeExpression(expr.Expr)
 		a.checkMatchExhaustiveness(expr.Expr, expr.Cases, expr.Token)
+		for i := range expr.Cases {
+			a.analyzeMatchCase(&expr.Cases[i], nil)
+		}
+	case *ast.TernaryExpression:
+		a.analyzeExpression(expr.Condition)
+		cons, alt := a.narrowingsForCondition(expr.Condition)
+		a.analyzeExpressionWithNarrowing(expr.ThenExpr, cons)
+		a.analyzeExpressionWithNarrowing(expr.ElseExpr, alt)
+	case *ast.InterpolatedString:
+		for _, part := range expr.Parts {
+			a.analyzeExpression(part)
+		}
+	case *ast.FormattedInterpolation:
+		a.analyzeExpression(expr.Value)
+	case *ast.CastExpression:
+		a.analyzeExpression(expr.Value)
+	case *ast.AwaitExpression:
+		a.analyzeExpression(expr.Value)
+	case *ast.SpreadExpression:
+		a.analyzeExpression(expr.Value)
+	case *ast.RangeExpression:
+		a.analyzeExpression(expr.Start)
+		a.analyzeExpression(expr.End)
+		a.analyzeExpression(expr.Step)
+	case *ast.PipeExpression:
+		a.analyzeExpression(expr.Left)
+		// The piped value becomes the first argument, so a call on the right is not checked as written.
+		if call, ok := expr.Right.(*ast.CallExpression); ok {
+			if !a.isModuleValueRef(call.Callee) {
+				a.analyzeExpression(call.Callee)
+			}
+			for _, arg := range call.Arguments {
+				a.analyzeExpression(arg.Value)
+			}
+		} else if !a.isModuleValueRef(expr.Right) {
+			a.analyzeExpression(expr.Right)
+		}
+	case *ast.ListComprehension:
+		a.analyzeComprehension(expr.Clauses, expr.Body)
+	case *ast.SetComprehension:
+		a.analyzeComprehension(expr.Clauses, expr.Body)
+	case *ast.DictComprehension:
+		a.analyzeComprehension(expr.Clauses, expr.KeyBody, expr.ValueBody)
+	case *ast.GeneratorComprehension:
+		a.analyzeComprehension(expr.Clauses, expr.Body)
 	case *ast.SelectorExpression:
 		a.checkUnimportedModuleSelector(expr)
 		if !a.isModuleValueRef(expr.Object) {
@@ -2675,10 +2983,12 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		}
 		a.checkTypedCollectionMethodCall(expr)
 		a.checkPrimitiveMethodCall(expr)
+		a.checkNativeCallArity(expr)
 		a.checkClassMethodCall(expr)
 		a.checkImportedCallArgs(expr)
 		a.checkMethodCallTypeArgs(expr)
 		a.checkConstructorTypeArgs(expr)
+		a.checkConstructorlessCall(expr)
 		a.checkDeprecatedCall(expr)
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
 			if overloads := a.functions[strings.ToLower(ident.Value)]; len(overloads) > 0 {
@@ -2749,6 +3059,30 @@ func (a *Analyzer) checkUnimportedModuleSelector(expr *ast.SelectorExpression) {
 		return
 	}
 	a.errorAt(ident.Token, "module %q is used without an import; add 'import %s;'", name, name)
+}
+
+// checkQualifiedTypeImported reports a module-qualified parent or interface whose module is not imported; only the VM could otherwise resolve it.
+func (a *Analyzer) checkQualifiedTypeImported(ref *ast.TypeRef) {
+	if ref == nil || ref.Operator != "" {
+		return
+	}
+	dot := strings.LastIndex(ref.Name, ".")
+	if dot <= 0 {
+		return
+	}
+	qualifier := ref.Name[:dot]
+	if a.moduleAliases[qualifier] || a.importedNames[qualifier] {
+		return
+	}
+	if _, declared := a.declaredNames[qualifier]; declared {
+		return
+	}
+	for _, path := range a.aliasModules {
+		if path == qualifier {
+			return
+		}
+	}
+	a.errorAt(ref.Token, "module %q is used without an import; add 'import %s;'", qualifier, qualifier)
 }
 
 // dir(M) accepts a module name as its argument.
@@ -2947,6 +3281,13 @@ func (a *Analyzer) analyzeAssignment(expr *ast.AssignmentExpression) {
 	}
 	a.checkBindingNotDestroyed(ident)
 	target, ok := a.lookup(ident.Value)
+	if ok && len(target.union) > 0 {
+		actual := a.expressionTypeName(expr.Value)
+		if actual.known && !a.unionAccepts(target.union, actual) && !unionWidensLiteral(target.union, expr.Value) {
+			a.errorf("cannot assign %s to %s %s", actual.display(), target.display(), ident.Value)
+		}
+		return
+	}
 	if !ok || !target.known {
 		return
 	}
@@ -3196,6 +3537,20 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 		return a.typeInfoFromRef(ref)
 	case *ast.InfixExpression:
 		return a.infixNumericResult(expr)
+	case *ast.FunctionLiteral:
+		return typeInfo{name: "func", known: true}
+	case *ast.PrefixExpression:
+		operand := a.expressionTypeName(expr.Right)
+		if !operand.known || operand.nullable {
+			return typeInfo{}
+		}
+		switch {
+		case (expr.Operator == "-" || expr.Operator == "+") && numericRank(operand) > 0:
+			return typeInfo{name: operand.name, known: true}
+		case expr.Operator == "!" && operand.name == "bool":
+			return typeInfo{name: "bool", known: true}
+		}
+		return typeInfo{}
 	default:
 		return typeInfo{}
 	}
@@ -3290,6 +3645,9 @@ func (a *Analyzer) isAssignableType(target, actual string) bool {
 	if isGeneratorTypeName(target) && isGeneratorTypeName(actual) {
 		return true
 	}
+	if strings.EqualFold(target, "iterable") {
+		return staticIterableSource(actual)
+	}
 	if _, ok := a.interfaces[target]; ok {
 		return a.classImplements(actual, target) || a.interfaceExtends(actual, target) || a.enumImplements(actual, target)
 	}
@@ -3306,6 +3664,17 @@ func (a *Analyzer) isAssignableType(target, actual string) bool {
 
 func isCallableTypeName(name string) bool {
 	return strings.EqualFold(name, "callable") || strings.EqualFold(name, "func") || strings.EqualFold(name, "function")
+}
+
+// staticIterableSource reports whether a value of the named type can satisfy iterable<T>; classes defer to the runtime __iter check.
+func staticIterableSource(name string) bool {
+	switch strings.ToLower(strings.TrimPrefix(name, "?")) {
+	case "generator", "iterable", "list", "set", "dict", "range", "string":
+		return true
+	case "int", "float", "decimal", "bool", "bytes", "null", "func", "callable", "function", "void":
+		return false
+	}
+	return true
 }
 
 func isGeneratorTypeName(name string) bool {
@@ -3707,6 +4076,13 @@ func (a *Analyzer) typeInfoFromRef(ref *ast.TypeRef) typeInfo {
 }
 
 func (t typeInfo) display() string {
+	if len(t.union) > 0 {
+		parts := make([]string, 0, len(t.union))
+		for _, member := range t.union {
+			parts = append(parts, member.display())
+		}
+		return strings.Join(parts, " | ")
+	}
 	if !t.known {
 		return "unknown"
 	}
@@ -3793,6 +4169,67 @@ func (a *Analyzer) ruleWarningAt(tok token.Token, rule, format string, args ...a
 		Severity: SeverityWarning,
 		Rule:     rule,
 	})
+}
+
+// waitOnlyTasks return a task that does nothing useful unless awaited, unlike async.run, whose task may run unobserved.
+var waitOnlyTasks = map[string]bool{"async.sleep": true, "async.all": true, "async.race": true, "async.timeout": true}
+
+// checkNativeCallArity reports a positional native call whose argument count the catalog signature rejects, as the bytecode compiler does, so both runtimes refuse it before running.
+func (a *Analyzer) checkNativeCallArity(call *ast.CallExpression) {
+	selector, ok := call.Callee.(*ast.SelectorExpression)
+	if !ok || selector.Name == nil {
+		return
+	}
+	ident, ok := selector.Object.(*ast.Identifier)
+	if !ok || !a.moduleAliases[ident.Value] {
+		return
+	}
+	if _, shadowed := a.lookup(ident.Value); shadowed {
+		return
+	}
+	for _, arg := range call.Arguments {
+		if arg.Name != nil || arg.Hole || arg.Spread {
+			return
+		}
+	}
+	module, name := a.aliasModules[ident.Value], selector.Name.Value
+	if !native.ArityCheckedAtCompile(module, name) || native.ForwardsNamedArgs(module, name) {
+		return
+	}
+	if fits, known := native.NativeArityFits(module, name, len(call.Arguments)); !known || fits {
+		return
+	}
+	sig, _ := native.NativeSignature(module, name)
+	a.errorAt(selector.Name.Token, "%s.%s(%s) does not accept %d argument(s)", module, name, strings.Join(sig.ParamNames, ", "), len(call.Arguments))
+}
+
+func (a *Analyzer) checkDiscardedWaitTask(expr ast.Expression) {
+	call, ok := expr.(*ast.CallExpression)
+	if !ok {
+		return
+	}
+	qualified := ""
+	var tok token.Token
+	switch callee := call.Callee.(type) {
+	case *ast.SelectorExpression:
+		ident, ok := callee.Object.(*ast.Identifier)
+		if !ok || callee.Name == nil || !a.moduleAliases[ident.Value] {
+			return
+		}
+		if _, shadowed := a.lookup(ident.Value); shadowed {
+			return
+		}
+		qualified, tok = a.aliasModules[ident.Value]+"."+callee.Name.Value, callee.Name.Token
+	case *ast.Identifier:
+		if _, shadowed := a.lookup(callee.Value); shadowed {
+			return
+		}
+		qualified, tok = a.fromImports[callee.Value], callee.Token
+	}
+	if !waitOnlyTasks[qualified] {
+		return
+	}
+	a.ruleWarningAt(tok, "discarded-task", "%s(...) returns a task that is never awaited, so nothing waits for it; write await %s(...)", qualified, qualified)
 }
 
 // checkMatchExhaustiveness warns on an enum match missing a variant (guarded cases never cover; unknowns suppress).

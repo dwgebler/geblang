@@ -10,7 +10,9 @@ import io;
 class Transaction {
     string label;
 
-    func Transaction(string label) { this.label = label; }
+    func Transaction(string label) {
+        this.label = label;
+    }
 
     func __enter(): Transaction {
         io.println("begin ${this.label}");
@@ -25,6 +27,7 @@ class Transaction {
 with (tx = Transaction("write")) {
     io.println("inside ${tx.label}");
 }
+
 /* Output:
  *   begin write
  *   inside write
@@ -35,9 +38,15 @@ with (tx = Transaction("write")) {
  * exception, return, break, and continue. */
 class Span {
     string name;
-    func Span(string n) { this.name = n; }
-    func __enter(): Span { return this; }
-    func __exit(): void { io.println("end ${this.name}"); }
+    func Span(string n) {
+        this.name = n;
+    }
+    func __enter(): Span {
+        return this;
+    }
+    func __exit(): void {
+        io.println("end ${this.name}");
+    }
 }
 
 for (i in [1, 2, 3]) {

@@ -6,13 +6,9 @@
 import collections;
 import io;
 
-let doubled = collections.lazyMap(collections.range(1, 10), func(int x): int {
-    return x * 2;
-});
+let doubled = collections.lazyMap(collections.range(1, 10), func(int x): int { return x * 2; });
 
-let divisibleByFour = collections.lazyFilter(doubled, func(int x): bool {
-    return x % 4 == 0;
-});
+let divisibleByFour = collections.lazyFilter(doubled, func(int x): bool { return x % 4 == 0; });
 
 for (n in collections.take(divisibleByFour, 3)) {
     io.println(n);

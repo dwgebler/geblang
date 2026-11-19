@@ -33,7 +33,15 @@ func exprTypeFromInfo(t typeInfo) ExprType {
 // Diagnostics from this run are discarded - callers wanting diagnostics run
 // Analyze separately.
 func ResolveExpressionTypes(program *ast.Program) map[ast.Expression]ExprType {
+	return ResolveExpressionTypesWith(program, nil)
+}
+
+// ResolveExpressionTypesWith is ResolveExpressionTypes with names already bound outside program, such as earlier REPL lines.
+func ResolveExpressionTypesWith(program *ast.Program, bound map[string]*ast.TypeRef) map[ast.Expression]ExprType {
 	a := New()
+	for name, ref := range bound {
+		a.declare(name, a.typeInfoFromRef(ref))
+	}
 	a.exprTypes = map[ast.Expression]ExprType{}
 	// A within-program field resolver types `this.f` / `obj.f` accesses
 	// for classes declared in the program. Direct fields only; inherited

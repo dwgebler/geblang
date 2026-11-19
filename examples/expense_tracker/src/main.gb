@@ -17,17 +17,17 @@ let expenses = service.newService(repo);
 let first = expenses.record({
     "category": "Hosting",
     "description": "Production API",
-    "cents": 12900
+    "cents": 12900,
 });
 let second = expenses.record({
     "category": "Tools",
     "description": "Design review",
-    "cents": 4500
+    "cents": 4500,
 });
 let invalid = expenses.record({
     "category": "Travel",
     "description": "Bad receipt",
-    "cents": 0
+    "cents": 0,
 });
 
 let report = reporting.summary(repo.all(), settings);

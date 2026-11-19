@@ -42,15 +42,20 @@ try {
 }
 
 # @immutable class: fields are readable, mutation is blocked.
-@immutable class Point {
+@immutable
+class Point {
     int x;
     int y;
     func Point(int x, int y) {
         this.x = x;
         this.y = y;
     }
-    func withX(int x): Point { return Point(x, this.y); }
-    func withY(int y): Point { return Point(this.x, y); }
+    func withX(int x): Point {
+        return Point(x, this.y);
+    }
+    func withY(int y): Point {
+        return Point(this.x, y);
+    }
 }
 
 Point a = Point(1, 2);

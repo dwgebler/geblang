@@ -8,13 +8,18 @@ import io;
 
 # A simple enum: variants carry no associated data.
 
-enum Direction { North, South, East, West }
+enum Direction {
+    North,
+    South,
+    East,
+    West
+}
 
 # Handling every variant means no `default` case is needed. Drop one of the
 # four cases below and `geblang check` reports:
-#   warning[match-nonexhaustive]: match on enum 'Direction' is not exhaustive
+# warning[match-nonexhaustive]: match on enum 'Direction' is not exhaustive
 # (advisory only - the program still runs and throws MatchError if an
-#  unhandled value ever reaches the match).
+# unhandled value ever reaches the match).
 
 func describe(Direction d): string {
     return match (d) {
@@ -39,9 +44,9 @@ enum Shape {
 
 func area(Shape s): decimal {
     return match (s) {
-        case Shape.Circle(decimal radius)   => 3.14159 * radius * radius;
+        case Shape.Circle(decimal radius) => 3.14159 * radius * radius;
         case Shape.Rect(decimal w, decimal h) => w * h;
-        case Shape.Point                     => 0.0;
+        case Shape.Point => 0.0;
     };
 }
 
@@ -54,9 +59,9 @@ for (Shape s in shapes) {
 
 func label(Shape s): string {
     return match (s) {
-        case Shape.Circle(decimal r)        => "circle r=${r}";
+        case Shape.Circle(decimal r) => "circle r=${r}";
         case Shape.Rect(decimal w, decimal h) => "rect ${w}x${h}";
-        case Shape.Point                     => "a single point";
+        case Shape.Point => "a single point";
     };
 }
 

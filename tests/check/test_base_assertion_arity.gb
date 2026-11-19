@@ -1,0 +1,14 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an inherited test.Test assertion called
+ * with an argument count it does not accept: `assertTrue` takes only the
+ * condition (use `fail(message)` for a failure message).
+ */
+import test;
+
+class CartTest extends test.Test {
+    @test
+    func totalIsPositive(): void {
+        this.assertTrue(1 > 0, "total must be positive");
+    }
+}

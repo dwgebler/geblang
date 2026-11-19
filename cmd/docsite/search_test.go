@@ -60,3 +60,11 @@ func TestNavbarSearchUsesClientBoxUnlessServerSearchConfigured(t *testing.T) {
 		t.Fatalf("server search must keep the form: %s", form)
 	}
 }
+
+func TestSearchScriptRunsAQueryFromTheURL(t *testing.T) {
+	for _, want := range []string{`new URLSearchParams(window.location.search).get("q")`, `input.value = preset;`, `render(search(preset))`} {
+		if !strings.Contains(searchScript, want) {
+			t.Errorf("search script lacks %q", want)
+		}
+	}
+}

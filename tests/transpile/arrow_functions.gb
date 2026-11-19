@@ -1,0 +1,35 @@
+import io;
+
+/* Arrow functions: parameters inferred from list<T> callback methods or
+   written explicitly; expression and block bodies. Pinned output across
+   VM == evaluator == native. */
+
+let xs = [3, 1, 2];
+io.println(xs.map((x) => x * 2));
+io.println(xs.filter((x) => x > 1));
+io.println(xs.sorted((a, b) => b - a));
+io.println(xs.sorted((a, b) => a < b));
+io.println(xs.sorted(func(int a, int b): int { return a - b; }));
+io.println(xs);
+io.println(xs.reduce((acc, x) => acc + x, 10));
+io.println(xs.any((x) => x > 2));
+io.println(xs.find((x) => x < 3));
+
+let words = ["pear", "fig", "apple"];
+io.println(words.map((w) => w.upper()));
+io.println(words.sortBy((w) => w.length()));
+
+let double = (int n) => n * 2;
+io.println(double(21));
+
+let describe = (string name, int age) => {
+    let label = age >= 18 ? "adult" : "minor";
+    return "${name}: ${label}";
+};
+io.println(describe("Ada", 36));
+io.println(describe("Tom", 9));
+
+let nothing = () => "nothing";
+io.println(nothing());
+
+io.println(xs.map((x) => xs.filter((y) => y < x).length()));

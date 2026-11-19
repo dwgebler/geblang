@@ -1,0 +1,20 @@
+module exported_callables_donor;
+
+export let evens = func(list<int> xs): list<int> { return xs.filter((x) => x % 2 == 0); };
+
+export const twice = (int n) => n * 2;
+
+let count = 0;
+
+export let bump = () => {
+    count = count + 1;
+    return count;
+};
+
+class Doubler {
+    func __invoke(int n): int {
+        return n * 2;
+    }
+}
+
+export let doubler = Doubler();

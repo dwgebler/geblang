@@ -98,7 +98,7 @@ let size = image.measureText(caption, {"size": 18, "font": "bold"});
 
 let label = image.blank(qr.width(), qr.height() + 40, "white");
 label.paste(qr, 0, 0)
-     .text(caption, (qr.width() - (size["width"] as int)) / 2, qr.height() + 8, {"size": 18, "font": "bold"});
+    .text(caption, (qr.width() - (size["width"] as int)) / 2, qr.height() + 8, {"size": 18, "font": "bold"});
 label.save("label.png", "png");
 ```
 

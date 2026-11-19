@@ -1,4 +1,4 @@
-# Control Flow
+# Control flow
 
 ## Conditionals
 
@@ -7,7 +7,7 @@ Conditions must be `bool`.
 ```gb
 if (score >= 90) {
     io.println("excellent");
-} elseif (score >= 60) {
+} else if (score >= 60) {
     io.println("pass");
 } else {
     io.println("retry");
@@ -268,9 +268,10 @@ are inferred from the body expression and the binder.
 
 The same iterables the `for-in` loop accepts: `list`, `range`,
 generator-returning calls, classes that implement the iterator protocol,
-1.0.6-era `streams`, and (1.16.0) `dict` (insertion-ordered `[key, value]`
-pairs, destructurable into two binders), `set` (sorted `toList()` order),
-and `string` (per character, matching `.chars()`):
+`streams` pipelines, `dict` (insertion-ordered `[key, value]` pairs,
+destructurable into two binders), `set` (in `toList()` order, which is fixed
+but not numeric: use `toList().sorted()` when order matters), and
+`string` (per character, matching `.chars()`):
 
 ```gb
 [k + "=" + (v as string) for k, v in {"a": 1, "b": 2}]   # ["a=1", "b=2"]
@@ -283,9 +284,56 @@ intermediate list itself.
 
 ### Generator comprehensions
 
-The lazy `(expr for x in xs)` form is not supported in 1.6.0; build a
-list with `[...]` and call `.lazy*` higher-order helpers on it, or use a
-`generator` function for lazy production.
+Parentheses instead of brackets make a lazy generator comprehension. It
+returns a `generator`, and each value is computed only when the consumer
+asks for it, so it suits large or unbounded sources:
+
+```gb
+import collections;
+
+let squares = (n * n for n in collections.range(1, 1000000) if n % 2 == 0);
+io.println(squares.next());   # 4
+io.println(squares.next());   # 16
+squares.close();
+```
+
+It takes the same clauses as the other comprehensions: several `for`
+clauses, `if` filters, typed binders and destructuring. It can be passed
+straight to anything that iterates, including a function taking
+`iterable<T>`, and keeps its own parentheses inside a call:
+
+```gb
+func total(iterable<int> xs): int {
+    int sum = 0;
+    for (x in xs) {
+        sum += x;
+    }
+    return sum;
+}
+
+total((x * x for x in [1, 2, 3]));   # 14
+```
+
+The first `in` source is evaluated where the comprehension is written, and
+must be iterable: `(x for x in null)` raises `TypeError: null is not
+iterable` at that point. Reassigning the variable afterwards does not change
+what the generator walks. Everything else, including later `for` sources,
+filters and the body, runs only as values are read, and sees variables as
+they are at that moment:
+
+```gb
+int scale = 1;
+let scaled = (x * scale for x in [1, 2]);
+scale = 10;
+[v for v in scaled];   # [10, 20]
+```
+
+Like any generator, it can be read only once. Use a list comprehension when
+the input is small or you need the values more than once; it is cheaper per
+item. For longer pipelines, `collections.lazyMap`, `collections.lazyFilter`
+and the `streams` module offer the same laziness as chained calls, and a
+`generator` function with `yield` handles anything that needs statements
+(see [Async and generators](09-async-generators.md)).
 
 ## Match
 
@@ -379,7 +427,7 @@ alternates use `|` directly between the patterns.
 Guards apply to the whole or-pattern: `case A | B if (cond) => ...`
 means "match A or B, then check cond".
 
-Bindings inside an or-pattern are not supported in 1.6.0; use
+Bindings inside an or-pattern are not supported; use
 separate cases when a branch needs to bind a value, or a single
 typed case with an internal `if/else`.
 
@@ -413,10 +461,13 @@ match (value) {
 Enum variants with associated values can be destructured in `case`:
 
 ```gb
-enum Result { Ok(string), Err(string) }
+enum Result {
+    Ok(string),
+    Err(string)
+}
 
 let text = match (result) {
-    case Result.Ok(string value)   => value;
+    case Result.Ok(string value) => value;
     case Result.Err(string message) => "error: " + message;
 };
 ```
@@ -459,10 +510,10 @@ let action = match (cmd) {
 ```gb
 let pair = [3, 7];
 let label = match (pair) {
-    case [int x, int y] if (x > y)   => "first wins";
-    case [int x, int y] if (x == y)  => "tie";
-    case [int x, int y]              => "second wins";
-    default                          => "no match";
+    case [int x, int y] if (x > y)  => "first wins";
+    case [int x, int y] if (x == y) => "tie";
+    case [int x, int y]             => "second wins";
+    default                         => "no match";
 };
 ```
 
@@ -471,14 +522,14 @@ Mixed-type rows and wildcard slots:
 ```gb
 let mixed = ["ada", 37];
 let greet = match (mixed) {
-    case [string name, int age]      => name + " (" + (age as string) + ")";
-    default                          => "unknown";
+    case [string name, int age] => name + " (" + (age as string) + ")";
+    default                     => "unknown";
 };
 
 let xs = [99, 100];
 let first = match (xs) {
-    case [int kept, _]               => kept;     # discard second element
-    default                          => 0;
+    case [int kept, _] => kept;     # discard second element
+    default            => 0;
 };
 ```
 
@@ -503,7 +554,11 @@ case is reported as `warning[match-nonexhaustive]`, listing the missing
 variants:
 
 ```gb
-enum Color { Red, Green, Blue }
+enum Color {
+    Red,
+    Green,
+    Blue
+}
 
 func describe(Color c): string {
     return match (c) {

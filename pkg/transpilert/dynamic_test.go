@@ -107,7 +107,7 @@ func TestAsStringFromBoxedShapes(t *testing.T) {
 	if got := AsString(int64(7)); got != "7" {
 		t.Errorf("AsString int = %q", got)
 	}
-	if got := AsString(big.NewRat(7, 2)); got != "3.5000000000" {
+	if got := AsString(big.NewRat(7, 2)); got != "3.5" {
 		t.Errorf("AsString decimal = %q", got)
 	}
 }

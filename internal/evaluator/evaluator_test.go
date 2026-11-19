@@ -164,7 +164,7 @@ io.println(nan == nan);
 		t.Fatalf("unexpected exit")
 	}
 
-	want := "count: tick\ncount: tick\ncount: tick\n4\n2\n2.5000000000\n-3\n2\nfalse\n"
+	want := "count: tick\ncount: tick\ncount: tick\n4\n2\n2.5\n-3\n2\nfalse\n"
 	if out.String() != want {
 		t.Fatalf("output: got %q, want %q", out.String(), want)
 	}
@@ -1654,7 +1654,7 @@ io.println(("43" as UserId).toInt());
 		t.Fatalf("eval error: %v", err)
 	}
 
-	want := "string\nlist\nstring(\"42\")\nstring\ntrue\n43\n3.5000000000\ntrue\nu-1\n12.50\n43\n"
+	want := "string\nlist\nstring(\"42\")\nstring\ntrue\n43\n3.5\ntrue\nu-1\n12.50\n43\n"
 	if out.String() != want {
 		t.Fatalf("output: got %q, want %q", out.String(), want)
 	}
@@ -1687,7 +1687,7 @@ io.println(f);
 		t.Fatalf("eval error: %v", err)
 	}
 
-	want := "3\n31\n420\n31.0000000000\n3\n"
+	want := "3\n31\n420\n31.0\n3\n"
 	if out.String() != want {
 		t.Fatalf("output: got %q, want %q", out.String(), want)
 	}
@@ -5017,7 +5017,7 @@ io.println(keywords.not());
 		t.Fatalf("eval error: %v", err)
 	}
 
-	want := "Geblang\ngeblang\nGEBLANG\ntrue\ntrue\ntrue\n__Geblang  \n3\n2\nname=Ada age=37 hex=ff price=12.50\n  Geblang  \n7\ntrue\n-7\n-7.00\n-7\n2.5000000000\nfalse\n-3\n-2.500\n-2.5\n-2.5\n3.5\nfalse\n-3.50\nfalse\ntrue\n43\n3.25\n2.5\ntrue\nbool method\nnot method\n"
+	want := "Geblang\ngeblang\nGEBLANG\ntrue\ntrue\ntrue\n__Geblang  \n3\n2\nname=Ada age=37 hex=ff price=12.50\n  Geblang  \n7\ntrue\n-7\n-7.00\n-7\n2.5\nfalse\n-3\n-2.500\n-2.5\n-2.5\n3.5\nfalse\n-3.50\nfalse\ntrue\n43\n3.25\n2.5\ntrue\nbool method\nnot method\n"
 	if out.String() != want {
 		t.Fatalf("output: got %q, want %q", out.String(), want)
 	}

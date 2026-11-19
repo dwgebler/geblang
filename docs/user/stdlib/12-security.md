@@ -143,7 +143,7 @@ let hash = crypt.argon2idHash("hunter2", {
     "time":        4,        # iterations (1-32)
     "parallelism": 2,        # threads (1-255)
     "keyLength":   32,       # output bytes (16-1024)
-    "saltLength":  32        # salt bytes (8-1024)
+    "saltLength":  32,        # salt bytes (8-1024)
 });
 ```
 
@@ -194,11 +194,14 @@ The key shape depends on the algorithm:
 #### Symmetric example (HS256)
 
 ```gb
-let token = crypt.jwtSign({
-    "sub":  "user-42",
-    "role": "admin",
-    "exp":  datetime.nowUnix() + 3600
-}, "my-signing-secret");
+let token = crypt.jwtSign(
+    {
+        "sub":  "user-42",
+        "role": "admin",
+        "exp":  datetime.nowUnix() + 3600,
+    },
+    "my-signing-secret"
+);
 
 let payload = crypt.jwtVerify(token, "my-signing-secret");
 if (payload != null) {
@@ -291,7 +294,7 @@ formats), opt in explicitly:
 ```gb
 let unsigned = crypt.jwtSign(claims, "", {
     "alg":         "none",
-    "allowedAlgs": ["none"]
+    "allowedAlgs": ["none"],
 });
 
 let payload = crypt.jwtVerify(unsigned, "", {"allowedAlgs": ["none"]});
@@ -348,8 +351,8 @@ The earlier per-algorithm API remains as a shim. Prefer the unified surface:
 PKCS#8 PEM string. The default bit size is 2048; valid range is 1024-8192:
 
 ```gb
-let privPem = crypt.generateRsaKey();      # 2048-bit
-let privPem = crypt.generateRsaKey(4096);  # 4096-bit
+let rsaPem  = crypt.generateRsaKey();      # 2048-bit
+let rsa4096 = crypt.generateRsaKey(4096);  # 4096-bit
 ```
 
 #### EC keys
@@ -358,8 +361,8 @@ let privPem = crypt.generateRsaKey(4096);  # 4096-bit
 is `"P-256"`; valid values are `"P-256"`, `"P-384"`, and `"P-521"`:
 
 ```gb
-let privPem = crypt.generateEcKey();         # P-256
-let privPem = crypt.generateEcKey("P-384");  # stronger curve
+let ecPem = crypt.generateEcKey();         # P-256
+let ec384 = crypt.generateEcKey("P-384");  # stronger curve
 ```
 
 #### Ed25519 keys
@@ -392,12 +395,12 @@ let result = crypt.generateSelfSignedCert({
     "subject": {
         "commonName":   "localhost",
         "organization": "Acme Inc",
-        "country":      "GB"
+        "country":      "GB",
     },
     "dnsNames":    ["localhost", "api.example.com"],
     "ipAddresses": ["127.0.0.1"],
     "validDays":   365,
-    "keyType":     "EC-P256"   # RSA2048, RSA4096, EC-P256, EC-P384, EC-P521, Ed25519
+    "keyType":     "EC-P256",   # RSA2048, RSA4096, EC-P256, EC-P384, EC-P521, Ed25519
 });
 
 io.println(result["cert"]);   # -----BEGIN CERTIFICATE-----...
@@ -411,7 +414,7 @@ one:
 let key  = crypt.generateEcKey("P-256");
 let cert = crypt.generateSelfSignedCert({
     "subject": {"commonName": "localhost"},
-    "key":     key
+    "key":     key,
 });
 ```
 
@@ -429,9 +432,9 @@ let csr = crypt.generateCsr({
         "organization": "Acme Inc",
         "country":      "GB",
         "state":        "London",
-        "locality":     "London"
+        "locality":     "London",
     },
-    "dnsNames": ["api.example.com", "www.example.com"]
+    "dnsNames": ["api.example.com", "www.example.com"],
 });
 io.println(csr);   # -----BEGIN CERTIFICATE REQUEST-----...
 ```
@@ -447,20 +450,20 @@ issuer is the CA's subject.
 let caKey    = crypt.generateEcKey("P-256");
 let caBundle = crypt.generateSelfSignedCert({
     "subject": {"commonName": "Acme Root CA"},
-    "key":     caKey
+    "key":     caKey,
 });
 
 let leafKey = crypt.generateEcKey("P-256");
 let csr = crypt.generateCsr({
     "key":      leafKey,
     "subject":  {"commonName": "api.example.com"},
-    "dnsNames": ["api.example.com"]
+    "dnsNames": ["api.example.com"],
 });
 let leafPem = crypt.signCertificate({
     "csr":       csr,
     "caCert":    caBundle["cert"],
     "caKey":     caKey,
-    "validDays": 90
+    "validDays": 90,
 });
 ```
 
@@ -541,8 +544,8 @@ intermediate CA certificates. The password defaults to an empty string;
 common server PFX bundles use a non-empty password.
 
 ```gb
-let pfx     = io.readBytes("server.pfx");
-let bundle  = crypt.pkcs12Decode(pfx, "changeit");
+let pfx    = io.readBytes("server.pfx");
+let bundle = crypt.pkcs12Decode(pfx, "changeit");
 
 io.println(bundle["key"]);              # PKCS#8 PEM
 io.println(bundle["cert"]);             # CERTIFICATE PEM (or null)
@@ -569,12 +572,12 @@ import crypt;
 import bytes;
 import io;
 
-let cek    = bytes.fromHex(crypt.randomHex(32));   # 32-byte Content Encryption Key
-let token  = crypt.jweEncrypt("payload data", cek, {
+let cek   = bytes.fromHex(crypt.randomHex(32));   # 32-byte Content Encryption Key
+let token = crypt.jweEncrypt("payload data", cek, {
     "alg": "dir",
-    "enc": "A256GCM"
+    "enc": "A256GCM",
 });
-let plain  = crypt.jweDecrypt(token, cek);
+let plain = crypt.jweDecrypt(token, cek);
 io.println(bytes.toString(plain));   # payload data
 ```
 
@@ -589,7 +592,7 @@ let pub  = crypt.publicKey(priv);
 
 let token = crypt.jweEncrypt("payload", pub, {
     "alg": "RSA-OAEP-256",
-    "enc": "A256GCM"
+    "enc": "A256GCM",
 });
 let plain = crypt.jweDecrypt(token, priv);
 ```
@@ -736,8 +739,8 @@ let salt = secrets.randomBytes(16);   # 16 random bytes
 string of length `2n`:
 
 ```gb
-let token    = secrets.randomHex(32);   # 64-char hex token
-let csrfKey  = secrets.randomHex(16);   # 32-char key
+let token   = secrets.randomHex(32);   # 64-char hex token
+let csrfKey = secrets.randomHex(16);   # 32-char key
 ```
 
 `secrets.randomBase64(n)` returns `n` random bytes encoded as URL-safe Base64
@@ -857,16 +860,23 @@ import secrets;
 const JWT_SECRET = secrets.requireEnv("JWT_SECRET");
 
 func issueToken(string userId): string {
-    return crypt.jwtSign({
-        "sub": userId,
-        "exp": datetime.nowUnix() + 3600
-    }, JWT_SECRET);
+    return crypt.jwtSign(
+        {
+            "sub": userId,
+            "exp": datetime.nowUnix() + 3600,
+        },
+        JWT_SECRET
+    );
 }
 
 func verifyToken(string token): ?string {
     let payload = crypt.jwtVerify(token, JWT_SECRET);
-    if (payload == null) { return null; }
-    if (payload["exp"] < datetime.nowUnix()) { return null; }
+    if (payload == null) {
+        return null;
+    }
+    if (payload["exp"] < datetime.nowUnix()) {
+        return null;
+    }
     return payload["sub"] as string;
 }
 ```
@@ -881,7 +891,7 @@ let result = crypt.generateSelfSignedCert({
     "subject":     {"commonName": "localhost"},
     "dnsNames":    ["localhost"],
     "ipAddresses": ["127.0.0.1"],
-    "validDays":   365
+    "validDays":   365,
 });
 
 io.writeText("server.crt", result["cert"]);
@@ -1065,9 +1075,7 @@ let priorCommitment = io.readText("round-1234.commitment");
 if (published["commitment"] != priorCommitment) {
     throw RuntimeError("audit log changed the original commitment");
 }
-if (!secureRandom.verifyCommitment(
-        priorCommitment,
-        published["serverSeed"] as string)) {
+if (!secureRandom.verifyCommitment(priorCommitment, published["serverSeed"] as string)) {
     throw RuntimeError("server seed does not match published commitment");
 }
 

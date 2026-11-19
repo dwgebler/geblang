@@ -41,7 +41,7 @@ io.println(n.toDecimal().format(2));
 io.println("42".toInt() + 1);
 io.println("2.5".toFloat());
 io.println("true".toBool());
-`, "2.0000000000\n3.0000000000\n2\n1.500\n1.5\n5.00\n43\n2.5\ntrue\n")
+`, "2.0\n3.0\n2\n1.500\n1.5\n5.00\n43\n2.5\ntrue\n")
 }
 
 func TestParityNumericMethods(t *testing.T) {
@@ -69,7 +69,7 @@ io.println((19.99).clamp(0, 5));
 io.println((4).isEven());
 io.println((7).isOdd());
 io.println((-4).isEven());
-`, "2.5700000000\n3.0000000000\n-3.0000000000\n2.0000000000\n3.0000000000\n2.9000000000\n3.14\n2\n7.0000000000\n3.1420000000\n12.3500000000\n-1\n0\n1\n10\n0\n5\n5.0000000000\ntrue\ntrue\ntrue\n")
+`, "2.57\n3.0\n-3.0\n2.0\n3.0\n2.9\n3.14\n2\n7.0\n3.142\n12.35\n-1\n0\n1\n10\n0\n5\n5.0\ntrue\ntrue\ntrue\n")
 }
 
 func TestParityFloatArithmetic(t *testing.T) {
@@ -246,7 +246,7 @@ func TestParitySmallIntArithmetic(t *testing.T) {
 	runParity(t, `import io; io.println(2 + 3);`, "5\n")
 	runParity(t, `import io; io.println(10 - 4);`, "6\n")
 	runParity(t, `import io; io.println(3 * 7);`, "21\n")
-	runParity(t, `import io; io.println(15 / 4);`, "3.7500000000\n")
+	runParity(t, `import io; io.println(15 / 4);`, "3.75\n")
 	runParity(t, `import io; io.println(15 // 4);`, "3\n")
 	runParity(t, `import io; io.println(17 % 5);`, "2\n")
 
@@ -365,7 +365,7 @@ io.println(7.5 // 2.0);
 io.println((-7.5) // 2.0);
 io.println(10.0 % 3.0);
 io.println((-10.0) % 3.0);
-`, "2\n-4\n3.0000000000\n-4.0000000000\n1.0000000000\n2.0000000000\n")
+`, "2\n-4\n3.0\n-4.0\n1.0\n2.0\n")
 }
 
 func TestParityConstantFolding(t *testing.T) {
@@ -387,7 +387,7 @@ io.println("foo" + "bar");
 io.println("a" == "b");
 io.println(true == true);
 io.println(true != false);
-`, "8\n20\n16\n2\n-3\n-2\ntrue\nfalse\ntrue\n4.0000000000\n7.0000000000\ntrue\nfoobar\nfalse\ntrue\ntrue\n")
+`, "8\n20\n16\n2\n-3\n-2\ntrue\nfalse\ntrue\n4.0\n7.0\ntrue\nfoobar\nfalse\ntrue\ntrue\n")
 }
 
 // Cross-type numeric mixing: int<->float promote in arithmetic; comparisons and
@@ -406,7 +406,7 @@ io.println(3 < 2.5f);
 io.println(2.5 < 3.0f);
 io.println([1, 2, 3].contains(2.0f));
 io.println(3 != 3.0f);
-`, "5.5\n5.5\n2.5\n5.5000000000\ntrue\nfalse\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\n")
+`, "5.5\n5.5\n2.5\n5.5\ntrue\nfalse\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\n")
 }
 
 // Followup adversarial: a function body that forward-references a top-level const (or let) declared later in the file resolves on both backends (the VM compiler now pre-allocates the global slot in the hoist pass).

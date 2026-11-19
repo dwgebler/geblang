@@ -18,9 +18,10 @@ router.get(app, "/ws", func(Request req): dict<string, any> {
     });
 });
 
-let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
-    return router.handle(app, request);
-});
+let server = http.listen(
+    "127.0.0.1:0",
+    func(dict<string, any> request): dict<string, any> { return router.handle(app, request); }
+);
 
 let addr = http.serverAddr(server);
 let conn = ws.connect("ws://" + addr + "/ws");

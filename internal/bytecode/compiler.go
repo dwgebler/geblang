@@ -51,6 +51,7 @@ type Compiler struct {
 	finalizers       []finalizerContext
 	expectedTypes    []string
 	returnTypes      []string
+	yieldTypes       []string
 	reflectFuncs     map[string]runtime.DecoratorTarget
 	reflectClasses   map[string]runtime.DecoratorTarget
 	reflectMethods   map[string]map[string]runtime.DecoratorTarget
@@ -153,6 +154,9 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 		return Chunk{}, err
 	}
 	if err := desugar.Memoize(program); err != nil {
+		return Chunk{}, err
+	}
+	if err := desugar.Arrows(program); err != nil {
 		return Chunk{}, err
 	}
 	c := &Compiler{
@@ -746,56 +750,6 @@ func typeRefConstraintString(ref *ast.TypeRef) string {
 	return ref.Name
 }
 
-func blockContainsYield(block *ast.BlockStatement) bool {
-	if block == nil {
-		return false
-	}
-	for _, stmt := range block.Statements {
-		if statementContainsYield(stmt) {
-			return true
-		}
-	}
-	return false
-}
-
-func statementContainsYield(stmt ast.Statement) bool {
-	switch stmt := stmt.(type) {
-	case *ast.YieldStatement:
-		return true
-	case *ast.IfStatement:
-		if blockContainsYield(stmt.Consequence) || blockContainsYield(stmt.Alternative) {
-			return true
-		}
-		for _, elseif := range stmt.ElseIfs {
-			if blockContainsYield(elseif.Body) {
-				return true
-			}
-		}
-	case *ast.WhileStatement:
-		return blockContainsYield(stmt.Body)
-	case *ast.ForStatement:
-		return blockContainsYield(stmt.Body)
-	case *ast.TryStatement:
-		if blockContainsYield(stmt.Body) || blockContainsYield(stmt.Finally) {
-			return true
-		}
-		for _, catch := range stmt.Catches {
-			if blockContainsYield(catch.Body) {
-				return true
-			}
-		}
-	case *ast.MatchStatement:
-		for _, matchCase := range stmt.Cases {
-			if blockContainsYield(matchCase.Body) {
-				return true
-			}
-		}
-	case *ast.WithStatement:
-		return blockContainsYield(stmt.Body)
-	}
-	return false
-}
-
 func (c *Compiler) bytecodeTypeName(typ *ast.TypeRef) string {
 	if typ == nil || strings.EqualFold(typ.Name, "any") {
 		return "any"
@@ -814,9 +768,6 @@ func (c *Compiler) bytecodeTypeName(typ *ast.TypeRef) string {
 	name := typ.Name
 	if isCallableTypeName(name) {
 		name = "func"
-	}
-	if isGeneratorTypeName(name) {
-		name = "generator"
 	}
 	if typ.ListAlias || strings.EqualFold(name, "list") {
 		name = "list"
@@ -876,6 +827,17 @@ func isCallableTypeName(name string) bool {
 	return strings.EqualFold(name, "func") || strings.EqualFold(name, "callable") || strings.EqualFold(name, "function")
 }
 
+// staticIterableSource reports whether a value of the named type can satisfy iterable<T>; classes defer to the runtime __iter check.
+func staticIterableSource(name string) bool {
+	switch strings.ToLower(strings.TrimPrefix(name, "?")) {
+	case "generator", "iterable", "list", "set", "dict", "range", "string":
+		return true
+	case "int", "float", "decimal", "bool", "bytes", "null", "func", "callable", "function", "void":
+		return false
+	}
+	return true
+}
+
 func isGeneratorTypeName(name string) bool {
 	return strings.EqualFold(name, "generator") || strings.EqualFold(name, "iterable")
 }
@@ -911,6 +873,20 @@ func (info FunctionInfo) reflectedReturnType() string {
 // Source form with aliases resolved, matching the evaluator's messages.
 func (c *Compiler) bytecodeReturnCheckType(typ *ast.TypeRef) string {
 	return c.resolveTypeRef(typ).String()
+}
+
+func (c *Compiler) yieldTypeFor(typ *ast.TypeRef) string {
+	if elem := ast.GeneratorElementType(typ); elem != nil {
+		return c.bytecodeTypeName(elem)
+	}
+	return ""
+}
+
+func (c *Compiler) currentYieldType() string {
+	if len(c.yieldTypes) == 0 {
+		return ""
+	}
+	return c.yieldTypes[len(c.yieldTypes)-1]
 }
 
 func (c *Compiler) currentReturnType() string {
@@ -1131,27 +1107,11 @@ func isEvaluatorOnlyBuiltinImport(path []string) bool {
 }
 
 func isStatefulBytecodeBuiltinModule(name string) bool {
-	switch name {
-	case "io", "sys", "secrets", "process", "procnative", "sshnative",
-		"http", "websocket", "smtp", "web", "db", "ext", "ffinative", "net", "test", "log", "watch",
-		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli",
-		"amqp", "kafka", "dataframe", "onnx", "browser", "archive_native":
-		return true
-	default:
-		return false
-	}
+	return native.IsStatefulBytecodeBuiltinModule(name)
 }
 
 func isStatefulBytecodeBuiltin(module, name string) bool {
-	if isStatefulBytecodeBuiltinModule(module) {
-		return true
-	}
-	switch module {
-	case "json", "xml", "yaml":
-		return name == "reader" || name == "stream"
-	default:
-		return false
-	}
+	return native.IsStatefulBytecodeBuiltin(module, name)
 }
 
 func isEvaluatorOnlyBuiltinModule(name string) bool {

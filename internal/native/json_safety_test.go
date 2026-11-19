@@ -69,7 +69,7 @@ func TestJSONEscapedStringsAndDecimalCompatibility(t *testing.T) {
 	}
 	decimal, _ := new(big.Rat).SetString("0.1234567890123456789")
 	got, encodeErr = EncodeJSONValue(runtime.Decimal{Value: decimal})
-	if encodeErr != nil || got != "0.1234567890" {
+	if encodeErr != nil || got != "0.123456789" {
 		t.Fatalf("decimal compatibility: %q, %v", got, encodeErr)
 	}
 }

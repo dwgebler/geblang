@@ -566,6 +566,7 @@ const (
 	vmTypeDict
 	vmTypeCallable
 	vmTypeGenerator
+	vmTypeIterable
 	// vmTypeUnion holds a `T | U | ...` shape: spec.args carries the
 	// branches; a value matches when any branch matches.
 	vmTypeUnion
@@ -1540,6 +1541,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 		case OpIterInit:
 			if err := vm.iterInit(*instruction); err != nil {
+				return err
+			}
+		case OpCheckIterable:
+			if err := vm.checkIterable(*instruction); err != nil {
 				return err
 			}
 		case OpForRangeIter:
@@ -2539,16 +2544,19 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			ip = returnIP
 		case OpYield:
-			value, err := vm.pop()
+			valueVM, err := vm.popVM()
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			if len(vm.frames) == 0 || vm.frames[len(vm.frames)-1].generator == nil {
 				return vm.runtimeError(*instruction, "yield can only be used inside a generator function")
 			}
-			frame := vm.frames[len(vm.frames)-1]
+			frame := &vm.frames[len(vm.frames)-1]
+			if meta := frame.meta; meta != nil && meta.yieldSpec != nil && !(meta.yieldSpec.kind == vmTypeInt && valueVM.Kind == runtime.VMKindSmallInt) && !vm.matchVMValueToTypeSpecWith(meta.typeParams, frame.returnCheckBindings(), valueVM, *meta.yieldSpec) {
+				return vm.typedFault(*instruction, "TypeError", fmt.Sprintf("%s expects %s yield, got %s", frame.functionName, vm.expandTypeAliases(meta.yieldSpec.raw), vm.descriptiveRuntimeTypeName(valueVM.ToValue())))
+			}
 			select {
-			case frame.generator <- vmGeneratorItem{value: value}:
+			case frame.generator <- vmGeneratorItem{value: valueVM.ToValue()}:
 			case <-frame.generatorDone:
 				return nil
 			}
@@ -4842,6 +4850,17 @@ func sliceBounds(startValue runtime.Value, endValue runtime.Value, exclusive boo
 	return start, end, nil
 }
 
+func (vm *VM) checkIterable(instruction Instruction) error {
+	if len(vm.stack) == 0 {
+		return vm.fatalError(instruction, "stack underflow")
+	}
+	value := vm.stack[len(vm.stack)-1].ToValue()
+	if vm.forInAccepts(value) {
+		return nil
+	}
+	return vm.typedFault(instruction, "TypeError", fmt.Sprintf("%s is not iterable", vm.descriptiveRuntimeTypeName(value)))
+}
+
 func (vm *VM) iterInit(instruction Instruction) error {
 	value, err := vm.pop()
 	if err != nil {
@@ -4980,6 +4999,11 @@ func (vm *VM) raiseIteratorFault(instruction Instruction, err error) error {
 	var thrown vmThrownError
 	if errors.As(err, &thrown) {
 		return vm.uncaughtThrowError(instruction, thrown.err)
+	}
+	// A fault from the generator's worker VM renders as a whole uncaught report through Error(); keep its own message and frames.
+	var rt *vmRuntimeError
+	if errors.As(err, &rt) {
+		return vm.uncaughtThrowError(instruction, rt.toRuntimeError())
 	}
 	return vm.callPropagate(instruction, err)
 }
@@ -5911,7 +5935,7 @@ func (vm *VM) runDeferredAction(instruction Instruction, action deferredAction) 
 			}
 			if spread.hasNamed {
 				// The evaluator rejects named args mixed with spread on natives.
-				return vm.deferNativeError(instruction, action.line, fmt.Errorf("named arguments are only supported for Geblang functions and methods"))
+				return vm.deferNativeError(instruction, action.line, errors.New(runtime.NamedArgsUnsupported))
 			}
 			args = spread.args
 		}

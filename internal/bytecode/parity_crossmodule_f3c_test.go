@@ -94,7 +94,7 @@ class Model {
 }
 io.println(insp.dump(Model()));
 `,
-		"other=Assert.choice:[[\"a\", \"b\", \"c\"]] value=Assert.greaterThan:[18.0000000000] \n")
+		"other=Assert.choice:[[\"a\", \"b\", \"c\"]] value=Assert.greaterThan:[18.0] \n")
 }
 
 // reflect.fields on a cross-module instance must report declared field types (they came back as "any" on the VM).

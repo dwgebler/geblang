@@ -355,20 +355,38 @@ func (g *fuzzGen) generatorBlock() (decls string, calls []string) {
 	} else {
 		// Loop-driven yields: resumption interleaves with loop state.
 		d.WriteString("  for (i in 0..<" + strconv.Itoa(yields+1) + ") {\n")
+		if g.rng.Intn(2) == 0 {
+			d.WriteString("    if (i == " + strconv.Itoa(g.rng.Intn(yields+1)) + ") { return; }\n")
+		}
 		d.WriteString("    yield (i * " + strconv.Itoa(1+g.rng.Intn(9)) + ");\n")
 		d.WriteString("  }\n")
 	}
-	switch g.rng.Intn(3) {
+	switch g.rng.Intn(4) {
 	case 0:
 		// clean finish
 	case 1:
 		d.WriteString("  throw ValueError(" + g.stringLit() + ");\n")
+	case 2:
+		// A runtime fault, not a throw, once reached the consumer as the whole rendered report on the VM.
+		d.WriteString("  int zero = 0;\n  yield 1 // zero;\n")
 	default:
 		d.WriteString("  throw GenErr(" + g.stringLit() + ");\n")
 	}
 	d.WriteString("}\n")
+	// A generator consuming another once ran the inner one inline on the VM.
+	d.WriteString("func relay(): generator<int> { for (n in gen()) { yield n + " + strconv.Itoa(1+g.rng.Intn(9)) + "; } }\n")
+	// Comprehensions over a user iterable once failed on the evaluator.
+	d.WriteString("class Bag { func Bag() {} func __iter(): any { return [" + g.intLit() + ", " + g.intLit() + "]; } }\n")
+	calls = append(calls, `io.println([b * 2 for b in Bag()]);`)
+	source := "gen()"
+	switch g.rng.Intn(3) {
+	case 0:
+		source = "relay()"
+	case 1:
+		source = "(n * " + strconv.Itoa(1+g.rng.Intn(5)) + " for n in gen() if n % " + strconv.Itoa(1+g.rng.Intn(3)) + " == 0)"
+	}
 	calls = append(calls,
-		`try { for (n in gen()) { io.println(n); } io.println("done"); } catch (ValueError e) { io.println(e.class); io.println(e.message); }`,
+		`try { for (n in `+source+`) { io.println(n); } io.println("done"); } catch (Error e) { io.println(e.class); io.println(e.message); }`,
 	)
 	return d.String(), calls
 }
@@ -435,6 +453,55 @@ func (g *fuzzGen) collectionsBlock() (decls string, calls []string) {
 	return "", calls
 }
 
+// arrowBlock exercises arrow functions: parameters inferred from list callbacks (one element, comparator pair, accumulator, nested) and written explicitly, expression and block bodies, captures and async arrows.
+func (g *fuzzGen) arrowBlock() (decls string, calls []string) {
+	a, b, c, k := g.intLit(), g.intLit(), g.intLit(), g.intLit()
+	forms := []string{
+		"io.println(\"${axs.map((x) => x * " + k + ")}\");",
+		"io.println(\"${axs.filter((x) => x > " + k + ")}\");",
+		"io.println(\"${axs.sorted((p, q) => q - p)}\");",
+		"io.println(axs.reduce((acc, x) => acc + x, " + k + "));",
+		"io.println(\"${axs.scan(" + k + ", (acc, x) => acc - x)}\");",
+		"io.println(\"${axs.map((x) => axs.filter((y) => y < x).length())}\");",
+		"io.println(\"${axs.sortBy((x) => x % 3)}\");",
+		"io.println(aDouble(" + k + "));",
+		"io.println(aBlock(" + k + ", " + a + "));",
+		"io.println(aCurry(" + a + ")(" + b + "));",
+		"io.println(await aLater(" + k + "));",
+		"io.println(\"${axs.map((x) => x + aBase)}\");",
+	}
+	g.rng.Shuffle(len(forms), func(i, j int) { forms[i], forms[j] = forms[j], forms[i] })
+	calls = append([]string{
+		"let axs = [" + a + ", " + b + ", " + c + "];",
+		"let aBase = " + k + ";",
+		"let aDouble = (int n) => n * 2;",
+		"let aBlock = (int p, int q) => {\n    let s = p + q;\n    return s > 0 ? s : -s;\n};",
+		"let aCurry = (int p) => (int q) => p - q;",
+		"let aLater = async (int n) => n + 1;",
+	}, forms[:3+g.rng.Intn(len(forms)-2)]...)
+	return "", calls
+}
+
+// predicateBlock calls each list predicate method with a bool or a non-bool callback; a non-bool result must be the same TypeError on both backends.
+func (g *fuzzGen) predicateBlock() (decls string, calls []string) {
+	a, b, c, k := g.intLit(), g.intLit(), g.intLit(), g.intLit()
+	methods := []string{"filter", "find", "findLast", "any", "all", "count", "partition", "takeWhile", "dropWhile", "indexBy", "search"}
+	g.rng.Shuffle(len(methods), func(i, j int) { methods[i], methods[j] = methods[j], methods[i] })
+	calls = []string{
+		"let pxs = [" + a + ", " + b + ", " + c + "];",
+		"let pStrict = (int n) => n > " + k + ";",
+		"let pLoose = func(int n): any { return n > " + k + " ? n : null; };",
+	}
+	for _, m := range methods[:3+g.rng.Intn(len(methods)-2)] {
+		pred := "pStrict"
+		if g.rng.Intn(2) == 0 {
+			pred = "pLoose"
+		}
+		calls = append(calls, "try {\n    io.println(\"${pxs."+m+"("+pred+")}\");\n} catch (TypeError e) {\n    io.println(e.message);\n}")
+	}
+	return "", calls
+}
+
 // matchBlock exercises match expressions: literal value cases with a default,
 // and list-destructuring patterns with guards (a proven divergence source -
 // guard ordering and binding must agree across backends).
@@ -498,6 +565,10 @@ func (g *fuzzGen) closureCaptureBlock() (decls string, calls []string) {
 		"let capPartial = func(): callable { return capAdd(capBase, _); };",
 		"io.println(((capPartial as callable)() as callable)("+add+"));",
 		"io.println(capFused("+g.intLit()+", "+strconv.Itoa(1+g.rng.Intn(9))+"));",
+		"let capItems = [() => capBase + i for i in [0, 1, 2]];",
+		"io.println(\"${capItems.map((callable f) => f())}\");",
+		"let capPairs = [() => p * 10 + q for p in [1, 2] for q in [3, "+strconv.Itoa(g.rng.Intn(9))+"]];",
+		"io.println(\"${capPairs.map((callable f) => f())}\");",
 	)
 	return d.String(), calls
 }
@@ -705,7 +776,7 @@ func (g *fuzzGen) program() string {
 	// declarations cannot collide; the rest of the budget is scalar
 	// expressions and fault statements.
 	var sectionCalls []string
-	switch g.rng.Intn(14) {
+	switch g.rng.Intn(16) {
 	case 0:
 		decls, calls := g.classBlock()
 		b.WriteString(decls)
@@ -760,6 +831,14 @@ func (g *fuzzGen) program() string {
 		sectionCalls = calls
 	case 13:
 		decls, calls := g.globalWritesBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 14:
+		decls, calls := g.arrowBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 15:
+		decls, calls := g.predicateBlock()
 		b.WriteString(decls)
 		sectionCalls = calls
 	}

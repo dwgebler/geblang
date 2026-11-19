@@ -417,7 +417,7 @@ func TestFoldIdempotent(t *testing.T) {
 	}
 }
 
-func TestFoldUserEmbedFunctionIsHijacked(t *testing.T) {
+func TestFoldUserEmbedFunctionIsRejected(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a.txt", "A")
 
@@ -425,8 +425,8 @@ func TestFoldUserEmbedFunctionIsHijacked(t *testing.T) {
 let x = embed("a.txt");
 `
 	program, recs, diags := foldSource(t, dir, source, embedfold.Inline)
-	if len(diags) != 0 {
-		t.Fatalf("unexpected diagnostics: %+v", diags)
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "embed is reserved for the compile-time embed builtin") || diags[0].Line != 1 {
+		t.Fatalf("diagnostics = %+v, want one reserved-name error on line 1", diags)
 	}
 	lit := embeddedLiteral(t, declValue(t, program, 1))
 	if string(lit.Content) != "A" {

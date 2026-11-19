@@ -76,9 +76,9 @@ value (nulls included), and the function returns a `bool`:
 
 ```gb
 let cutoff = 40;
-let adults = users.filterFn(func(any row): bool {
-    return row["age"] != null && (row["age"] as int) > cutoff;
-});
+let adults = users.filterFn(
+    func(any row): bool { return row["age"] != null && (row["age"] as int) > cutoff; }
+);
 ```
 
 `filterFn` is the escape hatch, not the default: the columnwise

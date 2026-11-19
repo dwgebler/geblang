@@ -1,4 +1,4 @@
-# Utility Modules
+# Utility modules
 
 These modules are written in Geblang and distributed under `stdlib/`. Import
 them like any other module - the runtime resolves them by name.
@@ -106,10 +106,14 @@ Apply `@immutable` to a class to freeze every instance after its constructor
 returns. Field reads still work; any field assignment raises `ImmutableError`:
 
 ```gb
-@immutable class Point {
+@immutable
+class Point {
     int x;
     int y;
-    func Point(int x, int y) { this.x = x; this.y = y; }
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
 }
 
 Point p = Point(3, 4);
@@ -120,12 +124,20 @@ p.x = 99;          # throws ImmutableError: cannot modify frozen instance of Poi
 Use the *wither* pattern to produce modified copies from immutable classes:
 
 ```gb
-@immutable class Point {
+@immutable
+class Point {
     int x;
     int y;
-    func Point(int x, int y) { this.x = x; this.y = y; }
-    func withX(int x): Point { return Point(x, this.y); }
-    func withY(int y): Point { return Point(this.x, y); }
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+    func withX(int x): Point {
+        return Point(x, this.y);
+    }
+    func withY(int y): Point {
+        return Point(this.x, y);
+    }
 }
 
 Point a = Point(1, 2);
@@ -157,7 +169,13 @@ b[0].append(9);
 io.println(a);   # [[1], [2]]   (unchanged)
 io.println(b);   # [[1, 9], [2]]
 
-class Box { int v; func Box() { this.v = 1; } }
+class Box {
+    int v;
+    func Box() {
+        this.v = 1;
+    }
+}
+
 let original = Box();
 let copy = clone.deep(original);
 copy.v = 99;
@@ -189,10 +207,18 @@ import io;
 
 class CaseInsensitiveHeaders implements maps.DictInterface {
     dict<string, string> store;
-    func CaseInsensitiveHeaders() { this.store = {}; }
-    func __index(any key): any { return this.store.get((key as string).lower()); }
-    func __setIndex(any key, any value): void { this.store.set((key as string).lower(), value as string); }
-    func keys(): list<any> { return this.store.keys(); }
+    func CaseInsensitiveHeaders() {
+        this.store = {};
+    }
+    func __index(any key): any {
+        return this.store.get((key as string).lower());
+    }
+    func __setIndex(any key, any value): void {
+        this.store.set((key as string).lower(), value as string);
+    }
+    func keys(): list<any> {
+        return this.store.keys();
+    }
 }
 
 let h = CaseInsensitiveHeaders();
@@ -244,7 +270,7 @@ func divide(int a, int b): Result<int, string> {
     if (b == 0) {
         return result.err("division by zero");
     }
-    return result.ok(a / b);
+    return result.ok(a // b);
 }
 
 let r = divide(10, 2);
@@ -352,8 +378,8 @@ let userSchema = sv.of({
     "properties": {
         "name":  {"type": "string", "minLength": 1},
         "email": {"type": "string"},
-        "age":   {"type": "number", "minimum": 0}
-    }
+        "age":   {"type": "number", "minimum": 0},
+    },
 });
 
 let valid = {"name": "Ada", "email": "ada@example.com", "age": 37};
@@ -462,9 +488,14 @@ let add10 = functools.partial(add, 10);
 io.println(add10(3));                  # 13
 
 int calls = 0;
-let expensive = func(int n): int { calls = calls + 1; return n * n; };
+let expensive = func(int n): int {
+    calls = calls + 1;
+    return n * n;
+};
 let fast = functools.memoize(expensive);
-fast(5); fast(5); fast(5);
+fast(5);
+fast(5);
+fast(5);
 io.println(calls);                     # 1 - only first call executed
 ```
 

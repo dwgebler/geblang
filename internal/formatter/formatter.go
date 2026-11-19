@@ -11,6 +11,7 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/lexer"
 	"geblang/internal/parser"
+	"geblang/internal/token"
 )
 
 // Format parses src, formats it canonically, and returns the result.
@@ -33,11 +34,12 @@ func FormatWithOptions(src []byte, opts Options) (result []byte, err error) {
 		}
 	}()
 	p := parser.New(lexer.New(string(src)))
+	p.TrackGrouping()
 	program := p.ParseProgram()
 	if errs := p.Errors(); len(errs) > 0 {
 		return nil, fmt.Errorf("parse error: %s", errs[0])
 	}
-	f := &fmtr{clean: opts.Clean}
+	f := &fmtr{clean: opts.Clean, grouped: p.Grouped(), pads: map[[2]int]int{}}
 	if !opts.StripComments {
 		f.comments = p.Comments()
 	}
@@ -69,22 +71,161 @@ type fmtr struct {
 	comments        []lexer.Comment
 	ci              int
 	clean           bool
+	lastLine        int
+	grouped         map[ast.Expression]token.Token
+	pads            map[[2]int]int
 }
 
 // flushTrailing appends a comment that sits on the same source line as the statement just written, keeping it on that line instead of moving it.
 func (f *fmtr) flushTrailing(line int) {
+	f.lastLine = max(f.lastLine, line)
 	for f.ci < len(f.comments) && f.comments[f.ci].Line == line {
 		b := f.buf.Bytes()
 		if len(b) > 0 && b[len(b)-1] == '\n' {
 			f.buf.Truncate(f.buf.Len() - 1)
 		}
-		f.buf.WriteString(" " + renderComment(f.comments[f.ci]) + "\n")
+		f.buf.WriteString(f.trailingGap(f.comments[f.ci]) + renderComment(f.comments[f.ci]) + "\n")
 		f.ci++
 	}
 }
 
+// spaceBefore is the spacing before an alignment anchor: the padding planned for its aligned group, else one space.
+func (f *fmtr) spaceBefore(tok token.Token) string {
+	if n := f.pads[[2]int{tok.Line, tok.Column}]; n > 1 && !f.clean {
+		return strings.Repeat(" ", n)
+	}
+	return " "
+}
+
+type alignItem struct {
+	anchor     token.Token
+	head       int
+	start, end int
+}
+
+// align pads each run of consecutive items whose anchors shared a source column so the anchors line up in the output.
+func (f *fmtr) align(items []alignItem) {
+	if f.clean || f.pads == nil {
+		return
+	}
+	for i := 0; i < len(items); {
+		j := i + 1
+		for j < len(items) && items[i].anchor.Line > 0 && items[j].anchor.Line > 0 &&
+			items[j].anchor.Column == items[i].anchor.Column && items[j].start == items[j-1].end+1 {
+			j++
+		}
+		if j-i > 1 {
+			width := 0
+			for _, it := range items[i:j] {
+				width = max(width, it.head)
+			}
+			for _, it := range items[i:j] {
+				f.pads[[2]int{it.anchor.Line, it.anchor.Column}] = width - it.head + 1
+			}
+		}
+		i = j
+	}
+}
+
+// measure renders e for its length only, leaving the comment cursor untouched.
+func (f *fmtr) measure(e ast.Expression) int {
+	ci, last := f.ci, f.lastLine
+	n := len(f.expr(e))
+	f.ci, f.lastLine = ci, last
+	return n
+}
+
+// planStatements aligns declared names and `=` across consecutive statements the author aligned.
+func (f *fmtr) planStatements(stmts []ast.Statement) {
+	names := make([]alignItem, len(stmts))
+	for i, s := range stmts {
+		names[i] = alignItem{start: startLine(s), end: endLine(s)}
+		if d, ok := s.(*ast.DeclarationStatement); ok && d.Type != nil && d.Name != nil {
+			names[i].anchor = d.Name.Token
+			names[i].head = len(f.inlineDecorators(d) + declPrefix(d))
+		}
+	}
+	f.align(names)
+	eqs := make([]alignItem, len(stmts))
+	for i, s := range stmts {
+		eqs[i] = alignItem{start: startLine(s), end: endLine(s)}
+		switch d := s.(type) {
+		case *ast.DeclarationStatement:
+			if d.Value != nil && d.Name != nil {
+				eqs[i].anchor = d.Assign
+				eqs[i].head = len(f.inlineDecorators(d) + f.declHead(d))
+			}
+		case *ast.ExpressionStatement:
+			if a, ok := d.Expression.(*ast.AssignmentExpression); ok {
+				eqs[i].anchor = a.Token
+				eqs[i].head = f.measure(a.Left)
+			}
+		}
+	}
+	f.align(eqs)
+}
+
+func (f *fmtr) firstToken(e ast.Expression) token.Token {
+	if open, ok := f.grouped[e]; ok && !f.clean {
+		return open
+	}
+	switch x := e.(type) {
+	case *ast.InfixExpression:
+		return f.firstToken(x.Left)
+	case *ast.CallExpression:
+		return f.firstToken(x.Callee)
+	case *ast.IndexExpression:
+		return f.firstToken(x.Left)
+	case *ast.SelectorExpression:
+		return f.firstToken(x.Object)
+	case *ast.PostfixExpression:
+		return f.firstToken(x.Left)
+	case *ast.CastExpression:
+		return f.firstToken(x.Value)
+	case *ast.TernaryExpression:
+		return f.firstToken(x.Condition)
+	case *ast.PipeExpression:
+		return f.firstToken(x.Left)
+	case *ast.RangeExpression:
+		return f.firstToken(x.Start)
+	}
+	v := reflect.Indirect(reflect.ValueOf(e))
+	if v.Kind() == reflect.Struct {
+		if tok, ok := v.FieldByName("Token").Interface().(token.Token); ok {
+			return tok
+		}
+	}
+	return token.Token{}
+}
+
+func (f *fmtr) assignOp(tok token.Token, op string) string {
+	return f.spaceBefore(tok) + op + " "
+}
+
+func (f *fmtr) trailingGap(c lexer.Comment) string {
+	gap := strings.ReplaceAll(c.Gap, "\t", "    ")
+	if f.clean || len(gap) < 2 {
+		return " "
+	}
+	return gap
+}
+
+// trailLine is the line whose end-of-line comment belongs after stmts[i]; 0 when the next statement shares that line, so the comment follows the last one.
+func trailLine(stmts []ast.Statement, i int) int {
+	end := endLine(stmts[i])
+	if i+1 < len(stmts) && startLine(stmts[i+1]) == end {
+		return 0
+	}
+	return end
+}
+
 // startLine returns a statement's first source line via its Token field, or a large sentinel for nodes without one.
 func startLine(s any) int {
+	if ex, ok := s.(*ast.ExportStatement); ok && ex.Statement != nil {
+		if inner := startLine(ex.Statement); inner < ex.Token.Line {
+			return inner
+		}
+	}
 	v := reflect.Indirect(reflect.ValueOf(s))
 	if v.Kind() == reflect.Struct {
 		if fv := v.FieldByName("Decorators"); fv.IsValid() {
@@ -165,12 +306,62 @@ func (f *fmtr) maybeBlank(prevEnd int, s ast.Statement) {
 	}
 }
 
-// flushComments emits every pending comment whose source line precedes beforeLine.
-func (f *fmtr) flushComments(beforeLine int) {
-	for f.ci < len(f.comments) && f.comments[f.ci].Line < beforeLine {
-		f.writeln(f.pad() + renderComment(f.comments[f.ci]))
+func (f *fmtr) ownLineComments(line int, indent string) string {
+	var b strings.Builder
+	for f.ci < len(f.comments) && f.comments[f.ci].Line < line {
+		b.WriteString(indent + renderComment(f.comments[f.ci]) + "\n")
+		f.lastLine = f.comments[f.ci].Line
 		f.ci++
 	}
+	return b.String()
+}
+
+func (f *fmtr) sameLineComments(line int) string {
+	var b strings.Builder
+	for f.ci < len(f.comments) && f.comments[f.ci].Line == line {
+		b.WriteString(f.trailingGap(f.comments[f.ci]) + renderComment(f.comments[f.ci]))
+		f.ci++
+	}
+	return b.String()
+}
+
+func (f *fmtr) commentBefore(line int) bool {
+	return f.ci < len(f.comments) && f.comments[f.ci].Line < line
+}
+
+// flushComments emits every pending comment whose source line precedes beforeLine, keeping source blank lines around them.
+func (f *fmtr) flushComments(beforeLine int) {
+	if f.flushCommentRun(beforeLine) && beforeLine-f.lastLine > 1 {
+		f.blankOnce()
+	}
+}
+
+func (f *fmtr) flushTail(endLine int) {
+	f.flushCommentRun(endLine)
+}
+
+func (f *fmtr) flushCommentRun(beforeLine int) bool {
+	emitted := false
+	for f.ci < len(f.comments) && f.comments[f.ci].Line < beforeLine {
+		c := f.comments[f.ci]
+		if f.lastLine > 0 && c.Line-f.lastLine > 1 {
+			f.blankOnce()
+		}
+		f.writeln(f.pad() + renderComment(c))
+		f.lastLine = c.Line + strings.Count(c.Text, "\n")
+		f.ci++
+		emitted = true
+	}
+	return emitted
+}
+
+// blankOnce adds a blank line unless one is already there or a block was just opened.
+func (f *fmtr) blankOnce() {
+	b := f.buf.Bytes()
+	if len(b) == 0 || bytes.HasSuffix(b, []byte("\n\n")) || bytes.HasSuffix(b, []byte("{\n")) {
+		return
+	}
+	f.nl()
 }
 
 func renderComment(c lexer.Comment) string {
@@ -181,15 +372,9 @@ func renderComment(c lexer.Comment) string {
 		}
 		return "## " + c.Text
 	case "block":
-		if strings.Contains(c.Text, "\n") {
-			return "/*" + c.Text + "*/"
-		}
-		return "/* " + strings.TrimSpace(c.Text) + " */"
+		return "/*" + c.Text + "*/"
 	case "doc-block":
-		if strings.Contains(c.Text, "\n") {
-			return "/**" + c.Text + "*/"
-		}
-		return "/** " + strings.TrimSpace(c.Text) + " */"
+		return "/**" + c.Text + "*/"
 	default:
 		if c.Text == "" {
 			return "#"
@@ -227,6 +412,7 @@ func (f *fmtr) program(prog *ast.Program) {
 		}
 		break
 	}
+	f.planStatements(stmts[i:])
 	// Top-level declarations are always blank-separated; other statements, including the first after the header, keep the author's blanks.
 	for i < len(stmts) {
 		if i > 0 {
@@ -238,12 +424,12 @@ func (f *fmtr) program(prog *ast.Program) {
 		}
 		f.flushComments(startLine(stmts[i]))
 		f.stmt(stmts[i])
-		f.flushTrailing(endLine(stmts[i]))
+		f.flushTrailing(trailLine(stmts, i))
 		prevEnd = endLine(stmts[i])
 		prev = stmts[i]
 		i++
 	}
-	f.flushComments(1 << 30)
+	f.flushTail(1 << 30)
 }
 
 func importPath(path []string, forceBuiltin bool) string {
@@ -385,9 +571,9 @@ func (f *fmtr) stmtInner(s ast.Statement) {
 func (f *fmtr) stmtNoPrefix(s ast.Statement) {
 	switch s := s.(type) {
 	case *ast.DeclarationStatement:
-		line := strings.Join(declPrefix(s), " ")
+		line := f.declHead(s)
 		if s.Value != nil {
-			line += " = " + f.expr(s.Value)
+			line += f.assignOp(s.Assign, "=") + f.expr(s.Value)
 		}
 		f.writeln(line + ";")
 	case *ast.TypeAliasStatement:
@@ -401,9 +587,16 @@ func (f *fmtr) stmtNoPrefix(s ast.Statement) {
 // ---- declaration ----
 
 // declPrefix renders the qualifier + optional type + name of a declaration, preserving const/static (Kind) which a typed-only render would drop.
-func declPrefix(s *ast.DeclarationStatement) []string {
+func (f *fmtr) declHead(s *ast.DeclarationStatement) string {
+	return declPrefix(s) + f.spaceBefore(s.Name.Token) + s.Name.Value
+}
+
+func declPrefix(s *ast.DeclarationStatement) string {
 	var parts []string
-	if s.Kind != "" {
+	switch {
+	case s.ImplicitLet:
+		parts = append(parts, "static")
+	case s.Kind != "":
 		parts = append(parts, s.Kind)
 	}
 	if s.Type != nil {
@@ -412,8 +605,17 @@ func declPrefix(s *ast.DeclarationStatement) []string {
 	if len(parts) == 0 {
 		parts = append(parts, "let")
 	}
-	parts = append(parts, s.Name.Value)
-	return parts
+	return strings.Join(parts, " ")
+}
+
+func (f *fmtr) inlineDecorators(s *ast.DeclarationStatement) string {
+	out := ""
+	for _, dec := range s.Decorators {
+		if s.Name != nil && dec.Token.Line == s.Name.Token.Line {
+			out += f.fmtDecorator(dec) + " "
+		}
+	}
+	return out
 }
 
 func exportedDecorators(s ast.Statement) []ast.Decorator {
@@ -430,6 +632,7 @@ func exportedDecorators(s ast.Statement) []ast.Decorator {
 func (f *fmtr) writeDecorators(decs []ast.Decorator) {
 	for _, dec := range decs {
 		f.writeln(f.pad() + f.fmtDecorator(dec))
+		f.flushTrailing(dec.Token.Line)
 	}
 }
 
@@ -452,10 +655,15 @@ func (f *fmtr) typeArgs(args []*ast.TypeRef) string {
 }
 
 func (f *fmtr) fmtDeclaration(s *ast.DeclarationStatement) {
-	f.writeDecorators(s.Decorators)
-	line := f.pad() + strings.Join(declPrefix(s), " ")
+	for _, dec := range s.Decorators {
+		if s.Name == nil || dec.Token.Line != s.Name.Token.Line {
+			f.writeln(f.pad() + f.fmtDecorator(dec))
+			f.flushTrailing(dec.Token.Line)
+		}
+	}
+	line := f.pad() + f.inlineDecorators(s) + f.declHead(s)
 	if s.Value != nil {
-		prefix := line + " = "
+		prefix := line + f.assignOp(s.Assign, "=")
 		line = prefix + f.renderValue(s.Value, len(prefix))
 	}
 	f.writeln(line + ";")
@@ -533,7 +741,7 @@ func (f *fmtr) fmtElse(s *ast.IfStatement, i int) {
 // blockInline writes a block and calls after() before the trailing newline
 // (used to chain else/else-if on the same line as the closing brace).
 func (f *fmtr) blockInline(block *ast.BlockStatement, after func()) {
-	if block == nil || len(block.Statements) == 0 {
+	if block == nil || (len(block.Statements) == 0 && !f.commentBefore(block.End.Line)) {
 		if after != nil {
 			f.write("{}")
 			after()
@@ -543,15 +751,18 @@ func (f *fmtr) blockInline(block *ast.BlockStatement, after func()) {
 		return
 	}
 	f.writeln("{")
+	f.flushTrailing(block.Token.Line)
 	f.depth++
+	f.planStatements(block.Statements)
 	prevEnd := 0
-	for _, s := range block.Statements {
+	for i, s := range block.Statements {
 		f.maybeBlank(prevEnd, s)
 		f.flushComments(startLine(s))
 		f.stmt(s)
-		f.flushTrailing(endLine(s))
+		f.flushTrailing(trailLine(block.Statements, i))
 		prevEnd = endLine(s)
 	}
+	f.flushTail(block.End.Line)
 	f.depth--
 	f.write(f.pad() + "}")
 	if after != nil {
@@ -596,7 +807,7 @@ func (f *fmtr) fmtFor(s *ast.ForStatement) {
 	var initStr, condStr, updateStr string
 	if s.Init != nil {
 		// strip trailing newline/semicolon from statement rendering
-		tmp := &fmtr{depth: 0, clean: f.clean}
+		tmp := &fmtr{depth: 0, clean: f.clean, grouped: f.grouped, pads: f.pads}
 		tmp.stmt(s.Init)
 		initStr = strings.TrimRight(tmp.buf.String(), "\n;")
 	}
@@ -604,7 +815,7 @@ func (f *fmtr) fmtFor(s *ast.ForStatement) {
 		condStr = f.expr(s.Condition)
 	}
 	if s.Update != nil {
-		tmp := &fmtr{depth: 0, clean: f.clean}
+		tmp := &fmtr{depth: 0, clean: f.clean, grouped: f.grouped, pads: f.pads}
 		tmp.stmt(s.Update)
 		updateStr = strings.TrimRight(tmp.buf.String(), "\n;")
 	}
@@ -666,14 +877,20 @@ func (f *fmtr) fmtClassHead(s *ast.ClassStatement) {
 		}
 		line += " implements " + strings.Join(parts, ", ")
 	}
+	if len(s.Members) == 0 && s.Destructor == nil && !f.commentBefore(s.End.Line) {
+		f.writeln(line + " {}")
+		return
+	}
 	f.writeln(line + " {")
+	f.flushTrailing(s.Token.Line)
 	f.depth++
 	members := s.Members
 	if s.Destructor != nil {
 		members = withDestructor(s.Members, s.Destructor)
 	}
+	f.planStatements(members)
 	prevEnd := 0
-	for _, m := range members {
+	for i, m := range members {
 		f.maybeBlank(prevEnd, m)
 		f.flushComments(startLine(m))
 		if m == ast.Statement(s.Destructor) {
@@ -681,9 +898,10 @@ func (f *fmtr) fmtClassHead(s *ast.ClassStatement) {
 		} else {
 			f.stmt(m)
 		}
-		f.flushTrailing(endLine(m))
+		f.flushTrailing(trailLine(members, i))
 		prevEnd = endLine(m)
 	}
+	f.flushTail(s.End.Line)
 	f.depth--
 	f.writeln(f.pad() + "}")
 }
@@ -728,7 +946,12 @@ func (f *fmtr) fmtInterface(s *ast.InterfaceStatement) {
 		}
 		line += " extends " + strings.Join(parts, ", ")
 	}
+	if len(s.Fields)+len(s.Methods)+len(s.Defaults) == 0 && !f.commentBefore(s.End.Line) {
+		f.writeln(line + " {}")
+		return
+	}
 	f.writeln(line + " {")
+	f.flushTrailing(s.Token.Line)
 	f.depth++
 	members := make([]any, 0, len(s.Fields)+len(s.Methods)+len(s.Defaults))
 	for _, fld := range s.Fields {
@@ -758,6 +981,7 @@ func (f *fmtr) fmtInterface(s *ast.InterfaceStatement) {
 		f.flushTrailing(endLine(m))
 		prevEnd = endLine(m)
 	}
+	f.flushTail(s.End.Line)
 	f.depth--
 	f.writeln(f.pad() + "}")
 }
@@ -776,6 +1000,17 @@ func (f *fmtr) fmtSignature(sig *ast.FunctionSignature) {
 
 // ---- enum ----
 
+func variantHead(v ast.EnumVariantDef) string {
+	if len(v.FieldTypes) == 0 {
+		return v.Name.Value
+	}
+	parts := make([]string, 0, len(v.FieldTypes))
+	for _, ft := range v.FieldTypes {
+		parts = append(parts, ft.String())
+	}
+	return v.Name.Value + "(" + strings.Join(parts, ", ") + ")"
+}
+
 func (f *fmtr) fmtEnum(s *ast.EnumStatement) {
 	header := "enum " + s.Name.Value
 	if s.BackingType != nil {
@@ -789,18 +1024,22 @@ func (f *fmtr) fmtEnum(s *ast.EnumStatement) {
 		header += " implements " + strings.Join(parts, ", ")
 	}
 	f.writeln(f.pad() + header + " {")
+	f.flushTrailing(s.Token.Line)
 	f.depth++
+	items := make([]alignItem, len(s.Variants))
 	for i, v := range s.Variants {
-		line := f.pad() + v.Name.Value
-		if len(v.FieldTypes) > 0 {
-			parts := make([]string, 0, len(v.FieldTypes))
-			for _, ft := range v.FieldTypes {
-				parts = append(parts, ft.String())
-			}
-			line += "(" + strings.Join(parts, ", ") + ")"
-		}
+		items[i] = alignItem{start: v.Name.Token.Line, end: endLine(v)}
 		if v.BackingValue != nil {
-			line += " = " + f.expr(v.BackingValue)
+			items[i].anchor = v.Assign
+			items[i].head = len(variantHead(v))
+		}
+	}
+	f.align(items)
+	for i, v := range s.Variants {
+		f.flushComments(v.Name.Token.Line)
+		line := f.pad() + variantHead(v)
+		if v.BackingValue != nil {
+			line += f.assignOp(v.Assign, "=") + f.expr(v.BackingValue)
 		}
 		if i < len(s.Variants)-1 {
 			line += ","
@@ -808,6 +1047,7 @@ func (f *fmtr) fmtEnum(s *ast.EnumStatement) {
 			line += ";"
 		}
 		f.writeln(line)
+		f.flushTrailing(endLine(v))
 	}
 	prevEnd := 0
 	if len(s.Variants) > 0 {
@@ -820,6 +1060,7 @@ func (f *fmtr) fmtEnum(s *ast.EnumStatement) {
 		f.flushTrailing(endLine(m))
 		prevEnd = endLine(m)
 	}
+	f.flushTail(s.End.Line)
 	f.depth--
 	f.writeln(f.pad() + "}")
 }
@@ -860,21 +1101,49 @@ func (f *fmtr) fmtTry(s *ast.TryStatement) {
 
 func (f *fmtr) fmtMatch(s *ast.MatchStatement) {
 	f.writeln(f.pad() + "match (" + f.expr(s.Expr) + ") {")
+	f.flushTrailing(s.Token.Line)
 	f.depth++
-	for _, c := range s.Cases {
-		f.fmtMatchCase(c)
-	}
+	f.matchCases(s.Cases, s.End.Line)
 	f.depth--
 	f.writeln(f.pad() + "}")
 }
 
-func (f *fmtr) fmtMatchCase(c ast.MatchCase) {
-	head := "default"
-	if !c.Default {
-		head = "case " + f.matchCasePattern(c)
+func (f *fmtr) matchCases(cases []ast.MatchCase, endLine int) {
+	items := make([]alignItem, len(cases))
+	for i, c := range cases {
+		items[i] = alignItem{start: c.Token.Line, end: caseEnd(c)}
+		if c.Body == nil {
+			items[i].anchor = c.Arrow
+			items[i].head = len(f.matchCaseHead(c))
+		}
 	}
+	f.align(items)
+	for _, c := range cases {
+		f.flushComments(c.Token.Line)
+		f.fmtMatchCase(c)
+		f.flushTrailing(caseEnd(c))
+	}
+	f.flushTail(endLine)
+}
+
+func caseEnd(c ast.MatchCase) int {
+	if c.Body != nil {
+		return c.Body.End.Line
+	}
+	return endLine(c.Value)
+}
+
+func (f *fmtr) matchCaseHead(c ast.MatchCase) string {
+	if c.Default {
+		return "default"
+	}
+	return "case " + f.matchCasePattern(c)
+}
+
+func (f *fmtr) fmtMatchCase(c ast.MatchCase) {
+	head := f.matchCaseHead(c)
 	if c.Body == nil { // arrow form: `case pat => value;`
-		f.writeln(f.pad() + head + " => " + f.expr(c.Value) + ";")
+		f.writeln(f.pad() + head + f.spaceBefore(c.Arrow) + "=> " + f.expr(c.Value) + ";")
 		return
 	}
 	f.write(f.pad() + head + ": ")
@@ -1090,7 +1359,8 @@ func (f *fmtr) shouldBreakInfix(e *ast.InfixExpression) bool {
 type chainSeg struct {
 	name     string
 	optional bool
-	call     *ast.CallExpression // nil for a bare property access
+	call     *ast.CallExpression  // nil for a bare property access
+	index    *ast.IndexExpression // set for a `[...]` step, which stays on the previous step's line
 	line     int
 }
 
@@ -1111,6 +1381,11 @@ func flattenChain(e ast.Expression) (ast.Expression, []chainSeg) {
 			node = sel.Object
 			continue
 		}
+		if idx, ok := node.(*ast.IndexExpression); ok {
+			segs = append(segs, chainSeg{index: idx})
+			node = idx.Left
+			continue
+		}
 		break
 	}
 	for i, j := 0, len(segs)-1; i < j; i, j = i+1, j-1 {
@@ -1128,22 +1403,27 @@ func (f *fmtr) shouldBreakChain(e ast.Expression) bool {
 	if len(segs) < 2 {
 		return false
 	}
-	minL, maxL := nodeLine(base), 0
-	if minL == 0 {
-		minL = 1 << 30
-	}
+	prevEnd := endLine(base)
 	for _, s := range segs {
-		if s.line == 0 {
-			continue
+		if prevEnd > 0 && s.line > prevEnd {
+			return true
 		}
-		if s.line < minL {
-			minL = s.line
-		}
-		if s.line > maxL {
-			maxL = s.line
+		prevEnd = segEnd(s)
+	}
+	return false
+}
+
+// segEnd is a chain segment's last source line, so a break inside its arguments is not taken as a break before the next segment.
+func segEnd(s chainSeg) int {
+	if s.index != nil {
+		return endLine(s.index)
+	}
+	if s.call != nil {
+		if end := endLine(s.call); end > s.line {
+			return end
 		}
 	}
-	return maxL > minL
+	return s.line
 }
 
 // multilineChain renders a method chain keeping the author's line breaks: each segment that started on a new source line goes on its own indented line.
@@ -1152,8 +1432,13 @@ func (f *fmtr) multilineChain(e ast.Expression) string {
 	indent := strings.Repeat("    ", f.depth+1)
 	var b strings.Builder
 	b.WriteString(f.exprChild(base, !fmtIsPrimary(base)))
-	prevLine := nodeLine(base)
+	prevLine := endLine(base)
 	for _, s := range segs {
+		if s.index != nil {
+			b.WriteString("[" + f.indexText(s.index) + "]")
+			prevLine = segEnd(s)
+			continue
+		}
 		dot := "."
 		if s.optional {
 			dot = "?."
@@ -1163,11 +1448,11 @@ func (f *fmtr) multilineChain(e ast.Expression) string {
 			seg += f.typeArgs(s.call.TypeArguments) + "(" + f.callArgs(s.call.Arguments) + ")"
 		}
 		if prevLine > 0 && s.line > prevLine {
-			b.WriteString("\n" + indent + seg)
+			b.WriteString(f.sameLineComments(prevLine) + "\n" + f.ownLineComments(s.line, indent) + indent + seg)
 		} else {
 			b.WriteString(seg)
 		}
-		prevLine = s.line
+		prevLine = segEnd(s)
 	}
 	return b.String()
 }
@@ -1184,14 +1469,25 @@ func (f *fmtr) multilineInfix(e *ast.InfixExpression) string {
 		if i == 0 {
 			wrap = fmtPrec(o) < self
 		}
+		if i > 0 {
+			b.WriteString(f.sameLineComments(endLine(operands[i-1])) + "\n" + f.ownLineComments(nodeLine(o), indent))
+		}
 		s := f.exprChild(o, wrap)
 		if i == 0 {
 			b.WriteString(s)
 		} else {
-			b.WriteString("\n" + indent + op + " " + s)
+			b.WriteString(indent + op + " " + s)
 		}
 	}
 	return b.String()
+}
+
+// indexText renders the subscript of an index step; a range index is Python-style slice syntax.
+func (f *fmtr) indexText(e *ast.IndexExpression) string {
+	if rng, ok := e.Index.(*ast.RangeExpression); ok {
+		return f.sliceIndex(rng)
+	}
+	return f.expr(e.Index)
 }
 
 // sliceIndex renders a range used as an index in Python slice syntax: start:end[:step].
@@ -1217,6 +1513,9 @@ func (f *fmtr) sliceIndex(r *ast.RangeExpression) string {
 func (f *fmtr) isParen(e ast.Expression) bool {
 	if f.clean {
 		return false
+	}
+	if _, ok := f.grouped[e]; ok {
+		return true
 	}
 	switch x := e.(type) {
 	case *ast.InfixExpression:
@@ -1300,6 +1599,8 @@ func (f *fmtr) exprBare(e ast.Expression) string {
 		return "[" + f.expr(e.Body) + f.fmtComprehensionClauses(e.Clauses) + "]"
 	case *ast.SetComprehension:
 		return "{" + f.expr(e.Body) + f.fmtComprehensionClauses(e.Clauses) + "}"
+	case *ast.GeneratorComprehension:
+		return "(" + f.expr(e.Body) + f.fmtComprehensionClauses(e.Clauses) + ")"
 	case *ast.DictComprehension:
 		return "{" + f.expr(e.KeyBody) + ": " + f.expr(e.ValueBody) + f.fmtComprehensionClauses(e.Clauses) + "}"
 	case *ast.PrefixExpression:
@@ -1328,9 +1629,9 @@ func (f *fmtr) exprBare(e ast.Expression) string {
 	case *ast.AssignmentExpression:
 		// The parser desugars `a op= b` into `a = a op b` sharing the one left node.
 		if infix, ok := e.Value.(*ast.InfixExpression); ok && infix.Left == e.Left {
-			return f.expr(e.Left) + " " + infix.Operator + "= " + f.expr(infix.Right)
+			return f.expr(e.Left) + f.assignOp(e.Token, infix.Operator+"=") + f.expr(infix.Right)
 		}
-		return f.expr(e.Left) + " = " + f.expr(e.Value)
+		return f.expr(e.Left) + f.assignOp(e.Token, "=") + f.expr(e.Value)
 	case *ast.SelectorExpression:
 		if f.shouldBreakChain(e) {
 			return f.multilineChain(e)
@@ -1351,11 +1652,10 @@ func (f *fmtr) exprBare(e ast.Expression) string {
 		}
 		return f.exprChild(e.Callee, !fmtIsPrimary(e.Callee)) + f.typeArgs(e.TypeArguments) + "(" + f.partialArgs(e.Arguments) + ")"
 	case *ast.IndexExpression:
-		idx := f.expr(e.Index)
-		if rng, ok := e.Index.(*ast.RangeExpression); ok {
-			idx = f.sliceIndex(rng) // a range as an index is Python-style slice syntax
+		if f.shouldBreakChain(e) {
+			return f.multilineChain(e)
 		}
-		return f.exprChild(e.Left, !fmtIsPrimary(e.Left)) + "[" + idx + "]"
+		return f.exprChild(e.Left, !fmtIsPrimary(e.Left)) + "[" + f.indexText(e) + "]"
 	case *ast.SpreadExpression:
 		return "..." + f.expr(e.Value)
 	case *ast.RangeExpression:
@@ -1369,6 +1669,9 @@ func (f *fmtr) exprBare(e ast.Expression) string {
 		}
 		return s
 	case *ast.FunctionLiteral:
+		if e.Arrow {
+			return f.arrowFunction(e)
+		}
 		prefix := "func"
 		if e.Async {
 			prefix = "async func"
@@ -1377,9 +1680,10 @@ func (f *fmtr) exprBare(e ast.Expression) string {
 		if e.ReturnType != nil {
 			sig += ": " + e.ReturnType.String()
 		}
-		// Inline small bodies; block format larger ones
-		body := f.inlineBlock(e.Body)
-		return sig + " " + body
+		if body, ok := f.inlineReturnBody(e.Body); ok && f.depth*4+len(sig)+1+len(body) <= fmtMaxWidth {
+			return sig + " " + body
+		}
+		return sig + " " + f.blockString(e.Body)
 	case *ast.AwaitExpression:
 		return "await " + f.expr(e.Value)
 	case *ast.CastExpression:
@@ -1444,30 +1748,47 @@ func (f *fmtr) fmtInterpolated(e *ast.InterpolatedString) string {
 	return sb.String()
 }
 
-func (f *fmtr) inlineBlock(block *ast.BlockStatement) string {
-	if block == nil || len(block.Statements) == 0 {
+func (f *fmtr) inlineReturnBody(block *ast.BlockStatement) (string, bool) {
+	if block == nil || len(block.Statements) != 1 {
+		return "", false
+	}
+	if _, ok := block.Statements[0].(*ast.ReturnStatement); !ok {
+		return "", false
+	}
+	if f.commentBefore(block.End.Line) {
+		return "", false
+	}
+	tmp := &fmtr{depth: 0, clean: f.clean, grouped: f.grouped, pads: f.pads}
+	tmp.stmt(block.Statements[0])
+	inner := strings.TrimRight(tmp.buf.String(), "\n")
+	if strings.Contains(inner, "\n") {
+		return "", false
+	}
+	return "{ " + inner + " }", true
+}
+
+func (f *fmtr) blockString(block *ast.BlockStatement) string {
+	if block == nil || (len(block.Statements) == 0 && !f.commentBefore(block.End.Line)) {
 		return "{}"
 	}
-	if len(block.Statements) == 1 {
-		tmp := &fmtr{depth: 0, clean: f.clean}
-		tmp.stmt(block.Statements[0])
-		inner := strings.TrimRight(tmp.buf.String(), "\n")
-		if !strings.Contains(inner, "\n") {
-			return "{ " + inner + " }"
-		}
-	}
-	// Multi-statement: write as indented block (returns string representation)
 	var b strings.Builder
-	b.WriteString("{\n")
-	inner := &fmtr{depth: f.depth + 1, comments: f.comments, ci: f.ci, clean: f.clean}
+	b.WriteString("{")
+	for f.ci < len(f.comments) && f.comments[f.ci].Line == block.Token.Line {
+		b.WriteString(f.trailingGap(f.comments[f.ci]) + renderComment(f.comments[f.ci]))
+		f.ci++
+	}
+	b.WriteString("\n")
+	inner := &fmtr{depth: f.depth + 1, comments: f.comments, ci: f.ci, clean: f.clean, grouped: f.grouped, pads: f.pads}
+	inner.planStatements(block.Statements)
 	prevEnd := 0
-	for _, s := range block.Statements {
+	for i, s := range block.Statements {
 		inner.maybeBlank(prevEnd, s)
 		inner.flushComments(startLine(s))
 		inner.stmt(s)
-		inner.flushTrailing(endLine(s))
+		inner.flushTrailing(trailLine(block.Statements, i))
 		prevEnd = endLine(s)
 	}
+	inner.flushTail(block.End.Line)
 	f.ci = inner.ci
 	b.WriteString(inner.buf.String())
 	b.WriteString(strings.Repeat("    ", f.depth) + "}")
@@ -1476,11 +1797,10 @@ func (f *fmtr) inlineBlock(block *ast.BlockStatement) string {
 
 func (f *fmtr) fmtMatchExpr(e *ast.MatchExpression) string {
 	var b strings.Builder
-	b.WriteString("match (" + f.expr(e.Expr) + ") {\n")
-	inner := &fmtr{depth: f.depth + 1, clean: f.clean}
-	for _, c := range e.Cases {
-		inner.fmtMatchCase(c)
-	}
+	b.WriteString("match (" + f.expr(e.Expr) + ") {" + f.sameLineComments(e.Token.Line) + "\n")
+	inner := &fmtr{depth: f.depth + 1, comments: f.comments, ci: f.ci, clean: f.clean, grouped: f.grouped, pads: f.pads}
+	inner.matchCases(e.Cases, e.End.Line)
+	f.ci = inner.ci
 	b.WriteString(inner.buf.String())
 	b.WriteString(strings.Repeat("    ", f.depth) + "}")
 	return b.String()
@@ -1498,51 +1818,55 @@ func isCollection(e ast.Expression) bool {
 	return false
 }
 
-// spanMultiline reports whether the source lines span more than one line.
-func spanMultiline(lines []int) bool {
-	lo, hi := 1<<30, 0
-	for _, l := range lines {
-		if l == 0 {
+// spanMultiline reports whether any element starts on a line after the previous element ends.
+func spanMultiline(spans []lineSpan) bool {
+	prevEnd := 0
+	for _, sp := range spans {
+		if sp.start == 0 {
 			continue
 		}
-		if l < lo {
-			lo = l
+		if prevEnd > 0 && sp.start > prevEnd {
+			return true
 		}
-		if l > hi {
-			hi = l
-		}
+		prevEnd = max(sp.start, sp.end)
 	}
-	return hi > lo
+	return false
 }
 
-// elementLines returns the source line of each element, entry, or argument of a collection or call.
-func elementLines(e ast.Expression) []int {
-	var lines []int
+type lineSpan struct{ start, end int }
+
+func spanOf(start, last ast.Expression) lineSpan {
+	return lineSpan{start: nodeLine(start), end: endLine(last)}
+}
+
+// elementLines returns the source line span of each element, entry, or argument of a collection or call.
+func elementLines(e ast.Expression) []lineSpan {
+	var lines []lineSpan
 	switch e := e.(type) {
 	case *ast.ListLiteral:
 		for _, el := range e.Elements {
-			lines = append(lines, nodeLine(el))
+			lines = append(lines, spanOf(el, el))
 		}
 	case *ast.SetLiteral:
 		for _, el := range e.Elements {
-			lines = append(lines, nodeLine(el))
+			lines = append(lines, spanOf(el, el))
 		}
 	case *ast.DictLiteral:
 		for _, en := range e.Entries {
 			if en.Spread || en.Key == nil {
-				lines = append(lines, nodeLine(en.Value))
+				lines = append(lines, spanOf(en.Value, en.Value))
 			} else {
-				lines = append(lines, nodeLine(en.Key))
+				lines = append(lines, spanOf(en.Key, en.Value))
 			}
 		}
 	case *ast.CallExpression:
 		for _, a := range e.Arguments {
-			lines = append(lines, nodeLine(a.Value))
+			lines = append(lines, spanOf(a.Value, a.Value))
 		}
 	case *ast.PartialExpression:
 		for _, a := range e.Arguments {
 			if !a.Hole {
-				lines = append(lines, nodeLine(a.Value))
+				lines = append(lines, spanOf(a.Value, a.Value))
 			}
 		}
 	}
@@ -1606,13 +1930,17 @@ func (f *fmtr) renderValue(e ast.Expression, col int) string {
 	if e == nil {
 		return ""
 	}
+	ci, last := f.ci, f.lastLine
 	flat := f.expr(e)
 	if f.clean {
 		return flat
 	}
+	// The flat render may have consumed comments; rewind before rendering again.
+	rewind := func() { f.ci, f.lastLine = ci, last }
 	switch e := e.(type) {
 	case *ast.ListLiteral, *ast.DictLiteral, *ast.SetLiteral:
 		if needsBreakAuthor(e) || col+len(flat) > fmtMaxWidth {
+			rewind()
 			return f.renderBrokenCollection(e)
 		}
 	case *ast.CallExpression:
@@ -1620,6 +1948,7 @@ func (f *fmtr) renderValue(e ast.Expression, col int) string {
 			return flat
 		}
 		if needsBreakAuthor(e) || col+len(flat) > fmtMaxWidth {
+			rewind()
 			return f.renderBrokenCall(e, col)
 		}
 	case *ast.PartialExpression:
@@ -1627,6 +1956,7 @@ func (f *fmtr) renderValue(e ast.Expression, col int) string {
 			return flat
 		}
 		if needsBreakAuthor(e) || col+len(flat) > fmtMaxWidth {
+			rewind()
 			return f.renderBrokenPartial(e, col)
 		}
 	}
@@ -1641,34 +1971,49 @@ func (f *fmtr) renderBrokenCollection(e ast.Expression) string {
 	}
 	var open, close string
 	var items []item
+	closeLine := 1 << 30
 	switch e := e.(type) {
 	case *ast.ListLiteral:
+		closeLine = e.End.Line
 		open, close = "[", "]"
 		for _, el := range e.Elements {
 			items = append(items, item{"", el})
 		}
 	case *ast.SetLiteral:
+		closeLine = e.End.Line
 		open, close = "{", "}"
 		for _, el := range e.Elements {
 			items = append(items, item{"", el})
 		}
 	case *ast.DictLiteral:
+		closeLine = e.End.Line
 		open, close = "{", "}"
+		plan := make([]alignItem, len(e.Entries))
+		for i, en := range e.Entries {
+			plan[i] = alignItem{start: nodeLine(en.Value), end: endLine(en.Value)}
+			if !en.Spread && en.Key != nil {
+				plan[i] = alignItem{anchor: f.firstToken(en.Value), head: f.measure(en.Key) + 1, start: nodeLine(en.Key), end: endLine(en.Value)}
+			}
+		}
+		f.align(plan)
 		for _, en := range e.Entries {
 			if en.Spread {
 				items = append(items, item{"...", en.Value})
 			} else {
-				items = append(items, item{f.expr(en.Key) + ": ", en.Value})
+				items = append(items, item{f.expr(en.Key) + ":" + f.spaceBefore(f.firstToken(en.Value)), en.Value})
 			}
 		}
 	}
 	indent := strings.Repeat("    ", f.depth+1)
 	var b strings.Builder
-	b.WriteString(open + "\n")
+	b.WriteString(open + f.sameLineComments(nodeLine(e)) + "\n")
 	f.depth++
 	for _, it := range items {
-		b.WriteString(indent + it.prefix + f.renderValue(it.value, len(indent)+len(it.prefix)) + ",\n")
+		b.WriteString(f.ownLineComments(nodeLine(it.value), indent))
+		b.WriteString(indent + it.prefix + f.renderValue(it.value, len(indent)+len(it.prefix)) + ",")
+		b.WriteString(f.sameLineComments(endLine(it.value)) + "\n")
 	}
+	b.WriteString(f.ownLineComments(closeLine, indent))
 	f.depth--
 	b.WriteString(strings.Repeat("    ", f.depth) + close)
 	return b.String()
@@ -1683,26 +2028,66 @@ func (f *fmtr) renderBrokenCall(e *ast.CallExpression, col int) string {
 			return callee + "(" + f.renderValue(a.Value, col+len(callee)+1) + ")"
 		}
 	}
+	if hug, ok := f.hugLastCollection(e, callee, col); ok {
+		return hug
+	}
 	indent := strings.Repeat("    ", f.depth+1)
 	var b strings.Builder
 	b.WriteString(callee + "(\n")
 	f.depth++
+	plan := make([]alignItem, len(e.Arguments))
+	for i, a := range e.Arguments {
+		plan[i] = alignItem{start: nodeLine(a.Value), end: endLine(a.Value)}
+		if a.Name != nil && !a.Spread {
+			plan[i] = alignItem{anchor: f.firstToken(a.Value), head: len(a.Name.Value) + 1, start: a.Name.Token.Line, end: endLine(a.Value)}
+		}
+	}
+	f.align(plan)
 	for i, a := range e.Arguments {
 		prefix := ""
 		if a.Spread {
 			prefix = "..."
 		} else if a.Name != nil {
-			prefix = a.Name.Value + ": "
+			prefix = a.Name.Value + ":" + f.spaceBefore(f.firstToken(a.Value))
 		}
+		b.WriteString(f.ownLineComments(nodeLine(a.Value), indent))
 		b.WriteString(indent + prefix + f.renderValue(a.Value, len(indent)+len(prefix)))
 		if i < len(e.Arguments)-1 {
 			b.WriteString(",")
 		}
-		b.WriteString("\n")
+		b.WriteString(f.sameLineComments(endLine(a.Value)) + "\n")
 	}
+	b.WriteString(f.ownLineComments(e.End.Line, indent))
 	f.depth--
 	b.WriteString(strings.Repeat("    ", f.depth) + ")")
 	return b.String()
+}
+
+// hugLastCollection keeps leading arguments on the call line and opens a trailing multi-line collection there: f(a, {...}).
+func (f *fmtr) hugLastCollection(e *ast.CallExpression, callee string, col int) (string, bool) {
+	n := len(e.Arguments)
+	if n < 2 {
+		return "", false
+	}
+	last := e.Arguments[n-1]
+	if last.Spread || !isCollection(last.Value) || spanMultiline(elementLines(e)) {
+		return "", false
+	}
+	for _, a := range e.Arguments[:n-1] {
+		if needsBreakAuthor(a.Value) {
+			return "", false
+		}
+	}
+	ci, lastLine := f.ci, f.lastLine
+	head := callee + "(" + f.callArgs(e.Arguments[:n-1]) + ", "
+	if last.Name != nil {
+		head += last.Name.Value + ": "
+	}
+	if strings.Contains(head, "\n") || col+len(head)+1 > fmtMaxWidth {
+		f.ci, f.lastLine = ci, lastLine
+		return "", false
+	}
+	return head + f.renderBrokenCollection(last.Value) + ")", true
 }
 
 func (f *fmtr) callArgs(args []ast.CallArgument) string {
@@ -1787,6 +2172,19 @@ func (f *fmtr) params(params []ast.Parameter) string {
 	return strings.Join(parts, ", ")
 }
 
+func (f *fmtr) arrowFunction(e *ast.FunctionLiteral) string {
+	head := "(" + f.params(e.Parameters) + ") => "
+	if e.Async {
+		head = "async " + head
+	}
+	if e.ExprBody && e.Body != nil && len(e.Body.Statements) == 1 {
+		if ret, ok := e.Body.Statements[0].(*ast.ReturnStatement); ok && ret.Value != nil {
+			return head + f.expr(ret.Value)
+		}
+	}
+	return head + f.blockString(e.Body)
+}
+
 // param renders a parameter, using f.expr for the default so dict/list/closure defaults are not emitted as String() placeholders.
 func (f *fmtr) param(p ast.Parameter) string {
 	prefix := ""
@@ -1797,7 +2195,7 @@ func (f *fmtr) param(p ast.Parameter) string {
 	if p.Const {
 		seg = append(seg, "const")
 	}
-	if p.Type != nil {
+	if p.Type != nil && !p.Type.Inferred {
 		seg = append(seg, p.Type.String())
 	}
 	if p.Variadic {

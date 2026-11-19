@@ -1,0 +1,51 @@
+/**
+ * @title Decimal default display
+ * @summary A decimal prints at up to ten places with trailing zeros dropped,
+ * keeping one fractional digit; toString(n) and format(n) keep a fixed scale.
+ */
+import test;
+import json;
+
+class Order {
+    decimal total;
+}
+
+class DecimalDisplayTest extends test.Test {
+    @test
+    func trailingZerosAreDropped(): void {
+        this.assertEquals("12.5", "${12.5}");
+        this.assertEquals("3.5", "${7 / 2}");
+        this.assertEquals("0.3", "${0.1 + 0.2}");
+        this.assertEquals("-2.5", "${-2.50}");
+    }
+
+    @test
+    func wholeValuesKeepOneDecimalPlace(): void {
+        this.assertEquals("7.0", "${7.0}");
+        this.assertEquals("25.0", "${12.5 * 2}");
+        this.assertEquals("1000.0", "${1e3}");
+    }
+
+    @test
+    func repeatingValuesShowTenPlaces(): void {
+        decimal third = 1.0 / 3.0;
+        this.assertEquals("0.3333333333", "${third}");
+        this.assertEquals("0.6666666667", "${third * 2}");
+    }
+
+    @test
+    func everyDefaultRenderingAgrees(): void {
+        this.assertEquals("12.5", 12.5 as string);
+        this.assertEquals("12.5", (12.5).toString());
+        this.assertEquals("[1.5, 2.0]", "${[1.5, 2.0]}");
+        this.assertEquals("decimal(4.1)", dump(4.10));
+        this.assertEquals("{\"total\":120.5}", json.stringify(json.parseAs("{\"total\": 120.50}", Order)));
+    }
+
+    @test
+    func explicitScaleIsUnchanged(): void {
+        this.assertEquals("12.500", (12.5).toString(3));
+        this.assertEquals("12.50", (12.5).format(2));
+        this.assertEquals("12.5000000000", (12.5).toString(10));
+    }
+}

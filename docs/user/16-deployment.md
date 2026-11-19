@@ -1,4 +1,4 @@
-# Deployment And Performance Tuning
+# Deployment and performance tuning
 
 This chapter covers running Geblang programs in production: shipping the
 binary, picking sensible runtime settings, observing live behaviour, and

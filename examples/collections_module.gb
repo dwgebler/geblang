@@ -12,22 +12,26 @@ let scores = {"alice": 10, "bob": 12};
 let users = [
     {"id": 1, "name": "Ada"},
     {"id": 2, "name": "Grace"},
-    {"id": 3, "name": "Ada"}
+    {"id": 3, "name": "Ada"},
 ];
 
 io.println(collections.join(sorted, ","));
 io.println(collections.contains(nums, 2));
 io.println(collections.contains(scores, "alice"));
 io.println(collections.reverse("abc"));
-io.println(collections.findLast(users, func(dict<string, any> user): bool {
-    return user["name"] == "Ada";
-})["id"]);
-io.println(collections.containsBy(users, "Grace", func(dict<string, any> user): string {
-    return user["name"] as string;
-}));
-io.println(collections.indexBy(users, func(dict<string, any> user): bool {
-    return user["id"] == 2;
-}));
+io.println(
+    collections.findLast(users, func(dict<string, any> user): bool { return user["name"] == "Ada"; })["id"]
+);
+io.println(
+    collections.containsBy(
+        users,
+        "Grace",
+        func(dict<string, any> user): string { return user["name"] as string; }
+    )
+);
+io.println(
+    collections.indexBy(users, func(dict<string, any> user): bool { return user["id"] == 2; })
+);
 io.println(collections.binarySearch(sorted, 2));
 io.println(collections.lowerBound(sorted, 2));
 io.println(collections.upperBound(sorted, 2));

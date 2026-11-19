@@ -68,7 +68,7 @@ class AsyncScopeTest extends test.Test {
         try {
             ascope.scope(func(any group): void {
                 leakedTask = group.spawn(func(): int {
-                    async.sleep(10);
+                    await async.sleep(10);
                     return 7;
                 });
                 throw RuntimeError("early-exit");

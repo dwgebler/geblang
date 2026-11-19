@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"unicode"
 )
 
 func primitiveReSplit(patternArg runtime.Value, text string) (runtime.Value, error) {
@@ -190,32 +189,23 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		return runtime.Bool{Value: strings.HasSuffix(value.Value, arg)}, nil
 	case "trim":
-		if len(args) != 0 {
-			return nil, fmt.Errorf("string.trim expects no arguments")
-		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
 			return nil, native.UnknownMethodError(receiver.TypeName(), "trim")
 		}
-		return runtime.String{Value: strings.TrimSpace(value.Value)}, nil
+		return native.StringTrimMethod("trim", value.Value, args)
 	case "trimStart":
-		if len(args) != 0 {
-			return nil, fmt.Errorf("string.trimStart expects no arguments")
-		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
 			return nil, native.UnknownMethodError(receiver.TypeName(), "trimStart")
 		}
-		return runtime.String{Value: strings.TrimLeftFunc(value.Value, unicode.IsSpace)}, nil
+		return native.StringTrimMethod("trimStart", value.Value, args)
 	case "trimEnd":
-		if len(args) != 0 {
-			return nil, fmt.Errorf("string.trimEnd expects no arguments")
-		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
 			return nil, native.UnknownMethodError(receiver.TypeName(), "trimEnd")
 		}
-		return runtime.String{Value: strings.TrimRightFunc(value.Value, unicode.IsSpace)}, nil
+		return native.StringTrimMethod("trimEnd", value.Value, args)
 	case "repeat":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("string.repeat expects one argument")
@@ -405,23 +395,17 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			return nil, native.UnknownMethodError(receiver.TypeName(), "format")
 		}
 	case "lower":
-		if len(args) != 0 {
-			return nil, fmt.Errorf("string.lower expects no arguments")
-		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
 			return nil, native.UnknownMethodError(receiver.TypeName(), "lower")
 		}
-		return runtime.String{Value: strings.ToLower(value.Value)}, nil
+		return native.StringCaseMethod("lower", value.Value, args)
 	case "upper":
-		if len(args) != 0 {
-			return nil, fmt.Errorf("string.upper expects no arguments")
-		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
 			return nil, native.UnknownMethodError(receiver.TypeName(), "upper")
 		}
-		return runtime.String{Value: strings.ToUpper(value.Value)}, nil
+		return native.StringCaseMethod("upper", value.Value, args)
 	case "capitalize":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("string.capitalize expects no arguments")
@@ -1262,6 +1246,9 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 	case "clear":
 		switch v := receiver.(type) {
 		case *runtime.List:
+			if len(args) != 0 {
+				return nil, fmt.Errorf("list.clear expects no arguments")
+			}
 			if v.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 			}
@@ -1478,6 +1465,9 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 				if err != nil {
 					return nil, err
 				}
+			}
+			if len(args) == 0 {
+				return runtime.String{Value: runtime.FormatDecimal(value.Value)}, nil
 			}
 			return runtime.String{Value: value.Value.FloatString(scale)}, nil
 		}

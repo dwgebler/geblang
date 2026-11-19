@@ -51,7 +51,7 @@ class WebMultipartTest extends test.Test {
                 "headers": {"Content-Type": "application/json"},
                 "body": "{}",
             });
-            this.assertTrue(false, "expected error on non-multipart body");
+            this.fail("expected error on non-multipart body");
         } catch (RuntimeError e) {
             this.assertTrue(e.message.contains("not multipart"));
         }
@@ -66,7 +66,7 @@ class WebMultipartTest extends test.Test {
                 "headers": {"Content-Type": "multipart/form-data"},
                 "body": "",
             });
-            this.assertTrue(false, "expected error on missing boundary");
+            this.fail("expected error on missing boundary");
         } catch (RuntimeError e) {
             this.assertTrue(e.message.contains("boundary"));
         }

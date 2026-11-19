@@ -121,7 +121,7 @@ func divide(int a, int b): int {
     if (b == 0) {
         throw RuntimeError("division by zero");
     }
-    return a / b;
+    return a // b;
 }
 
 class DivideTest extends test.Test {
@@ -130,8 +130,7 @@ class DivideTest extends test.Test {
         this.assertThrows(func(): int { return divide(1, 0); });
         this.assertThrows(func(): int { return divide(1, 0); }, "by zero");
         this.assertThrowsOf(func(): int { return divide(1, 0); }, "RuntimeError");
-        this.assertThrowsOf(
-            func(): int { return divide(1, 0); }, "RuntimeError", "by zero");
+        this.assertThrowsOf(func(): int { return divide(1, 0); }, "RuntimeError", "by zero");
     }
 }
 ```
@@ -226,12 +225,12 @@ Replacement callables receive the real arguments, so a mock can return
 different values per input:
 
 ```gb
-test.mock("crypt", {
-    "sha256": func(string s): string {
-        if (s == "key") { return "matched"; }
-        return "default";
+test.mock("crypt", {"sha256": func(string s): string {
+    if (s == "key") {
+        return "matched";
     }
-});
+    return "default";
+}});
 ```
 
 To clear patches before the method ends, use `test.restore(moduleName,
@@ -291,13 +290,15 @@ asserts, and a failure reports which row failed via the assertion
 message:
 
 ```gb
+import test;
+
 class LengthTest extends test.Test {
     @test
     func countsCharacters(): void {
         let cases = [
             {"input": "abc", "expected": 3},
             {"input": "", "expected": 0},
-            {"input": "hello", "expected": 5}
+            {"input": "hello", "expected": 5},
         ];
         for (row in cases) {
             let input = row["input"] as string;
@@ -519,15 +520,20 @@ the module under test and exercise its exported surface.
 ## Reified generics in tests
 
 The runtime enforces declared element types for `list<T>`, `set<T>`, and
-`dict<K,V>`. A test can confirm the enforcement:
+`dict<K,V>`. A literal with the wrong elements is rejected before the program
+runs, so a test checks a value arriving through `any`:
 
 ```gb
+func raw(any x): any {
+    return x;
+}
+
 @test
 func listRejectsWrongElement(): void {
     let threw = false;
     try {
-        list<int> bad = [1, "two", 3];
-    } catch (RuntimeError e) {
+        list<int> bad = raw([1, "two", 3]);
+    } catch (TypeError e) {
         threw = true;
     }
     this.assertTrue(threw);

@@ -85,7 +85,7 @@ export class User { ... }
 
 ```gb
 let x = 1;                   # inferred (int)
-int  y = 2;                  # explicit
+int y = 2;                  # explicit
 ?string maybe = null;        # nullable
 const PI = 3.14;             # immutable; PI is decimal
 ```
@@ -115,9 +115,9 @@ io.println("${42:04d}");        # -> 0042
 ### Collections
 
 ```gb
-list<int>          xs = [1, 2, 3];      # int[] is an alias
-dict<string, int>  d  = {"a": 1, "b": 2};
-set<int>           s  = {1, 2, 3};      # brace literal w/o ':' is a set
+list<int>         xs = [1, 2, 3];      # int[] is an alias
+dict<string, int> d  = {"a": 1, "b": 2};
+set<int>          s  = {1, 2, 3};      # brace literal w/o ':' is a set
 ```
 
 - **List mutators work in place** (1.16.0+): `push`, `pop`,
@@ -135,7 +135,8 @@ set<int>           s  = {1, 2, 3};      # brace literal w/o ':' is a set
 - Slicing is Python-style on lists and strings: `xs[1:3]`,
   `xs[:2]`, `s[-3:]`. Negative indexes count from the end.
 - Comprehensions: `[x * x for x in 1..5]`,
-  `[x for x in xs if x > 0]`, `{k: v * 2 for k, v in d}`.
+  `[x for x in xs if x > 0]`, `{k: v * 2 for k, v in d}`; `(x * x for x in xs)`
+  is a lazy generator (first source evaluated immediately, the rest on demand).
 - `instanceof list<T>` works at runtime (reified generics).
 - `xs.search(v)` / `xs.search(pred)` / `s.searchPattern(re)` return every
   matching locator (list indices, dict keys, string positions); `xs.fill(v, n)`
@@ -146,12 +147,15 @@ set<int>           s  = {1, 2, 3};      # brace literal w/o ':' is a set
 ### Ranges
 
 ```gb
-for (i in 1..5)   { }     # inclusive: 1,2,3,4,5
-for (i in 0..<10) { }     # exclusive end
+for (i in 1..5) {}     # inclusive: 1,2,3,4,5
+for (i in 0..<10) {}     # exclusive end
 let xs = (1..5).toList();
 range(1, 9, 2);           # builtin -> [1, 3, 5, 7, 9] (inclusive)
 zrange(0, 5);             # exclusive, Python-style -> [0,1,2,3,4]; zrange(n) from 0
-r.length; r.first; r.last; r.contains(3);
+r.length;
+r.first;
+r.last;
+r.contains(3);
 ```
 
 ### Control flow
@@ -203,6 +207,8 @@ let len = user?.profile?.bio ?? "";     # optional chaining
 func add(int a, int b): int { return a + b; }
 
 let inc = func(int n): int { return n + 1; };
+let twice = (int n) => n * 2;           # arrow function (1.43.0)
+[1, 2, 3].map((x) => x * 10);           # x typed int from the list
 
 func greet(string name, string greeting = "Hello"): string { ... }
 greet("Ada", greeting: "Hi");           # named argument
@@ -223,6 +229,11 @@ greet(...{"name": "Ada"});              # dict spread -> named args
   argument count and type at the call site.
 - Closures capture by reference; captured variables can be
   reassigned through the closure.
+- Arrow functions `(params) => expr` or `(params) => { ... }` (also
+  `async (...) => ...`). A bare parameter name is only allowed when the arrow
+  is passed to a `list<T>` callback method (`map`, `filter`, `sortBy`,
+  `reduce`, ...); elsewhere write the type: `(int x) => ...`. No defaults or
+  variadics; the return value is unchecked.
 - Pipe: `x |> f(y)` calls `f(x, y)`; chains read left to right.
 - Partial application: a call with `_` placeholders returns a new callable with
   those positions open (`add(_, 10)`, `wrap(_, "-", _)`), across every dispatch
@@ -256,7 +267,10 @@ func counter(): generator<int> {
     yield 1;
     yield 2;
 }
-for (n in counter()) { io.println(n); }
+
+for (n in counter()) {
+    io.println(n);
+}
 ```
 
 Return type is `generator<T>`. Use `iterable<T>` for parameters
@@ -272,7 +286,9 @@ consuming loop's `catch`.
 import async;
 import io;
 
-func work(int n): int { return n * n; }
+func work(int n): int {
+    return n * n;
+}
 
 let t1 = async.run(func(): int { return work(1); });
 let t2 = async.run(func(): int { return work(2); });
@@ -315,7 +331,9 @@ class Counter {
         this.value += 1;
         return this.value;
     }
-    static func total(): int { return Counter.created; }
+    static func total(): int {
+        return Counter.created;
+    }
 }
 
 class TaskCounter extends Counter {
@@ -343,11 +361,21 @@ class TaskCounter extends Counter {
 ```gb
 class Money {
     int cents;
-    func Money(int c) { this.cents = c; }
-    func __add(Money o): Money { return Money(this.cents + o.cents); }
-    func __eq(Money o): bool { return this.cents == o.cents; }
-    func __lt(Money o): bool { return this.cents < o.cents; }
-    func __string(): string { return "$${this.cents / 100}"; }
+    func Money(int c) {
+        this.cents = c;
+    }
+    func __add(Money o): Money {
+        return Money(this.cents + o.cents);
+    }
+    func __eq(Money o): bool {
+        return this.cents == o.cents;
+    }
+    func __lt(Money o): bool {
+        return this.cents < o.cents;
+    }
+    func __string(): string {
+        return "$${this.cents / 100}";
+    }
 }
 ```
 
@@ -366,12 +394,22 @@ interpolation).
 interface Notifier {
     func send(string msg): void;
     func sendAll(list<string> ms): void {   # default body allowed
-        for (m in ms) { this.send(m); }
+        for (m in ms) {
+            this.send(m);
+        }
     }
 }
 
-enum Color { Red, Green, Blue }
-enum Shape { Circle(decimal), Rect(decimal, decimal) }
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+enum Shape {
+    Circle(decimal),
+    Rect(decimal, decimal)
+}
 
 let area = match (shape) {
     case Shape.Circle(decimal r)          => 3.14 * r * r;
@@ -396,8 +434,11 @@ try {
 }
 
 class MyError extends ValueError {
-    func MyError(string m) { parent(m); }
+    func MyError(string m) {
+        parent(m);
+    }
 }
+
 throw MyError("boom");
 ```
 
@@ -413,7 +454,7 @@ stdlib helpers.
 ### Context managers and decorators
 
 ```gb
-with (f = io.open("data.txt")) {
+with (f = io.open("data.txt", "r")) {
     io.println(f.readAll());
 }
 # the with-binding (f) does not escape the block
@@ -536,7 +577,9 @@ lists members at runtime.
 import test;
 
 func half(int n): int {
-    if (n % 2 != 0) { throw ValueError("odd"); }
+    if (n % 2 != 0) {
+        throw ValueError("odd");
+    }
     return n / 2;
 }
 
@@ -548,7 +591,9 @@ class MathTest extends test.Test {
 
     @test
     func throwsOnInvalidInput(): void {
-        this.assertThrows(func(): void { half(3); });
+        this.assertThrows(func(): void {
+            half(3);
+        });
     }
 }
 ```

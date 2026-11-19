@@ -93,7 +93,17 @@ type Parser struct {
 
 	curToken  token.Token
 	peekToken token.Token
+
+	grouped map[ast.Expression]token.Token
+	// noArrow stops `(x) =>` reading as an arrow function inside a match case head, where `=>` ends the pattern.
+	noArrow bool
 }
+
+// TrackGrouping records every parenthesized expression so a formatter can keep the author's parentheses.
+func (p *Parser) TrackGrouping() { p.grouped = map[ast.Expression]token.Token{} }
+
+// Grouped maps each expression written inside grouping parentheses to its opening paren; nil unless TrackGrouping was called.
+func (p *Parser) Grouped() map[ast.Expression]token.Token { return p.grouped }
 
 func New(l *lexer.Lexer) *Parser {
 	p := &Parser{l: l}
@@ -597,11 +607,13 @@ func (p *Parser) parseDeclarationStatement() ast.Statement {
 			// Typed static class member: `static int count = 0;` is
 			// mutable and behaves like static let with a declared type.
 			stmt.Kind = "static let"
+			stmt.ImplicitLet = true
 		}
 	}
 
 	if p.peekTokenIs(token.Assign) {
 		p.nextToken()
+		stmt.Assign = p.curToken
 		p.nextToken()
 		stmt.Value = emptySetForType(stmt.Type, p.parseExpression(lowest))
 	}
@@ -735,6 +747,7 @@ func (p *Parser) parseClassStatement() ast.Statement {
 	for {
 		p.nextToken()
 		if p.atBodyEnd() {
+			stmt.End = p.curToken
 			break
 		}
 		// `func ~ClassName()` is a destructor declaration. We
@@ -823,6 +836,7 @@ func (p *Parser) parseInterfaceStatement() ast.Statement {
 	for {
 		p.nextToken()
 		if p.atBodyEnd() {
+			stmt.End = p.curToken
 			break
 		}
 		if p.curTokenIs(token.Func) {
@@ -1127,7 +1141,7 @@ func (p *Parser) parseTryStatement() ast.Statement {
 
 func (p *Parser) parseMatchStatement() ast.Statement {
 	expr := p.parseMatchExpression()
-	return &ast.MatchStatement{Token: expr.Token, Expr: expr.Expr, Cases: expr.Cases}
+	return &ast.MatchStatement{Token: expr.Token, Expr: expr.Expr, Cases: expr.Cases, End: expr.End}
 }
 
 func (p *Parser) parseSelectStatement() ast.Statement {
@@ -1330,9 +1344,22 @@ func (p *Parser) parsePrefix() ast.Expression {
 		expr.Value = p.parseExpression(prefix)
 		return expr
 	case token.LParen:
+		if p.arrowAhead() {
+			return p.parseArrowFunction(p.curToken, false)
+		}
+		open := p.curToken
 		p.nextToken()
 		expr := p.parseExpression(lowest)
+		if p.peekTokenIs(token.For) {
+			comp := &ast.GeneratorComprehension{Token: open, Body: expr}
+			comp.Clauses = p.parseComprehensionTail()
+			p.expectPeek(token.RParen)
+			return comp
+		}
 		p.expectPeek(token.RParen)
+		if p.grouped != nil && expr != nil {
+			p.grouped[expr] = open
+		}
 		// Selector: routes `(obj.x)(args)` through value-then-call. Others: lets the formatter keep the author's grouping parens.
 		switch e := expr.(type) {
 		case *ast.SelectorExpression:
@@ -1357,6 +1384,15 @@ func (p *Parser) parsePrefix() ast.Expression {
 		if p.peekTokenIs(token.Func) {
 			p.nextToken()
 			return p.parseFunctionLiteral(true)
+		}
+		if p.peekTokenIs(token.LParen) {
+			asyncTok := p.curToken
+			p.nextToken()
+			if p.arrowAhead() {
+				return p.parseArrowFunction(asyncTok, true)
+			}
+			p.errorf(p.curToken, "expected an arrow function after async (")
+			return nil
 		}
 		return &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 	case token.Match:
@@ -1987,6 +2023,76 @@ func (p *Parser) parseFunctionLiteral(async bool) ast.Expression {
 	return lit
 }
 
+// arrowAhead reports whether the `(` at curToken opens an arrow function's parameter list: its matching `)` is followed by `=>`.
+func (p *Parser) arrowAhead() bool {
+	if p.noArrow {
+		return false
+	}
+	depth := 1
+	for i := p.position - 1; i < len(p.tokens); i++ {
+		switch p.tokens[i].Type {
+		case token.LParen:
+			depth++
+		case token.RParen:
+			depth--
+			if depth == 0 {
+				return i+1 < len(p.tokens) && p.tokens[i+1].Type == token.Arrow
+			}
+		case token.EOF, token.Semicolon, token.LBrace, token.RBrace:
+			return false
+		}
+	}
+	return false
+}
+
+// parseArrowFunction parses `(params) => expr` or `(params) => { ... }` with curToken on the `(`.
+func (p *Parser) parseArrowFunction(start token.Token, async bool) ast.Expression {
+	lit := &ast.FunctionLiteral{Token: start, Async: async, Arrow: true}
+	lit.Parameters = []ast.Parameter{}
+	if p.peekTokenIs(token.RParen) {
+		p.nextToken()
+	} else {
+		for {
+			p.nextToken()
+			var paramType *ast.TypeRef
+			if p.curTokenIs(token.Ident) && (p.peekTokenIs(token.Comma) || p.peekTokenIs(token.RParen)) {
+				paramType = &ast.TypeRef{Token: p.curToken, Name: "any", Inferred: true}
+			} else {
+				paramType = p.parseTypeRefFromCurrent()
+				if !p.expectPeek(token.Ident) {
+					return lit
+				}
+			}
+			lit.Parameters = append(lit.Parameters, ast.Parameter{Type: paramType, Name: &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}})
+			if p.peekTokenIs(token.Assign) || p.peekTokenIs(token.Ellipsis) {
+				p.errorf(p.peekToken, "arrow function parameters cannot have default values or be variadic; use func(...) instead")
+				return lit
+			}
+			if !p.peekTokenIs(token.Comma) {
+				break
+			}
+			p.nextToken()
+		}
+		if !p.expectPeek(token.RParen) {
+			return lit
+		}
+	}
+	if !p.expectPeek(token.Arrow) {
+		return lit
+	}
+	arrow := p.curToken
+	if p.peekTokenIs(token.LBrace) {
+		p.nextToken()
+		lit.Body = p.parseBlockStatement()
+		return lit
+	}
+	p.nextToken()
+	value := p.parseExpression(lowest)
+	lit.ExprBody = true
+	lit.Body = &ast.BlockStatement{Token: arrow, Statements: []ast.Statement{&ast.ReturnStatement{Token: arrow, Value: value}}, End: p.curToken}
+	return lit
+}
+
 func (p *Parser) parseMatchExpression() *ast.MatchExpression {
 	expr := &ast.MatchExpression{Token: p.curToken}
 	expr.Expr = p.parseParenthesizedExpression()
@@ -1996,6 +2102,7 @@ func (p *Parser) parseMatchExpression() *ast.MatchExpression {
 	for {
 		p.nextToken()
 		if p.atBodyEnd() {
+			expr.End = p.curToken
 			break
 		}
 		c := ast.MatchCase{Token: p.curToken}
@@ -2004,6 +2111,8 @@ func (p *Parser) parseMatchExpression() *ast.MatchExpression {
 			c.Default = true
 		case token.Case:
 			p.nextToken()
+			outerNoArrow := p.noArrow
+			p.noArrow = true
 			if p.isEnumDestructuringPattern() {
 				c.EnumVariant = p.parseEnumVariantPattern()
 			} else if p.curTokenIs(token.LBracket) {
@@ -2043,6 +2152,7 @@ func (p *Parser) parseMatchExpression() *ast.MatchExpression {
 				p.nextToken()
 				c.Guard = p.parseParenthesizedExpression()
 			}
+			p.noArrow = outerNoArrow
 		default:
 			p.errorf(p.curToken, "expected case or default, got %s", p.curToken.Type)
 			p.synchronize()
@@ -2050,6 +2160,7 @@ func (p *Parser) parseMatchExpression() *ast.MatchExpression {
 		}
 		if p.peekTokenIs(token.Arrow) {
 			p.nextToken()
+			c.Arrow = p.curToken
 			p.nextToken()
 			c.Value = p.parseExpression(lowest)
 			p.expectPeek(token.Semicolon)
@@ -2144,6 +2255,7 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 	for {
 		p.nextToken()
 		if p.atBodyEnd() {
+			stmt.End = p.curToken
 			return stmt
 		}
 		if p.curTokenIs(token.Semicolon) {
@@ -2172,6 +2284,7 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 		}
 		if p.peekTokenIs(token.Assign) {
 			p.nextToken()
+			variant.Assign = p.curToken
 			p.nextToken()
 			variant.BackingValue = p.parseExpression(lowest)
 		}
@@ -2191,6 +2304,7 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 	for {
 		p.nextToken()
 		if p.atBodyEnd() {
+			stmt.End = p.curToken
 			break
 		}
 		if !p.curTokenIs(token.Func) && !(p.curTokenIs(token.Async) && p.peekTokenIs(token.Func)) {
@@ -2723,6 +2837,7 @@ func (p *Parser) parseInterpolatedString(tok token.Token) *ast.InterpolatedStrin
 
 		subLexer := lexer.NewAt(exprText, exprLine)
 		subParser := New(subLexer)
+		subParser.grouped = p.grouped
 		expr := subParser.parseExpression(lowest)
 		if len(subParser.errors) == 0 && !subParser.peekTokenIs(token.EOF) {
 			subParser.errorf(subParser.peekToken, "unexpected %s after expression", subParser.peekToken.Type)

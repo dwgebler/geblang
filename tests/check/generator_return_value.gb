@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary A generator cannot return a value; the value would never reach the consumer.
+ */
+func numbers(): generator<int> {
+    yield 1;
+    return 2;
+}

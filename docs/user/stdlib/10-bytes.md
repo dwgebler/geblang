@@ -149,11 +149,14 @@ io.println(bytes.toHex(header));        /* deadbeef040007 */
 let parts = binary.unpack(">IHB", header);
 io.println(parts);                      /* [3735928559, 1024, 7] */
 
-let labelled = binary.unpackNamed([
-    {"name": "magic",   "type": ">I"},
-    {"name": "size",    "type": "H"},
-    {"name": "version", "type": "B"}
-], header);
+let labelled = binary.unpackNamed(
+    [
+        {"name": "magic", "type": ">I"},
+        {"name": "size", "type": "H"},
+        {"name": "version", "type": "B"},
+    ],
+    header
+);
 io.println(labelled["magic"]);          /* 3735928559 */
 ```
 
@@ -212,7 +215,7 @@ import io;
 
 let raw = archive.zipWrite([
     {"name": "hello.txt", "data": "hello world"},
-    {"name": "nested/inside.txt", "data": "nested"}
+    {"name": "nested/inside.txt", "data": "nested"},
 ]);
 
 let entries = archive.zipRead(raw);
@@ -221,9 +224,7 @@ for (e in entries) {
     io.println(bytes.toString(e["data"] as bytes));
 }
 
-let tgz = archive.tarGzWrite([
-    {"name": "config.toml", "data": "key = \"value\""}
-]);
+let tgz = archive.tarGzWrite([{"name": "config.toml", "data": "key = \"value\""}]);
 let configEntries = archive.tarGzRead(tgz);
 ```
 
@@ -257,7 +258,9 @@ writer.close();
 let reader = archive.open("backup.tar.gz");
 while (true) {
     let entry = reader.next();
-    if (entry == null) { break; }
+    if (entry == null) {
+        break;
+    }
     io.println(entry.name);
     entry.close();
 }

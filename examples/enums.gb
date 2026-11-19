@@ -7,7 +7,12 @@ import io;
 
 # Simple enum - no associated data
 
-enum Direction { North, South, East, West }
+enum Direction {
+    North,
+    South,
+    East,
+    West
+}
 
 Direction heading = Direction.North;
 io.println(heading);                        # Direction.North
@@ -17,7 +22,10 @@ io.println(heading instanceof Direction);   # true
 
 # Tagged enum - variants carry associated values
 
-enum Result { Ok(string), Err(string) }
+enum Result {
+    Ok(string),
+    Err(string)
+}
 
 Result ok = Result.Ok("hello");
 Result err = Result.Err("something went wrong");
@@ -70,13 +78,16 @@ io.println(handle(Result.Err("connection refused"))); # failure: connection refu
 
 # Enum with multiple payload fields
 
-enum Shape { Circle(decimal), Rect(decimal, decimal) }
+enum Shape {
+    Circle(decimal),
+    Rect(decimal, decimal)
+}
 
 Shape c = Shape.Circle(5.0);
 Shape r = Shape.Rect(3.0, 4.0);
 
-io.println(c);  # Shape.Circle(5.0000000000)
-io.println(r);  # Shape.Rect(3.0000000000, 4.0000000000)
+io.println(c);  # Shape.Circle(5.0)
+io.println(r);  # Shape.Rect(3.0, 4.0)
 
 func area(Shape s): decimal {
     return match (s) {
@@ -85,5 +96,5 @@ func area(Shape s): decimal {
     };
 }
 
-io.println(area(Shape.Circle(5.0)));    # 78.5397500000
-io.println(area(Shape.Rect(3.0, 4.0))); # 12.0000000000
+io.println(area(Shape.Circle(5.0)));    # 78.53975
+io.println(area(Shape.Rect(3.0, 4.0))); # 12.0

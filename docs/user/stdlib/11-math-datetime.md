@@ -53,7 +53,7 @@ numeric methods. See the syntax-basics chapter for details.
 ```gb
 io.println(math.abs(-5));     # 5      (int)
 io.println(math.abs(-3.7f));  # 3.7    (float)
-io.println(math.abs(-2.5));   # 2.5000000000  (decimal)
+io.println(math.abs(-2.5));   # 2.5  (decimal)
 ```
 
 `math.clamp(value, min, max)` constrains a value to the range `[min, max]`:
@@ -87,12 +87,12 @@ width (`inLow == inHigh`). Neither clamps, so values of `t` outside `[0, 1]` (or
 clamping.
 
 ```gb
-io.println(math.lerp(10, 20, 0.25));                 # 12.5000000000 (exact decimal)
-io.println(math.remap(450000, 400000, 500000, 11500, 10000));  # 10750.0000000000
+io.println(math.lerp(10, 20, 0.25));                 # 12.5 (exact decimal)
+io.println(math.remap(450000, 400000, 500000, 11500, 10000));  # 10750.0
 
 # exact: 1/3 stays a rational, so three thirds sum back to exactly 1
 let third = math.remap(1, 0, 3, 0, 1);
-io.println(third + third + third);                   # 1.0000000000
+io.println(third + third + third);                   # 1.0
 
 io.println(math.lerp(0.0f, 1.0f, 0.5f));             # 0.5 (float in, float out)
 ```
@@ -367,7 +367,7 @@ given IANA timezone (e.g. `"Europe/London"`, `"America/New_York"`,
 
 ```gb
 let london = datetime.now("Europe/London");
-io.println(london["hour"], london["zone"]);
+io.println("${london["hour"]} ${london["zone"]}");
 ```
 
 ### Parts at a specific timezone for a known unix timestamp
@@ -511,10 +511,10 @@ All arithmetic functions take and return Unix timestamps (`int`):
 
 ```gb
 let now = datetime.nowUnix();
-let tomorrow   = datetime.addDays(now, 1);
-let nextMonth  = datetime.addMonths(now, 1);
-let nextYear   = datetime.addYears(now, 1);
-let inOneHour  = datetime.addSeconds(now, 3600);
+let tomorrow  = datetime.addDays(now, 1);
+let nextMonth = datetime.addMonths(now, 1);
+let nextYear  = datetime.addYears(now, 1);
+let inOneHour = datetime.addSeconds(now, 3600);
 ```
 
 `datetime.diff(start, end)` returns a dict:
@@ -561,10 +561,10 @@ let snapshot = appt.copy();
 ```gb
 io.println("${dir(datetime.Instant(0))}");
 # ["add", "addDays", "addMonths", "addSeconds", "addYears", "copy", "day",
-#  "dayOfYear", "diff", "equals", "format", "formatHTTP", "formatRFC3339",
-#  "hour", "inZone", "isAfter", "isBefore", "isWeekend", "minute", "month",
-#  "parts", "second", "sub", "toLocal", "toString", "toUnix", "toUnixMillis",
-#  "toUnixNanos", "toUtc", "unix", "weekday", "year"]
+# "dayOfYear", "diff", "equals", "format", "formatHTTP", "formatRFC3339",
+# "hour", "inZone", "isAfter", "isBefore", "isWeekend", "minute", "month",
+# "parts", "second", "sub", "toLocal", "toString", "toUnix", "toUnixMillis",
+# "toUnixNanos", "toUtc", "unix", "weekday", "year"]
 ```
 
 **Formatting methods:**
@@ -639,9 +639,11 @@ import io;
 func nextMonday(datetime.Instant from): datetime.Instant {
     let parts = from.parts();
     let daysUntilMonday = (8 - parts["weekday"]) % 7;
-    if (daysUntilMonday == 0) { daysUntilMonday = 7; }
+    if (daysUntilMonday == 0) {
+        daysUntilMonday = 7;
+    }
     return from.addDays(daysUntilMonday)
-               .add(datetime.Duration(9 * 3600 - (parts["hour"] * 3600 + parts["minute"] * 60 + parts["second"])));
+        .add(datetime.Duration(9 * 3600 - (parts["hour"] * 3600 + parts["minute"] * 60 + parts["second"])));
 }
 
 let reminder = nextMonday(datetime.Instant());
@@ -709,12 +711,12 @@ is the offset at a specific instant.
 (accounts for DST):
 
 ```gb
-let summerTs  = datetime.Instant("2025-07-01T00:00:00Z");
-let winterTs  = datetime.Instant("2025-01-01T00:00:00Z");
+let summerTs = datetime.Instant("2025-07-01T00:00:00Z");
+let winterTs = datetime.Instant("2025-01-01T00:00:00Z");
 let la = datetime.Zone("America/Los_Angeles");
 
-io.println(la.offsetAt(summerTs) / 3600);   # -7  (PDT)
-io.println(la.offsetAt(winterTs) / 3600);   # -8  (PST)
+io.println(la.offsetAt(summerTs) // 3600);   # -7  (PDT)
+io.println(la.offsetAt(winterTs) // 3600);   # -8  (PST)
 ```
 
 ### Labels
@@ -802,8 +804,11 @@ skip invalid dates rather than clamping them.
 `[from, to)`. Both require a positive safety limit.
 
 ```gb
-let schedule = period.Recurrence(datetime.Instant(2024, 1, 31, 9, 0, 0),
-    "monthly", {"count": 3, "zone": "Europe/London"});
+let schedule = period.Recurrence(
+    datetime.Instant(2024, 1, 31, 9, 0, 0),
+    "monthly",
+    {"count": 3, "zone": "Europe/London"}
+);
 for (instant in schedule.occurrences(3)) {
     io.println(instant.formatRFC3339());
 }
@@ -973,7 +978,7 @@ let id3 = uuid.v3(ns, "example.com");
 let id5 = uuid.v5(ns, "example.com");
 
 io.println(id3);   # 9073926b-929f-31c2-abc9-fad77ae3e8eb  (always the same)
-io.println(id5);   # 2ed6657d-e927-568b-95e3-af9a23cb4481  (always the same)
+io.println(id5);   # cfbff0d1-9375-5685-968c-48ce8b15ae17  (always the same)
 ```
 
 The same namespace and name always produce the same UUID. Use v5 in new
@@ -1024,9 +1029,9 @@ io.println(uuid.nil());   # 00000000-0000-0000-0000-000000000000
 `uuid.fromBytes(b)` does the reverse:
 
 ```gb
-let id    = uuid.v4();
-let raw   = uuid.toBytes(id);      # 16-byte bytes value
-let back  = uuid.fromBytes(raw);   # round-trips to the same string
+let id   = uuid.v4();
+let raw  = uuid.toBytes(id);      # 16-byte bytes value
+let back = uuid.fromBytes(raw);   # round-trips to the same string
 io.println(id == back);   # true
 ```
 

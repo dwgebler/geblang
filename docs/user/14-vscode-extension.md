@@ -1,4 +1,4 @@
-# VS Code Extension
+# VS Code extension
 
 Geblang has a VS Code extension, published on the Visual Studio Marketplace as
 `geblang.vscode-geblang`. Its source is in the `vscode-geblang/` directory of
@@ -258,16 +258,12 @@ frame's body are not currently visible.
 
 - The debug adapter runs scripts on the evaluator path. Scripts that require
   `--vm-strict` mode may behave differently under the debugger.
-- Only the main script file has source-mapped breakpoints. Breakpoints set in
-  imported modules are not yet supported.
 - Outer-frame inspection covers a frame's parameters and enclosing scope;
   locals declared inside an outer frame's body are not currently visible.
   Module-level variables are visible in the outermost frame.
 - Disconnect and Terminate cancel debugger evaluations at Geblang statement
   boundaries, including work spawned with `async.run`. A native call that
   blocks inside an evaluation cannot be interrupted until that call returns.
-
-These limitations are expected to be lifted in a post-1.0.0 release.
 
 ## Settings
 

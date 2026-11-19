@@ -1,4 +1,4 @@
-# Data Stores
+# Data stores
 
 Geblang ships database, Redis, configuration, and schema-validation modules for
 application storage and infrastructure code. These modules are documented on

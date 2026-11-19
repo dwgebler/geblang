@@ -82,7 +82,7 @@ public fields or its `__serialize()` result (1.41.3).
 log.info(logger, "user login", {
     "userId": "42",
     "ip": request["remoteAddr"],
-    "remember": true
+    "remember": true,
 });
 ```
 
@@ -106,11 +106,13 @@ import log;
 
 class JsonSink implements log.LogInterface {
     func handle(string level, string message, dict<string, any> fields): void {
-        io.println(json.stringify({
-            "level": level,
-            "message": message,
-            "fields": fields
-        }));
+        io.println(
+            json.stringify({
+                "level": level,
+                "message": message,
+                "fields": fields,
+            })
+        );
     }
 }
 
@@ -126,10 +128,10 @@ class MemoryLogger implements log.LogInterface {
     list<dict<string, any>> entries = [];
 
     func handle(string level, string message, dict<string, any> fields): void {
-        this.entries = this.entries.push({
+        this.entries.push({
             "level": level,
             "message": message,
-            "fields": fields
+            "fields": fields,
         });
     }
 }
@@ -172,7 +174,7 @@ func logRequest(any logger, dict<string, any> req, int status, int durationMs): 
         "method": req["method"],
         "path": req["path"],
         "status": status,
-        "durationMs": durationMs
+        "durationMs": durationMs,
     });
 }
 ```
@@ -184,10 +186,10 @@ class Capture implements log.LogInterface {
     list<dict<string, any>> entries = [];
 
     func handle(string level, string message, dict<string, any> fields): void {
-        this.entries = this.entries.push({
+        this.entries.push({
             "level": level,
             "message": message,
-            "fields": fields
+            "fields": fields,
         });
     }
 }
@@ -211,7 +213,7 @@ let logger = log.syslog({
     "network":  "udp",
     "address":  "logs.example.com:514",
     "facility": "local0",
-    "app":      "checkout"
+    "app":      "checkout",
 });
 log.info(logger, "order placed", {"orderId": "A123"});
 log.close(logger);

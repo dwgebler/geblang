@@ -1,4 +1,4 @@
-# Standard Library Overview
+# Standard library overview
 
 Geblang's standard library is intentionally broad enough for everyday work, but
 not designed as a monolithic application framework. It should give you the

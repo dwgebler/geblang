@@ -20,7 +20,8 @@ class ServerHandlerErrorLogTest extends test.Test {
             if (r["path"] == "/throw") {
                 throw ValueError("bad input");
             }
-            let m = {"a": 1};
+            # Typed any so the fault happens at run time instead of failing geblang check.
+            any m = {"a": 1};
             return {"status": 200, "body": "${m.nope()}"};
         });
         let thrown = http.get("http://${http.serverAddr(s)}/throw");

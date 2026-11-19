@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"geblang/internal/ast"
+	"geblang/internal/native"
 	"geblang/internal/semantic"
 )
 
@@ -17,6 +18,8 @@ type classGraph struct {
 	// ambiguous names are declared in more than one source; resolution
 	// bails on them to avoid picking the wrong declaration.
 	ambiguous map[string]bool
+	// testBase holds the spellings that name the native test.Test base in this program.
+	testBase map[string]bool
 }
 
 // buildClassGraph extracts the class model of the file under check plus
@@ -27,6 +30,7 @@ func buildClassGraph(program *ast.Program, opts Options, cache *ModuleCache) *cl
 		classes:    map[string]semantic.ClassDecl{},
 		interfaces: map[string]semantic.InterfaceDecl{},
 		ambiguous:  map[string]bool{},
+		testBase:   testBaseSpellings(program),
 	}
 	g.merge(semantic.ExtractModel(program))
 	if opts.Resolver == nil {
@@ -51,6 +55,33 @@ func buildClassGraph(program *ast.Program, opts Options, cache *ModuleCache) *cl
 
 // importedModulePaths returns the canonical paths of every module the
 // program imports, via either `import m` or `from m import ...`.
+func testBaseSpellings(program *ast.Program) map[string]bool {
+	spellings := map[string]bool{"test.Test": true}
+	for _, stmt := range program.Statements {
+		switch s := stmt.(type) {
+		case *ast.ImportStatement:
+			isNative := joinPath(s.Path) == "test" && IsNativeImport("test")
+			if s.Alias != nil {
+				if isNative {
+					spellings[s.Alias.Value+".Test"] = true
+				} else if s.Alias.Value == "test" {
+					delete(spellings, "test.Test")
+				}
+			}
+		case *ast.FromImportStatement:
+			if joinPath(s.Path) != "test" || !IsNativeImport("test") {
+				continue
+			}
+			for _, n := range s.Names {
+				if n.Name != nil && n.Name.Value == "Test" {
+					spellings[n.Local()] = true
+				}
+			}
+		}
+	}
+	return spellings
+}
+
 func importedModulePaths(program *ast.Program) []string {
 	var paths []string
 	for _, stmt := range program.Statements {
@@ -102,7 +133,13 @@ func simpleName(name string) string {
 func (g *classGraph) surface(className string) (map[string]bool, bool) {
 	members := map[string]bool{}
 	seen := map[string]bool{}
-	for name := className; name != ""; {
+	for name, parent := className, ""; name != ""; {
+		if g.testBase[parent] {
+			for m := range native.TestBaseMethods {
+				members[strings.ToLower(m)] = true
+			}
+			return members, true
+		}
 		if g.ambiguous[name] || seen[name] {
 			return nil, false
 		}
@@ -126,6 +163,7 @@ func (g *classGraph) surface(className string) (map[string]bool, bool) {
 				return nil, false
 			}
 		}
+		parent = decl.Parent
 		name = simpleName(decl.Parent)
 	}
 	return members, true
@@ -138,7 +176,10 @@ func (g *classGraph) surface(className string) (map[string]bool, bool) {
 // or the method resolves only via an interface) so callers stay silent.
 func (g *classGraph) methodSignatures(className, methodLower string) ([]semantic.MethodSignature, []string, bool) {
 	seen := map[string]bool{}
-	for name := className; name != ""; {
+	for name, parent := className, ""; name != ""; {
+		if g.testBase[parent] {
+			return testBaseSignatures(methodLower)
+		}
 		if g.ambiguous[name] || seen[name] {
 			return nil, nil, false
 		}
@@ -150,6 +191,7 @@ func (g *classGraph) methodSignatures(className, methodLower string) ([]semantic
 		if sigs, found := decl.MethodSigs[methodLower]; found && len(sigs) > 0 {
 			return sigs, decl.TypeParams, true
 		}
+		parent = decl.Parent
 		name = simpleName(decl.Parent)
 	}
 	return nil, nil, false
@@ -220,4 +262,26 @@ func (g *classGraph) addInterfaceMembers(name string, members, seen map[string]b
 		}
 	}
 	return true
+}
+
+// testBaseSignatures types every parameter any: only the argument count of an inherited assertion is checked.
+func testBaseSignatures(methodLower string) ([]semantic.MethodSignature, []string, bool) {
+	for name, doc := range native.TestBaseMethods {
+		if strings.ToLower(name) != methodLower {
+			continue
+		}
+		var sigs []semantic.MethodSignature
+		for _, params := range append([][]string{doc.Params}, doc.Alternates...) {
+			sig := semantic.MethodSignature{}
+			for _, p := range params {
+				sig.Params = append(sig.Params, &ast.TypeRef{Name: "any", Nullable: true})
+				if !strings.Contains(p, " = ") {
+					sig.Required++
+				}
+			}
+			sigs = append(sigs, sig)
+		}
+		return sigs, nil, true
+	}
+	return nil, nil, false
 }

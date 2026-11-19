@@ -46,7 +46,7 @@ let assembled = url.stringify({
     "scheme": "https",
     "host": "api.example.com",
     "path": "/v1/users",
-    "query": {"limit": "10"}
+    "query": {"limit": "10"},
 });
 io.println("assembled:   ${assembled}");
 io.println("joined:      ${url.joinPath("https://api.example.com", "v1", "users")}");

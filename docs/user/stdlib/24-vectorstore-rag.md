@@ -1,4 +1,4 @@
-# Vector Search and RAG (`vectorstore`, `rag`)
+# Vector search and RAG (`vectorstore`, `rag`)
 
 Two source modules for working with embeddings: `vectorstore` stores dense
 vectors and ranks them by similarity, and `rag` layers chunking, indexing,
@@ -27,7 +27,7 @@ let model  = "text-embedding-3-small";
 let docs = [
     "Cats are small carnivorous mammals.",
     "Cars are wheeled motor vehicles.",
-    "Python is a high-level programming language."
+    "Python is a high-level programming language.",
 ];
 let vectors = client.embedBatch(docs, {"model": model})["vectors"] as list<any>;
 
@@ -99,9 +99,11 @@ io.println(hits[0].score);                      # similarity, higher = closer
 `searchWhere` takes an arbitrary callable and runs in process:
 
 ```gb
-let hits = store.searchWhere(queryVector, 5, func(any rec): bool {
-    return (rec as vectorstore.VectorRecord).metadata["lang"] == "en";
-});
+let hits = store.searchWhere(
+    queryVector,
+    5,
+    func(any rec): bool { return (rec as vectorstore.VectorRecord).metadata["lang"] == "en"; }
+);
 ```
 
 `searchFilter` takes a portable dict of criteria that external backends can push
@@ -186,7 +188,9 @@ The store is not persistent; rebuild it from your source data on startup, or use
 small `Embedder` interface so it is not tied to any one provider:
 
 ```gb
-interface Embedder { func embed(string text): list<any>; }
+interface Embedder {
+    func embed(string text): list<any>;
+}
 ```
 
 `LlmEmbedder` adapts an `llm` client to that interface; the options dict carries
@@ -207,8 +211,9 @@ let embedder = rag.LlmEmbedder(
 rag.index(store, embedder, "handbook", longText, {"source": "handbook"}, {});
 
 let hits   = rag.retrieve(store, embedder, "how do I reset my password?", 4);
-let prompt = "Answer using only this context:\n" + rag.context(hits, {})
-           + "\n\nQuestion: how do I reset my password?";
+let prompt = "Answer using only this context:\n"
+    + rag.context(hits, {})
+    + "\n\nQuestion: how do I reset my password?";
 let answer = llm.client({"provider": "openai", "apiKey": key})
     .chat([{"role": "user", "content": prompt}], {"model": "gpt-4o-mini"})["content"];
 ```
@@ -260,12 +265,17 @@ their own source text.
 deterministic stub embedder and avoid any API calls:
 
 ```gb
+import rag;
+
 class StubEmbedder implements rag.Embedder {
     func embed(string text): list<any> {
         let v = [];
         for (k in ["cat", "dog", "car"]) {
-            if (text.lower().contains(k as string)) { v = v.push(1.0f); }
-            else { v = v.push(0.0f); }
+            if (text.lower().contains(k as string)) {
+                v.push(1.0f);
+            } else {
+                v.push(0.0f);
+            }
         }
         return v;
     }

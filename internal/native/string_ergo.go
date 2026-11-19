@@ -1,8 +1,11 @@
 package native
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
+
+	"geblang/internal/runtime"
 )
 
 // String ergonomics helpers shared by both backends so the eval and VM
@@ -62,4 +65,58 @@ func StringEqualsIgnoreCase(a, b string) bool { return strings.EqualFold(a, b) }
 
 func StringContainsIgnoreCase(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
+}
+
+// StringTrimMethod implements trim, trimStart and trimEnd: whitespace by default, else any rune in the optional cutset.
+func StringTrimMethod(method, s string, args []runtime.Value) (runtime.Value, error) {
+	if len(args) > 1 {
+		return nil, fmt.Errorf("string.%s expects at most one argument", method)
+	}
+	if len(args) == 0 {
+		switch method {
+		case "trimStart":
+			return runtime.String{Value: strings.TrimLeftFunc(s, unicode.IsSpace)}, nil
+		case "trimEnd":
+			return runtime.String{Value: strings.TrimRightFunc(s, unicode.IsSpace)}, nil
+		}
+		return runtime.String{Value: strings.TrimSpace(s)}, nil
+	}
+	cutset, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("string.%s expects a string of characters to remove", method)
+	}
+	switch method {
+	case "trimStart":
+		return runtime.String{Value: strings.TrimLeft(s, cutset.Value)}, nil
+	case "trimEnd":
+		return runtime.String{Value: strings.TrimRight(s, cutset.Value)}, nil
+	}
+	return runtime.String{Value: strings.Trim(s, cutset.Value)}, nil
+}
+
+// StringCaseMethod implements upper and lower: the whole string, or the first n characters (the last -n when negative).
+func StringCaseMethod(method, s string, args []runtime.Value) (runtime.Value, error) {
+	convert := strings.ToUpper
+	if method == "lower" {
+		convert = strings.ToLower
+	}
+	if len(args) > 1 {
+		return nil, fmt.Errorf("string.%s expects at most one argument", method)
+	}
+	if len(args) == 0 {
+		return runtime.String{Value: convert(s)}, nil
+	}
+	n, err := intArg(args[0], "string."+method)
+	if err != nil {
+		return nil, err
+	}
+	r := []rune(s)
+	if n >= int64(len(r)) || -n >= int64(len(r)) {
+		return runtime.String{Value: convert(s)}, nil
+	}
+	if n >= 0 {
+		return runtime.String{Value: convert(string(r[:n])) + string(r[n:])}, nil
+	}
+	split := int64(len(r)) + n
+	return runtime.String{Value: string(r[:split]) + convert(string(r[split:]))}, nil
 }

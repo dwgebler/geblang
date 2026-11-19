@@ -1,0 +1,10 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag arguments passed to a class that declares
+ * no constructor: `Money` has only fields, so `Money(5)` fails when it runs.
+ */
+class Money {
+    int cents = 0;
+}
+
+let price = Money(5);

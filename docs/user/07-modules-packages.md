@@ -1,4 +1,4 @@
-# Modules And Packages
+# Modules and packages
 
 ## Imports
 
@@ -142,7 +142,6 @@ arguments, `implements`, `extends`, `instanceof`, and `as`.
 
 ```gb
 module shop;
-
 import shop.contract;
 
 export type Client = contract.Client;
@@ -155,7 +154,9 @@ from shop import Money;
 
 class LocalClient implements shop.Client {
     func LocalClient() {}
-    func charge(Money amount): bool { return true; }
+    func charge(Money amount): bool {
+        return true;
+    }
 }
 ```
 
@@ -180,7 +181,6 @@ called with the remaining command-line arguments:
 
 ```gb
 module app.cli;
-
 import io;
 
 export func main(list<string> args): int {
@@ -244,7 +244,6 @@ style guides; Geblang prevents it at the parser level.
 
 ```gb
 module app.ids;
-
 import uuid;
 
 const PREFIX = "usr";
@@ -271,8 +270,14 @@ calls from other modules, observe its assignments on both runtimes.
 ```gb
 module counter;
 let n = 0;
-export func bump(): void { n = n + 1; }
-export func get(): int { return n; }
+
+export func bump(): void {
+    n = n + 1;
+}
+
+export func get(): int {
+    return n;
+}
 ```
 
 ```gb
@@ -295,8 +300,12 @@ synchronisation:
 # suitable for one owner; do not mutate one shared instance concurrently
 class Counter {
     int n = 0;
-    func bump(): void { this.n = this.n + 1; }
-    func get(): int { return this.n; }
+    func bump(): void {
+        this.n = this.n + 1;
+    }
+    func get(): int {
+        return this.n;
+    }
 }
 ```
 
@@ -316,19 +325,19 @@ state object (for example `store.Store`).
 
 ```gb
 module app.metrics;
-
 import metrics;
 import sys;
 
 const SERVICE = sys.getenv("SERVICE_NAME") ?? "unnamed";
 
 init {
-    metrics.register("requests_total");
-    metrics.register("errors_total");
-    metrics.tag("service", SERVICE);
+    metrics.counter("requests_total", {"help": "Requests handled", "labels": ["service"]});
+    metrics.counter("errors_total", {"help": "Requests that failed", "labels": ["service"]});
 }
 
-export func recordRequest(): void { metrics.inc("requests_total"); }
+export func recordRequest(): void {
+    metrics.inc("requests_total", 1, {"service": SERVICE});
+}
 ```
 
 Rules:

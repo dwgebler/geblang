@@ -8,7 +8,6 @@
  * @category Docker Scaffolder
  */
 module docker.scaffolder.templates;
-
 import io;
 import yaml;
 import docker.scaffolder.model as model;
@@ -21,36 +20,45 @@ export func containerPort(model.Service svc): int {
     if (svc.language == "PHP") {
         return (svc.runtime == "apache" || svc.runtime == "frankenphp") ? 80 : 0;
     }
-    if (svc.language == "Python") { return 8000; }
-    if (svc.language == "Node") { return 3000; }
-    if (svc.language == "Go") { return 8080; }
-    if (svc.language == "Geblang") { return 8080; }
+    if (svc.language == "Python") {
+        return 8000;
+    }
+    if (svc.language == "Node") {
+        return 3000;
+    }
+    if (svc.language == "Go") {
+        return 8080;
+    }
+    if (svc.language == "Geblang") {
+        return 8080;
+    }
     return 0;
 }
 
 /* The Dockerfile body for a service, multi-stage and non-root. */
 export func dockerfileFor(model.Service svc): string {
-    if (svc.language == "PHP") { return phpDockerfile(svc); }
-    if (svc.language == "Python") { return pythonDockerfile(svc); }
-    if (svc.language == "Node") { return nodeDockerfile(svc); }
-    if (svc.language == "Go") { return goDockerfile(svc); }
-    if (svc.language == "Geblang") { return geblangDockerfile(svc); }
+    if (svc.language == "PHP") {
+        return phpDockerfile(svc);
+    }
+    if (svc.language == "Python") {
+        return pythonDockerfile(svc);
+    }
+    if (svc.language == "Node") {
+        return nodeDockerfile(svc);
+    }
+    if (svc.language == "Go") {
+        return goDockerfile(svc);
+    }
+    if (svc.language == "Geblang") {
+        return geblangDockerfile(svc);
+    }
     return "FROM debian:stable-slim\nWORKDIR /app\nCOPY . /app\n";
 }
 
 func phpDockerfile(model.Service svc): string {
     if (svc.runtime == "frankenphp") {
-        return [
-            "FROM dunglas/frankenphp:1-php${svc.version}",
-            "WORKDIR /app",
-            "COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer",
-            "COPY composer.* ./",
-            "RUN composer install --no-dev --no-interaction --no-progress --prefer-dist || true",
-            "COPY . /app",
-            /* FrankenPHP binds 80/443; run unprivileged with the bind capability. */
-            "RUN setcap cap_net_bind_service=+ep /usr/local/bin/frankenphp || true",
-            "USER www-data",
-        ].join("\n") + "\n";
+        return ["FROM dunglas/frankenphp:1-php${svc.version}", "WORKDIR /app", "COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer", "COPY composer.* ./", "RUN composer install --no-dev --no-interaction --no-progress --prefer-dist || true", "COPY . /app", "RUN setcap cap_net_bind_service=+ep /usr/local/bin/frankenphp || true", "USER www-data"].join("\n") + "\n";
+        /* FrankenPHP binds 80/443; run unprivileged with the bind capability. */
     }
     /* nginx -> php-fpm (served by a generated nginx); apache -> mod_php;
      * cli -> no web server, runs the script. */
@@ -80,12 +88,7 @@ func phpDockerfile(model.Service svc): string {
 
 /* Geblang runs on the official toolchain image; the entrypoint is geblang. */
 func geblangDockerfile(model.Service svc): string {
-    return [
-        "FROM dwgebler/geblang:${svc.version}",
-        "WORKDIR /app",
-        "COPY . /app",
-        "CMD [\"main.gb\"]",
-    ].join("\n") + "\n";
+    return ["FROM dwgebler/geblang:${svc.version}", "WORKDIR /app", "COPY . /app", "CMD [\"main.gb\"]"].join("\n") + "\n";
 }
 
 func pythonDockerfile(model.Service svc): string {
@@ -183,8 +186,7 @@ func composeService(model.Service svc, string database): dict<string, any> {
     }
     if (svc.gpu) {
         /* Compose GPU reservation: requires the host NVIDIA container toolkit. */
-        out["deploy"] = {"resources": {"reservations": {"devices":
-            [{"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}]}}};
+        out["deploy"] = {"resources": {"reservations": {"devices": [{"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}]}}};
     }
     return out;
 }
@@ -223,14 +225,23 @@ func healthcheck(list<string> test): dict<string, any> {
 }
 
 func redisService(): dict<string, any> {
-    return {"image": "redis:8-alpine", "restart": "unless-stopped", "networks": [netName],
-        "ports": ["6379:6379"], "healthcheck": healthcheck(["CMD", "redis-cli", "ping"])};
+    return {
+        "image": "redis:8-alpine",
+        "restart": "unless-stopped",
+        "networks": [netName],
+        "ports": ["6379:6379"],
+        "healthcheck": healthcheck(["CMD", "redis-cli", "ping"]),
+    };
 }
 
 func mailpitService(): dict<string, any> {
-    return {"image": "axllent/mailpit:latest", "restart": "unless-stopped", "networks": [netName],
+    return {
+        "image": "axllent/mailpit:latest",
+        "restart": "unless-stopped",
+        "networks": [netName],
         "ports": ["1025:1025", "8025:8025"],
-        "environment": {"MP_SMTP_AUTH_ACCEPT_ANY": "1", "MP_SMTP_AUTH_ALLOW_INSECURE": "1"}};
+        "environment": {"MP_SMTP_AUTH_ACCEPT_ANY": "1", "MP_SMTP_AUTH_ALLOW_INSECURE": "1"},
+    };
 }
 
 func isFpm(model.Service svc): bool {
@@ -274,18 +285,24 @@ func nginxService(list<model.Service> web): dict<string, any> {
             port80 = true;
         } else {
             /* No hostname: nginx serves this FPM app on its own port. */
-            ports = ports.push("${svc.port}:${svc.port}");
+            ports.push("${svc.port}:${svc.port}");
         }
     }
     if (port80) {
-        ports = ports.push("80:80");
+        ports.push("80:80");
     }
     list<string> vols = ["./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro"];
     if (needsCode) {
-        vols = vols.push(".:/app:ro");
+        vols.push(".:/app:ro");
     }
-    return {"image": "nginx:alpine", "restart": "unless-stopped", "networks": [netName],
-        "ports": ports, "volumes": vols, "depends_on": depends};
+    return {
+        "image": "nginx:alpine",
+        "restart": "unless-stopped",
+        "networks": [netName],
+        "ports": ports,
+        "volumes": vols,
+        "depends_on": depends,
+    };
 }
 
 /* The nginx server blocks for every web-backed service. */
@@ -300,44 +317,18 @@ export func nginxConfig(model.Project project): string {
 func serverBlock(model.Service svc): string {
     /* Hostname services answer on :80 by server_name; FPM apps without a
      * hostname answer on their own port. */
-    string listen = svc.hostname != ""
-        ? "    listen 80;\n    server_name ${svc.hostname};"
-        : "    listen ${svc.port};";
+    string listen = svc.hostname != "" ? "    listen 80;\n    server_name ${svc.hostname};" : "    listen ${svc.port};";
     if (isFpm(svc)) {
-        return [
-            "server {",
-            listen,
-            "    root /app/public;",
-            "    index index.php;",
-            "    location / { try_files $uri $uri/ /index.php?$query_string; }",
-            "    location ~ \\.php$ {",
-            "        fastcgi_pass ${svc.name}:9000;",
-            "        fastcgi_index index.php;",
-            "        include fastcgi_params;",
-            "        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;",
-            "    }",
-            "}",
-        ].join("\n") + "\n";
+        return ["server {", listen, "    root /app/public;", "    index index.php;", "    location / { try_files $uri $uri/ /index.php?$query_string; }", "    location ~ \\.php$ {", "        fastcgi_pass ${svc.name}:9000;", "        fastcgi_index index.php;", "        include fastcgi_params;", "        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;", "    }", "}"].join("\n") + "\n";
     }
-    return [
-        "server {",
-        listen,
-        "    location / {",
-        "        proxy_pass http://${svc.name}:${containerPort(svc)};",
-        "        proxy_set_header Host $host;",
-        "        proxy_set_header X-Real-IP $remote_addr;",
-        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-        "        proxy_set_header X-Forwarded-Proto $scheme;",
-        "    }",
-        "}",
-    ].join("\n") + "\n";
+    return ["server {", listen, "    location / {", "        proxy_pass http://${svc.name}:${containerPort(svc)};", "        proxy_set_header Host $host;", "        proxy_set_header X-Real-IP $remote_addr;", "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;", "        proxy_set_header X-Forwarded-Proto $scheme;", "    }", "}"].join("\n") + "\n";
 }
 
 /* The /etc/hosts lines a developer adds to reach the proxied hostnames. */
 export func hostsLines(model.Project project): list<string> {
     list<string> out = [];
     for (svc in proxiedServices(project)) {
-        out = out.push("127.0.0.1 ${svc.hostname}");
+        out.push("127.0.0.1 ${svc.hostname}");
     }
     return out;
 }
@@ -405,9 +396,24 @@ export func prodDict(model.Project project): dict<string, any> {
 export func write(model.Project project, string outDir): list<string> {
     list<string> written = [];
     io.mkdir(outDir, 0o755);
-    writeFile(outDir + "/compose.yaml", yaml.stringify(composeDict(project)), written, "compose.yaml");
-    writeFile(outDir + "/compose.override.yaml", yaml.stringify(overrideDict(project)), written, "compose.override.yaml");
-    writeFile(outDir + "/compose.prod.yaml", yaml.stringify(prodDict(project)), written, "compose.prod.yaml");
+    writeFile(
+        outDir + "/compose.yaml",
+        yaml.stringify(composeDict(project)),
+        written,
+        "compose.yaml"
+    );
+    writeFile(
+        outDir + "/compose.override.yaml",
+        yaml.stringify(overrideDict(project)),
+        written,
+        "compose.override.yaml"
+    );
+    writeFile(
+        outDir + "/compose.prod.yaml",
+        yaml.stringify(prodDict(project)),
+        written,
+        "compose.prod.yaml"
+    );
     for (svc in project.services) {
         string dir = outDir + "/docker/" + svc.name;
         io.mkdir(dir, 0o755);
@@ -416,7 +422,12 @@ export func write(model.Project project, string outDir): list<string> {
     if (webBackedServices(project).length() > 0) {
         string ndir = outDir + "/docker/nginx";
         io.mkdir(ndir, 0o755);
-        writeFile(ndir + "/default.conf", nginxConfig(project), written, "docker/nginx/default.conf");
+        writeFile(
+            ndir + "/default.conf",
+            nginxConfig(project),
+            written,
+            "docker/nginx/default.conf"
+        );
     }
     return written;
 }

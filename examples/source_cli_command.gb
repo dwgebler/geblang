@@ -7,7 +7,9 @@ import cli.command as command;
 import io;
 
 let deploy = command.newCommand("deploy", "Deploy an app");
-deploy.option(command.newOption("env", "string").short("e").default("dev").help("target environment"));
+deploy.option(
+    command.newOption("env", "string").short("e").default("dev").help("target environment")
+);
 deploy.option(command.newOption("dry-run", "bool").help("show planned changes"));
 
 let parsed = deploy.parse(["--env", "prod", "--dry-run"]);

@@ -41,6 +41,13 @@ type Manifest struct {
 	Modules       []ModuleRecord `json:"modules"`
 	Resources     []string       `json:"resources,omitempty"`
 	Permissions   *Permissions   `json:"permissions,omitempty"`
+	// Packages are the dependency packages (not the app itself) whose modules are bundled.
+	Packages []PackageVersion `json:"packages,omitempty"`
+}
+
+type PackageVersion struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
 }
 
 // Capabilities baked into a built binary so it runs without launch flags; nil = default-deny.

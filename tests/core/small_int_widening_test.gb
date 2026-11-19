@@ -16,7 +16,7 @@ class SmallIntWideningTest extends test.Test {
     func listLengthWidensToDecimal(): void {
         let xs = ["a", "b", "c"];
         decimal d = xs.length() as decimal;
-        this.assertEquals("3.0000000000", d as string);
+        this.assertEquals("3.0", d as string);
     }
 
     @test
@@ -29,19 +29,19 @@ class SmallIntWideningTest extends test.Test {
     @test
     func stringLengthWidensToDecimal(): void {
         decimal d = "hello".length() as decimal;
-        this.assertEquals("5.0000000000", d as string);
+        this.assertEquals("5.0", d as string);
     }
 
     @test
     func anyTypedSmallIntWidens(): void {
         any v = [1, 2, 3, 4].length();
         decimal d = v as decimal;
-        this.assertEquals("4.0000000000", d as string);
+        this.assertEquals("4.0", d as string);
     }
 
     @test
     func literalIntWidensTheSameWay(): void {
         decimal d = 5 as decimal;
-        this.assertEquals("5.0000000000", d as string);
+        this.assertEquals("5.0", d as string);
     }
 }

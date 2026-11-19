@@ -1,0 +1,11 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown method in an if condition:
+ * strings have `startsWith`, not `beginsWith`.
+ */
+func isAdmin(string role): bool {
+    if (role.beginsWith("admin")) {
+        return true;
+    }
+    return false;
+}

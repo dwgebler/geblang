@@ -1,0 +1,5 @@
+/**
+ * @category Tests
+ * @summary A class or interface cannot name a module-qualified interface without importing the module.
+ */
+interface Local extends rag.Embedder {}

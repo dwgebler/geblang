@@ -9,7 +9,6 @@ import (
 	"math/big"
 	"sort"
 	"strings"
-	"unicode"
 
 	"geblang/internal/native"
 	"geblang/internal/runtime"
@@ -145,7 +144,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 						cbErr = err
 						return false
 					}
-					if isTruthy(keep) {
+					predOK, err := native.PredicateResult("dict.search", keep)
+					if err != nil {
+						cbErr = err
+						return false
+					}
+					if predOK {
 						matches = append(matches, entry.Key)
 					}
 					return true
@@ -620,7 +624,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					if err != nil {
 						return nil, err
 					}
-					if isTruthy(keep) {
+					predOK, err := native.PredicateResult("list.search", keep)
+					if err != nil {
+						return nil, err
+					}
+					if predOK {
 						matches = append(matches, runtime.NewInt64(int64(i)))
 					}
 				}
@@ -797,6 +805,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			value.Elements = append(value.Elements, other.Elements...)
 			return runtime.Null{}, nil
 		case "clear":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("list.clear expects no arguments")
+			}
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
@@ -903,7 +914,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if isTruthy(keep) {
+				predOK, err := native.PredicateResult("list.filter", keep)
+				if err != nil {
+					return nil, err
+				}
+				if predOK {
 					result = append(result, el)
 				}
 			}
@@ -930,7 +945,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if isTruthy(match) {
+				predOK, err := native.PredicateResult("list.find", match)
+				if err != nil {
+					return nil, err
+				}
+				if predOK {
 					return el, nil
 				}
 			}
@@ -944,7 +963,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if isTruthy(result) {
+				predOK, err := native.PredicateResult("list.any", result)
+				if err != nil {
+					return nil, err
+				}
+				if predOK {
 					return runtime.Bool{Value: true}, nil
 				}
 			}
@@ -958,7 +981,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if !isTruthy(result) {
+				predOK, err := native.PredicateResult("list.all", result)
+				if err != nil {
+					return nil, err
+				}
+				if !predOK {
 					return runtime.Bool{Value: false}, nil
 				}
 			}
@@ -973,7 +1000,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if isTruthy(result) {
+				predOK, err := native.PredicateResult("list.count", result)
+				if err != nil {
+					return nil, err
+				}
+				if predOK {
 					n++
 				}
 			}
@@ -1150,7 +1181,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if isTruthy(result) {
+				predOK, err := native.PredicateResult("list.partition", result)
+				if err != nil {
+					return nil, err
+				}
+				if predOK {
 					yes = append(yes, el)
 				} else {
 					no = append(no, el)
@@ -1224,7 +1259,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if !isTruthy(keep) {
+				predOK, err := native.PredicateResult("list.takeWhile", keep)
+				if err != nil {
+					return nil, err
+				}
+				if !predOK {
 					break
 				}
 				result = append(result, el)
@@ -1242,7 +1281,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					if err != nil {
 						return nil, err
 					}
-					if isTruthy(keep) {
+					predOK, err := native.PredicateResult("list.dropWhile", keep)
+					if err != nil {
+						return nil, err
+					}
+					if predOK {
 						continue
 					}
 					dropping = false
@@ -1315,7 +1358,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if isTruthy(result) {
+				predOK, err := native.PredicateResult("list.findLast", result)
+				if err != nil {
+					return nil, err
+				}
+				if predOK {
 					return value.Elements[i], nil
 				}
 			}
@@ -1348,7 +1395,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if isTruthy(result) {
+				predOK, err := native.PredicateResult("list.indexBy", result)
+				if err != nil {
+					return nil, err
+				}
+				if predOK {
 					return runtime.NewInt64(int64(i)), nil
 				}
 			}
@@ -1767,7 +1818,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			seen := map[string]int{}
 			var counts []countEntry
 			for _, el := range value.Elements {
-				k := el.Inspect()
+				k := native.MatchKey(el)
 				if idx, ok := seen[k]; ok {
 					counts[idx].count++
 				} else {
@@ -1794,7 +1845,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			seen := map[string]int{}
 			var counts []countEntry
 			for _, el := range value.Elements {
-				k := el.Inspect()
+				k := native.MatchKey(el)
 				if idx, ok := seen[k]; ok {
 					counts[idx].count++
 				} else {
@@ -1819,11 +1870,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			exclude := map[string]bool{}
 			for _, el := range other.Elements {
-				exclude[el.Inspect()] = true
+				exclude[native.MatchKey(el)] = true
 			}
 			var result []runtime.Value
 			for _, el := range value.Elements {
-				if !exclude[el.Inspect()] {
+				if !exclude[native.MatchKey(el)] {
 					result = append(result, el)
 				}
 			}
@@ -1838,11 +1889,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			include := map[string]bool{}
 			for _, el := range other.Elements {
-				include[el.Inspect()] = true
+				include[native.MatchKey(el)] = true
 			}
 			var result []runtime.Value
 			for _, el := range value.Elements {
-				if include[el.Inspect()] {
+				if include[native.MatchKey(el)] {
 					result = append(result, el)
 				}
 			}
@@ -1862,7 +1913,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				exclude[key.Inspect()] = true
+				exclude[native.MatchKey(key)] = true
 			}
 			var result []runtime.Value
 			for _, el := range value.Elements {
@@ -1870,7 +1921,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if !exclude[key.Inspect()] {
+				if !exclude[native.MatchKey(key)] {
 					result = append(result, el)
 				}
 			}
@@ -1890,7 +1941,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				include[key.Inspect()] = true
+				include[native.MatchKey(key)] = true
 			}
 			var result []runtime.Value
 			for _, el := range value.Elements {
@@ -1898,7 +1949,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
-				if include[key.Inspect()] {
+				if include[native.MatchKey(key)] {
 					result = append(result, el)
 				}
 			}
@@ -1972,7 +2023,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					if err != nil {
 						return nil, err
 					}
-					if isTruthy(keep) {
+					predOK, err := native.PredicateResult("string.search", keep)
+					if err != nil {
+						return nil, err
+					}
+					if predOK {
 						matches = append(matches, runtime.NewInt64(int64(i)))
 					}
 				}
@@ -2022,20 +2077,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			return runtime.Bool{Value: strings.HasSuffix(value.Value, suffix.Value)}, nil
 		case "trim":
-			if len(args) != 0 {
-				return nil, fmt.Errorf("string.trim expects no arguments")
-			}
-			return runtime.String{Value: strings.TrimSpace(value.Value)}, nil
+			return native.StringTrimMethod("trim", value.Value, args)
 		case "trimStart":
-			if len(args) != 0 {
-				return nil, fmt.Errorf("string.trimStart expects no arguments")
-			}
-			return runtime.String{Value: strings.TrimLeftFunc(value.Value, unicode.IsSpace)}, nil
+			return native.StringTrimMethod("trimStart", value.Value, args)
 		case "trimEnd":
-			if len(args) != 0 {
-				return nil, fmt.Errorf("string.trimEnd expects no arguments")
-			}
-			return runtime.String{Value: strings.TrimRightFunc(value.Value, unicode.IsSpace)}, nil
+			return native.StringTrimMethod("trimEnd", value.Value, args)
 		case "repeat":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("string.repeat expects one argument")
@@ -2175,15 +2221,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			return runtime.String{Value: formatted}, nil
 		case "lower":
-			if len(args) != 0 {
-				return nil, fmt.Errorf("string.lower expects no arguments")
-			}
-			return runtime.String{Value: strings.ToLower(value.Value)}, nil
+			return native.StringCaseMethod("lower", value.Value, args)
 		case "upper":
-			if len(args) != 0 {
-				return nil, fmt.Errorf("string.upper expects no arguments")
-			}
-			return runtime.String{Value: strings.ToUpper(value.Value)}, nil
+			return native.StringCaseMethod("upper", value.Value, args)
 		case "capitalize":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.capitalize expects no arguments")
@@ -2614,6 +2654,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					return nil, err
 				}
+			}
+			if len(args) == 0 {
+				return runtime.String{Value: runtime.FormatDecimal(value.Value)}, nil
 			}
 			return runtime.String{Value: value.Value.FloatString(scale)}, nil
 		case "format":

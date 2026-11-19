@@ -380,5 +380,10 @@ func (v *astVisitor) expression(expr ast.Expression) {
 		v.comprehension(e.Clauses)
 		v.expression(e.KeyBody)
 		v.expression(e.ValueBody)
+	case *ast.GeneratorComprehension:
+		v.comprehension(e.Clauses)
+		v.expression(e.Body)
+	case *ast.IterableSource:
+		v.expression(e.Value)
 	}
 }

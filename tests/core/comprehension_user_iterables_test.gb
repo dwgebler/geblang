@@ -1,0 +1,61 @@
+/**
+ * @title Comprehensions over user-defined iterables
+ * @summary List, set and dict comprehensions iterate classes that implement __iter or __next/__done, including an __iter that returns a generator or another iterator.
+ */
+import test;
+
+class Bag {
+    func Bag() {}
+    func __iter(): any { return [1, 2]; }
+}
+
+class Lazy {
+    func Lazy() {}
+    func __iter(): any { return (x * 10 for x in [1, 2]); }
+}
+
+class Steps {
+    int n = 0;
+    func Steps() {}
+    func __next(): any {
+        this.n += 1;
+        return this.n;
+    }
+    func __done(): bool { return this.n >= 3; }
+}
+
+class Wrapper {
+    func Wrapper() {}
+    func __iter(): any { return Steps(); }
+}
+
+class SubBag extends Bag {
+    func SubBag() { parent(); }
+}
+
+class Pairs {
+    func Pairs() {}
+    func __iter(): any { return [["a", 1], ["b", 2]]; }
+}
+
+class ComprehensionUserIterablesTest extends test.Test {
+    @test
+    func listComprehensions(): void {
+        this.assertEquals([1, 2], [x for x in Bag()]);
+        this.assertEquals([1, 2], [x for x in SubBag()]);
+        this.assertEquals([10, 20], [x for x in Lazy()]);
+        this.assertEquals([1, 2, 3], [x for x in Steps()]);
+        this.assertEquals([1, 2, 3], [x for x in Wrapper()]);
+    }
+
+    @test
+    func setAndDictComprehensions(): void {
+        this.assertEquals({1, 2}, {x for x in Bag()});
+        this.assertEquals({"a": 1, "b": 2}, {k: v for k, v in Pairs()});
+    }
+
+    @test
+    func nestedClausesAndFilters(): void {
+        this.assertEquals([1, 3, 2, 6], [x * y for x in Bag() for y in Steps() if y != 2]);
+    }
+}

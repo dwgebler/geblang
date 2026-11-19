@@ -9,7 +9,7 @@ import io;
 
 let entries = [
     {"name": "README.md", "data": "# Demo archive\n"},
-    {"name": "src/main.gb", "data": "io.println(\"hello\");\n"}
+    {"name": "src/main.gb", "data": "io.println(\"hello\");\n"},
 ];
 
 let zipped = archive.zipWrite(entries);

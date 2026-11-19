@@ -36,7 +36,9 @@ io.println(grade);
 # Optional chaining: obj?.field  obj?.method()
 class Address {
     string city;
-    func Address(string city) { this.city = city; }
+    func Address(string city) {
+        this.city = city;
+    }
 }
 
 class Person {
@@ -46,7 +48,9 @@ class Person {
         this.name = name;
         this.address = addr;
     }
-    func getAddress(): Address { return this.address; }
+    func getAddress(): Address {
+        return this.address;
+    }
 }
 
 let p = Person("Ada", Address("London"));
@@ -55,4 +59,6 @@ io.println(p?.getAddress()?.city);
 
 let nobody = null;
 let city = nobody?.address?.city;
-if (city == null) { io.println("no city"); }
+if (city == null) {
+    io.println("no city");
+}

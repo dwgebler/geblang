@@ -1,0 +1,11 @@
+module comprehension_capture_donor;
+
+export func makers(list<int> xs): list<callable> {
+    return [() => x * 2 for x in xs];
+}
+
+export class Builder {
+    func labels(list<string> names): list<callable> {
+        return [() => "#" + name for name in names];
+    }
+}

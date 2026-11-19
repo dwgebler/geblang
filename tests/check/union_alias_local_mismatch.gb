@@ -1,0 +1,7 @@
+/**
+ * @category Tests
+ * @summary A local typed with a union alias rejects a value of another type.
+ */
+type IntOrString = int | string;
+
+IntOrString x = 1.5;

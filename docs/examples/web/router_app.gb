@@ -12,7 +12,7 @@ let app = router.newRouter();
 router.get(app, "/users/:id", func(dict<string, any> request): dict<string, any> {
     return {
         "status": 200,
-        "body": "user " + request["params"]["id"]
+        "body": "user " + request["params"]["id"],
     };
 });
 
@@ -20,7 +20,7 @@ let response = router.handle(app, {
     "method": "GET",
     "path": "/users/42",
     "headers": {},
-    "body": ""
+    "body": "",
 });
 
 io.println(response["status"]);

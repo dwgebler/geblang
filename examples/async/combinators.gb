@@ -40,9 +40,9 @@ io.println(job.cancelled);            # true
 # async.timeout cancels a task that overruns its deadline and re-throws the
 # timeout as a TimeoutError when the wrapping task is awaited:
 #
-#   let lazy = async.run(func(): string {
-#       await async.sleep(500);
-#       return "never";
-#   });
-#   await async.timeout(lazy, 50);
-#       -> TimeoutError: async.timeout: task did not complete within 50ms
+# let lazy = async.run(func(): string {
+# await async.sleep(500);
+# return "never";
+# });
+# await async.timeout(lazy, 50);
+# -> TimeoutError: async.timeout: task did not complete within 50ms

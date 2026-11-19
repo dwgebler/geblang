@@ -1,0 +1,151 @@
+/**
+ * @title Generator comprehensions
+ * @summary `(expr for x in xs if cond)` builds a lazy generator: the first source is evaluated and checked where the comprehension is written, everything else runs as values are read.
+ */
+import test;
+import collections;
+import streams;
+
+list calls = [];
+
+func source(string tag, list xs): list {
+    calls.push(tag);
+    return xs;
+}
+
+class Bag {
+    func Bag() {}
+    func __iter(): any { return [7, 8]; }
+}
+
+class Scaler {
+    int factor;
+    func Scaler(int f) { this.factor = f; }
+    func apply(list<int> xs): generator<int> {
+        return (x * this.factor for x in xs);
+    }
+}
+
+class SubScaler extends Scaler {
+    func SubScaler(int f) { parent(f); }
+}
+
+func evens(int limit): generator<int> {
+    for (v in (n for n in 0..limit if n % 2 == 0)) {
+        yield v;
+    }
+}
+
+func total(iterable<int> xs): int {
+    int t = 0;
+    for (x in xs) {
+        t += x;
+    }
+    return t;
+}
+
+func failure(func body): string {
+    try {
+        body();
+    } catch (Error e) {
+        return e.class + ": " + e.message;
+    }
+    return "no error";
+}
+
+class GeneratorComprehensionsTest extends test.Test {
+    func setUp(): void {
+        calls.clear();
+    }
+
+    @test
+    func producesAGeneratorWithFiltersAndNestedClauses(): void {
+        let g = (x * x for x in [1, 2, 3, 4] if x % 2 == 0);
+        this.assertEquals("generator", "${typeof(g)}");
+        this.assertEquals([4, 16], [v for v in g]);
+        this.assertEquals(["x1", "x2", "y1", "y2"], [v for v in ("${a}${b}" for a in ["x", "y"] for b in [1, 2])]);
+        this.assertEquals(["a=1", "b=2"], [v for v in ("${k}=${v}" for k, v in {"a": 1, "b": 2})]);
+        this.assertEquals([2, 3], [v for v in (n + 1 for int n in [1, 2])]);
+    }
+
+    @test
+    func firstSourceIsEvaluatedAtCreationOthersLazily(): void {
+        let g = (a + b for a in source("outer", [1, 2]) for b in source("inner", [10]));
+        this.assertEquals(["outer"], calls);
+        this.assertEquals([11, 12], [v for v in g]);
+        this.assertEquals(["outer", "inner", "inner"], calls);
+    }
+
+    @test
+    func rebindingTheSourceVariableHasNoEffect(): void {
+        let items = [1, 2];
+        let g = (x for x in items);
+        items = [9];
+        this.assertEquals([1, 2], [v for v in g]);
+    }
+
+    @test
+    func otherVariablesAreReadWhenEachValueIsProduced(): void {
+        int k = 1;
+        let g = (x * k for x in [1, 2]);
+        k = 10;
+        this.assertEquals([10, 20], [v for v in g]);
+    }
+
+    @test
+    func closuresCaptureTheirOwnItem(): void {
+        let fs = (() => x for x in [1, 2, 3]);
+        this.assertEquals([1, 2, 3], [f() for f in fs]);
+    }
+
+    @test
+    func valuesAreProducedOnDemand(): void {
+        let big = (n * n for n in collections.range(1, 1000000000));
+        this.assertEquals(1, big.next());
+        this.assertEquals(4, big.next());
+        big.close();
+        this.assertEquals([1, 4, 9], [v for v in collections.take((n * n for n in collections.range(1, 1000000)), 3)]);
+    }
+
+    @test
+    func iteratesEverySourceKind(): void {
+        this.assertEquals([7, 8], [v for v in (x for x in Bag())]);
+        this.assertEquals(["a", "b"], [v for v in (c for c in "ab")]);
+        this.assertEquals([1, 2], [v for v in (x for x in {2, 1})]);
+        this.assertEquals([4, 6], [v for v in (y * 2 for y in (x + 1 for x in [1, 2]))]);
+    }
+
+    @test
+    func worksInsideGeneratorsMethodsAndCalls(): void {
+        this.assertEquals([0, 2, 4, 6], [v for v in evens(6)]);
+        this.assertEquals([3, 6], [v for v in Scaler(3).apply([1, 2])]);
+        this.assertEquals([2], [v for v in SubScaler(2).apply([1])]);
+        this.assertEquals(14, total((x * x for x in [1, 2, 3])));
+        this.assertEquals([3, 2], streams.of((n for n in [3, 1, 2])).filter((int n) => n > 1).toList());
+    }
+
+    @test
+    func steppingAndEarlyBreak(): void {
+        let s = (n for n in [1, 2, 3]);
+        this.assertEquals(1, s.next());
+        for (v in s) {
+            this.assertEquals(2, v);
+            break;
+        }
+        this.assertTrue(s.done());
+    }
+
+    @test
+    func nonIterableFirstSourceFailsAtCreation(): void {
+        this.assertEquals("TypeError: null is not iterable", failure(func(): void { let g = (x for x in null); }));
+        this.assertEquals("TypeError: int is not iterable", failure(func(): void { let g = (x for x in 5); }));
+        this.assertEquals("no error", failure(func(): void { let g = (x for x in [1] for y in null); }));
+    }
+
+    @test
+    func bodyErrorsSurfaceWhenTheValueIsRead(): void {
+        let g = (10 / x for x in [1, 0]);
+        this.assertEquals(10, g.next());
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { g.next(); }));
+    }
+}

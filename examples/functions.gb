@@ -29,7 +29,6 @@ func describe(decimal value): string {
     return "decimal: " + (value.format(2));
 }
 
-
 func makeCounter(): func {
     int n = 0;
 

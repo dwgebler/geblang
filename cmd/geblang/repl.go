@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"geblang/internal/ast"
+	"geblang/internal/desugar"
 	"geblang/internal/embedfold"
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
@@ -1106,6 +1107,17 @@ func parseAnalyzeREPLSource(source string, errOut io.Writer, session *evaluator.
 		if blocked {
 			return nil, false
 		}
+	}
+	var declared map[string]*ast.TypeRef
+	if session != nil {
+		declared = session.DeclaredTypes()
+	}
+	if err := desugar.ArrowsWith(program, declared); err != nil {
+		fmt.Fprintln(errOut, err)
+		return nil, false
+	}
+	if session != nil {
+		session.RecordStaticTypes(desugar.InferredDeclTypes(program, declared))
 	}
 	return program, true
 }

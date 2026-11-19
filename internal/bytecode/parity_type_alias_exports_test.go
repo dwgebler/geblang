@@ -67,14 +67,14 @@ run("private-alias", func(): any { return page(Page()); });
 		"mine mine\n"+
 		"bot robo\n"+
 		"chain mine\n"+
-		"money 1.5000000000\n"+
+		"money 1.5\n"+
 		"money-bad ! cost expects decimal for parameter 'm', got string\n"+
 		"ids-bad ! ids expects list<int> return, got list<string>\n"+
 		"rows-bad ! rows expects list<string> return, got list<int>\n"+
 		"kid base\n"+
 		"inst true true true false\n"+
 		"cast mine\n"+
-		"money-local 2.0000000000\n"+
+		"money-local 2.0\n"+
 		"private-alias page\n")
 }
 

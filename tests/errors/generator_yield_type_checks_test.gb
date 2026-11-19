@@ -1,0 +1,153 @@
+/**
+ * @title Generator yield type checks
+ * @summary Each value a generator yields is checked against the element type of its generator<T> or iterable<T> annotation.
+ */
+import test;
+
+class Animal { func Animal() {} }
+class Dog extends Animal { func Dog() {} }
+class Cat { func Cat() {} }
+
+class Holder<T> {
+    list<T> items;
+    func Holder(list<T> items) { this.items = items; }
+    func each(): generator<T> {
+        for (x in this.items) {
+            yield x;
+        }
+    }
+    func wrong(): generator<T> {
+        list raw = [5];
+        yield raw[0];
+    }
+}
+
+class SubHolder<T> extends Holder<T> {
+    func SubHolder(list<T> items) { parent(items); }
+}
+
+func words(list raw): generator<string> {
+    for (x in raw) {
+        yield x;
+    }
+}
+
+func numbers(list raw): iterable<int> {
+    for (x in raw) {
+        yield x;
+    }
+}
+
+func animals(list raw): generator<Animal> {
+    for (x in raw) {
+        yield x;
+    }
+}
+
+func maybeInts(list raw): generator<?int> {
+    for (x in raw) {
+        yield x;
+    }
+}
+
+func anything(list raw): generator<any> {
+    for (x in raw) {
+        yield x;
+    }
+}
+
+func bare(list raw): generator {
+    for (x in raw) {
+        yield x;
+    }
+}
+
+func ratios(): generator<float> {
+    yield 2;
+}
+
+func amounts(): generator<decimal> {
+    yield 3;
+}
+
+func pass<T>(list raw): generator<T> {
+    for (x in raw) {
+        yield x;
+    }
+}
+
+func drain(any source): list {
+    list out = [];
+    for (x in source) {
+        out.push(x);
+    }
+    return out;
+}
+
+class GeneratorYieldTypeChecksTest extends test.Test {
+    @test
+    func matchingYieldsPass(): void {
+        this.assertEquals(["a", "b"], drain(words(["a", "b"])));
+        this.assertEquals([1, 2], drain(numbers([1, 2])));
+        this.assertEquals([null, 3], drain(maybeInts([null, 3])));
+        this.assertEquals(2, drain(animals([Dog(), Animal()])).length());
+    }
+
+    @test
+    func mismatchedYieldRaisesTypeError(): void {
+        this.assertThrowsOf(func(): void { drain(words(["a", 1])); }, "TypeError", "words expects string yield, got int");
+        this.assertThrowsOf(func(): void { drain(numbers(["x"])); }, "TypeError", "numbers expects int yield, got string");
+        this.assertThrowsOf(func(): void { drain(animals([Cat()])); }, "TypeError", "animals expects Animal yield, got Cat");
+        this.assertThrowsOf(func(): void { drain(maybeInts(["x"])); }, "TypeError", "maybeInts expects ?int yield, got string");
+    }
+
+    @test
+    func valuesBeforeTheBadYieldAreDelivered(): void {
+        list seen = [];
+        this.assertThrowsOf(func(): void {
+            for (x in words(["a", "b", 3])) {
+                seen.push(x);
+            }
+        }, "TypeError", "words expects string yield, got int");
+        this.assertEquals(["a", "b"], seen);
+    }
+
+    @test
+    func manualSteppingChecksEachValue(): void {
+        let g = words(["a", 2]);
+        this.assertEquals("a", g.next());
+        this.assertThrowsOf(func(): void { g.next(); }, "TypeError", "words expects string yield, got int");
+    }
+
+    @test
+    func untypedAndAnyGeneratorsAreUnchecked(): void {
+        this.assertEquals(["a", 1], drain(anything(["a", 1])));
+        this.assertEquals(["a", 1], drain(bare(["a", 1])));
+    }
+
+    @test
+    func intLiteralYieldsWidenToFloatAndDecimal(): void {
+        this.assertEquals("float", "${typeof(drain(ratios())[0])}");
+        this.assertEquals("decimal", "${typeof(drain(amounts())[0])}");
+        this.assertEquals("3.0", "${drain(amounts())[0]}");
+    }
+
+    @test
+    func boundTypeParametersAreChecked(): void {
+        this.assertEquals([1, 2], drain(Holder<int>([1, 2]).each()));
+        this.assertThrowsOf(func(): void { drain(Holder<string>(["x"]).wrong()); }, "TypeError", "Holder.wrong expects T yield, got int");
+        this.assertThrowsOf(func(): void { drain(SubHolder<string>(["x"]).wrong()); }, "TypeError", "Holder.wrong expects T yield, got int");
+        this.assertThrowsOf(func(): void { drain(pass<string>([1])); }, "TypeError", "pass expects T yield, got int");
+        this.assertEquals([1], drain(pass([1])));
+    }
+
+    @test
+    func closureErrorsNameTheClosure(): void {
+        func make = func(list raw): generator<int> {
+            for (x in raw) {
+                yield x;
+            }
+        };
+        this.assertThrowsOf(func(): void { drain(make(["s"])); }, "TypeError", "<closure> expects int yield, got string");
+    }
+}

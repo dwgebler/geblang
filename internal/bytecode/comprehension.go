@@ -23,7 +23,7 @@ func desugarListComprehension(c *ast.ListComprehension) ast.Expression {
 		},
 		Arguments: []ast.CallArgument{{Value: c.Body}},
 	})
-	loopBody := wrapClauses(c.Clauses, bodyStmt)
+	loopBody := ast.WrapComprehensionClauses(c.Clauses, bodyStmt)
 	return buildComprehensionIIFE(tok, &ast.ListLiteral{Token: tok}, loopBody, accIdent)
 }
 
@@ -42,7 +42,7 @@ func desugarSetComprehension(c *ast.SetComprehension) ast.Expression {
 		},
 		Arguments: []ast.CallArgument{{Value: c.Body}},
 	})
-	loopBody := wrapClauses(c.Clauses, bodyStmt)
+	loopBody := ast.WrapComprehensionClauses(c.Clauses, bodyStmt)
 	cast := &ast.CastExpression{
 		Token: tok,
 		Value: accIdent,
@@ -65,43 +65,8 @@ func desugarDictComprehension(c *ast.DictComprehension) ast.Expression {
 		},
 		Arguments: []ast.CallArgument{{Value: c.KeyBody}, {Value: c.ValueBody}},
 	})
-	loopBody := wrapClauses(c.Clauses, bodyStmt)
+	loopBody := ast.WrapComprehensionClauses(c.Clauses, bodyStmt)
 	return buildComprehensionIIFE(tok, &ast.DictLiteral{Token: tok}, loopBody, accIdent)
-}
-
-func wrapClauses(clauses []ast.ComprehensionClause, inner ast.Statement) ast.Statement {
-	for i := len(clauses) - 1; i >= 0; i-- {
-		inner = wrapClause(clauses[i], inner)
-	}
-	return inner
-}
-
-func wrapClause(clause ast.ComprehensionClause, inner ast.Statement) ast.Statement {
-	switch c := clause.(type) {
-	case *ast.ComprehensionFor:
-		return &ast.ForStatement{
-			Token:    c.Token,
-			VarType:  c.VarType,
-			VarName:  c.VarName,
-			VarNames: c.VarNames,
-			Iterable: c.Iterable,
-			Body:     blockOf(inner),
-		}
-	case *ast.ComprehensionIf:
-		return &ast.IfStatement{
-			Token:       c.Token,
-			Condition:   c.Filter,
-			Consequence: blockOf(inner),
-		}
-	}
-	return inner
-}
-
-func blockOf(stmt ast.Statement) *ast.BlockStatement {
-	if b, ok := stmt.(*ast.BlockStatement); ok {
-		return b
-	}
-	return &ast.BlockStatement{Statements: []ast.Statement{stmt}}
 }
 
 func wrapInExpressionStatement(tok token.Token, expr ast.Expression) ast.Statement {

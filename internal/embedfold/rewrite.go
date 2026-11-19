@@ -29,9 +29,15 @@ func rewriteStmt(s ast.Statement, f *folder) {
 	case *ast.InitStatement:
 		rewriteBlock(n.Body, f)
 	case *ast.DeclarationStatement:
+		f.checkDeclaredName(n.Name)
 		n.Value = rewriteExpr(n.Value, f)
 		rewriteDecorators(n.Decorators, f)
 	case *ast.DestructuringStatement:
+		if n.Define {
+			for _, name := range n.Names {
+				f.checkDeclaredName(name)
+			}
+		}
 		n.Value = rewriteExpr(n.Value, f)
 	case *ast.ExpressionStatement:
 		n.Expression = rewriteExpr(n.Expression, f)
@@ -53,6 +59,10 @@ func rewriteStmt(s ast.Statement, f *folder) {
 		n.Condition = rewriteExpr(n.Condition, f)
 		rewriteBlock(n.Body, f)
 	case *ast.ForStatement:
+		f.checkDeclaredName(n.VarName)
+		for _, name := range n.VarNames {
+			f.checkDeclaredName(name)
+		}
 		rewriteStmt(n.Init, f)
 		n.Condition = rewriteExpr(n.Condition, f)
 		rewriteStmt(n.Update, f)
@@ -79,11 +89,26 @@ func rewriteStmt(s ast.Statement, f *folder) {
 		}
 		rewriteBlock(n.Default, f)
 	case *ast.FunctionStatement:
+		f.checkDeclaredName(n.Name)
 		rewriteFunction(n, f)
+	case *ast.FromImportStatement:
+		for _, item := range n.Names {
+			if local := item.Local(); local == embedName {
+				f.errAt(n.Token, "embed is reserved for the compile-time embed builtin; import it under another name")
+			}
+		}
 	case *ast.ClassStatement:
 		rewriteDecorators(n.Decorators, f)
 		for _, member := range n.Members {
-			rewriteStmt(member, f)
+			switch m := member.(type) {
+			case *ast.FunctionStatement:
+				rewriteFunction(m, f)
+			case *ast.DeclarationStatement:
+				m.Value = rewriteExpr(m.Value, f)
+				rewriteDecorators(m.Decorators, f)
+			default:
+				rewriteStmt(member, f)
+			}
 		}
 		rewriteFunction(n.Destructor, f)
 	case *ast.InterfaceStatement:
@@ -119,6 +144,7 @@ func rewriteFunction(fn *ast.FunctionStatement, f *folder) {
 
 func rewriteParams(params []ast.Parameter, f *folder) {
 	for i := range params {
+		f.checkDeclaredName(params[i].Name)
 		params[i].Default = rewriteExpr(params[i].Default, f)
 		rewriteDecorators(params[i].Decorators, f)
 	}
@@ -193,6 +219,9 @@ func rewriteExpr(e ast.Expression, f *folder) ast.Expression {
 		n.Body = rewriteExpr(n.Body, f)
 		rewriteClauses(n.Clauses, f)
 	case *ast.SetComprehension:
+		n.Body = rewriteExpr(n.Body, f)
+		rewriteClauses(n.Clauses, f)
+	case *ast.GeneratorComprehension:
 		n.Body = rewriteExpr(n.Body, f)
 		rewriteClauses(n.Clauses, f)
 	case *ast.DictComprehension:

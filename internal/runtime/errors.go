@@ -152,3 +152,6 @@ func CallRecovering(f func() (Value, error)) (value Value, err error) {
 	}()
 	return f()
 }
+
+// NamedArgsUnsupported is the one message both runtimes raise for named arguments to a callee that has no declared parameter names.
+const NamedArgsUnsupported = "named arguments are only supported for Geblang functions and methods"

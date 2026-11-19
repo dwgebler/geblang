@@ -150,6 +150,9 @@ func main() {
 	srcDir := arg(1, "docs/user")
 	outDir := arg(2, "docs/site")
 	apiSources, exampleSource := parseExtraArgs(os.Args[3:])
+	if err := loadSiteChrome(); err != nil {
+		fatal(err)
+	}
 
 	pages, err := loadPages(srcDir)
 	if err != nil {
@@ -221,8 +224,7 @@ func sitemapXML(pages []page, lastModified func(string) string) string {
 	b.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
 	b.WriteString("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n")
 	for _, p := range pages {
-		// The agent guide is published for tools, not as a manual page for search.
-		if strings.EqualFold(filepath.Base(p.Output), "AGENTS.html") {
+		if isAgentsPage(p) {
 			continue
 		}
 		b.WriteString("  <url><loc>" + html.EscapeString(pageURL(p)) + "</loc>")
@@ -244,6 +246,37 @@ func gitLastModified(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+var siteFlags = map[string]*string{
+	"--site-header":    &siteHeaderFile,
+	"--site-footer":    &siteFooterFile,
+	"--site-css":       &siteCSS,
+	"--site-root":      &siteRoot,
+	"--site-root-name": &siteRootName,
+}
+
+// loadSiteChrome reads the --site-header/--site-footer fragments.
+func loadSiteChrome() error {
+	for _, f := range []struct {
+		path string
+		dst  *string
+	}{{siteHeaderFile, &siteHeader}, {siteFooterFile, &siteFooter}} {
+		if f.path == "" {
+			continue
+		}
+		data, err := os.ReadFile(f.path)
+		if err != nil {
+			return err
+		}
+		*f.dst = string(data)
+	}
+	return nil
+}
+
+// isAgentsPage reports the agent cheat sheet, which is published for tools rather than as a manual page.
+func isAgentsPage(p page) bool {
+	return strings.EqualFold(filepath.Base(p.Output), "AGENTS.html")
 }
 
 func parseExtraArgs(args []string) ([]string, string) {
@@ -292,6 +325,13 @@ func parseExtraArgs(args []string) ([]string, string) {
 			}
 			continue
 		}
+		if target, ok := siteFlags[args[i]]; ok {
+			if i+1 < len(args) {
+				*target = args[i+1]
+				i++
+			}
+			continue
+		}
 		apiSources = append(apiSources, args[i])
 	}
 	return apiSources, exampleSource
@@ -307,6 +347,24 @@ var (
 	siteName      = "Geblang"
 	ogImage       string
 )
+
+// Website chrome injected around every page; empty in plain builds.
+var (
+	siteHeaderFile string
+	siteFooterFile string
+	siteHeader     string
+	siteFooter     string
+	siteCSS        string
+	siteRoot       string
+	siteRootName   = "Home"
+)
+
+func siteCSSLink() string {
+	if siteCSS == "" {
+		return ""
+	}
+	return "\n  <link rel=\"stylesheet\" href=\"" + html.EscapeString(siteCSS) + "\">"
+}
 
 func navbarSearchHTML(current page) string {
 	if searchURL != "" {
@@ -832,11 +890,17 @@ func tableOfContents(body string) string {
 func writePage(outDir string, pages []page, index int) error {
 	p := pages[index]
 	var prev, next *page
-	if index > 0 {
-		prev = &pages[index-1]
+	for i := index - 1; i >= 0; i-- {
+		if !isAgentsPage(pages[i]) {
+			prev = &pages[i]
+			break
+		}
 	}
-	if index+1 < len(pages) {
-		next = &pages[index+1]
+	for i := index + 1; i < len(pages); i++ {
+		if !isAgentsPage(pages[i]) {
+			next = &pages[i]
+			break
+		}
 	}
 	content := layout(pages, p, prev, next)
 	path := filepath.Join(outDir, p.Output)
@@ -885,15 +949,48 @@ func pageDescription(body string) string {
 	return strings.TrimRight(text[:cut], " ,;:.") + "..."
 }
 
+// pageTitleText names the manual after the page title unless the title already does.
+func pageTitleText(current page) string {
+	if strings.Contains(current.Title, "Manual") {
+		return current.Title
+	}
+	return current.Title + " - " + siteName + " Manual"
+}
+
+// metaDescription leads with the page's place in the manual, then its opening prose, ending on a sentence where it fits.
+func metaDescription(current page) string {
+	const limit = 160
+	lead := current.Title + " in the " + siteName + " manual."
+	if strings.Contains(current.Title, "Manual") {
+		lead = ""
+	}
+	base := pageDescription(current.HTML)
+	if text := strings.TrimSpace(lead + " " + base); len(text) <= limit {
+		return text
+	}
+	text := strings.TrimSpace(lead + " " + strings.TrimSuffix(base, "..."))
+	if end := strings.LastIndex(text[:limit], ". "); end > len(lead) {
+		return text[:end+1]
+	}
+	cut := strings.LastIndex(text[:limit], " ")
+	if cut <= 0 {
+		cut = limit
+	}
+	return strings.TrimRight(text[:cut], " ,;:.") + "..."
+}
+
 func pageMetaHTML(current page) string {
-	title := current.Title + " - " + siteName + " Manual"
-	desc := pageDescription(current.HTML)
+	title := pageTitleText(current)
+	desc := metaDescription(current)
 	var b strings.Builder
 	meta := func(attr, key, value string) {
 		b.WriteString("\n  <meta " + attr + "=\"" + key + "\" content=\"" + html.EscapeString(value) + "\">")
 	}
 	if desc != "" {
 		meta("name", "description", desc)
+	}
+	if isAgentsPage(current) {
+		meta("name", "robots", "noindex")
 	}
 	meta("property", "og:type", "article")
 	meta("property", "og:site_name", siteName+" Manual")
@@ -930,9 +1027,13 @@ func pageMetaHTML(current page) string {
 	if desc != "" {
 		article["description"] = desc
 	}
-	crumbs := []map[string]any{{"@type": "ListItem", "position": 1, "name": manual, "item": home}}
+	var crumbs []map[string]any
+	if siteRoot != "" {
+		crumbs = append(crumbs, map[string]any{"@type": "ListItem", "position": 1, "name": siteRootName, "item": siteRoot})
+	}
+	crumbs = append(crumbs, map[string]any{"@type": "ListItem", "position": len(crumbs) + 1, "name": manual, "item": home})
 	if url != home {
-		crumbs = append(crumbs, map[string]any{"@type": "ListItem", "position": 2, "name": current.Title, "item": url})
+		crumbs = append(crumbs, map[string]any{"@type": "ListItem", "position": len(crumbs) + 1, "name": current.Title, "item": url})
 	}
 	breadcrumb := map[string]any{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": crumbs}
 	for _, data := range []any{article, breadcrumb} {
@@ -947,6 +1048,9 @@ func pageMetaHTML(current page) string {
 func layout(pages []page, current page, prev, next *page) string {
 	var nav strings.Builder
 	for _, p := range pages {
+		if isAgentsPage(p) {
+			continue
+		}
 		active := ""
 		if p.Output == current.Output {
 			active = " active"
@@ -983,14 +1087,16 @@ func layout(pages []page, current page, prev, next *page) string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>` + html.EscapeString(current.Title) + ` - ` + html.EscapeString(siteName) + ` Manual</title>` + canonicalLinkHTML(current) + pageMetaHTML(current) + `
-  <link rel="stylesheet" href="` + relHref(current.Output, manualCSSFile) + `">
+  <title>` + html.EscapeString(pageTitleText(current)) + `</title>` + canonicalLinkHTML(current) + pageMetaHTML(current) + `
+  <script>try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;}catch(e){}</script>
+  <link rel="stylesheet" href="` + relHref(current.Output, manualCSSFile) + `">` + siteCSSLink() + `
 </head>
-<body>
+<body>` + siteHeader + `
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid manual-shell">
       <a class="navbar-brand fw-semibold" href="` + relHref(current.Output, "index.html") + `">` + html.EscapeString(siteName) + ` Reference Manual</a>` + navbarSearchHTML(current) + `
       <span class="navbar-text d-none d-xl-inline">Static manual and source API reference</span>
+      <button class="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
     </div>
   </nav>
   <main class="container-fluid manual-shell py-4">
@@ -1162,8 +1268,18 @@ func layout(pages []page, current page, prev, next *page) string {
     document.querySelectorAll("pre code.language-gb, pre code.language-geblang").forEach(function (block) {
       block.innerHTML = highlightGeblang(block.textContent);
     });
+    var toggle = document.querySelector(".theme-toggle");
+    if (toggle) {
+      toggle.addEventListener("click", function () {
+        var root = document.documentElement;
+        var current = root.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        var next = current === "dark" ? "light" : "dark";
+        root.dataset.theme = next;
+        try { localStorage.setItem("theme", next); } catch (e) {}
+      });
+    }
   })();
-  </script>
+  </script>` + siteFooter + `
 </body>
 </html>
 `

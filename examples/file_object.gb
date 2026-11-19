@@ -43,6 +43,8 @@ io.move(path.join(dir, "app.log.bak"), path.join(dir, "archive.log"));
 
 for (entry in io.scanDir(dir)) {
     let kind = "file";
-    if (entry["isDir"] as bool) { kind = "dir"; }
+    if (entry["isDir"] as bool) {
+        kind = "dir";
+    }
     io.println("${entry["name"]} (${kind})");
 }

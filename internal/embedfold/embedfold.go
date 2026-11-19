@@ -75,6 +75,13 @@ func (f *folder) visit(expr ast.Expression) ast.Expression {
 	return expr
 }
 
+// checkDeclaredName rejects a binding named embed, which every call site would resolve to the compile-time builtin instead.
+func (f *folder) checkDeclaredName(name *ast.Identifier) {
+	if name != nil && name.Value == embedName {
+		f.errAt(name.Token, "embed is reserved for the compile-time embed builtin; choose another name")
+	}
+}
+
 func embedCallee(callee ast.Expression) (*ast.Identifier, bool) {
 	ident, ok := callee.(*ast.Identifier)
 	if !ok || ident.Value != embedName {

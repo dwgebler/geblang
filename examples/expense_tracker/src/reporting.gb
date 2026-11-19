@@ -29,6 +29,6 @@ export func summary(list<any> expenses, dict<string, any> settings): dict<string
         "budgetCents": budget,
         "percent": percent,
         "overWarning": percent >= (settings["warningRatio"] as int),
-        "byCategory": categoryTotals(expenses)
+        "byCategory": categoryTotals(expenses),
     };
 }

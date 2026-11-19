@@ -9,7 +9,9 @@ let values = cli.withContext({"stdin": "0.10\n0.20\n", "quiet": true}, func(): l
     list<money.Money> result = [];
     for (i in 0..<2) {
         let amount = cli.promptDecimal("Amount: ", {"min": 0});
-        if (amount != null) { result.push(money.Money(amount, "GBP")); }
+        if (amount != null) {
+            result.push(money.Money(amount, "GBP"));
+        }
     }
     return result;
 });
@@ -20,7 +22,9 @@ try {
     string encoded = io.toString(output);
     io.println(encoded); /* {"amount":"0.30","currency":"GBP"} */
     io.println(written == encoded.byteLength()); /* true */
-} finally { io.close(output); }
+} finally {
+    io.close(output);
+}
 
 let recent = cache.memoryCacheStore(60, 2);
 recent.set("a", "first");

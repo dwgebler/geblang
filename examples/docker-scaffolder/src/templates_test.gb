@@ -6,7 +6,6 @@
  * @category Docker Scaffolder
  */
 module docker.scaffolder.templates;
-
 import test;
 import docker.scaffolder.model as model;
 

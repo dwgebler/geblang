@@ -2,6 +2,7 @@
 package bcloader
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -832,7 +833,7 @@ func (l *Loader) CallModuleOverloadedSpread(module string, indices []int64, name
 
 func (l *Loader) CallParentInModuleNamed(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, names []string, caller *bytecode.VM) (runtime.Value, error) {
 	if _, ok := l.nativeClassFor(module, className); ok {
-		return nil, fmt.Errorf("named arguments are only supported for Geblang functions and methods")
+		return nil, errors.New(runtime.NamedArgsUnsupported)
 	}
 	var chunk bytecode.Chunk
 	if module == "" {

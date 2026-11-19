@@ -37,7 +37,9 @@ when storing a function in a field or accepting one as a parameter:
 ```gb
 class Scheduler {
     func cb;
-    func Scheduler(func cb) { this.cb = cb; }
+    func Scheduler(func cb) {
+        this.cb = cb;
+    }
     func fire(): void {
         let handler = this.cb;
         handler();
@@ -102,9 +104,10 @@ an optional `places`, default 0, and rounds half away from zero for
 | `truncate(places = 0)` | same type | Round toward zero to `places` digits. |
 
 `float` additionally has `isNaN()` and `isInf()`. `decimal`
-additionally has `format(scale)` and `toString(scale = 10)` for
+additionally has `format(scale)` and `toString(scale)` for
 fixed-scale rendering (a `decimal` is an exact value with no stored
-scale, so the default display is 10 places; pass a scale for more).
+scale, so the default display shows up to 10 places with trailing zeros
+dropped; pass a scale for a fixed number of places).
 
 Both `float` and `decimal` have `isInt()`, which reports whether the
 value is a whole number. `float.isInt()` is true only for a finite
@@ -115,15 +118,16 @@ value has denominator 1.
 A numeric literal like `2.9` is a `decimal`; floats are written with an
 `f` suffix (`2.9f`). Scientific notation follows the same rule: `1e3`
 is the exact decimal `1000`, while `1e3f` is a `float`. Decimals display
-at 10 places by default (they store an exact value, not a scale), so use
-`toString(scale)` or a format spec to control the rendered precision:
+with up to 10 places by default, dropping trailing zeros (they store an exact
+value, not a scale), so use `toString(scale)` or a format spec to fix the
+rendered precision:
 
 ```gb
 import io;
 let r = (2.567 as decimal).round(2);
-io.println(r);                  # 2.5700000000  (rounded to 2 places; 10-place default display)
+io.println(r);                  # 2.57          (rounded to 2 places)
 io.println(r.toString(2));      # 2.57          (pick the display scale)
-io.println((2.9).floor());      # 2.0000000000  (2.9 is a decimal; floor keeps the type)
+io.println((2.9).floor());      # 2.0           (2.9 is a decimal; floor keeps the type)
 io.println((-7).sign());        # -1
 io.println((12).clamp(0, 10));  # 10
 io.println((4).isEven());       # true
@@ -168,7 +172,7 @@ exact types from silent precision loss:
 
 An integer literal written where a `float` or `decimal` is expected takes that
 type: `float f = 3;` stores the `float` `3`, and `return 2;` in a function
-declared `decimal` returns the `decimal` `2.0000000000`. The same applies to a
+declared `decimal` returns the `decimal` `2.0`. The same applies to a
 field assignment or default (`this.total = 0;` or `decimal total = 0;` on a
 `decimal` field, static fields included) and to an argument for a `float` or
 `decimal` parameter, positional or named in any order (`half(3)`,
@@ -203,7 +207,7 @@ is `true` (2.5 is exactly representable as a float), but `0.1 == 0.1f` is
 
 ```gb
 io.println(3 + 2.5f);     # 5.5    (int promoted to float)
-io.println(3 + 2.5);      # 5.5000000000  (decimal, exact)
+io.println(3 + 2.5);      # 5.5  (decimal, exact)
 # io.println(2.5 + 2.5f); # error: cannot mix decimal and float in +
 io.println(3 == 3.0f);    # true
 io.println(0.1 == 0.1f);  # false  (they genuinely differ)
@@ -245,7 +249,9 @@ enforces "any branch matches".
 
 ```gb
 func get(int | string id): User {
-    if (id instanceof string) { return User.byName(id as string); }
+    if (id instanceof string) {
+        return User.byName(id as string);
+    }
     return User.byId(id as int);
 }
 
@@ -259,8 +265,12 @@ union as a whole or on individual branches; the meaning is the same.
 
 ```gb
 func parseAge(?int | string raw): int {
-    if (raw == null)            { return 0; }
-    if (raw instanceof int)     { return raw as int; }
+    if (raw == null) {
+        return 0;
+    }
+    if (raw instanceof int) {
+        return raw as int;
+    }
     return (raw as string).toInt();
 }
 ```
@@ -273,7 +283,9 @@ suffices.
 ```gb
 func lookup(string key): User | NotFoundError {
     let row = db.findByKey(key);
-    if (row == null) { return NotFoundError("no user with key " + key); }
+    if (row == null) {
+        return NotFoundError("no user with key " + key);
+    }
     return User.fromRow(row);
 }
 ```
@@ -295,21 +307,41 @@ The intersection operator `&` is also supported in parameter and
 return positions: a value must match every branch. It's mainly useful
 for interface intersection, e.g. `Comparable & Hashable`.
 
-Variable-level unions (`let x: int | string;`) are deferred to a
-future release; today the union form is only enforced at the function
-boundary. Inside a function body, a union-typed parameter can be
-narrowed with `instanceof` and re-bound via `as`.
+A union can't be written directly in front of a local variable or field
+(`int | string x` is a syntax error), but a type alias can: the alias means
+its union everywhere, and every assignment is checked against the branches:
+
+```gb
+type IntOrString = int | string;
+
+IntOrString id = 5;
+id = "a-17";          # ok: string branch
+# id = 1.5;           # error: cannot assign decimal to int | string id
+```
+
+Inside a function body, a union-typed value can be narrowed with
+`instanceof` and re-bound via `as`.
 
 A union-typed value can also be passed straight on to another function.
 The call is accepted when the receiving parameter takes at least one of
 the union's branches, and the receiver checks the actual value at runtime:
 
 ```gb
-func label(int | string id): string { return "${id}"; }
-func describe(int | string id): string { return "id " + label(id); }
+func label(int | string id): string {
+    return "${id}";
+}
 
-func double(int n): int { return n * 2; }
-func twice(int | string v): int { return double(v); }
+func describe(int | string id): string {
+    return "id " + label(id);
+}
+
+func double(int n): int {
+    return n * 2;
+}
+
+func twice(int | string v): int {
+    return double(v);
+}
 
 twice(21);      # 42
 twice("x");     # TypeError: double expects int for parameter 'n', got string
@@ -326,11 +358,21 @@ and their element types, classes, interfaces, enums, `func`, unions, and
 nullable types. A mismatch the compiler cannot see raises a `TypeError`:
 
 ```gb
-interface Shape { func area(): int; }
-class Dog { func Dog() {} }
+interface Shape {
+    func area(): int;
+}
 
-func ids(list raw): list<int> { return raw; }
-func first(list items): Shape { return items[0]; }
+class Dog {
+    func Dog() {}
+}
+
+func ids(list raw): list<int> {
+    return raw;
+}
+
+func first(list items): Shape {
+    return items[0];
+}
 
 ids(["a"]);       # TypeError: ids expects list<int> return, got list<string>
 first([Dog()]);   # TypeError: first expects Shape return, got Dog
@@ -359,7 +401,9 @@ type, an `int` range in a loop) is not re-checked. A value arriving through
 `any` is checked, and a mismatch raises a `TypeError`:
 
 ```gb
-func raw(any x): any { return x; }
+func raw(any x): any {
+    return x;
+}
 
 string s = raw(5);              # TypeError: type error: cannot assign int to string
 string t = "a";
@@ -400,6 +444,7 @@ io.println(typeof("x") == "string"); # true (compare to a type-name string)
 io.println("x" instanceof string);   # true
 
 class User {}
+
 User u = User();
 io.println(typeof(u) == User);     # true
 io.println(typeof(u) == "User");   # true
@@ -524,8 +569,8 @@ match elementwise on untagged collections and tag-satisfies on
 tagged ones, so both cases below hold:
 
 ```gb
-[1, "f", true] instanceof list<string|bool|int>;  # true
-xs instanceof list<int|string>;                   # true (since 1.5.1)
+[1, "f", true] instanceof list<string | bool | int>;  # true
+xs instanceof list<int | string>;                   # true (since 1.5.1)
 ```
 
 `dict<K,V>` exposes the tag as `{"K": "...", "V": "..."}`;
@@ -541,16 +586,25 @@ a typed variable is declared or reassigned (see
 ```gb
 func sumInts(list<int> items): int {
     let total = 0;
-    for (item in items) { total = total + item; }
+    for (item in items) {
+        total = total + item;
+    }
     return total;
 }
 
-sumInts([1, 2, 3]);      # ok
-sumInts(["a", "b"]);     # runtime type error  -  list<string> does not satisfy list<int>
+func raw(any x): any {
+    return x;
+}
 
-list<int> nums = [1, 2, 3];   # ok
-list<int> bad  = ["a", "b"];  # runtime type error  -  list<string> does not satisfy list<int>
+sumInts([1, 2, 3]);          # ok
+sumInts(raw(["a", "b"]));    # TypeError: sumInts expects list<int> for parameter 'items', got list (element at index 0 is string)
+
+list<int> nums = [1, 2, 3];          # ok
+list<int> bad  = raw(["a", "b"]);    # TypeError: type error: cannot assign list to list<int> (element at index 0 is string)
 ```
+
+When the mismatch is visible in the source, as in `sumInts(["a", "b"])` or
+`list<int> bad = ["a", "b"]`, the analyzer reports it before the program runs.
 
 The error message names the function (or variable) and describes both the
 expected and actual element types, e.g.:
@@ -580,7 +634,9 @@ import io;
 
 class Box<T> {
     T value;
-    func Box(T v) { this.value = v; }
+    func Box(T v) {
+        this.value = v;
+    }
 }
 
 Box<string> b = Box("hello");
@@ -614,7 +670,7 @@ import bytes;
 let raw  = bytes.fromString("hello");          # encode UTF-8 string to bytes
 let hex  = bytes.fromHex("48656c6c6f");        # decode hexadecimal
 let b64  = bytes.fromBase64("aGVsbG8=");       # decode Base64
-let both = bytes.concat([raw, hex]);           # join two byte sequences
+let both = bytes.concat(raw, hex);             # join two byte sequences
 ```
 
 ### bytes instance methods
@@ -782,8 +838,12 @@ func identity<T>(T value): T {
 
 class Box<T> {
     T value;
-    func Box(T value) { this.value = value; }
-    func get(): T { return this.value; }
+    func Box(T value) {
+        this.value = value;
+    }
+    func get(): T {
+        return this.value;
+    }
 }
 
 let b = Box<string>("hello");
@@ -819,7 +879,10 @@ explicitly:
 class Pair<A, B> {
     A first;
     B second;
-    func Pair(A first, B second) { this.first = first; this.second = second; }
+    func Pair(A first, B second) {
+        this.first = first;
+        this.second = second;
+    }
 }
 
 func make<T>(T v): Pair<T, T> {
@@ -845,7 +908,9 @@ the instance was created:
 ```gb
 class Typed<T> {
     T value;
-    func Typed(T v) { this.value = v; }
+    func Typed(T v) {
+        this.value = v;
+    }
 
     func isCorrectType(any candidate): bool {
         return candidate instanceof T;   # T is the concrete type at runtime
@@ -883,17 +948,25 @@ io.println(reflect.typeBindings(c));   # {"T": "string"}
 
 Explicit type arguments are a contract, not a hint. When a constructor is
 called with an explicit `<TypeArgs>` clause, every constructor parameter
-typed with a bound type parameter is validated against the binding at
-runtime, on both runtimes:
+typed with a bound type parameter is validated against the binding, on both
+runtimes. A mismatch visible in the source is reported before the program
+runs; one arriving through `any` raises a `TypeError` at the call:
 
 ```gb
 class Box<T> {
     T value;
-    func Box(T value) { this.value = value; }
+    func Box(T value) {
+        this.value = value;
+    }
 }
 
-let ok  = Box<string>("hello");   # fine
-let bad = Box<string>(42);        # TypeError: Box expects T for parameter 'value', got int
+func raw(any x): any {
+    return x;
+}
+
+let ok  = Box<string>("hello");     # fine
+let bad = Box<string>(raw(42));     # TypeError: Box expects T for parameter 'value', got int
+# Box<string>(42) is rejected before the program runs
 ```
 
 Subtype arguments still pass (`Pen<Animal>(Dog())` is fine), and a call
@@ -971,12 +1044,17 @@ caller's reified bindings disagree with the callee's declared bindings:
 
 ```gb
 class Base {}
+
 class Sub extends Base {}
-class Box<T> { func Box() {} }
+
+class Box<T> {
+    func Box() {}
+}
 
 Box<Base> b = Box<Sub>();   # static error: cannot assign Box<Sub> to Box<Base>
 
 func consume(Box<Base> b): void {}
+
 consume(Box<Sub>());        # runtime error: consume expects Box<Base> for parameter 'b'
 ```
 
@@ -998,14 +1076,20 @@ collection is accepted where the element type is `any`:
 
 ```gb
 class Animal {}
+
 class Dog extends Animal {}
 
-func count(list<Animal> xs): int { return xs.length(); }
+func count(list<Animal> xs): int {
+    return xs.length();
+}
 
 list<Dog> dogs = [Dog(), Dog()];
 count(dogs);            # ok - Dog is an Animal
 
-func countAny(list<any> xs): int { return xs.length(); }
+func countAny(list<any> xs): int {
+    return xs.length();
+}
+
 countAny([1, 2, 3]);   # ok - any element type satisfies list<any>
 ```
 
@@ -1014,7 +1098,9 @@ statically and at the runtime boundary. There is no numeric widening:
 a `list<int>` does not satisfy `list<float>` or `list<string>`.
 
 ```gb
-func countStrings(list<string> xs): int { return xs.length(); }
+func countStrings(list<string> xs): int {
+    return xs.length();
+}
 
 list<int> ints = [1, 2, 3];
 countStrings(ints);    # static + runtime error: list<int> is not list<string>
@@ -1049,11 +1135,13 @@ is shallow to keep mutation cheap).
 
 Nested element tags are not fully checked on mutation. A value that is a
 `list<string>` can be pushed into a `list<list<int>>` through a dynamic value;
-the outer write only checks that it is a list. Nullable element tags also
-report the base type through `instanceof` and `reflect.typeBindings`: a
-`list<?int>` containing `null` currently satisfies `instanceof list<int>` and
-reports `T` as `int`. Re-validate nested or nullable contents when those
-distinctions matter.
+the outer write only checks that it is a list. Re-validate nested contents
+when that distinction matters.
+
+`instanceof` honours nullable element types: a `list<?int>` satisfies
+`instanceof list<?int>` but not `instanceof list<int>`, while a `list<int>`
+satisfies both. `reflect.typeBindings` reports the base element type, so a
+`list<?int>` reports `T` as `int`.
 
 ### Container types
 
@@ -1100,7 +1188,8 @@ satisfy all of them:
 func move<T implements Swimmer | Runner>(T item): void {}
 
 # T must implement both Printable AND Persistable
-func persist<T implements Printable, Persistable>(T item): void {}
+func persist<T implements Printable & Persistable>(T item): void {}
+
 func archive<T implements Printable & Persistable>(T item): void {}
 ```
 
@@ -1109,7 +1198,9 @@ Constraint branches are not limited to interfaces. A primitive name
 exact type, and a class name is satisfied by the class or any subclass:
 
 ```gb
-func pick<T implements string|int>(T v): T { return v; }
+func pick<T implements string | int>(T v): T {
+    return v;
+}
 
 pick(42);      # ok: int branch
 pick("ada");   # ok: string branch
@@ -1121,11 +1212,15 @@ dropped - the bare form reads more naturally and means the same thing, on
 functions and classes alike:
 
 ```gb
-func pick<T string|int>(T v): T { return v; }
+func pick<T implements string | int>(T v): T {
+    return v;
+}
 
-class Holder<T string|int> {
+class Holder<T implements string | int> {
     T value;
-    func Holder(T value) { this.value = value; }
+    func Holder(T value) {
+        this.value = value;
+    }
 }
 
 Holder(7);        # ok, T = int
@@ -1163,7 +1258,9 @@ even when control flows through a stdlib helper such as
 ```gb
 import collections;
 
-interface Scored { func score(): int; }
+interface Scored {
+    func score(): int;
+}
 
 func topBy<T implements Scored>(list<T> items): T {
     # The lambda's `T x` parameter resolves to the same concrete type

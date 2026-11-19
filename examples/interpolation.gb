@@ -25,6 +25,7 @@ io.println("enabled: ${enabled}");
 func greet(string who, int age): string {
     return "Hello, ${who}! You are ${age} years old.";
 }
+
 io.println(greet("Alice", 30));
 
 # Nested expressions

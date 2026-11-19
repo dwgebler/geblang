@@ -481,7 +481,7 @@ func encodeJSONValueInto(ctx ConversionContext, buf *bytes.Buffer, value runtime
 		buf.WriteByte('"')
 		return nil
 	case runtime.Decimal:
-		buf.WriteString(v.Value.FloatString(10))
+		buf.WriteString(runtime.FormatDecimal(v.Value))
 		return nil
 	case runtime.Float:
 		if math.IsNaN(v.Value) || math.IsInf(v.Value, 0) {
@@ -705,7 +705,7 @@ func ValueToJSONCtx(ctx ConversionContext, value runtime.Value) (any, error) {
 		}
 		return value.Value.String(), nil
 	case runtime.Decimal:
-		return json.Number(value.Value.FloatString(10)), nil
+		return json.Number(runtime.FormatDecimal(value.Value)), nil
 	case runtime.Float:
 		return value.Value, nil
 	case runtime.String:
@@ -797,7 +797,7 @@ func ValueToTOMLCtx(ctx ConversionContext, value runtime.Value) (any, error) {
 		}
 		return value.Value.String(), nil
 	case runtime.Decimal:
-		return value.Value.FloatString(10), nil
+		return runtime.FormatDecimal(value.Value), nil
 	case runtime.Float:
 		return value.Value, nil
 	case runtime.String:
@@ -856,7 +856,7 @@ func ValueToYAMLCtx(ctx ConversionContext, value runtime.Value) (any, error) {
 		}
 		return value.Value.String(), nil
 	case runtime.Decimal:
-		return value.Value.FloatString(10), nil
+		return runtime.FormatDecimal(value.Value), nil
 	case runtime.Float:
 		return value.Value, nil
 	case runtime.String:

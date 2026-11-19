@@ -58,7 +58,7 @@ func encodeJSON(b *strings.Builder, v any) {
 			b.WriteString(strconv.FormatInt(x.I64, 10))
 		}
 	case *big.Rat:
-		b.WriteString(x.FloatString(10))
+		b.WriteString(DecimalToString(x))
 	case float64:
 		if math.IsNaN(x) || math.IsInf(x, 0) {
 			panic(&Error{Class: "RuntimeError", Message: fmt.Sprintf("json: unsupported value: %g", x), Parents: []string{"Error"}})

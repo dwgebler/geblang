@@ -479,7 +479,7 @@ for (text in ["", "no", "1.2.3"]) {
 }
 try { "12".toIntOrNull(1); }
 catch (ValueError error) { io.println("bad base"); }
-`, "42\n255\n255\n1000\n1.2500000000\n1.25\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nbad base\n")
+`, "42\n255\n255\n1000\n1.25\n1.25\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nbad base\n")
 }
 
 func TestParitySecureRandomDirectConveniences(t *testing.T) {
@@ -809,9 +809,9 @@ io.println(n as string);
 io.println((50000 / 1000) as string);
 io.println((50000 // 1000) as string);
 io.println((6 / 2.0f) as string);
-`, `3.5000000000
+`, `3.5
 3
-50.0000000000
+50.0
 50
 3
 `)
@@ -2113,7 +2113,7 @@ let f = (1.5 as float);
 io.println(msgpack.decode(msgpack.encode(f)));
 let d = 1.5;
 io.println(msgpack.decode(msgpack.encode(d)));
-`, "1.5\n1.5000000000\n")
+`, "1.5\n1.5\n")
 
 	// validate + tryDecode behaviours.
 	runParity(t, `import io;
@@ -5885,7 +5885,7 @@ let handle=io.memory();io.println(json.write(null,handle));io.println(io.toStrin
 let bounded=cache.memoryCacheStore(3600,2);bounded.set("a",{"n":[1]});bounded.set("b",2);
 let snapshot=bounded.get("a");snapshot["n"].push(9);bounded.set("c",3);
 io.println(bounded.get("b")==null);io.println(bounded.get("a")["n"]);io.println(bounded.get("c"));
-`, "1\n3\n30\n0\nempty rejected\n2.5000000000\n1.2500000000\ntrue\ntrue\ntrue\ntrue\n4\nnull\ntrue\n[1]\n3\n")
+`, "1\n3\n30\n0\nempty rejected\n2.5\n1.25\ntrue\ntrue\ntrue\ntrue\n4\nnull\ntrue\n[1]\n3\n")
 }
 
 func TestParityBoundedCacheAcrossRequestSnapshots(t *testing.T) {

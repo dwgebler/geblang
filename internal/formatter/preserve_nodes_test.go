@@ -14,7 +14,7 @@ func TestFormatPreservesEveryDeclaredNode(t *testing.T) {
 			"interface Entity {\n    string id;\n\n    func sameAs(Entity other): bool {\n        return this.id == other.id;\n    }\n\n    func save(): void;\n}"},
 		{"field decorators",
 			"class P {\n    @notBlank\n    string name;\n    @Groups(\"read\", \"admin\") string id;\n}",
-			"class P {\n    @notBlank\n    string name;\n    @Groups(\"read\", \"admin\")\n    string id;\n}"},
+			"class P {\n    @notBlank\n    string name;\n    @Groups(\"read\", \"admin\") string id;\n}"},
 		{"dataclass field decorators",
 			"@dataclass(frozen: true)\nexport class Line {\n    string sku;\n\n    @positive\n    int quantity;\n}",
 			"@dataclass(frozen: true)\nexport class Line {\n    string sku;\n\n    @positive\n    int quantity;\n}"},

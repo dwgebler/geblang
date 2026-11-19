@@ -1,0 +1,20 @@
+/**
+ * @title secureRandom draws with decimal arguments replay unchanged
+ * @summary Decimal arguments enter the draw message in a fixed form, so changes
+ * to how decimals print never change recorded outcomes. Expected values were
+ * produced by an earlier release.
+ */
+import test;
+import secureRandom;
+
+class SecureRandomDecimalReplayTest extends test.Test {
+    @test
+    func weightedChoiceWithDecimalWeightsReplaysAsBefore(): void {
+        let seed = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let draws = [];
+        for (n in [0, 1, 2, 3, 4, 5]) {
+            draws.push(secureRandom.replay(seed, "Alice", n, "weightedChoice", [["x", "y", "z"], [1.0, 2.5, 3.25]]));
+        }
+        this.assertEquals(["z", "z", "y", "z", "y", "z"], draws);
+    }
+}

@@ -11,7 +11,7 @@ import io;
 
 let cfg = config.layer([
     {"debug": false, "db": {"host": "localhost", "port": 5432}},
-    {"debug": true, "db": {"database": "app"}}
+    {"debug": true, "db": {"database": "app"}},
 ]);
 
 io.println(config.require(cfg, "db.host"));
@@ -40,12 +40,12 @@ the override value replaces the base value.
 ```gb
 let base = {
     "app": {"name": "Geb", "debug": false},
-    "cache": {"ttl": 60}
+    "cache": {"ttl": 60},
 };
 
 let local = {
     "app": {"debug": true},
-    "cache": {"driver": "redis"}
+    "cache": {"driver": "redis"},
 };
 
 let merged = config.merge(base, local);
@@ -63,9 +63,9 @@ let settings = {
     "db": {
         "primary": {
             "host": "localhost",
-            "port": 5432
-        }
-    }
+            "port": 5432,
+        },
+    },
 };
 
 io.println(config.has(settings, "db.primary.host"));
@@ -90,9 +90,7 @@ encountered before the end of the path.
 | `toDict()` | `dict<string, any>` | Return a deep copy of the stored config |
 
 ```gb
-let cfg = config.Config({
-    "mail": {"from": "noreply@example.com"}
-});
+let cfg = config.Config({"mail": {"from": "noreply@example.com"}});
 
 io.println(cfg.require("mail.from"));
 io.println(cfg.getOr("mail.transport", "smtp"));
@@ -148,11 +146,14 @@ import config;
 
 let settings = config.load({
     "defaults": {"server": {"host": "127.0.0.1", "port": 8080}},
-    "files": [{"path": "settings.json"}, {"path": "local.toml"},
-              {"path": "site.yaml"}],
+    "files": [
+        {"path": "settings.json"},
+        {"path": "local.toml"},
+        {"path": "site.yaml"},
+    ],
     "dotenvFiles": [".env"],
     "env": {"server.port": {"name": "APP_PORT", "type": "int"}},
-    "overrides": {"server": {"host": "0.0.0.0"}}
+    "overrides": {"server": {"host": "0.0.0.0"}},
 });
 ```
 

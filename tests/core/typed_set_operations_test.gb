@@ -1,0 +1,35 @@
+/**
+ * @title Set-style list operations compare type and value
+ * @summary difference, intersection, their By forms, frequencies and mode treat
+ * values of different types as different, even when they print alike.
+ */
+import test;
+
+class TypedSetOperationsTest extends test.Test {
+    @test
+    func stringsDoNotMatchNumbersOrBools(): void {
+        this.assertEquals(["1", "x"], ["1", "x"].difference([1]));
+        this.assertEquals([], [1].intersection(["1"]));
+        this.assertEquals(["true", "null"], ["true", "null", true].difference([true, null]));
+    }
+
+    @test
+    func byFormsCompareKeysByTypeAndValue(): void {
+        this.assertEquals(["1.5"], ["1.5", 1.5].differenceBy([1.5], (any k) => k));
+        this.assertEquals([], [1.5].intersectionBy(["1.5"], (any k) => k));
+    }
+
+    @test
+    func countsKeepTypesApart(): void {
+        let counts = ["1", 1, 1].frequencies();
+        this.assertEquals(2, counts[1]);
+        this.assertEquals(1, counts["1"]);
+        this.assertEquals(1, ["1", "1", 1, 1, 1].mode());
+    }
+
+    @test
+    func equalValuesStillMatch(): void {
+        this.assertEquals([1, 3], [1, 2, 2, 3].difference([2]));
+        this.assertEquals(["b"], ["a", "b"].intersection(["b", "c"]));
+    }
+}

@@ -1,5 +1,216 @@
 # Release Notes
 
+## 1.43.0
+
+### Added
+
+- Generator comprehensions: `(x * 2 for x in xs if x > 0)` builds a lazy
+  `generator` with the same `for` and `if` clauses as list comprehensions. The
+  first source is evaluated, and checked to be iterable, where the
+  comprehension is written; later sources, filters and the body run as values
+  are read.
+- Arrow functions: `(int n) => n * 2`, `(a, b) => { ... }`, `() => value` and
+  `async (int n) => ...`. A parameter may leave out its type when the arrow is
+  passed to a callback method of a list with a known element type (`map`,
+  `filter`, `sortBy`, `reduce` and the rest); the type is filled in before the
+  program runs and checked at run time. Elsewhere an untyped parameter is an
+  error naming the parameter. In the REPL, variables from earlier lines keep
+  their declared or inferred types for this.
+- `trim`, `trimStart` and `trimEnd` take an optional set of characters to
+  remove instead of whitespace: `"/docs/api/".trim("/")` is `"docs/api"`.
+- `upper(n)` and `lower(n)` change the case of the first `n` characters, or the
+  last `-n` when `n` is negative: `"geblang".upper(1)` is `"Geblang"`.
+- `geblang check` reports a built-in method called with an argument count it
+  does not accept, such as `text.substring()` or `xs.length(1)`, when the
+  receiver's type is known.
+- `geblang check` warns (`discarded-task`) when `async.sleep`, `async.all`,
+  `async.race` or `async.timeout` is called without `await`, which silently
+  does not wait.
+
+### Changed
+
+- Decimals print in a shorter default form: up to 10 places with trailing zeros
+  dropped and at least one place kept, so `12.5` prints `12.5` and `7 / 7`
+  prints `1.0` instead of `12.5000000000` and `1.0000000000`. This applies to
+  printing, interpolation, `as string`, `toString()`, JSON, YAML, TOML,
+  MessagePack and CSV output. `toString(n)` and `format(n)` still give exactly
+  `n` places, and `secureRandom` draws are unaffected.
+- A generator declared `generator<T>` or `iterable<T>` checks every value it
+  yields against `T`. A mismatch raises a `TypeError` such as `words expects
+  string yield, got int` when the value is produced, and `geblang check`
+  reports mismatches it can see statically. An `int` literal yielded from a
+  `generator<float>` or `generator<decimal>` widens, as it does for `return`.
+  Previously yields were not checked at all.
+- A predicate passed to `filter`, `find`, `findLast`, `any`, `all`, `count`,
+  `partition`, `takeWhile`, `dropWhile`, `indexBy`, a callable `search`, or
+  `collections.lazyFilter` must return `bool`; any other result raises a
+  `TypeError` naming the method. Previously the two runtimes treated such
+  results differently (`all` could return `true` on one and `false` on the
+  other).
+- A built binary's `--version` (and the header of `--help`) lists the app's
+  name and version, then the Geblang runtime version and each bundled
+  dependency package with its version, one per line. `--help` notes that
+  `-- --help` shows the application's own options.
+- `geblang fmt` keeps a function literal on one line only when its body is a
+  single `return` that fits the width; any other body is expanded onto its own
+  lines, like `if`, loop and function bodies.
+- `geblang fmt` keeps columns the author aligned: consecutive declarations,
+  assignments, match arms, enum backing values, and the values of a multi-line
+  dict or named-argument list that were lined up stay lined up, with the
+  padding recomputed so the result is the same on every run. Other extra
+  spacing is still reduced to one space.
+- `geblang fmt` keeps the spacing before an end-of-line comment, so comments
+  aligned in a column stay aligned (`--clean` still uses one space).
+- `geblang fmt` leaves a field decorator on the field's line when it was
+  written there (`@immutable string id;`).
+- `geblang fmt` keeps a call's leading arguments on the call line when only
+  the last argument is a multi-line collection (`f(a, {` ... `});`) instead of
+  putting every argument on its own line.
+- `geblang fmt` writes an empty class or interface body as `{}` instead of
+  splitting it over two lines.
+
+### Fixed
+
+- Declaring a function, variable, parameter or loop variable named `embed` is
+  reported as a load error, since the name is reserved for the compile-time
+  builtin. A function named `embed` used to be accepted while every call to it
+  went to the builtin instead.
+- `instanceof` honours nullable element types: a `list<?int>` holding `null`
+  satisfies `instanceof list<?int>` and no longer satisfies `instanceof
+  list<int>`, the reverse of before. The same applies to sets and dict values.
+- A class, interface or enum that extends or implements a module-qualified
+  type (`extends test.Test`, `implements rag.Embedder`) without importing the
+  module is reported by `geblang check` and both runtimes. The VM used to
+  accept it while the evaluator failed with "parent class is not declared".
+- A call to a built-in module function with the wrong number of arguments is
+  now rejected before the program runs on both runtimes and by `geblang
+  check`; previously only the VM rejected it. Several built-in signatures were
+  corrected so that every argument count the function accepts is allowed:
+  `random.next`, `random.float`, `random.bool`, `random.choice` and
+  `random.shuffle` take an optional generator first, `watch.wait(path,
+  timeoutMs)` no longer needs a snapshot argument, `collections.range(end)`
+  starts at 0, `cli.password()` and `cli.secret()` take an optional prompt,
+  and `errors.new(class)` takes an optional message. `profiler.delta` rejects
+  extra arguments.
+- A local variable typed with a union alias (`type Id = int | string;
+  Id x = 5;`) accepts any branch of the union; `geblang check` and both
+  runtimes rejected it with "cannot assign int to Id x". Reassigning a
+  union-typed local or parameter is now also checked by `geblang check`.
+- List, set and dict comprehensions iterate classes that implement `__iter` or
+  `__next`/`__done` on the evaluator (`--disable-vm`) too; they failed with
+  "comprehension cannot iterate over". On the VM, a module can iterate an
+  instance of a caller-defined subclass that inherits `__iter` from one of the
+  module's classes; it failed with "unknown class".
+- An `iterable<T>` parameter, return type or variable accepts anything a
+  `for-in` loop accepts: lists, sets, ranges, dicts, strings, streams and
+  classes with `__iter` or `__next`/`__done`, as well as generators.
+  Previously it accepted only generators, and the VM reported the type as
+  `generator<T>`. Elements of an eager collection are checked against `T`.
+- A runtime error inside a generator body, such as a division by zero, reaches
+  the consumer's `catch` with its own message on `geblang run` and in built
+  binaries. Previously `e.message` held the whole rendered report, starting
+  "uncaught RuntimeError:" and followed by a stack trace.
+- A bare `return;` inside a generator ends it early instead of failing
+  `geblang check`, `run` and `test` with "cannot return null". Returning a
+  value from a generator is reported as an error, since the value was
+  silently dropped.
+- A function whose only `yield` is inside a `with` block is now a generator
+  on the evaluator (`--disable-vm`) too, and a `yield` inside a `select` case
+  or `default` makes a function a generator on both runtimes. Previously these
+  failed with "yield can only be used inside a generator function".
+- A generator that iterates another generator (a function, method, static
+  method, interface default, closure or recursive call) now gets that
+  generator's values on `geblang run` and in built binaries. Previously the
+  inner generator's values were yielded straight out of the outer one, and the
+  loop then failed with `null is not iterable`.
+- `difference`, `intersection`, `differenceBy`, `intersectionBy`,
+  `frequencies` and `mode` treat values of different types as different:
+  `["1"].difference([1])` keeps `"1"`, where it used to match the int `1`.
+- A closure created inside a comprehension, such as
+  `[async.run(() => work(n)) for n in xs]`, captures the item it was created
+  for on the VM, as on the evaluator. The VM gave every closure the last item.
+- `geblang check` reports arguments passed to a class that declares no
+  constructor (`class Money { int cents = 0; }` then `Money(5)`), which both
+  runtimes reject.
+- `geblang check` reports a wrong argument count on a method, imported
+  function or imported constructor call even when an argument is typed `any`,
+  and on assertions inherited from `test.Test` (such as
+  `this.assertTrue(ok, "message")`). A test class's own helper methods are now
+  checked too; previously extending `test.Test` switched these checks off.
+- `list.clear(...)` rejects arguments, like `dict.clear`; it used to ignore
+  them.
+- The manual and editor hover describe `containsBy(value, keyFn)` and
+  `indexBy(predicate)` (index of the first match, or `-1`) as they behave, and
+  no longer list `take`, `lazyMap` and `lazyFilter` as list methods (they are
+  `collections` functions). Editor signatures also show the optional `end` of
+  `substring` and `slice`, the optional count of `replace` and the precision of
+  `string.toDecimal`, and `topBy` takes the selector before the count.
+- `geblang check` now examines every expression: ternaries, string
+  interpolation, comprehensions, match subjects, guards and arms, `if`,
+  `else if` and `while` conditions, `for` iterables, `with` and `select`
+  statements, casts, `await`, ranges, spreads, pipes, parameter and field
+  defaults, and interface default methods were previously skipped, so a
+  misspelled method there was only caught when the code ran.
+- `async.rate.throttle` measures its window with the monotonic clock, so a
+  wall-clock correction can no longer make a call after the window return the
+  cached result.
+- On the VM, calling a function value stored in another module's exported
+  variable (`export let f = func(...) {...};` then `mod.f(...)`) now works,
+  with positional, named and spread arguments; it previously failed with
+  "is not callable". An exported callable object (`__invoke`) can now be called
+  the same way on the evaluator.
+- `geblang check` now checks the returned expression in a function or function
+  literal that has no declared return type; it was previously skipped.
+- `geblang build --native` now supports `list.sorted(comparator)`, with a
+  less-than or three-way comparator, including arrow functions.
+- `geblang build --native` now builds a function literal that has no return
+  type but returns a value; it previously produced a Go compile error.
+- Web response middleware (`use` / `after`) now also runs on the `404` for a
+  path no route matches, so its headers apply to missing pages and it can
+  replace the response. Previously that `404` skipped all response middleware.
+- A built binary uses only the standard library bundled inside it. It
+  previously also searched `GEBLANG_STDLIB`, the binary's own directory, and
+  the current directory and its parents for a `stdlib` folder, so running it
+  from inside a Geblang checkout could change how its modules resolved.
+- A module in a bundled dependency package keeps its package-qualified name
+  even when it declares a short one (`module i18n;` in package `webkit` is
+  `webkit.i18n`), as it does when run from source. Previously such a module
+  could be rejected at start-up as shadowing a built-in module name.
+- Passing a named argument to a method on a list, string, dict or other
+  built-in value now raises the same error on both runtimes ("named arguments
+  are only supported for Geblang functions and methods"); the VM previously
+  reported a different message.
+- Editor completion and hover now show `list.reduce(fn, initial)` with its
+  arguments in the order the runtimes take them; they previously listed the
+  initial value first.
+- `geblang fmt` no longer deletes a comment inside a function literal that
+  sits in a multi-line list, dict or argument list.
+- `geblang fmt` keeps comments inside multi-line method chains, operator
+  chains, collections, argument lists and match arms next to the code they
+  follow, and keeps a comment after an opening brace on that line. Previously
+  they were moved after the statement or into the body. When statements that
+  shared a line are split, the line's comment stays with the last of them.
+- `geblang fmt` keeps blank lines between comments and between a comment and
+  the code after it, and keeps a comment that ends a class, interface, enum,
+  function or block body inside that body instead of moving it after the
+  closing brace.
+- `geblang fmt` keeps comments between enum variants and after decorators in
+  place.
+- `geblang fmt` keeps parentheses written around any expression, including
+  inside string interpolation. Previously it dropped them around literals,
+  names, calls and other simple expressions, so `(2.5).round()` became
+  `2.5.round()`.
+- `geblang fmt` keeps a method chain the author split across lines when the
+  chain includes index steps (`resp["headers"]["Set-Cookie"]` then
+  `.split(";")[0]` on the next line); it previously flattened such chains.
+- `geblang fmt` keeps a typed static field as written (`static int n = 0;`)
+  instead of rewriting it to `static let int n = 0;`.
+- `geblang fmt` no longer changes the text inside a block comment; spaces in
+  `/* ... */` are kept as written.
+- `geblang fmt` output is now stable when run twice: a call, chain or list
+  element that follows a multi-line function literal is no longer moved onto
+  a new line by the second run.
+
 ## 1.42.3
 
 ### Fixed

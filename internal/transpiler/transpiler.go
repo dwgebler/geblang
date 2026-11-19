@@ -1,11 +1,13 @@
 package transpiler
 
 import (
+	"errors"
 	"go/format"
 	"sort"
 	"strings"
 
 	"geblang/internal/ast"
+	"geblang/internal/desugar"
 	"geblang/internal/semantic"
 	"geblang/internal/transpiler/emit"
 	"geblang/internal/transpiler/lower"
@@ -52,6 +54,19 @@ func Transpile(input Input, opts Options) (Output, []Diagnostic, error) {
 	}
 
 	var diags []Diagnostic
+	for _, canonical := range canonicals {
+		if err := desugar.Arrows(input.Modules[canonical]); err != nil {
+			d := Diagnostic{Severity: SeverityError, File: canonical, Message: err.Error()}
+			var positioned *desugar.PositionError
+			if errors.As(err, &positioned) {
+				d.Line, d.Column, d.Message = positioned.Line, positioned.Column, positioned.Message
+			}
+			diags = append(diags, d)
+		}
+	}
+	if len(diags) > 0 {
+		return out, diags, nil
+	}
 
 	// Register every module's classes before lowering any so cross-module
 	// inheritance (parent in another module) resolves its full member set.

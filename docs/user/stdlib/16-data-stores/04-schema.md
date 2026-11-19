@@ -22,9 +22,9 @@ let result = schema.validate(
             "name": {"type": "string"},
             "roles": {
                 "type": "array",
-                "items": {"type": "string"}
-            }
-        }
+                "items": {"type": "string"},
+            },
+        },
     }
 );
 
@@ -59,8 +59,8 @@ let userSchema = {
         "name": {"type": "string"},
         "email": {"type": "string"},
         "status": {"enum": ["active", "disabled"]},
-        "score": {"type": "number"}
-    }
+        "score": {"type": "number"},
+    },
 };
 
 let bad = schema.validate(
@@ -88,8 +88,8 @@ let validator = sv.of({
     "required": ["name"],
     "properties": {
         "name": {"type": "string"},
-        "age": {"type": "int"}
-    }
+        "age": {"type": "int"},
+    },
 });
 
 io.println(validator.isValid({"name": "Ada", "age": 36}));

@@ -1,0 +1,34 @@
+/**
+ * @title iterable<T> across modules
+ * @summary An imported function taking iterable<T> accepts local collections, and an imported or inherited iterable class satisfies a local iterable<T> parameter.
+ */
+import test;
+import iterable_source;
+
+class BigShelf extends iterable_source.Shelf {
+    func BigShelf(list<int> items) { parent(items); }
+}
+
+func count(iterable<int> xs): int {
+    int n = 0;
+    for (x in xs) {
+        n += 1;
+    }
+    return n;
+}
+
+class IterableParamsCrossModuleTest extends test.Test {
+    @test
+    func importedFunctionAcceptsLocalCollections(): void {
+        this.assertEquals(6, iterable_source.total([1, 2, 3]));
+        this.assertEquals(3, iterable_source.total({1, 2}));
+        this.assertEquals(10, iterable_source.total(1..4));
+    }
+
+    @test
+    func importedAndInheritedIterableClasses(): void {
+        this.assertEquals(2, count(iterable_source.Shelf([1, 2])));
+        this.assertEquals(3, count(BigShelf([1, 2, 3])));
+        this.assertEquals(5, iterable_source.total(BigShelf([2, 3])));
+    }
+}

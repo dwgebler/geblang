@@ -1,4 +1,4 @@
-# Foreign Function Interface
+# Foreign function interface
 
 `import ffi;` gives Geblang scripts direct access to C-ABI shared
 libraries: libtorch, libsqlite, libcurl, libopencv, libssl, or
@@ -160,14 +160,23 @@ import io;
 let sqlite = ffi.dlopen("libsqlite3.so.0");
 let open = sqlite.symbol("sqlite3_open", [ffi.CSTRING, ffi.PTR], ffi.INT32);
 let close = sqlite.symbol("sqlite3_close", [ffi.PTR], ffi.INT32);
-let exec = sqlite.symbol("sqlite3_exec",
-    [ffi.PTR, ffi.CSTRING, ffi.PTR, ffi.PTR, ffi.PTR], ffi.INT32);
+let exec = sqlite.symbol(
+    "sqlite3_exec",
+    [ffi.PTR, ffi.CSTRING, ffi.PTR, ffi.PTR, ffi.PTR],
+    ffi.INT32
+);
 
 class Database {
     int handle;
-    func Database(int handle) { this.handle = handle; }
-    func __enter(): Database { return this; }
-    func __exit(): void { close(this.handle); }
+    func Database(int handle) {
+        this.handle = handle;
+    }
+    func __enter(): Database {
+        return this;
+    }
+    func __exit(): void {
+        close(this.handle);
+    }
 }
 
 func openInMemory(): Database {
@@ -214,7 +223,7 @@ let libc = ffi.dlopen("libc.so.6");
 let gettimeofday = libc.symbol("gettimeofday", [ffi.PTR, ffi.PTR], ffi.INT32);
 
 let Timeval = ffi.StructOf([
-    ["tv_sec",  ffi.INT64],
+    ["tv_sec", ffi.INT64],
     ["tv_usec", ffi.INT64],
 ]);
 
@@ -293,8 +302,11 @@ let cmp = ffi.callback(func(int pa, int pb): int {
     return ai - bi;
 }, [ffi.PTR, ffi.PTR], ffi.INT32);
 
-let qsort = libc.symbol("qsort",
-    [ffi.PTR, ffi.UINT64, ffi.UINT64, ffi.PTR], ffi.VOID);
+let qsort = libc.symbol(
+    "qsort",
+    [ffi.PTR, ffi.UINT64, ffi.UINT64, ffi.PTR],
+    ffi.VOID
+);
 qsort(buf, 5, 4, cmp);
 ```
 

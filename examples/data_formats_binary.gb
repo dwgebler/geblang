@@ -33,7 +33,9 @@ io.println("compressed size: " + zipped.length().toString());
 
 let restored = compress.gunzip(zipped);
 io.println("restored text:   " + bytes.toString(restored));
-io.println("round-trip:      " + (bytes.toString(restored) == "payload payload payload payload payload payload").toString());
+io.println(
+    "round-trip:      " + (bytes.toString(restored) == "payload payload payload payload payload payload").toString()
+);
 
 /* XML: emit an element tree to text, then validate the emitted document. */
 io.println("");
@@ -53,7 +55,7 @@ io.println("== CSV ==");
 let table = [
     ["name", "qty", "note"],
     ["widget", "12", "small, round"],
-    ["gadget", "3", "line one\nline two"]
+    ["gadget", "3", "line one\nline two"],
 ];
 let csvText = csv.stringify(table);
 io.print(csvText);

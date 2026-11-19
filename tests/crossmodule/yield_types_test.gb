@@ -1,0 +1,34 @@
+/**
+ * @title Generator yield types across modules
+ * @summary Yield checks apply to generators declared in another module, including inherited generator methods.
+ */
+import test;
+import yield_types;
+
+class Local<T> extends yield_types.Source<T> {
+    func Local(list<T> items) { parent(items); }
+}
+
+func drain(any source): list {
+    list out = [];
+    for (x in source) {
+        out.push(x);
+    }
+    return out;
+}
+
+class YieldTypesTest extends test.Test {
+    @test
+    func importedFunctionChecksYields(): void {
+        this.assertEquals(["a"], drain(yield_types.words(["a"])));
+        this.assertThrowsOf(func(): void { drain(yield_types.words([1])); }, "TypeError", "words expects string yield, got int");
+    }
+
+    @test
+    func importedAndInheritedMethodsCheckYields(): void {
+        this.assertEquals([1, 2], drain(yield_types.Source<int>([1, 2]).each()));
+        this.assertEquals([3], drain(Local<int>([3]).each()));
+        this.assertThrowsOf(func(): void { drain(yield_types.Source<string>(["x"]).wrong()); }, "TypeError", "Source.wrong expects T yield, got int");
+        this.assertThrowsOf(func(): void { drain(Local<string>(["x"]).wrong()); }, "TypeError", "Source.wrong expects T yield, got int");
+    }
+}

@@ -1,0 +1,5 @@
+/**
+ * @category Tests
+ * @summary A class cannot extend a module-qualified class without importing the module.
+ */
+class Suite extends test.Test {}

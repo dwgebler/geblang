@@ -44,7 +44,10 @@ func main() {
     io.println("== dotenv ==");
 
     let envPath = io.tempFile("misc-modules-*.env");
-    io.writeText(envPath, "# demo .env file\nAPP_ENV=staging\nPORT=8080\nGREETING=\"hello world\"\n");
+    io.writeText(
+        envPath,
+        "# demo .env file\nAPP_ENV=staging\nPORT=8080\nGREETING=\"hello world\"\n"
+    );
 
     let vars = dotenv.load(envPath);
     io.println("APP_ENV: " + vars["APP_ENV"]);

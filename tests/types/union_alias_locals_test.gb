@@ -1,0 +1,68 @@
+/**
+ * @title Union type aliases on local variables
+ * @summary A local, loop variable or field typed with a union alias accepts any of the union's branches and rejects other values.
+ */
+import test;
+
+type IntOrString = int | string;
+type MaybeNum = ?int | float;
+
+class Holder {
+    IntOrString tag = 0;
+    func Holder() {}
+}
+
+func raw(any x): any {
+    return x;
+}
+
+func echo(IntOrString v): IntOrString {
+    IntOrString local = v;
+    return local;
+}
+
+func failure(func body): string {
+    try {
+        body();
+    } catch (TypeError e) {
+        return e.message;
+    }
+    return "no error";
+}
+
+class UnionAliasLocalsTest extends test.Test {
+    @test
+    func localsAcceptEveryBranch(): void {
+        IntOrString x = 5;
+        this.assertEquals(5, x);
+        x = "b";
+        this.assertEquals("b", x);
+        MaybeNum m = null;
+        this.assertEquals(null, m);
+        m = 2;
+        this.assertEquals("int", "${typeof(m)}");
+    }
+
+    @test
+    func parametersReturnsLoopsAndFields(): void {
+        this.assertEquals("e", echo("e"));
+        list seen = [];
+        for (IntOrString item in [1, "two"]) {
+            seen.push(item);
+        }
+        this.assertEquals([1, "two"], seen);
+        let h = Holder();
+        h.tag = "named";
+        this.assertEquals("named", h.tag);
+    }
+
+    @test
+    func otherValuesAreRejected(): void {
+        this.assertEquals("type error: cannot assign decimal to int | string", failure(func(): void {
+            IntOrString x = 1;
+            x = raw(1.5);
+        }));
+        this.assertEquals("type error: cannot assign bool to int | string", failure(func(): void { IntOrString y = raw(true); }));
+        this.assertEquals("type error: cannot assign string to ?int | float", failure(func(): void { MaybeNum z = raw("s"); }));
+    }
+}

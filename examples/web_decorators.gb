@@ -10,8 +10,18 @@ import web.router as router;
 import web.session as session;
 
 let sessions = session.fileSessionStore(io.tempDir("web-decorator-sessions"), 3600);
-let loginResponse = auth.login(sessions, http.text("logged in"), {"name": "Ada", "roles": ["admin"]}, {"httpOnly": true});
-let editorResponse = auth.login(sessions, http.text("logged in"), {"name": "Grace", "roles": ["editor"]}, {"httpOnly": true});
+let loginResponse = auth.login(
+    sessions,
+    http.text("logged in"),
+    {"name": "Ada", "roles": ["admin"]},
+    {"httpOnly": true}
+);
+let editorResponse = auth.login(
+    sessions,
+    http.text("logged in"),
+    {"name": "Grace", "roles": ["editor"]},
+    {"httpOnly": true}
+);
 
 class ApiController {
     @route("GET", "/health")
@@ -36,9 +46,7 @@ class ApiController {
 
 let app = router.newRouter();
 let api = router.group(app, "/api");
-router.mountWithOptions(api, ApiController(), {
-    "sessionStore": sessions
-});
+router.mountWithOptions(api, ApiController(), {"sessionStore": sessions});
 
 let health = router.handle(app, http.request("GET", "/api/health"));
 

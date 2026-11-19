@@ -106,9 +106,19 @@ func lowerListSort(l *Lowerer, sel *ast.SelectorExpression, ty *types.Type, args
 	return lowerListSortCmp(l, sel, ty, args)
 }
 
-// lowerListSorted returns a sorted copy (natural order), leaving the receiver
-// untouched; only ordered element types are supported without a comparator.
+// lowerListSorted returns a sorted copy, leaving the receiver untouched; only ordered element types are supported without a comparator.
 func lowerListSorted(l *Lowerer, sel *ast.SelectorExpression, ty *types.Type, args []ast.CallArgument) bool {
+	if len(args) == 1 && !args[0].Spread && args[0].Name == nil {
+		l.Module.AddImport("slices")
+		l.Module.AddImport(types.OrderedDictImport)
+		elemGo := types.ToGo(ty.Elem, l.Module.IntMode)
+		l.w.WriteString("func() []" + elemGo.Source + " { __c := slices.Clone(")
+		l.lowerExpression(sel.Object)
+		l.w.WriteString("); transpilert.SortInPlaceCmp(&__c, ")
+		l.emitLessFunc(elemGo.Source, args[0].Value)
+		l.w.WriteString("); return __c }()")
+		return true
+	}
 	if len(args) != 0 {
 		return false
 	}
@@ -206,23 +216,23 @@ func lowerListSortCmp(l *Lowerer, sel *ast.SelectorExpression, ty *types.Type, a
 // emitSortCmp adapts the user comparator (bool less-than, or int three-way) to
 // transpilert.SortInPlaceCmp's func(a, b T) bool.
 func (l *Lowerer) emitSortCmp(sel *ast.SelectorExpression, args []ast.CallArgument) {
-	cmpRet := l.comparatorReturnKind(args[0].Value)
 	l.Module.AddImport(types.OrderedDictImport)
 	l.w.WriteString("transpilert.SortInPlaceCmp(&")
 	l.lowerExpression(sel.Object)
 	l.w.WriteString(", ")
-	if cmpRet == types.KindInt {
-		// Three-way comparator: less when the result is negative.
-		elemGo := types.ToGo(l.inferExpressionType(sel.Object).Elem, l.Module.IntMode)
-		l.w.WriteString("func(__a, __b ")
-		l.w.WriteString(elemGo.Source)
-		l.w.WriteString(") bool { return (")
-		l.lowerExpression(args[0].Value)
-		l.w.WriteString(")(__a, __b) < 0 }")
-	} else {
-		l.lowerExpression(args[0].Value)
-	}
+	l.emitLessFunc(types.ToGo(l.inferExpressionType(sel.Object).Elem, l.Module.IntMode).Source, args[0].Value)
 	l.w.WriteString(")")
+}
+
+// emitLessFunc adapts a comparator (bool less-than, or int three-way) to func(a, b T) bool.
+func (l *Lowerer) emitLessFunc(elemGo string, cmp ast.Expression) {
+	if l.comparatorReturnKind(cmp) == types.KindInt {
+		l.w.WriteString("func(__a, __b " + elemGo + ") bool { return (")
+		l.lowerExpression(cmp)
+		l.w.WriteString(")(__a, __b) < 0 }")
+		return
+	}
+	l.lowerExpression(cmp)
 }
 
 // emitSortBy emits a natural-ordering less over the selector's key kind
@@ -263,8 +273,12 @@ func (l *Lowerer) comparatorReturnKind(expr ast.Expression) types.Kind {
 }
 
 func (l *Lowerer) lambdaReturnKind(expr ast.Expression) types.Kind {
-	if fn, ok := expr.(*ast.FunctionLiteral); ok && fn.ReturnType != nil {
-		if t := l.resolveTypeRef(fn.ReturnType); t != nil {
+	if fn, ok := expr.(*ast.FunctionLiteral); ok {
+		if fn.ReturnType != nil {
+			if t := l.resolveTypeRef(fn.ReturnType); t != nil {
+				return t.Kind
+			}
+		} else if t := l.callbackReturns[fn]; t != nil {
 			return t.Kind
 		}
 	}

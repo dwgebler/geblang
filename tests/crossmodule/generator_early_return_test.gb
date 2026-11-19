@@ -1,0 +1,31 @@
+/**
+ * @title Generator early return across modules
+ * @summary Imported generators and inherited generator methods that stop with a bare return end cleanly.
+ */
+import test;
+import early_return_gens;
+
+class Body extends early_return_gens.Lines {
+    func Body(list<string> items) { parent(items); }
+}
+
+func drain(any source): list {
+    list out = [];
+    for (x in source) {
+        out.push(x);
+    }
+    return out;
+}
+
+class GeneratorEarlyReturnCrossModuleTest extends test.Test {
+    @test
+    func importedGeneratorStopsEarly(): void {
+        this.assertEquals([1, 2], drain(early_return_gens.upTo(2)));
+    }
+
+    @test
+    func inheritedGeneratorMethodStopsEarly(): void {
+        this.assertEquals(["a"], drain(early_return_gens.Lines(["a", "", "b"]).untilBlank()));
+        this.assertEquals(["x", "y"], drain(Body(["x", "y", ""]).untilBlank()));
+    }
+}

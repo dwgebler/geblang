@@ -1,0 +1,42 @@
+/**
+ * @title instanceof with nullable element types
+ * @summary A collection whose elements may be null satisfies instanceof only for a nullable element type; a non-null collection satisfies both.
+ */
+import test;
+
+class NullableElementInstanceofTest extends test.Test {
+    @test
+    func declaredNullableCollections(): void {
+        list<?int> a = [1, null];
+        any va = a;
+        this.assertFalse(va instanceof list<int>);
+        this.assertTrue(va instanceof list<?int>);
+        this.assertTrue(va instanceof list<any>);
+        set<?string> s = {"x"};
+        any vs = s;
+        this.assertFalse(vs instanceof set<string>);
+        this.assertTrue(vs instanceof set<?string>);
+        dict<string, ?int> d = {"k": null};
+        any vd = d;
+        this.assertFalse(vd instanceof dict<string, int>);
+        this.assertTrue(vd instanceof dict<string, ?int>);
+    }
+
+    @test
+    func nonNullCollectionsSatisfyBoth(): void {
+        list<int> b = [1, 2];
+        any vb = b;
+        this.assertTrue(vb instanceof list<int>);
+        this.assertTrue(vb instanceof list<?int>);
+    }
+
+    @test
+    func untypedCollectionsAreCheckedByElement(): void {
+        any raw = [1, null];
+        this.assertFalse(raw instanceof list<int>);
+        this.assertTrue(raw instanceof list<?int>);
+        any rawDict = {"k": null};
+        this.assertTrue(rawDict instanceof dict<string, ?int>);
+        this.assertFalse(rawDict instanceof dict<string, int>);
+    }
+}

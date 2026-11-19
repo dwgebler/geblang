@@ -40,6 +40,28 @@ class WebRouterObjectTest extends test.Test {
     }
 
     @test
+    func afterMiddlewareRunsOnUnmatchedRoutes(): void {
+        let app = this.buildApp();
+        let r = router.handle(app, {"method": "GET", "path": "/missing", "headers": {}, "body": ""});
+        this.assertEquals(404, r["status"]);
+        this.assertEquals("/missing", (r["headers"] as dict<string, any>)["X-Path"] as string);
+    }
+
+    @test
+    func afterMiddlewareCanReplaceA404(): void {
+        let app = router.newRouter();
+        router.after(app, func(Request req, Response resp): Response {
+            if (resp.status == 404) {
+                return http.response("custom missing page", 404).withHeader("Content-Type", "text/html");
+            }
+            return resp;
+        });
+        let r = router.handle(app, {"method": "GET", "path": "/nowhere", "headers": {}, "body": ""});
+        this.assertEquals(404, r["status"]);
+        this.assertEquals("custom missing page", r["body"] as string);
+    }
+
+    @test
     func dictHandlerStillWorks(): void {
         let app = this.buildApp();
         let r = router.handle(app, {"method": "GET", "path": "/dict", "headers": {}, "body": ""});

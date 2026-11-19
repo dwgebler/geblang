@@ -1,0 +1,11 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown method in a match arm: strings
+ * have `lower`, not `toLower`.
+ */
+func normalise(int code, string text): string {
+    return match (code) {
+        case 1 => text.toLower();
+        default => text;
+    };
+}

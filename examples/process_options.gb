@@ -10,7 +10,7 @@ let result = sys.runWithOptions({
     "command": "sh",
     "args": ["-c", "printf $GEB_EXAMPLE"],
     "env": {"GEB_EXAMPLE": "hello"},
-    "timeoutMs": 1000
+    "timeoutMs": 1000,
 });
 
 io.println(result["code"]);
@@ -19,7 +19,7 @@ io.println(result["timedOut"]);
 
 let proc = sys.startWithOptions({
     "command": "sh",
-    "args": ["-c", "printf started"]
+    "args": ["-c", "printf started"],
 });
 
 io.println(sys.processReadStdout(proc));

@@ -1,4 +1,4 @@
-# Geblang Internals
+# Geblang internals
 
 This chapter describes how Geblang is implemented, written for readers who want
 a structural walkthrough of a scripting language built in Go. It covers the full
@@ -1038,7 +1038,25 @@ line arguments and delegates to one of several execution modes:
   intentional blank lines, and any construct the author wrote across multiple
   lines (operator and method chains, list/dict/set literals, and call argument
   lists), and it wraps a collection or argument list onto one item per line when
-  a single line would exceed the width. `--clean` produces the minimal canonical
+  a single line would exceed the width. Block bodies always go on their own
+  lines: `if`, `else`, loops, functions, and methods are expanded, and a
+  function literal stays on one line only when its body is a single `return`
+  that fits the width (`func(int x): int { return x * 2; }`). An empty class,
+  interface, or function body is written `{}`. Comments stay where they were
+  written, including at the end of a body, with any blank lines around them,
+  and the spacing before an end-of-line comment is kept so aligned comments
+  stay aligned. When the author lined up consecutive declarations,
+  assignments, match arms, enum backing values, or the values of a multi-line
+  dict or named-argument list in a column (the declared name, `=`, `=>`, or
+  value), the formatter keeps that group aligned, recomputing the padding
+  from its own output; spacing that does not line anything up is reduced to
+  one space. Comments inside multi-line chains, collections,
+  argument lists, and match arms stay next to the code they follow, and
+  comment text is never changed. When only the last argument of a call is a
+  multi-line collection, the other arguments stay on the call line and the
+  collection opens there (`f(a, {` ... `});`). A field decorator written
+  on the field's line stays there. Parentheses the author wrote around any
+  expression are kept, as in `(2.5).round()`. `--clean` produces the minimal canonical
   form instead (drops redundant parentheses, flattens multi-line chains,
   concatenations, and collections onto one line); `--strip-comments` removes all
   comments. The two flags are independent and may be combined. Every mode

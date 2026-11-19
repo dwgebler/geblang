@@ -1510,7 +1510,7 @@ probe("flatMap", collections.flatMap(xs, func(int x): list<int> { return [x, x];
 probe("enumerate", collections.enumerate(["a", "b"]));
 probe("partition", collections.partition(xs, pred));
 probe("groupBy", collections.groupBy(xs, sel));
-probe("indexBy", collections.indexBy(xs, sel));
+probe("indexBy", collections.indexBy(xs, pred));
 probe("zip", collections.zip([1, 2], ["a", "b"]));
 probe("zipWith", collections.zipWith([1, 2], [10, 20], zipf));
 probe("unzip", collections.unzip(pairs));
@@ -1560,7 +1560,7 @@ flatMap=[3, 3, 2, 2, 1, 1]
 enumerate=[[0, "a"], [1, "b"]]
 partition=[[3, 2], [1]]
 groupBy={1: [1], 2: [2], 3: [3]}
-indexBy=-1
+indexBy=0
 zip=[[1, "a"], [2, "b"]]
 zipWith=[11, 22]
 unzip=[[1, 2], ["a", "b"]]

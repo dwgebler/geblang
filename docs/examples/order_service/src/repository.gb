@@ -14,7 +14,7 @@ export class OrderRepository {
     }
 
     func add(any order): void {
-        this.orders = this.orders.push(order);
+        this.orders.push(order);
     }
 
     func all(): list<any> {

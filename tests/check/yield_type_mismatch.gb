@@ -1,0 +1,5 @@
+/**
+ * @category Tests
+ * @summary A generator<string> function cannot yield an int.
+ */
+func words(): generator<string> { yield 1; }

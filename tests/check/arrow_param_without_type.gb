@@ -1,0 +1,10 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an arrow function parameter written without
+ *          a type when nothing can supply one (it is not passed to a list
+ *          callback method).
+ */
+import io;
+
+let double = (x) => x * 2;
+io.println(double(2));

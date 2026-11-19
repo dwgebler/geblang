@@ -138,10 +138,10 @@ try {
     io.println(e.message);
 }
 `)
-	want := `p1 Ada & co 36 true 1.5000000000 null null
+	want := `p1 Ada & co 36 true 1.5 null null
 Leeds 12 true ["x", "y"] York
-<Person><active>true</active><age>36</age><home><city>Leeds</city><zip>12</zip></home><id>p1</id><name>Ada &amp; co</name><places><city>York</city><zip>1</zip></places><score>1.5000000000</score><tags>x</tags><tags>y</tags></Person>
-p1 Ada & co 1 1.5000000000
+<Person><active>true</active><age>36</age><home><city>Leeds</city><zip>12</zip></home><id>p1</id><name>Ada &amp; co</name><places><city>York</city><zip>1</zip></places><score>1.5</score><tags>x</tags><tags>y</tags></Person>
+p1 Ada & co 1 1.5
 <Money><amount>250</amount><currency>GBP</currency></Money>
 <plain a="1">ok</plain>
 xml.parseAs: field age expects int, got "old"

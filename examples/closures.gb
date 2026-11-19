@@ -22,6 +22,7 @@ io.println(next() as string);
 func applyTwice(callable f, int x): int {
     return f(f(x));
 }
+
 let inc = func(int n): int { return n + 1; };
 io.println(applyTwice(inc, 5) as string);
 

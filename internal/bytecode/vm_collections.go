@@ -390,7 +390,14 @@ func (vm *VM) collectionsNativeLazyFilter(args []runtime.Value) (runtime.Value, 
 				}
 				return nil, false, err
 			}
-			if b, ok := keep.(runtime.Bool); ok && b.Value {
+			predOK, err := native.PredicateResult("collections.lazyFilter", keep)
+			if err != nil {
+				if source.close != nil {
+					source.close()
+				}
+				return nil, false, err
+			}
+			if predOK {
 				return next, true, nil
 			}
 		}
@@ -518,7 +525,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if b, ok := keep.(runtime.Bool); ok && b.Value {
+			predOK, err := native.PredicateResult("list.filter", keep)
+			if err != nil {
+				return nil, true, err
+			}
+			if predOK {
 				result = append(result, el)
 			}
 		}
@@ -534,7 +545,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 				if err != nil {
 					return nil, true, err
 				}
-				if b, ok := keep.(runtime.Bool); ok && b.Value {
+				predOK, err := native.PredicateResult("list.search", keep)
+				if err != nil {
+					return nil, true, err
+				}
+				if predOK {
 					matches = append(matches, runtime.NewInt64(int64(i)))
 				}
 			}
@@ -587,7 +602,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if b, ok := match.(runtime.Bool); ok && b.Value {
+			predOK, err := native.PredicateResult("list.find", match)
+			if err != nil {
+				return nil, true, err
+			}
+			if predOK {
 				return el, true, nil
 			}
 		}
@@ -601,7 +620,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if b, ok := result.(runtime.Bool); ok && b.Value {
+			predOK, err := native.PredicateResult("list.any", result)
+			if err != nil {
+				return nil, true, err
+			}
+			if predOK {
 				return runtime.Bool{Value: true}, true, nil
 			}
 		}
@@ -615,7 +638,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if b, ok := result.(runtime.Bool); ok && !b.Value {
+			predOK, err := native.PredicateResult("list.all", result)
+			if err != nil {
+				return nil, true, err
+			}
+			if !predOK {
 				return runtime.Bool{Value: false}, true, nil
 			}
 		}
@@ -630,7 +657,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if b, ok := result.(runtime.Bool); ok && b.Value {
+			predOK, err := native.PredicateResult("list.count", result)
+			if err != nil {
+				return nil, true, err
+			}
+			if predOK {
 				n++
 			}
 		}
@@ -804,7 +835,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if b, ok := result.(runtime.Bool); ok && b.Value {
+			predOK, err := native.PredicateResult("list.partition", result)
+			if err != nil {
+				return nil, true, err
+			}
+			if predOK {
 				yes = append(yes, el)
 			} else {
 				no = append(no, el)
@@ -874,7 +909,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if b, ok := keep.(runtime.Bool); !ok || !b.Value {
+			predOK, err := native.PredicateResult("list.takeWhile", keep)
+			if err != nil {
+				return nil, true, err
+			}
+			if !predOK {
 				break
 			}
 			result = append(result, el)
@@ -892,7 +931,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 				if err != nil {
 					return nil, true, err
 				}
-				if b, ok := keep.(runtime.Bool); ok && b.Value {
+				predOK, err := native.PredicateResult("list.dropWhile", keep)
+				if err != nil {
+					return nil, true, err
+				}
+				if predOK {
 					continue
 				}
 				dropping = false
@@ -966,7 +1009,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if b, ok := result.(runtime.Bool); ok && b.Value {
+			predOK, err := native.PredicateResult("list.findLast", result)
+			if err != nil {
+				return nil, true, err
+			}
+			if predOK {
 				return list.Elements[i], true, nil
 			}
 		}
@@ -995,7 +1042,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if b, ok := result.(runtime.Bool); ok && b.Value {
+			predOK, err := native.PredicateResult("list.indexBy", result)
+			if err != nil {
+				return nil, true, err
+			}
+			if predOK {
 				return runtime.NewInt64(int64(i)), true, nil
 			}
 		}
@@ -1418,7 +1469,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		seen := map[string]int{}
 		var counts []countEntry
 		for _, el := range list.Elements {
-			k := el.Inspect()
+			k := native.MatchKey(el)
 			if idx, ok2 := seen[k]; ok2 {
 				counts[idx].count++
 			} else {
@@ -1445,7 +1496,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		seen := map[string]int{}
 		var counts []countEntry
 		for _, el := range list.Elements {
-			k := el.Inspect()
+			k := native.MatchKey(el)
 			if idx, ok2 := seen[k]; ok2 {
 				counts[idx].count++
 			} else {
@@ -1470,11 +1521,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		}
 		exclude := map[string]bool{}
 		for _, el := range other.Elements {
-			exclude[el.Inspect()] = true
+			exclude[native.MatchKey(el)] = true
 		}
 		var result []runtime.Value
 		for _, el := range list.Elements {
-			if !exclude[el.Inspect()] {
+			if !exclude[native.MatchKey(el)] {
 				result = append(result, el)
 			}
 		}
@@ -1489,11 +1540,11 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		}
 		include := map[string]bool{}
 		for _, el := range other.Elements {
-			include[el.Inspect()] = true
+			include[native.MatchKey(el)] = true
 		}
 		var result []runtime.Value
 		for _, el := range list.Elements {
-			if include[el.Inspect()] {
+			if include[native.MatchKey(el)] {
 				result = append(result, el)
 			}
 		}
@@ -1513,7 +1564,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			exclude[key.Inspect()] = true
+			exclude[native.MatchKey(key)] = true
 		}
 		var result []runtime.Value
 		for _, el := range list.Elements {
@@ -1521,7 +1572,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if !exclude[key.Inspect()] {
+			if !exclude[native.MatchKey(key)] {
 				result = append(result, el)
 			}
 		}
@@ -1541,7 +1592,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			include[key.Inspect()] = true
+			include[native.MatchKey(key)] = true
 		}
 		var result []runtime.Value
 		for _, el := range list.Elements {
@@ -1549,7 +1600,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				return nil, true, err
 			}
-			if include[key.Inspect()] {
+			if include[native.MatchKey(key)] {
 				result = append(result, el)
 			}
 		}
@@ -1593,7 +1644,11 @@ func (vm *VM) stringSearchMethod(s runtime.String, name string, args []runtime.V
 				if err != nil {
 					return true, nil, err
 				}
-				if b, ok := keep.(runtime.Bool); ok && b.Value {
+				predOK, err := native.PredicateResult("string.search", keep)
+				if err != nil {
+					return true, nil, err
+				}
+				if predOK {
 					matches = append(matches, runtime.NewInt64(int64(i)))
 				}
 			}
@@ -1643,7 +1698,12 @@ func (vm *VM) dictCollectionsMethod(graph runtime.Dict, name string, args []runt
 					cbErr = err
 					return false
 				}
-				if b, ok := keep.(runtime.Bool); ok && b.Value {
+				predOK, err := native.PredicateResult("dict.search", keep)
+				if err != nil {
+					cbErr = err
+					return false
+				}
+				if predOK {
 					matches = append(matches, entry.Key)
 				}
 				return true

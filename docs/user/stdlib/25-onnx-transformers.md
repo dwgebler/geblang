@@ -1,4 +1,4 @@
-# Local Models (`transformers`, `onnx`)
+# Local models (`transformers`, `onnx`)
 
 > Experimental (1.24.0). Local, offline AI/ML: WordPiece tokenization, ONNX model
 > inference, and sentence-transformer embedding. The surface may change.
@@ -154,7 +154,7 @@ let sess = onnx.session(dir + "/model.onnx");          # run with: geblang --all
 let out = sess.run({
     "input_ids":      ndarray.array(tok["input_ids"]),
     "attention_mask": ndarray.array(tok["attention_mask"]),
-    "token_type_ids": ndarray.array(tok["token_type_ids"])
+    "token_type_ids": ndarray.array(tok["token_type_ids"]),
 });
 io.println(out["last_hidden_state"].shape());          # [1, 4, 384]
 sess.close();
@@ -187,18 +187,17 @@ let dir   = "./models/all-MiniLM-L6-v2";
 let tjson = io.readText(dir + "/tokenizer.json");
 let sess  = onnx.session(dir + "/model.onnx");        # geblang --allow-onnx
 
-func embed(list<string> texts): list<any> {
+func encode(list<string> texts): list<any> {
     let tok = transformers.tokenize(tjson, texts);
     let out = sess.run({
         "input_ids":      ndarray.array(tok["input_ids"]),
         "attention_mask": ndarray.array(tok["attention_mask"]),
-        "token_type_ids": ndarray.array(tok["token_type_ids"])
+        "token_type_ids": ndarray.array(tok["token_type_ids"]),
     });
-    return transformers.pool(out["last_hidden_state"],
-                             ndarray.array(tok["attention_mask"])).toList() as list<any>;
+    return transformers.pool(out["last_hidden_state"], ndarray.array(tok["attention_mask"])).toList() as list<any>;
 }
 
-let e = embed(["a dog runs in the park", "a puppy plays outside", "quantum physics"]);
+let e = encode(["a dog runs in the park", "a puppy plays outside", "quantum physics"]);
 vecmath.score("cosine", e[0] as list<any>, e[1] as list<any>);   # ~0.45 (similar)
 vecmath.score("cosine", e[0] as list<any>, e[2] as list<any>);   # ~-0.09 (unrelated)
 sess.close();

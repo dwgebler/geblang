@@ -12,7 +12,7 @@ import io;
 import watch;
 
 let handle = watch.start("config", func(dict<string, any> event): void {
-    io.println(event["type"] as string + " " + (event["path"] as string));
+    io.println((event["type"] as string) + " " + (event["path"] as string));
 }, {"recursive": true});
 
 # ... do other work; the callback fires for each event ...

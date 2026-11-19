@@ -1497,8 +1497,10 @@ func (l *Lowerer) lowerCast(e *ast.CastExpression) {
 			return
 		}
 		if source != nil && source.Kind == types.KindDecimal {
+			l.Module.AddImport(types.OrderedDictImport)
+			l.w.WriteString("transpilert.DecimalToString(")
 			l.lowerExpression(e.Value)
-			l.w.WriteString(".FloatString(10)")
+			l.w.WriteString(")")
 			return
 		}
 		l.Module.AddImport("fmt")

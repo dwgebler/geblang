@@ -203,16 +203,16 @@ list<string> words = ["a", "b", "c"];
 
 # In-place: mutates and returns null.
 words.append("d");
-io.println(words);          # [a, b, c, d]
+io.println(words);          # ["a", "b", "c", "d"]
 words.extend(["e", "f"]);
-io.println(words);          # [a, b, c, d, e, f]
+io.println(words);          # ["a", "b", "c", "d", "e", "f"]
 words.set(0, "z");
-io.println(words);          # [z, b, c, d, e, f]
+io.println(words);          # ["z", "b", "c", "d", "e", "f"]
 
 # push mutates in place and returns the receiver, so it chains.
 let same = words.push("g");
-io.println(words);          # [z, b, c, d, e, f, g]
-io.println(same);           # [z, b, c, d, e, f, g] (alias of words)
+io.println(words);          # ["z", "b", "c", "d", "e", "f", "g"]
+io.println(same);           # ["z", "b", "c", "d", "e", "f", "g"] (alias of words)
 words.push("h").push("i");
 io.println(words.length()); # 9
 
@@ -224,8 +224,8 @@ io.println(alias.last());   # X
 # Copy first when you need to keep the original.
 let snapshot = ["a", "b"];
 let extendedCopy = snapshot.copy().push("c");
-io.println(snapshot);       # [a, b]
-io.println(extendedCopy);   # [a, b, c]
+io.println(snapshot);       # ["a", "b"]
+io.println(extendedCopy);   # ["a", "b", "c"]
 
 # clear empties the list (and every alias of it).
 words.clear();
@@ -245,7 +245,7 @@ io.println(words);          # []
 | `binarySearchBy(selector, key)` | `int` | Index whose selector key equals `key` in a list sorted by it, or -1 |
 | `concat(other)` | `list<T>` | New list with `other` appended |
 | `join(sep)` | `string` | Elements joined into a string with separator `sep` |
-| `flatten()` | `list<any>` | Recursively flatten nested lists |
+| `flatten()` | `list<any>` | Flatten one level of nesting |
 | `unique()` | `list<T>` | New list with duplicate values removed |
 
 ```gb
@@ -254,7 +254,7 @@ import io;
 list<int> a = [3, 1, 4, 1, 5, 9, 2, 6];
 io.println(a.reverse());        # [6, 2, 9, 5, 1, 4, 1, 3]
 io.println(a.sorted());         # [1, 1, 2, 3, 4, 5, 6, 9]
-io.println(a.unique());         # [3, 1, 4, 5, 9, 2, 6]
+io.println(a.unique());         # [6, 2, 9, 5, 1, 4, 3]  (a was reversed in place above)
 
 list<string> words = ["hello", "world", "foo"];
 io.println(words.join(", "));   # hello, world, foo
@@ -265,7 +265,7 @@ list<int> c = [4, 5, 6];
 io.println(b.concat(c));        # [1, 2, 3, 4, 5, 6]
 
 let nested = [[1, 2], [3, [4, 5]]];
-io.println(nested.flatten());   # [1, 2, 3, 4, 5]
+io.println(nested.flatten());   # [1, 2, 3, [4, 5]]  (one level)
 ```
 
 `sort` and `sorted` accept an optional callback. It may be either a
@@ -285,7 +285,7 @@ io.println(nums.sorted(func(int a, int b): bool { return a > b; }));  # [5, 4, 3
 
 # Three-way comparator: pass string.compare straight in.
 list<string> names = ["banana", "apple", "cherry"];
-io.println(names.sort(string.compare));   # [apple, banana, cherry]
+io.println(names.sort(string.compare));   # ["apple", "banana", "cherry"]
 
 # Equivalent descending: sort ascending, then reverse (or names[::-1]).
 io.println(nums.sorted().reverse());      # [5, 4, 3, 1, 1]
@@ -300,7 +300,7 @@ import io;
 
 list<dict<string, any>> users = [
     {"name": "Grace", "age": 85},
-    {"name": "Ada", "age": 36}
+    {"name": "Ada", "age": 36},
 ];
 let byAge = users.sortBy(func(dict<string, any> u): any { return u["age"]; });
 io.println(byAge[0]["name"]);                 # Ada
@@ -331,6 +331,11 @@ points.
 | `takeWhile(fn)` | `list<T>` | Leading elements while `fn` holds; stops at the first failure |
 | `dropWhile(fn)` | `list<T>` | Remaining elements after the leading run where `fn` holds |
 | `scan(initial, fn)` | `list<U>` | Running fold: `initial` followed by each successive accumulation |
+
+A predicate (the `fn` passed to `filter`, `find`, `findLast`, `any`, `all`,
+`count`, `partition`, `takeWhile`, `dropWhile`, `indexBy`, or a callable
+`search`) must return `bool`. Any other result raises a `TypeError` naming the
+method, for example `list.all predicate must return bool, got int`.
 
 ```gb
 import io;
@@ -388,25 +393,26 @@ interchangeable.
 | `frequencies()` | `dict<any, int>` | Count of each distinct value |
 | `mode()` | `T\|null` | Most-frequent element |
 | `uniqueBy(fn)` | `list<T>` | Remove duplicates compared by `fn(element)` (keeps first) |
-| `indexBy(fn)` | `dict<any, T>` | Dict keyed by `fn(element)` (latest wins on collision) |
-| `containsBy(fn)` | `bool` | `true` when any element matches `fn` |
+| `indexBy(fn)` | `int` | Index of the first element for which the predicate `fn` returns `true`; `-1` if none |
+| `containsBy(value, fn)` | `bool` | `true` when `fn(element) == value` for any element |
 | `differenceBy(other, fn)` | `list<T>` | Elements whose key isn't in `other`'s keys |
 | `intersectionBy(other, fn)` | `list<T>` | Elements whose key is in both lists |
 | `zipWith(other, fn)` | `list<U>` | Pairwise combine via `fn(a, b)` |
 | `binarySearch(value)` | `int` | Index of `value` in a sorted list; `-1` if absent |
 | `lowerBound(value)` | `int` | First insertion index keeping a sorted list sorted |
 | `upperBound(value)` | `int` | Last insertion index keeping a sorted list sorted |
-| `take(n)` | `list<T>` | First `n` elements (returns the whole list if `n > length`) |
-| `lazyMap(fn)` | `iterable<U>` | Like `map` but produces an iterable; the work happens on iteration |
-| `lazyFilter(fn)` | `iterable<T>` | Like `filter` but lazy |
+
+`take`, `lazyMap`, and `lazyFilter` exist only in module form:
+`collections.take(xs, n)`, `collections.lazyMap(xs, fn)`, and
+`collections.lazyFilter(xs, fn)`, the last two producing a generator.
 
 ```gb
 import io;
 
 list<dict<string, any>> users = [
-    {"name": "Ada",   "age": 36},
+    {"name": "Ada", "age": 36},
     {"name": "Grace", "age": 85},
-    {"name": "Alan",  "age": 41},
+    {"name": "Alan", "age": 41},
 ];
 
 let oldest = users.maxBy(func(dict<string, any> u): int { return u["age"] as int; });
@@ -432,8 +438,8 @@ import io;
 
 list<string> names = ["Ada", "Alan", "Bob", "Alice"];
 let by_letter = names.groupBy(func(string s): string { return s.substring(0, 1); });
-io.println(by_letter["A"]);  # [Ada, Alan, Alice]
-io.println(by_letter["B"]);  # [Bob]
+io.println(by_letter["A"]);  # ["Ada", "Alan", "Alice"]
+io.println(by_letter["B"]);  # ["Bob"]
 
 list<int> nums = [1, 2, 3, 4, 5];
 io.println(nums.chunk(2));   # [[1, 2], [3, 4], [5]]
@@ -484,7 +490,7 @@ io.println(d.length());      # 3
 io.println(d.isEmpty());     # false
 io.println(d.hasKey("a"));   # true
 io.println(d.hasKey("z"));   # false
-io.println(d.keys());        # [a, b, c]
+io.println(d.keys());        # ["a", "b", "c"]
 io.println(d.values());      # [1, 2, 3]
 io.println(d.items());       # [[a, 1], [b, 2], [c, 3]]
 ```
@@ -544,7 +550,10 @@ field:
 
 ```gb
 set<string> tags = {};          # empty set; only strings may be added
-func f(set<int> seen = {}): int { return seen.length(); }
+
+func f(set<int> seen = {}): int {
+    return seen.length();
+}
 ```
 
 ### Inspection
@@ -599,10 +608,10 @@ import io;
 set<int> a = {1, 2, 3, 4};
 set<int> b = {3, 4, 5, 6};
 
-io.println(a.union(b));        # {1, 2, 3, 4, 5, 6}
-io.println(a.intersection(b)); # {3, 4}
-io.println(a.difference(b));   # {1, 2}
-io.println(b.difference(a));   # {5, 6}
+io.println(a.union(b));        # set{1, 2, 3, 4, 5, 6}
+io.println(a.intersection(b)); # set{3, 4}
+io.println(a.difference(b));   # set{1, 2}
+io.println(b.difference(a));   # set{5, 6}
 
 let members = a.union(b).toList();
 ```
@@ -641,13 +650,13 @@ Transformations:
 
 - `map`, `filter`, `reduce`, `flatMap`, `scan`, `enumerate`
 - `reverse`, `sort`, `sorted`, `join`
-- `flatten`, `unique`, `uniqueBy`, `groupBy`, `indexBy`
+- `flatten`, `unique`, `uniqueBy`, `groupBy`
 - `chunk`, `windowed`, `partition`
 - `takeWhile`, `dropWhile`
 
 Searching:
 
-- `find`, `findLast`, `any`, `all`, `containsBy`
+- `find`, `findLast`, `any`, `all`, `indexBy`, `containsBy`
 - `binarySearch`, `lowerBound`, `upperBound`
 
 Ranking and statistics:
@@ -678,13 +687,13 @@ let graph = {
     "a": ["b", "c"],
     "b": ["d"],
     "c": ["d"],
-    "d": []
+    "d": [],
 };
 
-io.println("${collections.bfs(graph, "a")}");              # [a, b, c, d]
-io.println("${collections.dfs(graph, "a")}");              # [a, b, d, c]
-io.println("${collections.topologicalSort(graph)}");       # [a, b, c, d]
-io.println("${collections.shortestPath(graph, "a", "d")}"); # [a, b, d]
+io.println("${collections.bfs(graph, "a")}");              # ["a", "b", "c", "d"]
+io.println("${collections.dfs(graph, "a")}");              # ["a", "b", "d", "c"]
+io.println("${collections.topologicalSort(graph)}");       # ["a", "b", "c", "d"]
+io.println("${collections.shortestPath(graph, "a", "d")}"); # ["a", "b", "d"]
 ```
 
 Lazy helpers:
@@ -700,12 +709,10 @@ import io;
 
 let users = [
     {"name": "Ada", "score": 10},
-    {"name": "Grace", "score": 12}
+    {"name": "Grace", "score": 12},
 ];
 
-let top = collections.maxBy(users, func(dict<string, any> user): int {
-    return user["score"];
-});
+let top = collections.maxBy(users, func(dict<string, any> user): int { return user["score"]; });
 
 io.println(top["name"]);  # Grace
 ```
@@ -773,7 +780,7 @@ Use a C-style `for` loop when you need the counter as an index:
 ```gb
 let users = [
     {"name": "Ada", "score": 10},
-    {"name": "Grace", "score": 12}
+    {"name": "Grace", "score": 12},
 ];
 
 for (let int i = 0; i < users.length(); i++) {
@@ -791,7 +798,9 @@ import deque;
 import io;
 
 let d = deque.Deque<int>();
-d.pushBack(1); d.pushBack(2); d.pushBack(3);
+d.pushBack(1);
+d.pushBack(2);
+d.pushBack(3);
 d.pushFront(0);
 io.println(d.popFront());   # 0
 io.println(d.popBack());    # 3
@@ -819,7 +828,9 @@ The deque implements the iterator protocol so it slots into
 
 ```gb
 let d = deque.Deque<string>();
-d.pushBack("a"); d.pushBack("b"); d.pushBack("c");
+d.pushBack("a");
+d.pushBack("b");
+d.pushBack("c");
 for (s in d) {
     io.println(s);   # a, b, c
 }
@@ -845,7 +856,9 @@ let recent = deque.Deque<int>();
 let windowSize = 3;
 for (int v in [10, 20, 30, 40, 50]) {
     recent.pushBack(v);
-    if (recent.length() > windowSize) { recent.popFront(); }
+    if (recent.length() > windowSize) {
+        recent.popFront();
+    }
 }
 io.println(recent.toList());   # [30, 40, 50]
 ```
@@ -909,7 +922,9 @@ let memo = lrucache.LruCache<string, int>(1000);
 
 func expensive(string input): int {
     let cached = memo.get(input);
-    if (cached != null) { return cached; }
+    if (cached != null) {
+        return cached;
+    }
     let result = doExpensiveWork(input);
     memo.put(input, result);
     return result;
@@ -920,7 +935,7 @@ func expensive(string input): int {
 
 ```gb
 let s = memo.stats();
-let ratio = s["hits"] as float / ((s["hits"] + s["misses"]) as float);
+let ratio = (s["hits"] as float) / ((s["hits"] + s["misses"]) as float);
 log.info("cache hit ratio: " + (ratio as string));
 ```
 
@@ -934,7 +949,9 @@ import priorityq;
 import io;
 
 let q = priorityq.PriorityQueue<int>();
-q.push(3); q.push(1); q.push(2);
+q.push(3);
+q.push(1);
+q.push(2);
 io.println(q.pop());   # 1
 io.println(q.pop());   # 2
 io.println(q.pop());   # 3
@@ -946,10 +963,10 @@ custom types or reverse order, pass a comparator
 `func(T, T): int` that returns `< 0`, `0`, or `> 0`:
 
 ```gb
-let highestFirst = priorityq.PriorityQueue<int>(
-    func(int a, int b): int { return b - a; }
-);
-highestFirst.push(1); highestFirst.push(7); highestFirst.push(3);
+let highestFirst = priorityq.PriorityQueue<int>(func(int a, int b): int { return b - a; });
+highestFirst.push(1);
+highestFirst.push(7);
+highestFirst.push(3);
 io.println(highestFirst.pop());   # 7
 
 class Job {

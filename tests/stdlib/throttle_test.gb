@@ -30,6 +30,18 @@ class ThrottleTest extends test.Test {
     }
 
     @test
+    func firstCallAlwaysRuns(): void {
+        int calls = 0;
+        let work = func(int x): int {
+            calls = calls + 1;
+            return x;
+        };
+        let throttled = rate.throttle(work, 600000000);
+        this.assertEquals(4, throttled(4));
+        this.assertEquals(1, calls);
+    }
+
+    @test
     func throttleAllowsCallAfterWindow(): void {
         int calls = 0;
         let work = func(int x): int {

@@ -177,57 +177,7 @@ func isGeneratorFunc(fn *ast.FunctionStatement) bool {
 	if fn.ReturnType != nil && strings.HasPrefix(strings.TrimSpace(fn.ReturnType.String()), "generator") {
 		return true
 	}
-	return blockContainsYield(fn.Body)
-}
-
-func blockContainsYield(block *ast.BlockStatement) bool {
-	if block == nil {
-		return false
-	}
-	for _, stmt := range block.Statements {
-		if statementContainsYield(stmt) {
-			return true
-		}
-	}
-	return false
-}
-
-func statementContainsYield(stmt ast.Statement) bool {
-	switch s := stmt.(type) {
-	case *ast.YieldStatement:
-		return true
-	case *ast.IfStatement:
-		if blockContainsYield(s.Consequence) || blockContainsYield(s.Alternative) {
-			return true
-		}
-		for _, elseif := range s.ElseIfs {
-			if blockContainsYield(elseif.Body) {
-				return true
-			}
-		}
-	case *ast.WhileStatement:
-		return blockContainsYield(s.Body)
-	case *ast.ForStatement:
-		return blockContainsYield(s.Body)
-	case *ast.TryStatement:
-		if blockContainsYield(s.Body) || blockContainsYield(s.Finally) {
-			return true
-		}
-		for _, catch := range s.Catches {
-			if blockContainsYield(catch.Body) {
-				return true
-			}
-		}
-	case *ast.MatchStatement:
-		for _, c := range s.Cases {
-			if blockContainsYield(c.Body) {
-				return true
-			}
-		}
-	case *ast.WithStatement:
-		return blockContainsYield(s.Body)
-	}
-	return false
+	return ast.BlockContainsYield(fn.Body)
 }
 
 func parseFunctionBody(src string) (*ast.BlockStatement, error) {

@@ -420,6 +420,14 @@ type yieldFrame struct {
 	values []runtime.Value
 	ch     chan generatorItem
 	done   <-chan struct{}
+	check  *yieldCheck
+}
+
+type yieldCheck struct {
+	name       string
+	elem       *ast.TypeRef
+	typeParams map[string]bool
+	bindings   map[string]string
 }
 
 type signal struct {
@@ -877,6 +885,9 @@ func (e *Evaluator) Eval(program *ast.Program) (result Result, err error) {
 	if err := desugar.Memoize(program); err != nil {
 		return Result{}, err
 	}
+	if err := desugar.Arrows(program); err != nil {
+		return Result{}, err
+	}
 	env := runtime.NewEnvironment()
 	if err := e.installBuiltinTypes(env); err != nil {
 		return Result{}, err
@@ -1303,7 +1314,7 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		if stmt.Static {
 			return signal{}, fmt.Errorf("static functions are parsed but not evaluated yet")
 		}
-		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), OuterTypeParameters: e.enclosingTypeParameters(), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters, env), ReturnType: e.resolveTypeRef(stmt.ReturnType, env), Body: stmt.Body, Env: env.MarkShared(), TypeBindings: captured, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: blockContainsYield(stmt.Body), DefinitionModule: e.currentModule, DefinitionLine: stmt.Token.Line, DefinitionColumn: stmt.Token.Column}
+		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), OuterTypeParameters: e.enclosingTypeParameters(), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters, env), ReturnType: e.resolveTypeRef(stmt.ReturnType, env), Body: stmt.Body, Env: env.MarkShared(), TypeBindings: captured, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: ast.BlockContainsYield(stmt.Body), DefinitionModule: e.currentModule, DefinitionLine: stmt.Token.Line, DefinitionColumn: stmt.Token.Column}
 		fn.DefinitionPath = e.currentDebugPath()
 		if e.callDepth > 0 {
 			fn.Identity = runtime.NewFunctionIdentity()
@@ -1423,7 +1434,7 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 	case *ast.YieldStatement:
 		value := runtime.Value(runtime.Null{})
 		if stmt.Value != nil {
-			evaluated, err := e.evalExpression(stmt.Value, env)
+			evaluated, err := e.evalExpressionWithExpectedType(stmt.Value, env, e.currentYieldElem())
 			if err != nil {
 				return signal{}, err
 			}
@@ -1909,7 +1920,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		// outer generic frame's concrete bindings. snapshotTypeBindings
 		// walks the env chain so all reachable bindings come along.
 		captured := snapshotEnvTypeBindings(env)
-		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: e.resolveParameters(expr.Parameters, env), ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env.MarkShared(), Async: expr.Async, IsGenerator: blockContainsYield(expr.Body), TypeBindings: captured, OuterTypeParameters: e.enclosingTypeParameters(), DefinitionPath: e.currentDebugPath(), DefinitionModule: e.currentModule, DefinitionLine: expr.Token.Line, DefinitionColumn: expr.Token.Column}, nil
+		return runtime.Function{Identity: runtime.NewFunctionIdentity(), Parameters: e.resolveParameters(expr.Parameters, env), ReturnType: e.resolveTypeRef(expr.ReturnType, env), Body: expr.Body, Env: env.MarkShared(), Async: expr.Async, IsGenerator: ast.BlockContainsYield(expr.Body), TypeBindings: captured, OuterTypeParameters: e.enclosingTypeParameters(), DefinitionPath: e.currentDebugPath(), DefinitionModule: e.currentModule, DefinitionLine: expr.Token.Line, DefinitionColumn: expr.Token.Column}, nil
 	case *ast.AwaitExpression:
 		value, err := e.evalExpression(expr.Value, env)
 		if err != nil {
@@ -1926,6 +1937,17 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		return e.evalExpression(call, env)
 	case *ast.PartialExpression:
 		return e.evalExpression(ast.LowerPartial(expr), env)
+	case *ast.GeneratorComprehension:
+		return e.evalExpression(ast.LowerGeneratorComprehension(expr), env)
+	case *ast.IterableSource:
+		value, err := e.evalExpression(expr.Value, env)
+		if err != nil {
+			return nil, err
+		}
+		if !forInAccepts(value) {
+			return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s is not iterable", descriptiveTypeName(value))}
+		}
+		return value, nil
 	case *ast.ListComprehension:
 		acc := []runtime.Value{}
 		if err := e.walkComprehensionClauses(expr.Clauses, 0, env, func(itEnv *runtime.Environment) error {
@@ -2255,54 +2277,6 @@ func currentInstance(env *runtime.Environment) (*runtime.Instance, error) {
 		return nil, fmt.Errorf("this is not an instance")
 	}
 	return instance, nil
-}
-
-func blockContainsYield(block *ast.BlockStatement) bool {
-	if block == nil {
-		return false
-	}
-	for _, stmt := range block.Statements {
-		if statementContainsYield(stmt) {
-			return true
-		}
-	}
-	return false
-}
-
-func statementContainsYield(stmt ast.Statement) bool {
-	switch stmt := stmt.(type) {
-	case *ast.YieldStatement:
-		return true
-	case *ast.IfStatement:
-		if blockContainsYield(stmt.Consequence) || blockContainsYield(stmt.Alternative) {
-			return true
-		}
-		for _, elseif := range stmt.ElseIfs {
-			if blockContainsYield(elseif.Body) {
-				return true
-			}
-		}
-	case *ast.WhileStatement:
-		return blockContainsYield(stmt.Body)
-	case *ast.ForStatement:
-		return blockContainsYield(stmt.Body)
-	case *ast.TryStatement:
-		if blockContainsYield(stmt.Body) || blockContainsYield(stmt.Finally) {
-			return true
-		}
-		for _, catch := range stmt.Catches {
-			if blockContainsYield(catch.Body) {
-				return true
-			}
-		}
-	case *ast.MatchStatement:
-		for _, matchCase := range stmt.Cases {
-			if blockContainsYield(matchCase.Body) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (e *Evaluator) evalForStatement(stmt *ast.ForStatement, env *runtime.Environment) (signal, error) {
@@ -2869,6 +2843,36 @@ func (e *Evaluator) walkComprehensionClauses(clauses []ast.ComprehensionClause, 
 	return fmt.Errorf("unknown comprehension clause %T", clauses[idx])
 }
 
+// driveUserIterator steps a __next/__done iterator, calling fn with each value.
+func (e *Evaluator) driveUserIterator(iter *runtime.Instance, fn func(runtime.Value) error) error {
+	for {
+		if doneFn, ok := lookupMethod(iter.Class, "__done"); ok {
+			doneResult, err := e.applyFunctionWithThis(doneFn, nil, iter)
+			if err != nil {
+				return err
+			}
+			doneBool, ok := doneResult.(runtime.Bool)
+			if !ok {
+				return fmt.Errorf("%s.__done must return bool, got %s", iter.Class.Name, doneResult.TypeName())
+			}
+			if doneBool.Value {
+				return nil
+			}
+		}
+		nextFn, ok := lookupMethod(iter.Class, "__next")
+		if !ok {
+			return fmt.Errorf("%s is not an iterator: define __next()", iter.Class.Name)
+		}
+		value, err := e.applyFunctionWithThis(nextFn, nil, iter)
+		if err != nil {
+			return err
+		}
+		if err := fn(value); err != nil {
+			return err
+		}
+	}
+}
+
 func (e *Evaluator) iterateComprehensionFor(c *ast.ComprehensionFor, env *runtime.Environment, body func(*runtime.Environment) error) error {
 	iterable, err := e.evalExpression(c.Iterable, env)
 	if err != nil {
@@ -2899,6 +2903,18 @@ func (e *Evaluator) iterateComprehensionFor(c *ast.ComprehensionFor, env *runtim
 			}
 		}
 		return body(itEnv)
+	}
+	if instance, ok := iterable.(*runtime.Instance); ok {
+		iter, passthrough, iterableOk, err := e.resolveUserIterator(instance)
+		if err != nil {
+			return err
+		}
+		if iterableOk && passthrough == nil {
+			return e.driveUserIterator(iter, step)
+		}
+		if passthrough != nil {
+			iterable = passthrough
+		}
 	}
 	switch it := iterable.(type) {
 	case *runtime.List:
@@ -3041,6 +3057,21 @@ func bindDestructuredName(env *runtime.Environment, name string, value runtime.V
 //     to the standard iteration dispatcher on List / Generator / etc.
 //   - (nil, false, nil) when the instance implements neither protocol
 //     side (caller surfaces the existing "not iterable" error).
+func forInAccepts(value runtime.Value) bool {
+	switch v := value.(type) {
+	case *runtime.List, *runtime.Generator, runtime.Range, runtime.Dict, runtime.Set, runtime.String:
+		return true
+	case *runtime.Instance:
+		if v.Class == nil {
+			return false
+		}
+		_, hasIter := lookupMethod(v.Class, "__iter")
+		_, hasNext := lookupMethod(v.Class, "__next")
+		return hasIter || hasNext
+	}
+	return false
+}
+
 func (e *Evaluator) resolveUserIterator(instance *runtime.Instance) (*runtime.Instance, runtime.Value, bool, error) {
 	if instance == nil || instance.Class == nil {
 		return nil, nil, false, nil
@@ -3595,6 +3626,9 @@ func (e *Evaluator) callModuleExport(module, name string, call *ast.CallExpressi
 	if class, ok := value.(*runtime.Class); ok {
 		return e.instantiateClassFromCall(class, call, env, expected)
 	}
+	if runtime.IsCallableValue(value) {
+		return e.applyCallableValue(value, call, env, expected)
+	}
 	return nil, fmt.Errorf("%s.%s is not callable", module, name)
 }
 
@@ -4048,7 +4082,7 @@ func valueToYAML(value runtime.Value) (any, error) {
 		}
 		return value.Value.String(), nil
 	case runtime.Decimal:
-		return value.Value.FloatString(10), nil
+		return runtime.FormatDecimal(value.Value), nil
 	case runtime.Float:
 		return value.Value, nil
 	case runtime.String:
@@ -4201,7 +4235,7 @@ func valueToTOML(value runtime.Value) (any, error) {
 		}
 		return value.Value.String(), nil
 	case runtime.Decimal:
-		return value.Value.FloatString(10), nil
+		return runtime.FormatDecimal(value.Value), nil
 	case runtime.Float:
 		return value.Value, nil
 	case runtime.String:
@@ -5194,7 +5228,7 @@ func (e *Evaluator) evalCallArguments(call *ast.CallExpression, env *runtime.Env
 	args := make([]runtime.Value, 0, len(call.Arguments))
 	for _, arg := range call.Arguments {
 		if arg.Name != nil {
-			return nil, fmt.Errorf("named arguments are only supported for Geblang functions and methods")
+			return nil, errors.New(runtime.NamedArgsUnsupported)
 		}
 		value, err := e.evalExpression(arg.Value, env)
 		if err != nil {
@@ -6185,11 +6219,12 @@ func (e *Evaluator) lazyGenerator(fn runtime.Function, args []runtime.Value, thi
 			// native callbacks.
 			child := e.childInScope()
 			child.pendingEnumThis = enumThis
+			check := newYieldCheck(fn, this)
 			runner := fn
 			runner.IsGenerator = false
 			// The annotation describes the generator object, not the body's completion value.
 			runner.ReturnType = nil
-			child.pushYieldChannel(items, doneCh)
+			child.pushYieldChannel(items, doneCh, check)
 			endThread := child.startDebugThread("generator")
 			go func() {
 				defer endThread()
@@ -6345,8 +6380,23 @@ func (e *Evaluator) pushYieldFrame() {
 	e.yieldFrames = append(e.yieldFrames, &yieldFrame{})
 }
 
-func (e *Evaluator) pushYieldChannel(ch chan generatorItem, done <-chan struct{}) {
-	e.yieldFrames = append(e.yieldFrames, &yieldFrame{ch: ch, done: done})
+func (e *Evaluator) pushYieldChannel(ch chan generatorItem, done <-chan struct{}, check *yieldCheck) {
+	e.yieldFrames = append(e.yieldFrames, &yieldFrame{ch: ch, done: done, check: check})
+}
+
+func newYieldCheck(fn runtime.Function, this *runtime.Instance) *yieldCheck {
+	elem := ast.GeneratorElementType(fn.ReturnType)
+	if elem == nil {
+		return nil
+	}
+	return &yieldCheck{name: functionDisplayName(fn), elem: elem, typeParams: functionTypeParameterSetOrNil(fn), bindings: functionCheckBindings(fn, this)}
+}
+
+func (e *Evaluator) currentYieldElem() *ast.TypeRef {
+	if n := len(e.yieldFrames); n > 0 && e.yieldFrames[n-1].check != nil {
+		return e.yieldFrames[n-1].check.elem
+	}
+	return nil
 }
 
 func (e *Evaluator) appendYield(value runtime.Value) (bool, error) {
@@ -6355,6 +6405,9 @@ func (e *Evaluator) appendYield(value runtime.Value) (bool, error) {
 	}
 	index := len(e.yieldFrames) - 1
 	frame := e.yieldFrames[index]
+	if c := frame.check; c != nil && !matchValueToTypeRefWith(c.typeParams, c.bindings, value, c.elem) {
+		return false, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s expects %s yield, got %s", c.name, c.elem.String(), descriptiveTypeName(value))}
+	}
 	if frame.ch != nil {
 		select {
 		case frame.ch <- generatorItem{value: value}:

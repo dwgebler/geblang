@@ -1,0 +1,7 @@
+/**
+ * @category Tests
+ * @summary A list whose elements do not match T is rejected for an iterable<T> parameter.
+ */
+func count(iterable<int> xs): int { return 0; }
+
+count(["a", "b"]);

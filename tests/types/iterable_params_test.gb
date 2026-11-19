@@ -1,0 +1,114 @@
+/**
+ * @title iterable<T> parameters and returns
+ * @summary An iterable<T> accepts anything a for-in loop accepts; eager collections have their elements checked against T, lazy sources are checked as their values are produced.
+ */
+import test;
+import streams;
+
+class Bag {
+    func Bag() {}
+    func __iter(): any { return [1, 2]; }
+}
+
+class Steps {
+    int n = 0;
+    func Steps() {}
+    func __next(): any {
+        this.n += 1;
+        return this.n;
+    }
+    func __done(): bool { return this.n >= 3; }
+}
+
+class Tally {
+    func Tally() {}
+    func count(iterable<int> xs): int {
+        int n = 0;
+        for (x in xs) {
+            n += 1;
+        }
+        return n;
+    }
+}
+
+class SubTally extends Tally {
+    func SubTally() { parent(); }
+}
+
+func raw(any x): any {
+    return x;
+}
+
+func gen(): generator<int> {
+    yield 1;
+}
+
+func count(iterable<int> xs): int {
+    int n = 0;
+    for (x in xs) {
+        n += 1;
+    }
+    return n;
+}
+
+func letters(iterable<string> xs): string {
+    list<string> out = [];
+    for (x in xs) {
+        out.push(x);
+    }
+    return out.join("");
+}
+
+func evens(): iterable<int> {
+    return [2, 4];
+}
+
+func failure(func body): string {
+    try {
+        body();
+    } catch (TypeError e) {
+        return e.message;
+    }
+    return "no error";
+}
+
+class IterableParamsTest extends test.Test {
+    @test
+    func acceptsEveryForInSource(): void {
+        this.assertEquals(1, count(gen()));
+        this.assertEquals(3, count([1, 2, 3]));
+        this.assertEquals(2, count({1, 2}));
+        this.assertEquals(4, count(1..4));
+        this.assertEquals(2, count(Bag()));
+        this.assertEquals(3, count(Steps()));
+        this.assertEquals(2, count(streams.of([1, 2])));
+        this.assertEquals("abc", letters("abc"));
+    }
+
+    @test
+    func methodsAndSubclassesAcceptCollections(): void {
+        this.assertEquals(2, Tally().count([1, 2]));
+        this.assertEquals(1, SubTally().count({9}));
+        func f = count;
+        this.assertEquals(2, f([7, 8]));
+    }
+
+    @test
+    func returnsAndVariablesHoldCollections(): void {
+        this.assertEquals([2, 4], [v for v in evens()]);
+        iterable<int> held = [3, 4];
+        this.assertEquals(2, count(held));
+    }
+
+    @test
+    func elementTypesAreChecked(): void {
+        this.assertEquals("count expects iterable<int> for parameter 'xs', got list (element at index 0 is string)", failure(func(): void { count(raw(["a"])); }));
+        this.assertEquals("letters expects iterable<string> for parameter 'xs', got range", failure(func(): void { letters(raw(1..2)); }));
+    }
+
+    @test
+    func nonIterablesAreRejected(): void {
+        this.assertEquals("count expects iterable<int> for parameter 'xs', got int", failure(func(): void { count(raw(5)); }));
+        this.assertEquals("count expects iterable<int> for parameter 'xs', got null", failure(func(): void { count(raw(null)); }));
+    }
+}

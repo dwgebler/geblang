@@ -11,8 +11,8 @@ let userSchema = {
     "required": ["name"],
     "properties": {
         "name": {"type": "string"},
-        "age": {"type": "number"}
-    }
+        "age": {"type": "number"},
+    },
 };
 
 let result = schema.validate({"name": "Ada", "age": 37}, userSchema);

@@ -1,4 +1,4 @@
-# Async And Generators
+# Async and generators
 
 ## Async Functions
 
@@ -52,9 +52,7 @@ An async call made inside another async function or method also returns a
 import async;
 import io;
 
-let worker = async.run(func(): int {
-    return 42;
-});
+let worker = async.run(func(): int { return 42; });
 
 io.println(async.await(worker));
 await async.sleep(100);
@@ -255,8 +253,10 @@ let bodies = task.map(urls, func(string u): string { return fetch(u); }, {"concu
 
 let user = task.retry(func(): any { return loadUser(id); }, {"attempts": 5, "delayMs": 100});
 
-let data = task.parallel({"user": func(): any { return loadUser(1); },
-                          "orders": func(): any { return loadOrders(1); }});
+let data = task.parallel({
+    "user": func(): any { return loadUser(1); },
+    "orders": func(): any { return loadOrders(1); },
+});
 ```
 
 ### Capturing the loop variable
@@ -281,8 +281,16 @@ for (i in 1..3) {
 }
 ```
 
-The `async.tasks` helpers handle this for you; the note matters only when you
-spawn tasks in a loop by hand.
+A comprehension binds its variable afresh for each item, so tasks started
+from one each see their own value without the copy:
+
+```gb
+let tasks = [async.run(() => n * n) for n in [2, 3, 4]];
+io.println(await async.all(tasks));   # [4, 9, 16]
+```
+
+The `async.tasks` helpers handle this for you too; the note matters only when
+you spawn tasks in a `for` loop by hand.
 
 ## Doing Work While A Task Runs
 
@@ -456,6 +464,48 @@ for (n in numbers()) {
 }
 ```
 
+For a one-line transform of a source, a generator comprehension such as
+`(x * 2 for x in xs if x > 0)` builds the same kind of value (see
+[Control flow](04-control-flow.md)).
+
+The element type in `generator<T>` (or `iterable<T>`) is checked for every
+value the generator yields, just as a return type is checked for the value a
+function returns. Yielding a value of the wrong type raises a `TypeError` at
+the point the value is produced; values yielded before it have already been
+delivered. `geblang check` reports the mismatch when it can see it statically.
+An `int` literal widens to `float` or `decimal`, and `generator<any>` or a bare
+`generator` leaves yields unchecked:
+
+```gb
+func words(list raw): generator<string> {
+    for (x in raw) {
+        yield x;
+    }
+}
+
+for (w in words(["a", 1])) {   # prints a, then raises
+    io.println(w);             # TypeError: words expects string yield, got int
+}
+```
+
+A bare `return;` ends a generator early; `finally` blocks and `with` cleanup
+still run. A generator cannot return a value, because the consumer never
+sees it, so `geblang check` rejects `return value;` inside one:
+
+```gb
+func upTo(int limit): generator<int> {
+    for (n in [1, 2, 3, 4]) {
+        if (n > limit) {
+            return;
+        }
+        yield n;
+    }
+}
+```
+
+Any function whose body contains `yield` is a generator, including a `yield`
+inside `if`, loops, `try`, `match`, `with` or `select`.
+
 Function literals can be generators:
 
 ```gb
@@ -494,7 +544,9 @@ For generators of nullable elements, prefer `done()` over checking
 
 ## Iterable Parameters
 
-Use `iterable<T>` when an API accepts generator-like inputs:
+Use `iterable<T>` when an API accepts anything a `for-in` loop can walk:
+generators, lists, sets, ranges, dicts, strings, streams, and classes that
+implement the iterator protocol:
 
 ```gb
 func sum(iterable<int> values): int {
@@ -504,7 +556,19 @@ func sum(iterable<int> values): int {
     }
     return total;
 }
+
+sum([1, 2, 3]);        # 6
+sum(1..4);             # 10
+sum(numbers());        # 6
 ```
+
+For an eager collection, every element is checked against `T` at the call,
+as for a `list<T>` parameter: a list of strings passed as `iterable<int>` is
+a `TypeError`, and `geblang check` reports it when it can see the types. A
+range satisfies `iterable<int>`, a string `iterable<string>`, and a dict
+yields `[key, value]` pairs. Generators and user-defined iterables are lazy,
+so their values are checked as they are produced, if at all; `generator<T>`
+accepts only generators.
 
 Generators are lazy. Breaking out of a `for-in` loop closes the producer so
 unbounded streams do not continue running.
@@ -543,7 +607,9 @@ import io;
 
 let c = ch.Channel<int>(0);   # 0 = unbuffered handoff
 async.run(func(): void {
-    for (let int i = 0; i < 5; i++) { c.send(i); }
+    for (let int i = 0; i < 5; i++) {
+        c.send(i);
+    }
     c.close();
 });
 for (v in c) {
@@ -597,9 +663,14 @@ for (let int p = 0; p < 5; p++) {
         wg.done();
     });
 }
-async.run(func(): void { wg.wait(); c.close(); });
+async.run(func(): void {
+    wg.wait();
+    c.close();
+});
 
-for (v in c) { consume(v); }
+for (v in c) {
+    consume(v);
+}
 ```
 
 **Non-blocking poll**: use `tryRecv()` when you want to check for
@@ -706,7 +777,11 @@ let wg = sync.WaitGroup();
 for (let int i = 0; i < n; i++) {
     wg.add(1);
     async.run(func(): void {
-        try { doWork(i); } finally { wg.done(); }
+        try {
+            doWork(i);
+        } finally {
+            wg.done();
+        }
     });
 }
 wg.wait();
@@ -722,7 +797,11 @@ let throttle = sync.Semaphore(10);   # at most 10 in flight
 for (url in urls) {
     async.run(func(): void {
         throttle.acquire();
-        try { fetch(url); } finally { throttle.release(); }
+        try {
+            fetch(url);
+        } finally {
+            throttle.release();
+        }
     });
 }
 ```
@@ -749,10 +828,18 @@ read) have undefined behaviour and can abort the program.
 
 ```gb
 # WRONG: many tasks mutating one shared object with no synchronisation.
-class Counter { int n; func bump(): void { this.n = this.n + 1; } }
+class Counter {
+    int n;
+    func bump(): void {
+        this.n = this.n + 1;
+    }
+}
+
 let c = Counter();
 for (let int i = 0; i < 100; i++) {
-    async.run(func(): void { c.bump(); });   # data race on c.n
+    async.run(func(): void {   # data race on c.n
+        c.bump();
+    });
 }
 ```
 
@@ -766,7 +853,11 @@ Make shared access explicit with the tools above:
   let m = sync.Mutex();
   async.run(func(): void {
       m.lock();
-      try { c.bump(); } finally { m.unlock(); }
+      try {
+          c.bump();
+      } finally {
+          m.unlock();
+      }
   });
   ```
 
@@ -782,7 +873,9 @@ Make shared access explicit with the tools above:
   import store;
   import async;
   let s = store.Store();
-  async.run(func(): void { s.incr("done"); });   # atomic, no lost updates
+  async.run(func(): void {   # atomic, no lost updates
+      s.incr("done");
+  });
   ```
 
 The concurrency primitives themselves - `async.channel`, `async.sync`,

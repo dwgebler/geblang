@@ -26,6 +26,18 @@ type Comment struct {
 	Kind string
 	Text string
 	Line int
+	Gap  string // whitespace between preceding code and the comment; empty for a comment that starts its line
+}
+
+func (l *Lexer) gapBefore() string {
+	i := l.position
+	for i > 0 && (l.input[i-1] == ' ' || l.input[i-1] == '\t') {
+		i--
+	}
+	if i == 0 || l.input[i-1] == '\n' {
+		return ""
+	}
+	return l.input[i:l.position]
 }
 
 // Comments returns every comment lexed so far, in source order.
@@ -588,6 +600,7 @@ func (l *Lexer) skipIgnored() {
 
 func (l *Lexer) skipLineComment() {
 	startLine := l.line
+	gap := l.gapBefore()
 	doc := false
 	if l.peekChar() == '#' {
 		doc = true
@@ -605,14 +618,15 @@ func (l *Lexer) skipLineComment() {
 	content := strings.TrimSpace(text.String())
 	if doc {
 		l.pendingDocs = append(l.pendingDocs, content)
-		l.comments = append(l.comments, Comment{Kind: "doc-line", Text: content, Line: startLine})
+		l.comments = append(l.comments, Comment{Kind: "doc-line", Text: content, Line: startLine, Gap: gap})
 	} else {
-		l.comments = append(l.comments, Comment{Kind: "line", Text: content, Line: startLine})
+		l.comments = append(l.comments, Comment{Kind: "line", Text: content, Line: startLine, Gap: gap})
 	}
 }
 
 func (l *Lexer) skipBlockComment() {
 	startLine := l.line
+	gap := l.gapBefore()
 	l.readChar()
 	l.readChar()
 	doc := l.ch == '*'
@@ -632,9 +646,9 @@ func (l *Lexer) skipBlockComment() {
 	raw := text.String()
 	if doc {
 		l.pendingDocs = append(l.pendingDocs, cleanBlockDoc(raw))
-		l.comments = append(l.comments, Comment{Kind: "doc-block", Text: raw, Line: startLine})
+		l.comments = append(l.comments, Comment{Kind: "doc-block", Text: raw, Line: startLine, Gap: gap})
 	} else {
-		l.comments = append(l.comments, Comment{Kind: "block", Text: raw, Line: startLine})
+		l.comments = append(l.comments, Comment{Kind: "block", Text: raw, Line: startLine, Gap: gap})
 	}
 }
 

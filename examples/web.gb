@@ -15,14 +15,14 @@ web.use(app, func(dict<string, any> request, dict<string, any> response): dict<s
 web.get(app, "/users/:id", func(dict<string, any> request): dict<string, any> {
     return {
         "status": 200,
-        "body": "user " + request["params"]["id"]
+        "body": "user " + request["params"]["id"],
     };
 });
 
 let response = web.handle(app, {
     "method": "GET",
     "path": "/users/42",
-    "body": ""
+    "body": "",
 });
 
 io.println(response["status"]);

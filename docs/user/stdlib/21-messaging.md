@@ -18,7 +18,7 @@ let q = messaging.connect({
     "region":    "us-east-1",
     "queueUrl":  "https://sqs.us-east-1.amazonaws.com/123456789012/orders",
     "accessKey": env.get("AWS_ACCESS_KEY_ID"),
-    "secretKey": env.get("AWS_SECRET_ACCESS_KEY")
+    "secretKey": env.get("AWS_SECRET_ACCESS_KEY"),
 });
 ```
 
@@ -88,7 +88,7 @@ many subscribers receive a given message.
 let topic = messaging.topic({
     "driver": "rabbitmq",
     "url":    "amqp://localhost/",
-    "topic":  "events.user.signup"
+    "topic":  "events.user.signup",
 });
 
 topic.publish({"userId": 42});
@@ -116,7 +116,9 @@ concurrently:
 import async;
 
 async.run(func(): void {
-    topic.subscribe(func(any msg): void { handleEvent(msg); });
+    topic.subscribe(func(any msg): void {
+        handleEvent(msg);
+    });
 });
 
 topic.publish({"event": "tick"});
@@ -138,7 +140,7 @@ let q = messaging.connect({
     "queue":      "orders",
     "exchange":   "",           # default: direct-to-queue
     "routingKey": "orders",     # default: queue name
-    "durable":    true          # default
+    "durable":    true,          # default
 });
 ```
 
@@ -189,7 +191,7 @@ let q = messaging.connect({
     "port":        61613,
     "destination": "/queue/orders",
     "login":       env.get("STOMP_USER"),
-    "passcode":    env.get("STOMP_PASS")
+    "passcode":    env.get("STOMP_PASS"),
 });
 ```
 
@@ -236,7 +238,7 @@ let q = messaging.connect({
     "driver":  "kafka",
     "brokers": ["kafka-0:9092", "kafka-1:9092"],
     "topic":   "orders",
-    "groupId": "order-processor"
+    "groupId": "order-processor",
 });
 ```
 
@@ -305,7 +307,7 @@ let topic = messaging.topic({
     "topicArn":  "arn:aws:sns:us-east-1:123:orders",
     "queueUrl":  "https://sqs.us-east-1.amazonaws.com/123/orders-sub",
     "accessKey": env.get("AWS_ACCESS_KEY_ID"),
-    "secretKey": env.get("AWS_SECRET_ACCESS_KEY")
+    "secretKey": env.get("AWS_SECRET_ACCESS_KEY"),
 });
 topic.publish({"orderId": 42});
 topic.subscribe(func(any msg): void {

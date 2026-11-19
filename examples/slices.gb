@@ -6,17 +6,17 @@
 import io;
 
 let nums = [1, 2, 3, 4, 5];
-let mid = nums[1..<4];
+let mid = nums[1:4];
 mid[0] = 99;
 
 io.println(mid[0]);
 io.println(nums[1]);
 io.println(nums[1..3].length());
-io.println(nums[..<2].length());
+io.println(nums[:2].length());
 io.println(nums[3..].length());
 io.println(nums[..].length());
 
 string name = "Geblang";
-io.println(name[0..<3]);
+io.println(name[0:3]);
 io.println(name[3..]);
 io.println(name[..]);

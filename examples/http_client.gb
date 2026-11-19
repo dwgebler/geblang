@@ -43,16 +43,13 @@ io.println(ra.status());
 io.println(rb.status());
 
 # fetchAll - parallel batch, results in input order
-let ordered = await http.fetchAll([
-    {"method": "GET", "url": "https://example.com"},
-    {"method": "GET", "url": "https://example.com"}
-]);
+let ordered = await http.fetchAll([{"method": "GET", "url": "https://example.com"}, {"method": "GET", "url": "https://example.com"}]);
 io.println(ordered.length());
 
 # fetchStream - results arrive as each completes (completion order, not input order)
 let stream = http.fetchStream([
     {"method": "GET", "url": "https://example.com"},
-    {"method": "GET", "url": "https://example.com"}
+    {"method": "GET", "url": "https://example.com"},
 ]);
 while (!stream.done()) {
     let result = stream.next();
@@ -62,8 +59,6 @@ while (!stream.done()) {
 # Client-scoped batch (shares session cookies and default headers)
 let cs = http.newClient({"timeoutMs": 5000});
 cs.setDefaultHeader("Accept", "text/html");
-let cstream = cs.fetchStream([
-    {"method": "GET", "url": "https://example.com"}
-]);
+let cstream = cs.fetchStream([{"method": "GET", "url": "https://example.com"}]);
 let cr = cstream.next();
 io.println(cr.status());

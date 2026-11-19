@@ -125,8 +125,9 @@ class CallbackErrorClassPreservedTest extends test.Test {
     @test
     func nativeNonCallbackErrorStillRuntimeError(): void {
         let caught = false;
+        any d = {"a": 1};
         try {
-            {"a": 1}.search(1, 2);
+            d.search(1, 2);
         } catch (RuntimeError e) {
             caught = true;
             this.assertContains(e.message, "search");

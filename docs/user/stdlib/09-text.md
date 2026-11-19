@@ -28,7 +28,7 @@ io.println(s.length());     # 5
 io.println(s.isEmpty());    # false
 io.println(s.get(0));       # h
 io.println(s.get(-1));      # o
-io.println(s.chars());      # [h, e, l, l, o]
+io.println(s.chars());      # ["h", "e", "l", "l", "o"]
 io.println(s.codePointAt(0)); # 104
 ```
 
@@ -54,7 +54,7 @@ io.println(family.graphemeLength());  # 1  (one perceived character)
 
 let accented = "e\u{301}llo";          # e + combining acute = "éllo"
 io.println(accented.length());         # 5
-io.println(accented.graphemes());      # [é, l, l, o]
+io.println(accented.graphemes());      # ["é", "l", "l", "o"]
 
 io.println("héllo wörld".truncateGraphemes(5));  # héllo
 io.println("geblang".graphemes().reverse().join("")); # reverse by grapheme
@@ -113,13 +113,13 @@ io.println(s.slice(0, -6));      # hello
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `lower()` | `string` | All characters lower-cased |
-| `upper()` | `string` | All characters upper-cased |
+| `lower([n])` | `string` | All characters lower-cased; with `n`, only the first `n` (the last `-n` when negative) |
+| `upper([n])` | `string` | All characters upper-cased; with `n`, only the first `n` (the last `-n` when negative) |
 | `capitalize()` | `string` | First character upper-cased, the rest lower-cased |
 | `title()` | `string` | Each whitespace-separated word title-cased |
-| `trim()` | `string` | Leading and trailing whitespace removed |
-| `trimStart()` | `string` | Leading whitespace removed |
-| `trimEnd()` | `string` | Trailing whitespace removed |
+| `trim([chars])` | `string` | Leading and trailing whitespace removed, or any of the characters in `chars` |
+| `trimStart([chars])` | `string` | Leading whitespace removed, or any of the characters in `chars` |
+| `trimEnd([chars])` | `string` | Trailing whitespace removed, or any of the characters in `chars` |
 | `replace(old, new[, n])` | `string` | Replace occurrences of `old` with `new`; `n` limits replacements |
 | `reverse()` | `string` | Characters in reversed order |
 | `repeat(n)` | `string` | String repeated `n` times |
@@ -133,6 +133,10 @@ import io;
 
 let s = "  Hello, World!  ";
 io.println(s.trim());                       # Hello, World!
+io.println("/docs/api/".trim("/"));         # docs/api
+io.println("-_id_-".trimStart("-_"));       # id_-
+io.println("geblang".upper(1));             # Geblang
+io.println("geblang".upper(-4));            # gebLANG
 io.println(s.lower());                      # "  hello, world!  "
 io.println(s.upper());                      # "  HELLO, WORLD!  "
 io.println("abc".repeat(3));               # abcabcabc
@@ -153,19 +157,19 @@ io.println("report.txt".removeSuffix(".txt")); # report
 |--------|---------|-------------|
 | `split(sep)` | `list<string>` | Split on `sep`; returns list of parts |
 | `lines()` | `list<string>` | Split on line boundaries (LF and CRLF); no trailing empty line |
-| `format(...)` | `string` | `printf`-style formatting with positional `{}` placeholders |
+| `format(...)` | `string` | `printf`-style formatting with `%` placeholders (`%s`, `%d`, `%.2f`) |
 
 ```gb
 import io;
 
-let csv = "a,b,c,d";
-let parts = csv.split(",");
-io.println(parts);          # [a, b, c, d]
+let line = "a,b,c,d";
+let parts = line.split(",");
+io.println(parts);          # ["a", "b", "c", "d"]
 io.println(parts.length()); # 4
 
-io.println("line1\nline2\nline3".lines()); # [line1, line2, line3]
+io.println("line1\nline2\nline3".lines()); # ["line1", "line2", "line3"]
 
-let msg = "Hello, {}! You have {} messages.".format("Ada", 3);
+let msg = "Hello, %s! You have %d messages.".format("Ada", 3);
 io.println(msg);  # Hello, Ada! You have 3 messages.
 ```
 
@@ -346,7 +350,9 @@ when you need to know whether any of many signatures appear:
 ```gb
 let signatures = re.set(["(?i)\\bunion\\s+select\\b", "(?i)<script\\b", "\\.\\./"]);
 let hit = signatures.match(input);   # index of the matching pattern, or -1
-if (hit >= 0) { io.println("matched pattern ${hit}"); }
+if (hit >= 0) {
+    io.println("matched pattern ${hit}");
+}
 ```
 
 | Method | Returns | Description |
@@ -391,8 +397,10 @@ io.println(m["named"]["word"]);     # Ada      (named group)
 io.println(m["namedSpans"]["word"]); # [0, 3]
 
 # Extract every name=value pair from a free-form string.
-let pairs = re.matchAll("(?P<k>\\w+)=\"(?P<v>[^\"]*)\"",
-                       "user=\"ada\" role=\"admin\"");
+let pairs = re.matchAll(
+    "(?P<k>\\w+)=\"(?P<v>[^\"]*)\"",
+    "user=\"ada\" role=\"admin\""
+);
 for (pair in pairs) {
     io.println(pair["named"]["k"] + " -> " + pair["named"]["v"]);
 }
@@ -416,7 +424,7 @@ inline flags:
 - `(?U)` - swap greedy and non-greedy quantifiers
 
 ```gb
-io.println(re.test("(?i)^hello",  "Hello World"));   # true
+io.println(re.test("(?i)^hello", "Hello World"));   # true
 io.println(re.test("(?s)foo.bar", "foo\nbar"));      # true
 ```
 
@@ -601,8 +609,12 @@ import template;
 import io;
 
 io.println(template.renderString("Hello {{.name}}", {"name": "Ada"}));
-io.println(template.renderString("{{.user.email}}",
-    {"user": {"email": "ada@example.com"}}));
+io.println(
+    template.renderString(
+        "{{.user.email}}",
+        {"user": {"email": "ada@example.com"}}
+    )
+);
 ```
 
 Common actions:
@@ -615,8 +627,7 @@ Common actions:
 - Comments: `{{/* not rendered */}}`
 
 ```gb
-let tmpl = template.Template(
-    "<ul>{{range .todos}}<li>{{.title}}</li>{{end}}</ul>");
+let tmpl = template.Template("<ul>{{range .todos}}<li>{{.title}}</li>{{end}}</ul>");
 io.println(tmpl.render({"todos": [{"title": "ship"}, {"title": "rest"}]}));
 ```
 

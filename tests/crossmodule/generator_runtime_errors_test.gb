@@ -1,0 +1,31 @@
+/**
+ * @title Runtime errors inside imported generators
+ * @summary A runtime fault inside a generator from another module, or an inherited generator method, reaches the consumer with its own message.
+ */
+import test;
+import faulting_gens;
+
+class Local extends faulting_gens.Source {
+    func Local() { parent(); }
+}
+
+func failure(func body): string {
+    try {
+        body();
+    } catch (Error e) {
+        return e.class + ": " + e.message;
+    }
+    return "no error";
+}
+
+class GeneratorRuntimeErrorsCrossModuleTest extends test.Test {
+    @test
+    func importedGeneratorFault(): void {
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { for (v in faulting_gens.ratios(0)) {} }));
+    }
+
+    @test
+    func inheritedGeneratorMethodFault(): void {
+        this.assertEquals("RuntimeError: decimal division by zero", failure(func(): void { for (v in Local().each(0)) {} }));
+    }
+}

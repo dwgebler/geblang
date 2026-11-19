@@ -20,8 +20,8 @@ func main() {
 	var b *big.Rat = gbDecimalLit("0.1")
 	var c *big.Rat = gbDecimalLit("1234.5")
 	var big *big.Rat = gbDecimalLit("1000.25")
-	fmt.Println(transpilert.Show(a.FloatString(10)))
-	fmt.Println(transpilert.Show(b.FloatString(10)))
-	fmt.Println(transpilert.Show(c.FloatString(10)))
-	fmt.Println(transpilert.Show(big.FloatString(10)))
+	fmt.Println(transpilert.Show(transpilert.DecimalToString(a)))
+	fmt.Println(transpilert.Show(transpilert.DecimalToString(b)))
+	fmt.Println(transpilert.Show(transpilert.DecimalToString(c)))
+	fmt.Println(transpilert.Show(transpilert.DecimalToString(big)))
 }

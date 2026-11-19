@@ -68,7 +68,9 @@ for (b in blocks) {
     } else if (t == "task_list") {
         for (item in b["items"]) {
             let mark = " ";
-            if (item["checked"] == true) { mark = "x"; }
+            if (item["checked"] == true) {
+                mark = "x";
+            }
             io.println("task [${mark}] ${item["text"]}");
         }
     } else if (t == "blockquote") {

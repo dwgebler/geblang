@@ -17,7 +17,9 @@ func service(any cls): any {
 
 @service
 class AuthService {
-    func describe(): string { return "auth service"; }
+    func describe(): string {
+        return "auth service";
+    }
 }
 
 io.println(services.hasKey("AuthService"));
@@ -33,16 +35,24 @@ func audited(any cls): any {
 @audited
 class Order {
     string buyer;
-    func Order(string buyer) { this.buyer = buyer; }
-    func describe(): string { return "order for " + this.buyer; }
+    func Order(string buyer) {
+        this.buyer = buyer;
+    }
+    func describe(): string {
+        return "order for " + this.buyer;
+    }
 }
 
 io.println(Order("Ada").describe());
 
 class JsonRepository {
     string conn;
-    func JsonRepository(string conn) { this.conn = conn; }
-    func find(string id): string { return "json[" + this.conn + "]:" + id; }
+    func JsonRepository(string conn) {
+        this.conn = conn;
+    }
+    func find(string id): string {
+        return "json[" + this.conn + "]:" + id;
+    }
 }
 
 func storage(any cls): any {

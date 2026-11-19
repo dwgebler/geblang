@@ -16,7 +16,7 @@ func statusLabel(bool done): string {
 let tasks = [
     {"title": "Write API handler", "done": true},
     {"title": "Add integration test", "done": false},
-    {"title": "Update deployment notes", "done": false}
+    {"title": "Update deployment notes", "done": false},
 ];
 
 int open = 0;

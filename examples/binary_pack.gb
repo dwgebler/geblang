@@ -6,11 +6,13 @@ import io;
  * Build a fake network packet header: 4-byte magic, 2-byte length,
  * 1-byte version, then a 10-byte name field.
  */
-let packet = binary.pack(">IHB10s",
+let packet = binary.pack(
+    ">IHB10s",
     0xDEADBEEF,
     42,
     1,
-    "alice");
+    "alice"
+);
 
 io.println("hex:  " + bytes.toHex(packet));
 io.println("size: " + binary.size(">IHB10s").toString());
@@ -23,11 +25,14 @@ io.println("version = " + parts[2].toString());
 io.println("nameRaw = " + bytes.toHex(parts[3] as bytes));
 
 /* Decode named: get back a dict for easy field access. */
-let header = binary.unpackNamed([
-    {"name": "magic",   "type": ">I"},
-    {"name": "length",  "type": "H"},
-    {"name": "version", "type": "B"},
-    {"name": "name",    "type": "10s"}
-], packet);
+let header = binary.unpackNamed(
+    [
+        {"name": "magic", "type": ">I"},
+        {"name": "length", "type": "H"},
+        {"name": "version", "type": "B"},
+        {"name": "name", "type": "10s"},
+    ],
+    packet
+);
 io.println("named magic   = " + (header["magic"] as int).toString(16));
 io.println("named version = " + (header["version"] as int).toString());

@@ -1,4 +1,4 @@
-# Classes, Interfaces, And Enums
+# Classes, interfaces and enums
 
 ## Classes
 
@@ -63,12 +63,17 @@ instance:
 
 ```gb
 int nextId = 0;
-func allocate(): int { nextId = nextId + 1; return nextId; }
+
+func allocate(): int {
+    nextId = nextId + 1;
+    return nextId;
+}
 
 class Ticket {
     int id = allocate();
     list<string> notes = ["opened"];
 }
+
 io.println(Ticket().id);     # 1
 io.println(Ticket().id);     # 2
 ```
@@ -88,11 +93,11 @@ class Printer {
     }
 
     func print(int n): void {
-        io.println("int: " + n);
+        io.println("int: ${n}");
     }
 
     func print(string label, int n): void {
-        io.println(label + ": " + n);
+        io.println("${label}: ${n}");
     }
 }
 
@@ -222,10 +227,15 @@ equivalent:
 ```gb
 # shapes.gb
 module shapes;
+
 export class Shape {
     string color;
-    func Shape(string color) { this.color = color; }
-    func area(): float { return 0.0f; }
+    func Shape(string color) {
+        this.color = color;
+    }
+    func area(): float {
+        return 0.0f;
+    }
 }
 ```
 
@@ -236,8 +246,13 @@ import shapes;
 
 class Circle extends shapes.Shape {
     float radius;
-    func Circle(float radius) { parent("red"); this.radius = radius; }
-    func area(): float { return 3.14159f * this.radius * this.radius; }
+    func Circle(float radius) {
+        parent("red");
+        this.radius = radius;
+    }
+    func area(): float {
+        return 3.14159f * this.radius * this.radius;
+    }
 }
 ```
 
@@ -248,8 +263,13 @@ from shapes import Shape;
 
 class Square extends Shape {
     float side;
-    func Square(float side) { parent("blue"); this.side = side; }
-    func area(): float { return this.side * this.side; }
+    func Square(float side) {
+        parent("blue");
+        this.side = side;
+    }
+    func area(): float {
+        return this.side * this.side;
+    }
 }
 ```
 
@@ -321,10 +341,14 @@ Apply the `@immutable` decorator to freeze every instance after its constructor
 returns. Fields are readable; any assignment to a field raises `ImmutableError`.
 
 ```gb
-@immutable class Point {
+@immutable
+class Point {
     int x;
     int y;
-    func Point(int x, int y) { this.x = x; this.y = y; }
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
 }
 
 Point p = Point(3, 4);
@@ -335,11 +359,17 @@ p.x = 99;          # throws ImmutableError
 Produce modified copies using the *wither* pattern instead of mutation:
 
 ```gb
-@immutable class Point {
+@immutable
+class Point {
     int x;
     int y;
-    func Point(int x, int y) { this.x = x; this.y = y; }
-    func withX(int x): Point { return Point(x, this.y); }
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+    func withX(int x): Point {
+        return Point(x, this.y);
+    }
 }
 ```
 
@@ -456,12 +486,16 @@ method that was renamed or removed out from under the override.
 
 ```gb
 class Animal {
-    func speak(): string { return "..."; }
+    func speak(): string {
+        return "...";
+    }
 }
 
 class Dog extends Animal {
     @override
-    func speak(): string { return "woof"; }
+    func speak(): string {
+        return "woof";
+    }
 }
 ```
 
@@ -478,7 +512,9 @@ whether code runs.
 
 ```gb
 @deprecated("use fetchUser instead")
-func getUser(int id): User { return fetchUser(id); }
+func getUser(int id): User {
+    return fetchUser(id);
+}
 
 # geblang check: warning[deprecated]: use of deprecated getUser: use fetchUser instead
 let u = getUser(1);
@@ -584,15 +620,25 @@ interface Greetable {
 }
 
 class User implements Greetable {
-    func User(string n) { this.name = n; }
-    func loudName(): string { return this.name.upper(); }
+    func User(string n) {
+        this.name = n;
+    }
+    func loudName(): string {
+        return this.name.upper();
+    }
     /* greet inherited from Greetable */
 }
 
 class Loud implements Greetable {
-    func Loud(string n) { this.name = n; }
-    func greet(): string { return "HELLO, " + this.name; }
-    func loudName(): string { return this.name.upper(); }
+    func Loud(string n) {
+        this.name = n;
+    }
+    func greet(): string {
+        return "HELLO, " + this.name;
+    }
+    func loudName(): string {
+        return this.name.upper();
+    }
 }
 
 io.println(User("ada").greet());   /* "hello, ada" */
@@ -609,7 +655,9 @@ fields - no need to redeclare them in the class body.
 interface Greetable {
     string name;          /* every implementer has `name` */
     int age;              /* and `age` */
-    func greet(): string { return this.name + " is " + (this.age as string); }
+    func greet(): string {
+        return this.name + " is " + (this.age as string);
+    }
 }
 
 class User implements Greetable {
@@ -632,13 +680,24 @@ method explicitly. Inheriting one of the two defaults silently
 would be ambiguous, so the compiler rejects the class:
 
 ```gb
-interface A { func foo(): string { return "A"; } }
-interface B { func foo(): string { return "B"; } }
+interface A {
+    func foo(): string {
+        return "A";
+    }
+}
+
+interface B {
+    func foo(): string {
+        return "B";
+    }
+}
 
 class C implements A, B {}              /* error: ambiguous default for foo() */
 
 class C implements A, B {
-    func foo(): string { return "C"; }   /* OK */
+    func foo(): string {   /* OK */
+        return "C";
+    }
 }
 ```
 
@@ -666,7 +725,7 @@ aspects can be shared across a codebase (`from aspects import retry;` then
 
 ```gb
 func log(callable fn): callable {
-    return func(any ...args): any {
+    return func(any ... args): any {
         io.println("calling", reflect.className(fn));
         return fn(...args);
     };
@@ -778,9 +837,14 @@ value, and the transformed value is what gets stored. Use them for
 normalisation, validation, formatting, audit.
 
 ```gb
-func upper(string v): string { return v.upper(); }
+func upper(string v): string {
+    return v.upper();
+}
+
 func minLen(int min, string v): string {
-    if (v.length() < min) { throw RuntimeError("too short"); }
+    if (v.length() < min) {
+        throw RuntimeError("too short");
+    }
     return v;
 }
 
@@ -788,7 +852,9 @@ class User {
     @minLen(2)
     @upper
     string name;
-    func User(string n) { this.name = n; }
+    func User(string n) {
+        this.name = n;
+    }
 }
 
 let u = User("ada");
@@ -921,21 +987,28 @@ Direct construction of an abstract class throws `RuntimeError`.
 ```gb
 @abstract
 class Repository {
-    func describe(): string { return "repo"; }
+    func describe(): string {
+        return "repo";
+    }
 }
 
 class Storage {
     @abstract
-    func read(string key): string { return ""; }
+    func read(string key): string {
+        return "";
+    }
 }
 
 class MemoryStorage extends Storage {
-    func read(string key): string { return "..."; }
+    func read(string key): string {
+        return "...";
+    }
 }
 
 Repository();       /* throws: cannot instantiate abstract class Repository */
 Storage();          /* throws: cannot instantiate Storage: abstract method
                        Storage.read is not implemented */
+
 MemoryStorage();    /* OK - read() is overridden */
 ```
 
@@ -1007,7 +1080,9 @@ check and document.
 class Headers {
     dict<string, string> values;
 
-    func Headers() { this.values = {}; }
+    func Headers() {
+        this.values = {};
+    }
 
     func __index(string key): ?string {
         return this.values.get(key);
@@ -1309,7 +1384,9 @@ destructor lifecycle.
 class Transaction {
     string label;
 
-    func Transaction(string label) { this.label = label; }
+    func Transaction(string label) {
+        this.label = label;
+    }
 
     func __enter(): Transaction {
         io.println("begin " + this.label);
@@ -1360,7 +1437,11 @@ class Point {
     int x;
     int y;
     int _secret;
-    func Point(int x, int y) { this.x = x; this.y = y; this._secret = 99; }
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+        this._secret = 99;
+    }
 }
 
 io.println(json.stringify(Point(3, 4)));
@@ -1376,7 +1457,8 @@ class Tagged {
     string kind;
     string label;
     func Tagged(string kind, string label) {
-        this.kind = kind; this.label = label;
+        this.kind = kind;
+        this.label = label;
     }
     func __serialize(): dict {
         return {"kind": this.kind, "label": this.label, "v": 1};
@@ -1400,7 +1482,8 @@ class Tagged {
     string kind;
     string label;
     func Tagged(string kind, string label) {
-        this.kind = kind; this.label = label;
+        this.kind = kind;
+        this.label = label;
     }
     static func __deserialize(dict d): Tagged {
         return Tagged(d["kind"], d["label"]);
@@ -1418,8 +1501,16 @@ The same machinery applies to `yaml.parseAs`, `toml.parseAs`, and
 ## Enums
 
 ```gb
-enum Color { Red, Green, Blue }
-enum Result { Ok(string), Err(string) }
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+enum Result {
+    Ok(string),
+    Err(string)
+}
 
 let color = Color.Red;
 let result = Result.Ok("saved");
@@ -1452,8 +1543,8 @@ literal value:
 
 ```gb
 enum Status: string {
-    Active = "active";
-    Closed = "closed";
+    Active = "active",
+    Closed = "closed"
 }
 
 Status.Active.value;      # "active"
@@ -1468,8 +1559,8 @@ data or a backing value, not both.
 
 ```gb
 enum Code: int {
-    Ok = 200;
-    NotFound = 404;
+    Ok = 200,
+    NotFound = 404
 }
 
 Code.NotFound.value;   # 404
@@ -1483,7 +1574,9 @@ variant list, then a single `;`, then the method declarations:
 
 ```gb
 enum Status {
-    Active, Suspended, Closed(string);
+    Active,
+    Suspended,
+    Closed(string);
 
     func isTerminal(): bool {
         return match (this) {
@@ -1494,8 +1587,8 @@ enum Status {
 
     func describe(): string {
         return match (this) {
-            case Status.Active        => "active";
-            case Status.Suspended     => "suspended";
+            case Status.Active    => "active";
+            case Status.Suspended => "suspended";
             case Status.Closed(string r) => "closed: " + r;
         };
     }
@@ -1526,10 +1619,13 @@ unimplemented. A conforming enum value flows into an interface-typed slot, and
 interface-typed dispatch lands on the enum's method:
 
 ```gb
-interface Describable { func describe(): string; }
+interface Describable {
+    func describe(): string;
+}
 
 enum Status implements Describable {
-    Active, Closed(string);
+    Active,
+    Closed(string);
 
     func describe(): string {
         return match (this) {

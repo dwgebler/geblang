@@ -35,6 +35,55 @@ class StringsTest extends test.Test {
     }
 
     @test
+    func trimCharacterSet(): void {
+        this.assertEquals("compare/go", "/compare/go/".trim("/"));
+        this.assertEquals("x", "-_x_-".trim("-_"));
+        this.assertEquals("x_-", "-_x_-".trimStart("-_"));
+        this.assertEquals("-_x", "-_x_-".trimEnd("-_"));
+        this.assertEquals("  hi  ", "  hi  ".trim(""));
+        this.assertEquals(" hi ", "« hi »".trim("«»"));
+        this.assertEquals("", "///".trim("/"));
+        this.assertEquals("hi  ", "  hi  ".trimStart());
+        this.assertEquals("  hi", "  hi  ".trimEnd());
+    }
+
+    @test
+    func caseConversionOfPart(): void {
+        this.assertEquals("Geblang", "geblang".upper(1));
+        this.assertEquals("gebLANG", "geblang".upper(-4));
+        this.assertEquals("geblang", "geblang".upper(0));
+        this.assertEquals("GEBLANG", "geblang".upper(99));
+        this.assertEquals("GEBLANG", "geblang".upper(-99));
+        this.assertEquals("hELLO", "HELLO".lower(1));
+        this.assertEquals("HELlo", "HELLO".lower(-2));
+        this.assertEquals("Éclair", "éclair".upper(1));
+        this.assertEquals("", "".upper(3));
+    }
+
+    @test
+    func trimAndCaseThroughAny(): void {
+        any value = "..Mixed..";
+        this.assertEquals("Mixed", value.trim("."));
+        this.assertEquals("..MIxed..", value.upper(4));
+    }
+
+    @test
+    func trimAndCaseRejectBadArguments(): void {
+        this.assertThrows(func(): void {
+            any n = 1;
+            "x".trim(n);
+        });
+        this.assertThrows(func(): void {
+            any s = "1";
+            "x".upper(s);
+        });
+        this.assertThrows(func(): void {
+            any s = "x";
+            s.trim("a", "b");
+        });
+    }
+
+    @test
     func containsAndPrefixSuffix(): void {
         this.assertTrue("hello world".contains("world"));
         this.assertTrue("hello world".startsWith("hello"));

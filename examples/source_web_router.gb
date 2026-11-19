@@ -30,14 +30,15 @@ let api = router.group(app, "/api");
 router.get(api, "/users/:id", func(dict<string, any> request): dict<string, any> {
     return {
         "status": 200,
-        "body": "user " + request["params"]["id"]
+        "body": "user " + request["params"]["id"],
     };
 });
 
 router.post(api, "/users", func(dict<string, any> request): string {
-    let result = forms.validate(request, validation.object({
-        "name": validation.stringField()
-    }, ["name"]));
+    let result = forms.validate(
+        request,
+        validation.object({"name": validation.stringField()}, ["name"])
+    );
     if (!forms.isValid(result)) {
         return "invalid " + forms.firstFieldError(result, "name");
     }
@@ -50,9 +51,11 @@ router.put(api, "/users/:id", func(dict<string, any> request): dict<string, any>
     return http.jsonStatus({"updated": ctx.param("id")}, 202);
 });
 
-router.delete(api, "/users/:id", func(dict<string, any> request): dict<string, any> {
-    return http.noContent();
-});
+router.delete(
+    api,
+    "/users/:id",
+    func(dict<string, any> request): dict<string, any> { return http.noContent(); }
+);
 
 router.get(api, "/page", func(dict<string, any> request): dict<string, any> {
     let ctx = http.context(request);
@@ -63,13 +66,14 @@ router.get(api, "/events", func(dict<string, any> request): dict<string, any> {
     return sse.response([
         sse.comment("ready"),
         sse.event("user", "{\"id\":42}", {"id": "u42"}),
-        sse.retry(5000)
+        sse.retry(5000),
     ]);
 });
 
 router.get(api, "/inspect/:id", func(dict<string, any> request): dict<string, any> {
     let req = http.requestObject(request);
-    return http.responseObject(200, req.paramDefault("id", "none") + " " + req.header("x-mode")).header("X-Param", req.param("id")).toDict();
+    return http.responseObject(200, req.paramDefault("id", "none") + " " + req.header("x-mode")).header("X-Param", req.param("id")).toDict(
+    );
 });
 
 class UsersController {
@@ -81,7 +85,14 @@ class UsersController {
     @route("GET", "/decorated/:id")
     func show(dict<string, any> request): dict<string, any> {
         let ctx = http.context(request);
-        return http.withCookieOptions(ctx.text("decorated " + ctx.param("id") + " " + ctx.cookie("theme") + " " + ctx.queryParam("debug")), "seen", "yes", {"path": "/", "httpOnly": true, "sameSite": "Lax"});
+        return http.withCookieOptions(
+            ctx.text(
+                "decorated " + ctx.param("id") + " " + ctx.cookie("theme") + " " + ctx.queryParam("debug")
+            ),
+            "seen",
+            "yes",
+            {"path": "/", "httpOnly": true, "sameSite": "Lax"}
+        );
     }
 }
 
@@ -103,7 +114,10 @@ let inspected = router.handle(app, inspectRequest);
 let decoratedRequest = http.request("GET", "/api/decorated/7?debug=true");
 decoratedRequest["headers"] = {"Cookie": "theme=dark"};
 let decorated = router.handle(app, decoratedRequest);
-let sessionResponse = session.withSession(http.text("session"), {"user": "Ada"}, "secret", {"path": "/", "httpOnly": true});
+let sessionResponse = session.withSession(http.text("session"), {"user": "Ada"}, "secret", {
+    "path": "/",
+    "httpOnly": true,
+});
 let sessionRequest = http.request("GET", "/api/session");
 sessionRequest["headers"] = {"Cookie": sessionResponse["headers"]["Set-Cookie"]};
 let sessionData = session.session(sessionRequest, "secret");
@@ -120,23 +134,35 @@ let fileCached = fileCache.get("answer") as dict<string, any>;
 let fileCacheHadAnswer = fileCache.has("answer");
 fileCache.delete("answer");
 let fileCacheDeleted = !fileCache.has("answer");
-let loginResponse = auth.login(fileSessions, http.text("login"), {"name": "Ada", "roles": ["admin"], "permissions": ["users.edit"]}, {"httpOnly": true});
+let loginResponse = auth.login(
+    fileSessions,
+    http.text("login"),
+    {"name": "Ada", "roles": ["admin"], "permissions": ["users.edit"]},
+    {"httpOnly": true}
+);
 let loginRequest = http.request("GET", "/api/me");
 loginRequest["headers"] = {"Cookie": loginResponse["headers"]["Set-Cookie"]};
 let loginUser = auth.currentUser(fileSessions, loginRequest);
-let flashResponse = session.withFlash(fileSessions, http.text("flash"), loginRequest, "success", "Profile saved", {"httpOnly": true});
+let flashResponse = session.withFlash(
+    fileSessions,
+    http.text("flash"),
+    loginRequest,
+    "success",
+    "Profile saved",
+    {"httpOnly": true}
+);
 let flashRequest = http.request("GET", "/api/me");
 flashRequest["headers"] = {"Cookie": flashResponse["headers"]["Set-Cookie"]};
 let flashMessages = session.flashes(fileSessions, flashRequest);
-let clearFlashResponse = session.clearFlashes(fileSessions, http.text("clear"), flashRequest, {"httpOnly": true});
+let clearFlashResponse = session.clearFlashes(fileSessions, http.text("clear"), flashRequest, {
+    "httpOnly": true,
+});
 let clearFlashRequest = http.request("GET", "/api/me");
 clearFlashRequest["headers"] = {"Cookie": clearFlashResponse["headers"]["Set-Cookie"]};
 
 let authApp = router.newRouter();
 router.before(authApp, auth.requireRole(fileSessions, "admin"));
-router.get(authApp, "/admin", func(dict<string, any> request): string {
-    return "admin ok";
-});
+router.get(authApp, "/admin", func(dict<string, any> request): string { return "admin ok"; });
 let authMissing = router.handle(authApp, http.request("GET", "/admin"));
 let authAllowedRequest = http.request("GET", "/admin");
 authAllowedRequest["headers"] = {"Cookie": loginResponse["headers"]["Set-Cookie"]};
@@ -146,7 +172,9 @@ let conn = db.open("sqlite", "/tmp/geblang-router-sessions.sqlite");
 db.exec(conn, "drop table if exists geb_sessions");
 db.exec(conn, "drop table if exists geb_cache");
 let databaseSessions = session.databaseSessionStore(conn, "geb_sessions", 3600).install();
-let databaseSessionResponse = databaseSessions.save(http.text("db"), {"user": "Database"}, {"httpOnly": true});
+let databaseSessionResponse = databaseSessions.save(http.text("db"), {"user": "Database"}, {
+    "httpOnly": true,
+});
 let databaseSessionRequest = http.request("GET", "/api/session");
 databaseSessionRequest["headers"] = {"Cookie": databaseSessionResponse["headers"]["Set-Cookie"]};
 let databaseSessionData = databaseSessions.load(databaseSessionRequest);

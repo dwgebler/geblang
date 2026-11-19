@@ -125,12 +125,10 @@ let sales = df.fromDict({
 
 /* Columnwise filter - fast, no per-row callback */
 let east = sales.filter(df.col("region").eq("East"))
-                .select(["product", "revenue"]);
+    .select(["product", "revenue"]);
 
 /* Group and aggregate */
-let byProduct = sales.groupBy("product").agg({
-    "revenue": ["sum", "mean"],
-});
+let byProduct = sales.groupBy("product").agg({"revenue": ["sum", "mean"]});
 io.println("${byProduct.toDicts()}");
 
 /* Bridge to ndarray for compute */

@@ -43,7 +43,7 @@ func registerProfiler(r *Registry) {
 	})
 
 	r.Register("profiler", "delta", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) < 1 {
+		if len(args) != 1 {
 			return nil, fmt.Errorf("profiler.delta expects one argument")
 		}
 		snap, ok := args[0].(runtime.Dict)

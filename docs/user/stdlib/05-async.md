@@ -21,9 +21,7 @@ let user = await task;         # wait for result
 `async.run(callable)` wraps any callable as a task:
 
 ```gb
-let task = async.run(func(): string {
-    return "done";
-});
+let task = async.run(func(): string { return "done"; });
 let result = await task;
 ```
 
@@ -36,15 +34,15 @@ task:
 import async.io as aio;   # task-returning file I/O (see "Async I/O submodules")
 
 # Good - both I/O operations run in parallel
-let configTask   = aio.readText("config/app.json");
-let templateTask = aio.readText("templates/page.html");
+let configTask = aio.readText("config/app.json");
+let pageTask   = aio.readText("templates/page.html");
 
-let config   = await configTask;
-let template = await templateTask;
+let config = await configTask;
+let page   = await pageTask;
 
 # Bad - sequential despite async
-let config   = await aio.readText("config/app.json");
-let template = await aio.readText("templates/page.html");
+let slowConfig = await aio.readText("config/app.json");
+let slowPage   = await aio.readText("templates/page.html");
 ```
 
 ## Checking task status
@@ -211,11 +209,11 @@ allows them to be started concurrently and awaited later.
 Import them with an alias:
 
 ```gb
-import async.io     as aio;
-import async.http   as ahttp;
-import async.net    as anet;
+import async.io as aio;
+import async.http as ahttp;
+import async.net as anet;
 import async.stream as astream;
-import async.rate   as rate;
+import async.rate as rate;
 ```
 
 ### `async.io`
@@ -277,11 +275,19 @@ Functions: `jsonStream`, `jsonReader`, `yamlStream`, `yamlReader`,
 Rate-limit and debounce wrappers for callable values:
 
 ```gb
-let log = rate.throttle(func(string m): void { io.println(m); }, 200);
-log("a"); log("b"); log("c");                # only one io.println in 200ms
+let log = rate.throttle(func(string m): void {
+    io.println(m);
+}, 200);
+log("a");
+log("b");
+log("c");                # only one io.println in 200ms
 
-let save = rate.debounce(func(string text): void { persist(text); }, 300);
-save("hello"); save("hello!"); save("hello world");
+let save = rate.debounce(func(string text): void {
+    persist(text);
+}, 300);
+save("hello");
+save("hello!");
+save("hello world");
 # persist("hello world") runs 300ms after the last call
 ```
 
@@ -318,9 +324,11 @@ let bodies = tasks.map(urls, func(any u): any {
 }, {"concurrency": 4});
 
 # Retry a flaky call with backoff.
-let result = tasks.retry(func(): any {
-    return fetch();
-}, {"attempts": 5, "delayMs": 100, "jitter": true});
+let result = tasks.retry(func(): any { return fetch(); }, {
+    "attempts": 5,
+    "delayMs": 100,
+    "jitter": true,
+});
 ```
 
 ## Concurrency primitives
@@ -348,7 +356,9 @@ let wg = sync.WaitGroup();
 for (let int i = 0; i < 10; i++) {
     wg.add(1);
     async.run(func(): void {
-        try { /* work */ } finally { wg.done(); }
+        try {} finally { /* work */
+            wg.done();
+        }
     });
 }
 wg.wait();   # blocks until all ten finish
@@ -388,7 +398,9 @@ drain the buffer then return `null`. Also: `trySend(value)` /
 ```gb
 let c = ch.Channel<int>(8);
 async.run(func(): void {
-    for (let int i = 0; i < 5; i++) { c.send(i); }
+    for (let int i = 0; i < 5; i++) {
+        c.send(i);
+    }
     c.close();
 });
 for (v in c) {
@@ -454,9 +466,7 @@ let conn = s.getOrSet("pool", makePool());
 # Atomic read-modify-write. `fn` receives the current value (null if absent)
 # and its result is stored, retrying if another task changed the key first.
 # Do NOT touch this same key non-atomically inside `fn`.
-s.update("tally", func(any old): any {
-    return (old == null ? 0 : old as int) + 1;
-});
+s.update("tally", func(any old): any { return (old == null ? 0 : old as int) + 1; });
 ```
 
 Full surface: `get`, `set`, `has`, `delete`, `clear`, `len`, `keys`, `values`,

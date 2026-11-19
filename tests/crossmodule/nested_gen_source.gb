@@ -1,0 +1,18 @@
+module nested_gen_source;
+
+export func counted(int n): generator<int> {
+    for (let int i = 1; i <= n; i++) {
+        yield i;
+    }
+}
+
+export class Source {
+    func Source() {}
+    func each(): generator<int> { yield 1; yield 2; }
+}
+
+export func relay(): generator<int> {
+    for (v in counted(2)) {
+        yield v * 1000;
+    }
+}

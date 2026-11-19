@@ -51,7 +51,7 @@ export func main(list<string> args): int {
 		return string(outBytes)
 	}
 
-	if got := run("--version"); !strings.Contains(got, "flagapp 1.2.3 (geblang ") {
+	if got := run("--version"); !strings.HasPrefix(got, "flagapp 1.2.3\n  geblang ") {
 		t.Fatalf("--version output: %q", got)
 	}
 	help := run("--help")

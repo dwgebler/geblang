@@ -23,8 +23,12 @@ let query = [0.90, 0.12, 0.06, 0.03];   /* closest to the fruit cluster */
 
 /* --- Part 1: direct similarity with vecmath --- */
 io.println("== Pairwise similarity (vecmath) ==");
-io.println("cosine(apple, banana) = ${vecmath.score("cosine", docs["fruit:apple"], docs["fruit:banana"])}");
-io.println("cosine(apple, laptop) = ${vecmath.score("cosine", docs["fruit:apple"], docs["tech:laptop"])}");
+io.println(
+    "cosine(apple, banana) = ${vecmath.score("cosine", docs["fruit:apple"], docs["fruit:banana"])}"
+);
+io.println(
+    "cosine(apple, laptop) = ${vecmath.score("cosine", docs["fruit:apple"], docs["tech:laptop"])}"
+);
 io.println("dot(query, apple)     = ${vecmath.score("dot", query, docs["fruit:apple"])}");
 
 /* vecmath.topK ranks a flat list of vectors against the query and returns
@@ -34,8 +38,8 @@ io.println("== Brute-force top-3 (vecmath.topK) ==");
 let ids = [];
 let vectors = [];
 for (id in docs.keys()) {
-    ids = ids.push(id);
-    vectors = vectors.push(docs[id]);
+    ids.push(id);
+    vectors.push(docs[id]);
 }
 let ranked = vecmath.topK(vectors, query, 3, "cosine");
 for (hit in ranked) {
@@ -61,9 +65,7 @@ io.println("indexed ${hnsw.count(index)} vectors");
 io.println("");
 io.println("== Query 3-nearest neighbors (hnsw.search) ==");
 let neighbors = hnsw.search(index, query, 3);
-let byScore = neighbors.sortBy(func(any n): float {
-    return n["score"] as float;
-}, true);   /* true = descending */
+let byScore = neighbors.sortBy(func(any n): float { return n["score"] as float; }, true);   /* true = descending */
 for (n in byScore) {
     io.println("  ${n["id"]}  score=${n["score"]}");
 }

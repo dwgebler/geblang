@@ -10,7 +10,7 @@ let rows = [
     {"region": "north", "amount": 12900},
     {"region": "south", "amount": 8400},
     {"region": "north", "amount": 4600},
-    {"region": "west", "amount": 15250}
+    {"region": "west", "amount": 15250},
 ];
 
 dict<string, int> totals = {"north": 0, "south": 0, "west": 0};

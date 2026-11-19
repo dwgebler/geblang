@@ -25,6 +25,7 @@ let buf = streams.memory();
 buf.writeln("first");
 buf.writeln("second");
 io.println(buf.toString());
+
 # first
 # second
 
@@ -32,10 +33,18 @@ io.println(buf.toString());
 # __read / __write dunders - including user-defined classes.
 class HexSource {
     int step;
-    func HexSource() { this.step = 0; }
+    func HexSource() {
+        this.step = 0;
+    }
     func __read(int n): string {
-        if (this.step == 0) { this.step = 1; return "hello "; }
-        if (this.step == 1) { this.step = 2; return "world"; }
+        if (this.step == 0) {
+            this.step = 1;
+            return "hello ";
+        }
+        if (this.step == 1) {
+            this.step = 2;
+            return "world";
+        }
         return "";
     }
 }

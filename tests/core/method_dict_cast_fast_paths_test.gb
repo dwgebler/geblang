@@ -147,20 +147,24 @@ class FastPathsTest extends test.Test {
 
     @test
     func argumentCountErrorsNameTheReceiverType(): void {
+        # Typed any so the run-time messages are tested; geblang check rejects these calls statically.
+        any xs = [1];
+        any text = "ab";
+        any d = {"a": 1};
         try {
-            [1].length(1);
+            xs.length(1);
             this.fail("expected an error");
         } catch (Error e) {
             this.assertEquals("list.length expects no arguments", e.message);
         }
         try {
-            "ab".contains();
+            text.contains();
             this.fail("expected an error");
         } catch (Error e) {
             this.assertEquals("string.contains expects one argument", e.message);
         }
         try {
-            {"a": 1}.clear(1);
+            d.clear(1);
             this.fail("expected an error");
         } catch (Error e) {
             this.assertEquals("dict.clear expects no arguments", e.message);

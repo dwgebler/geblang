@@ -16,7 +16,9 @@ func exercise(string label, string address) {
     io.println("${label}:functions:echo=${functions.contains("echo")}");
     io.println("${label}:add=${ext.call(conn, "add", 19, 23)}");
     io.println("${label}:greet=${ext.call(conn, "greet", name: label)}");
-    io.println("${label}:greetOptions=${ext.callWithOptions(conn, "greet", {"timeoutMs": 2000, "maxResponseBytes": 1048576}, name: label)}");
+    io.println(
+        "${label}:greetOptions=${ext.callWithOptions(conn, "greet", {"timeoutMs": 2000, "maxResponseBytes": 1048576}, name: label)}"
+    );
     io.println("${label}:echo=${ext.call(conn, "echo", bytes.fromHex("0102ff")).toHex()}");
 
     ext.close(conn);

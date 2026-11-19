@@ -15,10 +15,16 @@ let lib = ffi.dlopen("libsqlite3.so.0");
 
 let sqlite3_open = lib.symbol("sqlite3_open", [ffi.CSTRING, ffi.PTR], ffi.INT32);
 let sqlite3_close = lib.symbol("sqlite3_close", [ffi.PTR], ffi.INT32);
-let sqlite3_exec = lib.symbol("sqlite3_exec",
-    [ffi.PTR, ffi.CSTRING, ffi.PTR, ffi.PTR, ffi.PTR], ffi.INT32);
-let sqlite3_prepare_v2 = lib.symbol("sqlite3_prepare_v2",
-    [ffi.PTR, ffi.CSTRING, ffi.INT32, ffi.PTR, ffi.PTR], ffi.INT32);
+let sqlite3_exec = lib.symbol(
+    "sqlite3_exec",
+    [ffi.PTR, ffi.CSTRING, ffi.PTR, ffi.PTR, ffi.PTR],
+    ffi.INT32
+);
+let sqlite3_prepare_v2 = lib.symbol(
+    "sqlite3_prepare_v2",
+    [ffi.PTR, ffi.CSTRING, ffi.INT32, ffi.PTR, ffi.PTR],
+    ffi.INT32
+);
 let sqlite3_step = lib.symbol("sqlite3_step", [ffi.PTR], ffi.INT32);
 let sqlite3_column_int = lib.symbol("sqlite3_column_int", [ffi.PTR, ffi.INT32], ffi.INT32);
 let sqlite3_column_text = lib.symbol("sqlite3_column_text", [ffi.PTR, ffi.INT32], ffi.CSTRING);
@@ -37,16 +43,28 @@ func readPointerSlot(int slot): int {
 
 class Database {
     int handle;
-    func Database(int handle) { this.handle = handle; }
-    func __enter(): Database { return this; }
-    func __exit(): void { sqlite3_close(this.handle); }
+    func Database(int handle) {
+        this.handle = handle;
+    }
+    func __enter(): Database {
+        return this;
+    }
+    func __exit(): void {
+        sqlite3_close(this.handle);
+    }
 }
 
 class Statement {
     int handle;
-    func Statement(int handle) { this.handle = handle; }
-    func __enter(): Statement { return this; }
-    func __exit(): void { sqlite3_finalize(this.handle); }
+    func Statement(int handle) {
+        this.handle = handle;
+    }
+    func __enter(): Statement {
+        return this;
+    }
+    func __exit(): void {
+        sqlite3_finalize(this.handle);
+    }
 }
 
 func openInMemory(): Database {
@@ -74,10 +92,7 @@ func prepare(Database db, string sql): Statement {
 }
 
 with (db = openInMemory()) {
-    let rc = sqlite3_exec(db.handle,
-        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);"
-        + "INSERT INTO users (name) VALUES ('Ada'), ('Carla'), ('Ed');",
-        0, 0, 0) as int;
+    let rc = sqlite3_exec(db.handle, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);" + "INSERT INTO users (name) VALUES ('Ada'), ('Carla'), ('Ed');", 0, 0, 0) as int;
     if (rc != 0) {
         throw RuntimeError("exec failed: " + rc.toString());
     }

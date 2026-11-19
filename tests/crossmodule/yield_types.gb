@@ -1,0 +1,21 @@
+module yield_types;
+
+export func words(list raw): generator<string> {
+    for (x in raw) {
+        yield x;
+    }
+}
+
+export class Source<T> {
+    list<T> items;
+    func Source(list<T> items) { this.items = items; }
+    func each(): generator<T> {
+        for (x in this.items) {
+            yield x;
+        }
+    }
+    func wrong(): generator<T> {
+        list raw = [5];
+        yield raw[0];
+    }
+}

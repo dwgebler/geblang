@@ -1,0 +1,7 @@
+/**
+ * @category Tests
+ * @summary A function named embed is rejected; every call to it would resolve to the compile-time builtin.
+ */
+func embed(list<string> texts): int {
+    return texts.length();
+}

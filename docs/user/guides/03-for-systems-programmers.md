@@ -255,7 +255,7 @@ let libc = ffi.dlopen("libc.so.6");
 let gettimeofday = libc.symbol("gettimeofday", [ffi.PTR, ffi.PTR], ffi.INT32);
 
 let Timeval = ffi.StructOf([
-    ["tv_sec",  ffi.INT64],
+    ["tv_sec", ffi.INT64],
     ["tv_usec", ffi.INT64],
 ]);
 

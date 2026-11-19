@@ -39,9 +39,9 @@ class Job {
 func demoPriorityQueue(): void {
     io.println("");
     io.println("== PriorityQueue ==");
-    let q = priorityq.PriorityQueue<Job>(func(Job a, Job b): int {
-        return a.priority - b.priority;
-    });
+    let q = priorityq.PriorityQueue<Job>(
+        func(Job a, Job b): int { return a.priority - b.priority; }
+    );
     q.push(Job("ship-release", 3));
     q.push(Job("fix-outage", 1));
     q.push(Job("answer-email", 5));

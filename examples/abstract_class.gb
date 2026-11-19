@@ -11,35 +11,57 @@ import io;
 @abstract
 class Repository {
     string name;
-    func Repository(string name) { this.name = name; }
-    func describe(): string { return "repo:${this.name}"; }
+    func Repository(string name) {
+        this.name = name;
+    }
+    func describe(): string {
+        return "repo:${this.name}";
+    }
 }
 
 class UsersRepository extends Repository {
-    func UsersRepository() { parent("users"); }
+    func UsersRepository() {
+        parent("users");
+    }
 }
 
 /* Method-level marker. The class becomes abstract by transitivity:
    any subclass that doesn't override `read` stays abstract too. */
 class Storage {
     @abstract
-    func read(string key): string { return ""; }
-    func describe(): string { return "storage"; }
+    func read(string key): string {
+        return "";
+    }
+    func describe(): string {
+        return "storage";
+    }
 }
 
 class MemoryStorage extends Storage {
     dict<string, string> data;
-    func MemoryStorage() { this.data = {}; }
-    func read(string key): string { return this.data[key] as string; }
+    func MemoryStorage() {
+        this.data = {};
+    }
+    func read(string key): string {
+        return this.data[key] as string;
+    }
 }
 
-try { Repository("nope"); io.println("FAIL"); }
-catch (RuntimeError e) { io.println(e.message); }
+try {
+    Repository("nope");
+    io.println("FAIL");
+} catch (RuntimeError e) {
+    io.println(e.message);
+}
 
 io.println(UsersRepository().describe());
 
-try { Storage(); io.println("FAIL"); }
-catch (RuntimeError e) { io.println(e.message); }
+try {
+    Storage();
+    io.println("FAIL");
+} catch (RuntimeError e) {
+    io.println(e.message);
+}
 
 let s = MemoryStorage();
 s.data["k"] = "v";

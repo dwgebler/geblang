@@ -1,0 +1,7 @@
+module union_alias_source;
+
+export type Id = int | string;
+
+export func normalise(Id id): string {
+    return "${id}";
+}

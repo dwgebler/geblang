@@ -24,7 +24,7 @@ func TestJSONStringifyScalars(t *testing.T) {
 		{nil, "null"},
 		{"a\"b\n", `"a\"b\n"`},
 		{[]int64{1, 2}, "[1,2]"},
-		{big.NewRat(7, 2), "3.5000000000"},
+		{big.NewRat(7, 2), "3.5"},
 		{[]byte("abc"), `"YWJj"`},
 	}
 	for _, c := range cases {
@@ -38,7 +38,7 @@ func TestJSONParseClassifiesNumbers(t *testing.T) {
 	if v := JSONParse("42"); v != int64(42) {
 		t.Errorf("parse 42 = %T %v", v, v)
 	}
-	if v := JSONParse("3.5"); JSONStringify(v) != "3.5000000000" {
+	if v := JSONParse("3.5"); JSONStringify(v) != "3.5" {
 		t.Errorf("parse 3.5 round trip = %q", JSONStringify(v))
 	}
 }

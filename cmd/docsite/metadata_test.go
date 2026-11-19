@@ -39,7 +39,7 @@ func TestPageMetaHTMLWithBaseURL(t *testing.T) {
 	withDocsiteFlags(t, "https://example.com/docs", "Gebweb", "https://example.com/og.png")
 	got := pageMetaHTML(page{Output: "routing.html", Title: "Routing", HTML: "<h1>Routing</h1><p>Routes map \"paths\" to handlers.</p>"})
 	for _, want := range []string{
-		`<meta name="description" content="Routes map &#34;paths&#34; to handlers.">`,
+		`<meta name="description" content="Routing in the Gebweb manual. Routes map &#34;paths&#34; to handlers.">`,
 		`<meta property="og:type" content="article">`,
 		`<meta property="og:title" content="Routing - Gebweb Manual">`,
 		`<meta property="og:url" content="https://example.com/docs/routing.html">`,
@@ -77,5 +77,27 @@ func TestLayoutUsesSiteName(t *testing.T) {
 	}
 	if strings.Contains(got, "Geblang Manual") || strings.Contains(got, "Geblang Reference Manual") {
 		t.Fatalf("hard-coded Geblang name remains")
+	}
+}
+
+func TestManualTitleAndDescriptionDoNotRepeatTheManualName(t *testing.T) {
+	old := siteName
+	siteName = "Gebweb"
+	defer func() { siteName = old }()
+	index := page{Title: "Gebweb Manual", HTML: "<p>An opinionated web framework.</p>"}
+	if got := pageTitleText(index); got != "Gebweb Manual" {
+		t.Fatalf("title %q", got)
+	}
+	if got := metaDescription(index); got != "An opinionated web framework." {
+		t.Fatalf("description %q", got)
+	}
+	clipped := page{Title: "Gebweb Manual", HTML: "<p>" + strings.Repeat("word ", 60) + "</p>"}
+	if got := metaDescription(clipped); !strings.HasSuffix(got, "...") {
+		t.Fatalf("a clipped description must keep its ellipsis: %q", got)
+	}
+	long := page{Title: "Routing", HTML: "<p>" + strings.Repeat("Routes map paths. ", 20) + "</p>"}
+	got := metaDescription(long)
+	if len(got) > 160 || !strings.HasPrefix(got, "Routing in the Gebweb manual. ") || !strings.HasSuffix(got, ".") {
+		t.Fatalf("description %q (%d)", got, len(got))
 	}
 }

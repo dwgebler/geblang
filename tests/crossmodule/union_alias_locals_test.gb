@@ -1,0 +1,33 @@
+/**
+ * @title Imported union aliases on locals
+ * @summary An exported union alias types a local variable in the importing module, with the same branch checks.
+ */
+import test;
+import union_alias_source;
+from union_alias_source import Id;
+
+func raw(any x): any {
+    return x;
+}
+
+class UnionAliasCrossModuleTest extends test.Test {
+    @test
+    func importedAliasTypesLocals(): void {
+        union_alias_source.Id a = 1;
+        Id b = "x";
+        a = "y";
+        this.assertEquals("y", union_alias_source.normalise(a));
+        this.assertEquals("x", union_alias_source.normalise(b));
+    }
+
+    @test
+    func importedAliasRejectsOtherValues(): void {
+        string message = "";
+        try {
+            Id c = raw(2.5);
+        } catch (TypeError e) {
+            message = e.message;
+        }
+        this.assertEquals("type error: cannot assign decimal to int | string", message);
+    }
+}

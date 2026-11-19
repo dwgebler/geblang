@@ -56,8 +56,7 @@ class ScaffolderTest extends test.Test {
         /* name; multiChoose PHP (space, enter); version 1 (8.5); runtime 2
          * (apache); port 8080; blank cpu/mem/gpu/hostname; database 2
          * (postgres); blank cache/mail. */
-        let project = io.withStdin("shop\n \r1\n2\n8080\n\n\n\n\n2\n\n\n",
-            func(): any { return prompts.gather(); }) as model.Project;
+        let project = io.withStdin("shop\n \r1\n2\n8080\n\n\n\n\n2\n\n\n", func(): any { return prompts.gather(); }) as model.Project;
         this.assertEquals("shop", project.name);
         this.assertEquals(1, project.services.length());
         let svc = project.services[0];
@@ -109,14 +108,22 @@ class ScaffolderTest extends test.Test {
 
     @test
     func phpArchitectures(): void {
-        let nginx = templates.dockerfileFor(model.Service("php", "PHP", "8.5", "nginx", "composer", 8080));
+        let nginx = templates.dockerfileFor(
+            model.Service("php", "PHP", "8.5", "nginx", "composer", 8080)
+        );
         this.assertTrue(nginx.contains("php:8.5-fpm-alpine"));
-        let apache = templates.dockerfileFor(model.Service("php", "PHP", "8.5", "apache", "composer", 8080));
+        let apache = templates.dockerfileFor(
+            model.Service("php", "PHP", "8.5", "apache", "composer", 8080)
+        );
         this.assertTrue(apache.contains("php:8.5-apache"));
-        let cliDf = templates.dockerfileFor(model.Service("php", "PHP", "8.5", "cli", "composer", 8080));
+        let cliDf = templates.dockerfileFor(
+            model.Service("php", "PHP", "8.5", "cli", "composer", 8080)
+        );
         this.assertTrue(cliDf.contains("php:8.5-cli"));
         this.assertTrue(cliDf.contains("CMD"));
-        let franken = templates.dockerfileFor(model.Service("php", "PHP", "8.5", "frankenphp", "composer", 8080));
+        let franken = templates.dockerfileFor(
+            model.Service("php", "PHP", "8.5", "frankenphp", "composer", 8080)
+        );
         this.assertTrue(franken.contains("dunglas/frankenphp:1-php8.5"));
     }
 
@@ -138,7 +145,9 @@ class ScaffolderTest extends test.Test {
         this.assertTrue(services.contains("proxy"));
         /* the fpm app publishes nothing; nginx publishes its port */
         this.assertTrue(!(services["php"] as dict<string, any>).contains("ports"));
-        this.assertTrue(((services["proxy"] as dict<string, any>)["ports"] as list<any>).contains("8080:8080"));
+        this.assertTrue(
+            ((services["proxy"] as dict<string, any>)["ports"] as list<any>).contains("8080:8080")
+        );
         this.assertTrue(templates.nginxConfig(project).contains("listen 8080;"));
     }
 
@@ -157,7 +166,9 @@ class ScaffolderTest extends test.Test {
         project.services.push(model.Service("php", "PHP", "8.5", "apache", "composer", 8080));
         project.database = "postgres";
         string out = io.tempDir() + "/scaffold-test-out";
-        if (io.exists(out)) { io.remove(out); }
+        if (io.exists(out)) {
+            io.remove(out);
+        }
         let written = templates.write(project, out);
         this.assertTrue(written.contains("compose.yaml"));
         this.assertTrue(written.contains("docker/php/Dockerfile"));

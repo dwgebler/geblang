@@ -638,6 +638,10 @@ func lowerStringSearch(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, a
 }
 
 func lowerStringTrim(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, args []ast.CallArgument) bool {
+	if len(args) == 1 {
+		l.emitStringHelper("StringTrimSet", sel.Object, args[0].Value)
+		return true
+	}
 	if len(args) != 0 {
 		return false
 	}
@@ -649,6 +653,14 @@ func lowerStringTrim(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, arg
 }
 
 func lowerStringCase(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, args []ast.CallArgument) bool {
+	if len(args) == 1 {
+		helper := "StringLowerN"
+		if sel.Name.Value == "upper" {
+			helper = "StringUpperN"
+		}
+		l.emitStringHelper(helper, sel.Object, args[0].Value)
+		return true
+	}
 	if len(args) != 0 {
 		return false
 	}
@@ -750,8 +762,21 @@ func registerStringErgoMethods(t map[builtinMethodKey]builtinMethodFn) {
 			return true
 		}
 	}
-	t[builtinMethodKey{types.KindString, "trimStart"}] = noArg("StringTrimStart")
-	t[builtinMethodKey{types.KindString, "trimEnd"}] = noArg("StringTrimEnd")
+	trimSide := func(bare, withSet string) builtinMethodFn {
+		return func(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, args []ast.CallArgument) bool {
+			switch len(args) {
+			case 0:
+				l.emitStringHelper(bare, sel.Object)
+			case 1:
+				l.emitStringHelper(withSet, sel.Object, args[0].Value)
+			default:
+				return false
+			}
+			return true
+		}
+	}
+	t[builtinMethodKey{types.KindString, "trimStart"}] = trimSide("StringTrimStart", "StringTrimStartSet")
+	t[builtinMethodKey{types.KindString, "trimEnd"}] = trimSide("StringTrimEnd", "StringTrimEndSet")
 	t[builtinMethodKey{types.KindString, "reverse"}] = noArg("StringReverse")
 	t[builtinMethodKey{types.KindString, "chars"}] = noArg("StringChars")
 	t[builtinMethodKey{types.KindString, "codePoints"}] = noArg("StringCodePoints")
@@ -1286,8 +1311,12 @@ func (l *Lowerer) hofMethodReturnType(method string, recv *types.Type, args []as
 }
 
 func (l *Lowerer) closureReturnType(arg ast.Expression) *types.Type {
-	if fn, ok := arg.(*ast.FunctionLiteral); ok && fn.ReturnType != nil {
-		if t := l.resolveTypeRef(fn.ReturnType); t != nil {
+	if fn, ok := arg.(*ast.FunctionLiteral); ok {
+		if fn.ReturnType != nil {
+			if t := l.resolveTypeRef(fn.ReturnType); t != nil {
+				return t
+			}
+		} else if t := l.callbackReturns[fn]; t != nil {
 			return t
 		}
 	}

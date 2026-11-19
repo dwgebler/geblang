@@ -216,10 +216,10 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 			return false
 		}
 		if len(v.ElementTypes) >= 1 {
-			return typeNameSatisfies(elementTagBase(v.ElementTypes[0]), args[0])
+			return elementTagSatisfies(v.ElementTypes[0], args[0])
 		}
 		for _, el := range v.Elements {
-			if !valueMatchesType(el, args[0]) {
+			if !elementValueMatches(el, args[0]) {
 				return false
 			}
 		}
@@ -229,10 +229,10 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 			return false
 		}
 		if len(v.ElementTypes) >= 1 {
-			return typeNameSatisfies(elementTagBase(v.ElementTypes[0]), args[0])
+			return elementTagSatisfies(v.ElementTypes[0], args[0])
 		}
 		for _, e := range v.Elements {
-			if !valueMatchesType(e.Value, args[0]) {
+			if !elementValueMatches(e.Value, args[0]) {
 				return false
 			}
 		}
@@ -242,11 +242,11 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 			return false
 		}
 		if len(v.ElementTypes) >= 2 {
-			return typeNameSatisfies(elementTagBase(v.ElementTypes[0]), args[0]) && typeNameSatisfies(elementTagBase(v.ElementTypes[1]), args[1])
+			return elementTagSatisfies(v.ElementTypes[0], args[0]) && elementTagSatisfies(v.ElementTypes[1], args[1])
 		}
 		matches := true
 		v.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
-			if !valueMatchesType(e.Key, args[0]) || !valueMatchesType(e.Value, args[1]) {
+			if !elementValueMatches(e.Key, args[0]) || !elementValueMatches(e.Value, args[1]) {
 				matches = false
 				return false
 			}
@@ -316,6 +316,37 @@ func checkDictWriteTags(dict runtime.Dict, key, value runtime.Value) error {
 		return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to dict<%s, %s>", value.TypeName(), dict.ElementTypes[0], dict.ElementTypes[1])}}
 	}
 	return nil
+}
+
+// elementTagSatisfies reports whether a stored element tag meets an instanceof argument; a nullable tag needs a nullable argument.
+func elementTagSatisfies(tag, want string) bool {
+	if want == "any" || want == "?any" {
+		return true
+	}
+	if strings.HasPrefix(tag, "?") && !elementArgAllowsNull(want) {
+		return false
+	}
+	return typeNameSatisfies(strings.TrimPrefix(tag, "?"), strings.TrimPrefix(want, "?"))
+}
+
+// elementValueMatches checks one element of an untagged collection; null meets a nullable argument.
+func elementValueMatches(value runtime.Value, want string) bool {
+	if _, isNull := value.(runtime.Null); isNull {
+		return want == "any" || elementArgAllowsNull(want)
+	}
+	return valueMatchesType(value, strings.TrimPrefix(want, "?"))
+}
+
+func elementArgAllowsNull(want string) bool {
+	if strings.HasPrefix(want, "?") {
+		return true
+	}
+	for _, arm := range strings.Split(want, "|") {
+		if strings.TrimSpace(arm) == "null" {
+			return true
+		}
+	}
+	return false
 }
 
 // valueSatisfiesElementTag is the element-tag write barrier: name-level
@@ -871,6 +902,9 @@ func valueMatchesTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 	if isCallableTypeName(typeName) {
 		return runtime.IsCallableValue(value)
 	}
+	if strings.EqualFold(typeName, "iterable") {
+		return forInAccepts(value)
+	}
 	if isGeneratorTypeName(typeName) {
 		_, ok := value.(*runtime.Generator)
 		return ok
@@ -1060,6 +1094,19 @@ func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 		return typ.Nullable
 	}
 	typeName := simpleTypeName(typ.Name)
+	if strings.EqualFold(typeName, "iterable") {
+		if !forInAccepts(value) {
+			return false
+		}
+		if len(typ.Arguments) == 1 && typ.Arguments[0].Name != "any" && !typeParams[strings.ToLower(typ.Arguments[0].Name)] {
+			for _, elem := range runtime.IterableElementsToCheck(value) {
+				if !matchValueToTypeRef(typeParams, elem, typ.Arguments[0]) {
+					return false
+				}
+			}
+		}
+		return true
+	}
 	if typ.ListAlias || typeName == "list" {
 		if value.TypeName() != "list" {
 			return false

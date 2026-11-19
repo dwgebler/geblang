@@ -133,6 +133,10 @@ var TestBaseMethods = map[string]FunctionDoc{
 	"assertEqual":              Fn([]string{"any expected", "any actual"}, "void", "Alias for assertEquals."),
 	"assertNotEquals":          Fn([]string{"any expected", "any actual"}, "void", "Fails when values are deeply equal."),
 	"assertNotEqual":           Fn([]string{"any expected", "any actual"}, "void", "Alias for assertNotEquals."),
+	"equal":                    Fn([]string{"any expected", "any actual"}, "void", "Alias for assertEquals."),
+	"isTrue":                   Fn([]string{"bool value"}, "void", "Alias for assertTrue."),
+	"isFalse":                  Fn([]string{"bool value"}, "void", "Alias for assertFalse."),
+	"notNull":                  Fn([]string{"any value"}, "void", "Alias for assertNotNull."),
 	"assertTrue":               Fn([]string{"bool value"}, "void", "Fails unless value is true."),
 	"assertFalse":              Fn([]string{"bool value"}, "void", "Fails unless value is false."),
 	"assertNull":               Fn([]string{"any value"}, "void", "Fails unless value is null."),
@@ -172,21 +176,21 @@ var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 		"searchPattern":      Fn([]string{"string pattern"}, "list<int>", "Start position of every regex match."),
 		"startsWith":         Fn([]string{"string prefix"}, "bool", "Prefix check."),
 		"endsWith":           Fn([]string{"string suffix"}, "bool", "Suffix check."),
-		"substring":          Fn([]string{"int start", "int end"}, "string", "Substring by code-point range."),
-		"slice":              Fn([]string{"int start", "int end"}, "string", "Alias for substring."),
+		"substring":          Fn([]string{"int start", "int end = length"}, "string", "Substring by code-point range."),
+		"slice":              Fn([]string{"int start", "int end = length"}, "string", "Alias for substring."),
 		"split":              Fn([]string{"string separator"}, "list<string>", "Split by separator."),
-		"replace":            Fn([]string{"string from", "string to"}, "string", "Replace all occurrences."),
+		"replace":            Fn([]string{"string from", "string to", "int n = -1"}, "string", "Replace occurrences; n limits how many (all by default)."),
 		"splitRegex":         Fn([]string{"string pattern"}, "list<string>", "Split by a regex pattern."),
 		"replaceRegex":       Fn([]string{"string pattern", "string replacement"}, "string", "Replace all regex matches; $1 / $2 capture-group references in replacement supported."),
 		"matchesRegex":       Fn([]string{"string pattern"}, "bool", "Test whether the string contains a regex match."),
-		"trim":               Fn([]string{}, "string", "Remove surrounding whitespace."),
-		"trimStart":          Fn([]string{}, "string", "Remove leading whitespace."),
-		"trimEnd":            Fn([]string{}, "string", "Remove trailing whitespace."),
+		"trim":               Fn([]string{}, "string", "Remove surrounding whitespace, or any of the given characters.").Or("string chars"),
+		"trimStart":          Fn([]string{}, "string", "Remove leading whitespace, or any of the given characters.").Or("string chars"),
+		"trimEnd":            Fn([]string{}, "string", "Remove trailing whitespace, or any of the given characters.").Or("string chars"),
 		"padStart":           Fn([]string{"int width", "string fill = \" \""}, "string", "Left-pad to a width."),
 		"padEnd":             Fn([]string{"int width", "string fill = \" \""}, "string", "Right-pad to a width."),
 		"repeat":             Fn([]string{"int n"}, "string", "Concatenate N copies."),
-		"lower":              Fn([]string{}, "string", "Lowercase."),
-		"upper":              Fn([]string{}, "string", "Uppercase."),
+		"lower":              Fn([]string{}, "string", "Lowercase; with n, only the first n characters (the last -n when negative).").Or("int n"),
+		"upper":              Fn([]string{}, "string", "Uppercase; with n, only the first n characters (the last -n when negative).").Or("int n"),
 		"capitalize":         Fn([]string{}, "string", "Upper-case the first character, lower-case the rest."),
 		"title":              Fn([]string{}, "string", "Title-case each whitespace-separated word."),
 		"isBlank":            Fn([]string{}, "bool", "True when empty or only whitespace."),
@@ -209,7 +213,7 @@ var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 		"toFloatOrNull":      Fn([]string{}, "?float", "Parses a float or returns null for invalid or out-of-range text."),
 		"toInt":              Fn([]string{"int base = 10"}, "int", "Parse as int in base 2-36."),
 		"toFloat":            Fn([]string{}, "float", "Parse as float."),
-		"toDecimal":          Fn([]string{}, "decimal", "Parse as decimal."),
+		"toDecimal":          Fn([]string{"int places = 0"}, "decimal", "Parse as decimal, optionally rounded to places digits."),
 		"toBool":             Fn([]string{}, "bool", "Parse as bool (true/false)."),
 		"isInt":              Fn([]string{}, "bool", "True if toInt would succeed (same parse)."),
 		"isDecimal":          Fn([]string{}, "bool", "True if toDecimal would succeed (same parse)."),
@@ -263,7 +267,7 @@ var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 		"isZero":     Fn([]string{}, "bool", "True if == 0."),
 		"isInt":      Fn([]string{}, "bool", "True if a whole number (denominator 1)."),
 		"format":     Fn([]string{"int scale"}, "string", "Fixed-scale string formatting."),
-		"toString":   Fn([]string{"int scale = 10"}, "string", "Decimal-string formatting at scale."),
+		"toString":   Fn([]string{"int scale = default"}, "string", "Default display (up to 10 places, trailing zeros dropped), or exactly scale places when given."),
 		"toInt":      Fn([]string{}, "int", "Truncate to int."),
 		"toFloat":    Fn([]string{}, "float", "Convert to float (may lose precision)."),
 		"toDecimal":  Fn([]string{"int places = 0"}, "decimal", "Round to places digits."),
@@ -310,14 +314,14 @@ var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 		"lastIndexOf":    Fn([]string{"any value"}, "int", "Last index of value, or -1."),
 		"search":         Fn([]string{"any value"}, "list<int>", "Indices of every element equal to value, or where the callable predicate returns true."),
 		"searchPattern":  Fn([]string{"string pattern"}, "list<int>", "Indices of every string element matching the regex."),
-		"slice":          Fn([]string{"int start", "int end"}, "list<any>", "Sub-list."),
+		"slice":          Fn([]string{"int start", "int end = length"}, "list<any>", "Sub-list."),
 		"reverse":        Fn([]string{}, "list<any>", "Reverses in place; returns the list."),
 		"reversed":       Fn([]string{}, "list<any>", "Returns a reversed copy; receiver unchanged."),
 		"sort":           Fn([]string{"func compare = null"}, "list<any>", "Sorts in place and returns the list. No argument = natural order; with a callback, either a less-than predicate (a, b) -> bool or a three-way comparator (a, b) -> int (e.g. string.compare)."),
 		"sorted":         Fn([]string{"func compare = null"}, "list<any>", "Sorted copy; receiver unchanged (same optional callback as sort)."),
 		"map":            Fn([]string{"func fn"}, "list<any>", "Apply fn to each element."),
 		"filter":         Fn([]string{"func predicate"}, "list<any>", "Keep elements matching predicate."),
-		"reduce":         Fn([]string{"any initial", "func fn"}, "any", "Left fold."),
+		"reduce":         Fn([]string{"func fn", "any initial"}, "any", "Left fold."),
 		"find":           Fn([]string{"func predicate"}, "any", "First element matching predicate, or null."),
 		"any":            Fn([]string{"func predicate"}, "bool", "True if any element matches."),
 		"all":            Fn([]string{"func predicate"}, "bool", "True if every element matches."),
@@ -337,7 +341,7 @@ var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 		"partition":      Fn([]string{"func predicate"}, "list<list<any>>", "Splits into [matching, non-matching]."),
 		"chunk":          Fn([]string{"int size"}, "list<list<any>>", "Splits into fixed-size sublists."),
 		"groupBy":        Fn([]string{"func key"}, "dict<any, list<any>>", "Groups elements by key function."),
-		"indexBy":        Fn([]string{"func key"}, "dict<any, any>", "Maps each key to its element."),
+		"indexBy":        Fn([]string{"func predicate"}, "int", "Index of the first element matching the predicate, or -1."),
 		"frequencies":    Fn([]string{}, "dict<any, int>", "Counts occurrences of each element."),
 		"mode":           Fn([]string{}, "any", "Most frequent element."),
 		"sortBy":         Fn([]string{"func selector", "bool descending = false"}, "list<any>", "Sorts in place by selector key (pass true for descending); returns the list."),
@@ -347,7 +351,7 @@ var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 		"averageBy":      Fn([]string{"func selector"}, "float", "Mean of selector values."),
 		"topK":           Fn([]string{"int k"}, "list<any>", "The k greatest elements."),
 		"bottomK":        Fn([]string{"int k"}, "list<any>", "The k least elements."),
-		"topBy":          Fn([]string{"int k", "func selector"}, "list<any>", "The k elements with the greatest selector value."),
+		"topBy":          Fn([]string{"func selector", "int k"}, "list<any>", "The k elements with the greatest selector value."),
 		"binarySearch":   Fn([]string{"any value"}, "int", "Index of value in a sorted list, or -1."),
 		"binarySearchBy": Fn([]string{"func selector", "any targetKey"}, "int", "Index of the element whose selector key equals targetKey in a list sorted by that key, or -1."),
 		"lowerBound":     Fn([]string{"any value"}, "int", "First index >= value in a sorted list."),
@@ -356,7 +360,7 @@ var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 		"differenceBy":   Fn([]string{"list<any> other", "func key"}, "list<any>", "Difference compared by key function."),
 		"intersection":   Fn([]string{"list<any> other"}, "list<any>", "Elements also in other."),
 		"intersectionBy": Fn([]string{"list<any> other", "func key"}, "list<any>", "Intersection compared by key function."),
-		"containsBy":     Fn([]string{"func predicate"}, "bool", "True when any element matches the predicate."),
+		"containsBy":     Fn([]string{"any value", "func key"}, "bool", "True when key(element) equals value for any element."),
 		"zip":            Fn([]string{"list<any> other"}, "list<list<any>>", "Pairs elements positionally with other."),
 		"zipWith":        Fn([]string{"list<any> other", "func combine"}, "list<any>", "Combines elements positionally with other."),
 		"flatMap":        Fn([]string{"func transform"}, "list<any>", "Maps each element to a list and concatenates the results."),
@@ -513,8 +517,8 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"withContext":    Fn([]string{"dict<string, any> options", "callable body"}, "any", "Runs a body with scoped stdin/stdout/stderr, terminal and quiet options; restores the previous context even on failure."),
 		"isTerminal":     Fn([]string{}, "bool", "Reports whether CLI stderr is a terminal, honoring the active context override."),
 		"prompt":         Fn([]string{"string label", "string default = \"\""}, "string", "Reads interactive console input."),
-		"password":       Fn([]string{"string label"}, "string", "Reads masked console input."),
-		"secret":         Fn([]string{"string label"}, "string", "Reads masked console input."),
+		"password":       Fn([]string{"string prompt = \"\""}, "string", "Reads masked console input."),
+		"secret":         Fn([]string{"string prompt = \"\""}, "string", "Reads masked console input."),
 		"confirm":        Fn([]string{"string label", "bool default = false"}, "bool", "Retries invalid yes/no answers, uses the default on blank input and raises IOError at EOF."),
 		"choose":         Fn([]string{"string label", "list<string> choices", "?int defaultIndex = null"}, "string", "Retries invalid choices, uses a zero-based default on blank input and raises IOError at EOF."),
 		"multiChoose":    Fn([]string{"string label", "list<string> choices", "list<int> preselected = []"}, "list<string>", "Selects multiple choices: an arrow-key checkbox UI on a TTY, numbered comma-separated input otherwise."),
@@ -561,13 +565,13 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"length":          Fn([]string{"any value"}, "int", "Returns the size of a collection or string."),
 		"isEmpty":         Fn([]string{"any value"}, "bool", "Reports whether a collection is empty."),
 		"contains":        Fn([]string{"any collection", "any value"}, "bool", "Checks collection membership."),
-		"containsBy":      Fn([]string{"any collection", "any value", "func eq"}, "bool", "Checks collection membership using a custom equality predicate."),
+		"containsBy":      Fn([]string{"list<any> values", "any value", "func key"}, "bool", "True when key(element) equals value for any element."),
 		"reverse":         Fn([]string{"list<any> values"}, "list<any>", "Returns values in reverse order."),
 		"sort":            Fn([]string{"list<any> values"}, "list<any>", "Returns sorted values."),
 		"sorted":          Fn([]string{"list<any> values", "func compare = null"}, "list<any>", "Sorted copy. No callback = natural order; callback is a less-than predicate (a,b)->bool or a three-way comparator (a,b)->int."),
 		"sortBy":          Fn([]string{"list<any> values", "func keySelector", "bool descending = false"}, "list<any>", "Sorted by the selector's key; pass true to sort descending."),
 		"join":            Fn([]string{"list<any> values", "string separator"}, "string", "Joins values into a string."),
-		"range":           Fn([]string{"int start", "int end", "int step = 1"}, "list<int>", "Builds an integer range."),
+		"range":           Fn([]string{"int start", "int end", "int step = 1"}, "generator<int>", "Lazy integer range; range(end) starts at 0.").Or("int end"),
 		"take":            Fn([]string{"any iterable", "int count"}, "list<any>", "Takes the first values from an iterable."),
 		"map":             Fn([]string{"list<any> values", "func callback"}, "list<any>", "Maps values through a callback."),
 		"lazyMap":         Fn([]string{"any iterable", "func callback"}, "generator<any>", "Lazy map that yields without materialising the full list."),
@@ -585,13 +589,13 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"groupBy":         Fn([]string{"list<any> values", "func selector"}, "dict<any, list<any>>", "Groups values by selector."),
 		"chunk":           Fn([]string{"list<any> values", "int size"}, "list<list<any>>", "Splits the list into sub-lists of size N (last may be shorter)."),
 		"partition":       Fn([]string{"list<any> values", "func predicate"}, "dict<string, list<any>>", "Splits into {matches, rest} lists."),
-		"indexBy":         Fn([]string{"list<any> values", "func selector"}, "dict<any, any>", "Indexes values by selector; later collisions overwrite earlier."),
+		"indexBy":         Fn([]string{"list<any> values", "func predicate"}, "int", "Index of the first value matching the predicate, or -1."),
 		"binarySearch":    Fn([]string{"list<any> values", "any target"}, "int", "Searches a sorted list; -1 if not found."),
 		"lowerBound":      Fn([]string{"list<any> values", "any target"}, "int", "Index of the first element >= target in a sorted list."),
 		"upperBound":      Fn([]string{"list<any> values", "any target"}, "int", "Index of the first element > target in a sorted list."),
 		"minBy":           Fn([]string{"list<any> values", "func keySelector"}, "any", "Element with the smallest selector key."),
 		"maxBy":           Fn([]string{"list<any> values", "func keySelector"}, "any", "Element with the largest selector key."),
-		"topBy":           Fn([]string{"list<any> values", "int count", "func keySelector"}, "list<any>", "Top N by selector key."),
+		"topBy":           Fn([]string{"list<any> values", "func keySelector", "int count"}, "list<any>", "Top N by selector key."),
 		"topK":            Fn([]string{"list<any> values", "int count"}, "list<any>", "Returns the largest values."),
 		"bottomK":         Fn([]string{"list<any> values", "int count"}, "list<any>", "Returns the smallest values."),
 		"sumBy":           Fn([]string{"list<any> values", "func selector"}, "number", "Sum of selector results."),
@@ -685,7 +689,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"shutdown":           Fn([]string{"Server server", "int timeoutMs = 5000"}, "void", "Gracefully shuts down a server."),
 		"serverStats":        Fn([]string{"Server server"}, "dict<string, int>", "Pool stats: active, queued, rejected, maxConcurrent."),
 		"wait":               Fn([]string{"Server server"}, "void", "Blocks until the server handle stops serving (close or shutdown from anywhere)."),
-		"stream":             Fn([]string{"int status = 200", "dict<string, string> headers = {}"}, "Response", "Creates a streaming response."),
+		"stream":             Fn([]string{"func handler"}, "Response", "Creates a streaming response whose handler writes the body."),
 		"streamWrite":        Fn([]string{"Stream stream", "string chunk"}, "void", "Writes a streaming response chunk."),
 		"streamFlush":        Fn([]string{"Stream stream"}, "void", "Flushes a streaming response."),
 		"streamClose":        Fn([]string{"Stream stream"}, "void", "Closes a stream."),
@@ -824,7 +828,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"readBytes":       Fn([]string{"string path"}, "bytes", "Reads a file as bytes.").Or("Stream stream", "int n"),
 		"writeBytes":      Fn([]string{"string path", "bytes data"}, "void", "Writes bytes to a file."),
 		"exists":          Fn([]string{"string path"}, "bool", "Checks whether a path exists."),
-		"open":            Fn([]string{"string path", "string mode = \"r\""}, "File", "Opens a file handle. Modes: r, w, a, r+, w+, a+, x (exclusive create), x+."),
+		"open":            Fn([]string{"string path", "string mode"}, "File", "Opens a file handle. Modes: r, w, a, r+, w+, a+, x (exclusive create), x+."),
 		"seek":            Fn([]string{"File handle", "int offset", "string whence = \"start\""}, "int", "Repositions a file handle; whence is \"start\", \"current\", or \"end\". Returns the new offset."),
 		"tell":            Fn([]string{"File handle"}, "int", "Returns the current byte offset of a file handle."),
 		"truncate":        Fn([]string{"File handle", "int size"}, "void", "Resizes the open file to the given length."),
@@ -893,7 +897,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"tryParse":         Fn([]string{"string text"}, "dict<string, any>", "Parses JSON without throwing."),
 		"validateDetailed": Fn([]string{"string text"}, "dict<string, any>", "Returns detailed validation information."),
 		"reader":           Fn([]string{"Stream stream"}, "JsonStreamInterface", "Creates a JSON stream reader."),
-		"stream":           Fn([]string{"Stream stream"}, "JsonStreamInterface", "Creates a JSON stream reader.").Or("any source", "any handler"),
+		"stream":           Fn([]string{"any source", "any handler"}, "JsonStreamInterface", "Drives a streaming JSON parse through callback methods on handler."),
 	}},
 	"llm": {Functions: map[string]FunctionDoc{
 		"client": Fn([]string{"dict<string, any> opts"}, "Client", "Build a provider-agnostic LLM client. opts.provider picks the backend (\"openai\" / \"anthropic\" / \"bedrock\"); remaining keys are validated by the chosen provider."),
@@ -923,8 +927,8 @@ var StdlibCatalog = map[string]ModuleDoc{
 	}},
 	"math": {Functions: map[string]FunctionDoc{
 		"abs":        Fn([]string{"number value"}, "number", "Absolute value."),
-		"min":        Fn([]string{"number left", "number right"}, "number", "Minimum value.").Or("...number values"),
-		"max":        Fn([]string{"number left", "number right"}, "number", "Maximum value.").Or("...number values"),
+		"min":        Fn([]string{"number left", "number right"}, "number", "Minimum value.").Or("number first", "...number rest"),
+		"max":        Fn([]string{"number left", "number right"}, "number", "Maximum value.").Or("number first", "...number rest"),
 		"clamp":      Fn([]string{"number value", "number min", "number max"}, "number", "Clamps a value."),
 		"lerp":       Fn([]string{"number a", "number b", "number t"}, "number", "Linear interpolation a+(b-a)*t. int/decimal inputs return an exact decimal; float returns float (1.10.0)."),
 		"remap":      Fn([]string{"number x", "number inLow", "number inHigh", "number outLow", "number outHigh"}, "number", "Linearly remaps x from [inLow,inHigh] onto [outLow,outHigh]. int/decimal inputs return an exact decimal; float returns float (1.10.0)."),
@@ -1408,7 +1412,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"addMonths":     Fn([]string{"int unix", "int months"}, "int", "Adds months to a Unix timestamp."),
 		"addYears":      Fn([]string{"int unix", "int years"}, "int", "Adds years to a Unix timestamp."),
 		"diff":          Fn([]string{"int from", "int to"}, "dict<string, any>", "Returns the difference between two Unix timestamps."),
-		"toLocal":       Fn([]string{"int unix", "string zone = \"UTC\""}, "string", "Renders a Unix timestamp in a zone."),
+		"toLocal":       Fn([]string{"int unix", "string zone"}, "string", "Renders a Unix timestamp in a zone."),
 		"toUtc":         Fn([]string{"int unix"}, "string", "Renders a Unix timestamp as UTC RFC3339."),
 		"now":           Fn([]string{"string zone = \"UTC\""}, "dict<string, any>", "Returns parts of the current date/time."),
 		"nowInstant":    Fn([]string{}, "Instant", "Returns the current Instant value."),
@@ -1501,7 +1505,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"sanitizeHtml":    Fn([]string{"string html"}, "string", "Sanitizes untrusted HTML against a safe allow-list (keeps common formatting tags, strips scripts/styles/event handlers)."),
 	}},
 	"errors": {Functions: map[string]FunctionDoc{
-		"new":           Fn([]string{"string class", "string message", "dict<string, any> fields = {}"}, "Error", "Constructs a new error value."),
+		"new":           Fn([]string{"string class", "string message = \"\""}, "Error", "Constructs a new error value."),
 		"message":       Fn([]string{"Error err"}, "string", "Returns the error message."),
 		"class":         Fn([]string{"Error err"}, "string", "Returns the error class name."),
 		"is":            Fn([]string{"Error err", "string class"}, "bool", "Reports whether err's class matches (including ancestors)."),
@@ -1662,12 +1666,12 @@ var StdlibCatalog = map[string]ModuleDoc{
 	}},
 	"random": {Functions: map[string]FunctionDoc{
 		"seed":     Fn([]string{"int seed"}, "void", "Seeds the deterministic PRNG (not for cryptography)."),
-		"next":     Fn([]string{}, "int", "Returns the next pseudo-random int."),
+		"next":     Fn([]string{}, "int", "Returns the next pseudo-random int.").Or("Random rng"),
 		"intRange": Fn([]string{"int min", "int max"}, "int", "Returns a pseudo-random int in [min, max].").Or("Random rng", "int min", "int max"),
-		"float":    Fn([]string{}, "float", "Returns a pseudo-random float in [0, 1)."),
-		"bool":     Fn([]string{}, "bool", "Returns a pseudo-random bool."),
-		"choice":   Fn([]string{"list<any> items"}, "any", "Returns a random element."),
-		"shuffle":  Fn([]string{"list<any> items"}, "list<any>", "Returns a shuffled copy."),
+		"float":    Fn([]string{}, "float", "Returns a pseudo-random float in [0, 1).").Or("Random rng"),
+		"bool":     Fn([]string{}, "bool", "Returns a pseudo-random bool.").Or("Random rng"),
+		"choice":   Fn([]string{"list<any> items"}, "any", "Returns a random element.").Or("Random rng", "list<any> items"),
+		"shuffle":  Fn([]string{"list<any> items"}, "list<any>", "Returns a shuffled copy.").Or("Random rng", "list<any> items"),
 	}, Classes: map[string]string{"Generator": "Stateful PRNG handle."}, ClassMethods: map[string]map[string]FunctionDoc{
 		"Generator": {
 			"next":     Fn([]string{}, "int", "Next pseudo-random int."),
@@ -2352,7 +2356,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 	}},
 	"watch": {Functions: map[string]FunctionDoc{
 		"snapshot": Fn([]string{"string path"}, "dict<string, any>", "Capture the current state of a file or directory for polling-based change detection."),
-		"wait":     Fn([]string{"string path", "dict<string, any> previous", "int timeoutMs", "int intervalMs = 250"}, "dict<string, any>", "Block until the path's state differs from the snapshot or the timeout expires."),
+		"wait":     Fn([]string{"string path", "int timeoutMs = 30000", "int intervalMs = 250"}, "dict<string, any>", "Snapshot the path, then block until it changes or the timeout expires; returns {changed, before, after}."),
 		"start":    Fn([]string{"string path", "func callback", "dict<string, any> options = {}"}, "int", "Register an fsnotify watcher; fires callback({path, type}) for each event. Options: {recursive: bool} (1.1.0)."),
 		"stop":     Fn([]string{"int handle"}, "void", "Stop a watcher and wait for in-flight callbacks to finish (1.1.0)."),
 	}},
@@ -2665,11 +2669,11 @@ var StdlibCatalog = map[string]ModuleDoc{
 		"validate":         Fn([]string{"string text"}, "bool", "Reports whether text is valid XML."),
 		"validateDetailed": Fn([]string{"string text"}, "dict<string, any>", "Detailed validation result."),
 		"reader":           Fn([]string{"Stream stream"}, "XmlStreamInterface", "Creates an XML stream reader."),
-		"stream":           Fn([]string{"Stream stream"}, "XmlStreamInterface", "Creates an XML stream reader.").Or("any source", "any handler"),
+		"stream":           Fn([]string{"any source", "any handler"}, "XmlStreamInterface", "Drives a streaming XML parse through callback methods on handler."),
 	}},
 	"yaml": {Functions: map[string]FunctionDoc{
 		"reader":           Fn([]string{"Stream stream"}, "YamlStreamInterface", "Creates a YAML stream reader."),
-		"stream":           Fn([]string{"Stream stream"}, "YamlStreamInterface", "Creates a YAML stream reader.").Or("any source", "any handler"),
+		"stream":           Fn([]string{"any source", "any handler"}, "YamlStreamInterface", "Drives a streaming YAML parse through callback methods on handler."),
 		"parse":            Fn([]string{"string text"}, "any", "Parses YAML into a value; throws on error."),
 		"parseAs":          Fn([]string{"string text", "class target"}, "any", "Parses YAML into an instance of the target class."),
 		"tryParse":         Fn([]string{"string text"}, "any", "Parses YAML or returns null on error."),
@@ -3607,6 +3611,53 @@ func NativeArityFits(module, function string, argc int) (fits bool, ok bool) {
 		}
 	}
 	return false, true
+}
+
+// PrimitiveCallForms renders a primitive method's accepted call shapes, e.g. "trim()" and "trim(chars)".
+func PrimitiveCallForms(typeName, method string) []string {
+	doc, ok := CatalogPrimitiveMethods[typeName][method]
+	if !ok {
+		return nil
+	}
+	var forms []string
+	for _, params := range append([][]string{doc.Params}, doc.Alternates...) {
+		names := make([]string, len(params))
+		for i, p := range params {
+			names[i] = paramName(p)
+			if strings.Contains(p, " = ") {
+				names[i] = "[" + names[i] + "]"
+			}
+		}
+		forms = append(forms, method+"("+strings.Join(names, ", ")+")")
+	}
+	return forms
+}
+
+// PrimitiveArityFits reports whether argc arguments fit a primitive method's catalog signature or an alternate; ok is false when it has no entry.
+func PrimitiveArityFits(typeName, method string, argc int) (fits bool, ok bool) {
+	doc, ok := CatalogPrimitiveMethods[typeName][method]
+	if !ok {
+		return false, false
+	}
+	return docArityFits(doc, argc), true
+}
+
+// TestBaseArityFits reports whether argc arguments fit a test.Test method's catalog signature; ok is false when it has no entry.
+func TestBaseArityFits(method string, argc int) (fits bool, ok bool) {
+	doc, ok := TestBaseMethods[method]
+	if !ok {
+		return false, false
+	}
+	return docArityFits(doc, argc), true
+}
+
+func docArityFits(doc FunctionDoc, argc int) bool {
+	for _, params := range append([][]string{doc.Params}, doc.Alternates...) {
+		if paramsAccept(params, argc) {
+			return true
+		}
+	}
+	return false
 }
 
 func paramsAccept(params []string, argc int) bool {

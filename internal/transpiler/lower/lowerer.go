@@ -39,6 +39,8 @@ type Lowerer struct {
 	typeParams    map[string]struct{}
 	exprTypes     map[ast.Expression]*types.Type
 	expectedType  *types.Type
+	// callbackReturns types untyped callback literals from the list method they are passed to.
+	callbackReturns map[*ast.FunctionLiteral]*types.Type
 	// refinedDecls types an untyped empty list/dict declaration from later
 	// push/index assignments in the same block.
 	refinedDecls map[*ast.DeclarationStatement]*types.Type
@@ -145,6 +147,7 @@ func (l *Lowerer) qualifiedTopLevelName(name string) string {
 }
 
 func (l *Lowerer) LowerProgram(prog *ast.Program) {
+	l.inferCallbackReturns(prog)
 	l.preregisterTopLevel(prog.Statements)
 	l.computeEntryHoist(prog.Statements)
 	l.recordEmptyCollectionRefinements(prog.Statements)
@@ -603,6 +606,11 @@ func (l *Lowerer) lowerExpression(expr ast.Expression) {
 		l.errAt(e.Token.Line, e.Token.Column,
 			"the transpiler does not yet support set literals",
 			"sets are sorted and need a dedicated runtime type deferred to a later phase")
+		l.w.WriteString("nil")
+	case *ast.GeneratorComprehension:
+		l.errAt(e.Token.Line, e.Token.Column,
+			"the transpiler does not yet support generator comprehensions",
+			"use a list comprehension or a generator function")
 		l.w.WriteString("nil")
 	case *ast.SetComprehension:
 		l.errAt(e.Token.Line, e.Token.Column,

@@ -1,4 +1,4 @@
-# Bundling And Standalone Executables
+# Bundling and standalone executables
 
 `geblang build` produces a self-contained binary from a Geblang package. The
 resulting file runs on any machine with the same OS and architecture as the
@@ -143,8 +143,11 @@ test`, `geblang check`, the REPL, and built binaries, and the experimental
   subtree under the source file's own directory.
 - The path must be a string literal written directly in the call. It cannot
   be a variable, a function result, or a string with interpolation.
-- The name `embed` is reserved for this compile-time builtin; using it as a
-  variable or value anywhere in a program is a load error.
+- The name `embed` is reserved for this compile-time builtin. Declaring a
+  function, variable, parameter or loop variable named `embed`, importing a
+  name as `embed`, or using `embed` as a value is a load error. Methods and
+  fields may be named `embed`, because they are always reached through an
+  object (`store.embed(text)`).
 
 ### Errors happen at load time, not at runtime
 
@@ -206,7 +209,6 @@ source: src
 
 ```gb
 module myapp.main;
-
 import io;
 import sys;
 
@@ -321,7 +323,8 @@ Every built binary recognises a few standard flags, but only when one is the
 **first argument**:
 
 - `--help` / `-h` prints the binary's usage.
-- `--version` prints `<app> <version> (geblang <runtime-version>)`.
+- `--version` prints `<app> <version>`, then the Geblang runtime version and
+  the name and version of each bundled dependency package, one per line.
 - `--notices` prints the embedded third-party notices.
 
 Because these are double-dash flags checked only in first position, they never
@@ -411,7 +414,7 @@ only when they are the FIRST argument:
 | Flag | Effect |
 |---|---|
 | `--help`, `-h` | Application name/version, usage, and this flag list |
-| `--version` | `<name> <version> (geblang <engine version>)`, from `geblang.yaml` |
+| `--version` | `<name> <version>` from `geblang.yaml`, then `geblang <version>` and each bundled dependency package's name and version, one per line |
 | `--notices`, `--licences` | Prints the embedded third-party licence notices |
 | `--` | Passes everything after it to the application untouched |
 
@@ -454,7 +457,6 @@ export func format(string name): string {
 
 ```gb
 module greet.main;
-
 import io;
 import sys;
 import greet.formatter as fmt;
@@ -515,7 +517,6 @@ Application code can import it normally:
 
 ```gb
 module webapp.main;
-
 import io;
 import authlib.tokens as tokens;
 
@@ -561,7 +562,6 @@ source: src
 
 ```gb
 module webapi.routes;
-
 import http;
 import web;
 
@@ -576,7 +576,6 @@ export func register(any app): void {
 
 ```gb
 module webapi.main;
-
 import io;
 import http;
 import web;
@@ -587,9 +586,10 @@ export func main(list<string> args): void {
     let app = web.new();
     routes.register(app);
     io.println("Listening on :" + port);
-    http.serve("127.0.0.1:" + port, func(dict<string, any> request): dict<string, any> {
-        return web.handle(app, request);
-    });
+    http.serve(
+        "127.0.0.1:" + port,
+        func(dict<string, any> request): dict<string, any> { return web.handle(app, request); }
+    );
 }
 ```
 
@@ -680,9 +680,8 @@ to `geblang build` if it reports something unsupported.
   interfaces, generics, enums (data variants, instance methods, interface
   implementation, and the `values()` / `fromName()` static surface), `match`
   (type / list / enum / guard patterns), exceptions, generators, async/await,
-  comprehensions,
-  destructuring, closures, optional chaining, spread, named/optional/variadic
-  arguments, `with`, string interpolation, slicing, and dynamic navigation of
+  list and dict comprehensions, destructuring, closures and arrow functions, optional chaining, spread,
+  named/optional/variadic arguments, `with`, string interpolation, slicing, and dynamic navigation of
   `any`-typed values (indexing and `as` casts, e.g. over a `json.parse` result).
 - Standard-library modules backed by the Go standard library: `io`, `sys`,
   `collections`, `math`, `json`, `strings` (including the regex methods),
@@ -698,6 +697,9 @@ to `geblang build` if it reports something unsupported.
   similar.
 - Calling a method on an `any`-typed value (cast it to a concrete type first);
   assigning into an `any`-typed index.
+- Async function literals and async arrow functions; a `sortBy` / `maxBy`-style
+  key callback whose key type the compiler cannot see (give the callback a
+  return type with `func(...): int { ... }`).
 - Arbitrary-precision integers: native arithmetic uses a fast machine-width path
   that wraps on overflow rather than promoting to big integers. An integer
   constant that does not fit in 64 bits is a diagnostic.
@@ -705,6 +707,8 @@ to `geblang build` if it reports something unsupported.
   supported), and `int / int`, whose result is an exact decimal: cast an
   operand to `float` instead.
 - Partial-application `_` placeholder arguments: use a typed wrapper function instead.
+- Set literals, set comprehensions and generator comprehensions: use a list
+  comprehension, or a generator function for lazy production.
 - The identity operators `is` and `is not`.
 
 ### Performance note

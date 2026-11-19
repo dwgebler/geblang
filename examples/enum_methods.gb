@@ -13,7 +13,10 @@ interface Describable {
 }
 
 enum Priority implements Describable {
-    Low, Medium, High, Urgent;
+    Low,
+    Medium,
+    High,
+    Urgent;
 
     func describe(): string {
         return match (this) {

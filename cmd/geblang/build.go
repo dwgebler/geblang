@@ -170,6 +170,7 @@ func runBuild(args []string) {
 
 	files := map[string][]byte{}
 	var records []bundle.ModuleRecord
+	moduleManifests := map[string]*modules.Manifest{}
 
 	for canonical, absPath := range allModules {
 		src, err := os.ReadFile(absPath)
@@ -189,6 +190,8 @@ func runBuild(args []string) {
 		prefix := "src"
 		if isStdlib {
 			prefix = "stdlib"
+		} else if m, err := resolver.FindManifest(absPath); err == nil && m != nil && m.Name != "" {
+			moduleManifests[m.Root] = m
 		}
 
 		relPath := strings.ReplaceAll(canonical, ".", "/") + ".gb"
@@ -271,7 +274,20 @@ func runBuild(args []string) {
 		sort.Strings(resourcePaths)
 	}
 
+	appRoot := ""
+	if pkgManifest, err := resolver.FindManifest(absPkgDir); err == nil && pkgManifest != nil {
+		appRoot = pkgManifest.Root
+	}
+	var packages []bundle.PackageVersion
+	for root, m := range moduleManifests {
+		if root != appRoot {
+			packages = append(packages, bundle.PackageVersion{Name: m.Name, Version: m.Version})
+		}
+	}
+	sort.Slice(packages, func(i, j int) bool { return packages[i].Name < packages[j].Name })
+
 	manifest := bundle.Manifest{
+		Packages:      packages,
 		Version:       version,
 		Entry:         entry,
 		Name:          appName,
@@ -479,20 +495,23 @@ func runBundled(b *bundle.Bundle) int {
 	return runBundledWithArgs(b, args)
 }
 
-func bundledAppName(b *bundle.Bundle) string {
-	if b.Manifest.Name != "" {
-		return b.Manifest.Name
-	}
-	return b.Manifest.Entry
+func printBundledVersion(b *bundle.Bundle) {
+	fmt.Print(bundledVersionText(b.Manifest))
 }
 
-func printBundledVersion(b *bundle.Bundle) {
-	name := bundledAppName(b)
-	if b.Manifest.AppVersion != "" {
-		fmt.Printf("%s %s (geblang %s)\n", name, b.Manifest.AppVersion, version)
-		return
+// bundledVersionText is the app's name and version, then the runtime and each bundled package on its own line.
+func bundledVersionText(m bundle.Manifest) string {
+	name := m.Name
+	if name == "" {
+		name = m.Entry
 	}
-	fmt.Printf("%s (geblang %s)\n", name, version)
+	var out strings.Builder
+	out.WriteString(strings.TrimSpace(name+" "+m.AppVersion) + "\n")
+	out.WriteString("  geblang " + version + "\n")
+	for _, p := range m.Packages {
+		out.WriteString("  " + strings.TrimSpace(p.Name+" "+p.Version) + "\n")
+	}
+	return out.String()
 }
 
 func printBundledHelp(b *bundle.Bundle) {
@@ -503,11 +522,12 @@ usage: %s [args...]
 
 Standard flags (recognised only as the first argument):
   --help, -h     show this help
-  --version      show the application and runtime version
+  --version      show the application, runtime and bundled package versions
   --notices      print third-party licence notices
   --             pass everything after it to the application untouched
 
-All other arguments are passed to the application.
+All other arguments are passed to the application; use "-- --help" to show
+the application's own options.
 `, bin)
 }
 
@@ -523,6 +543,7 @@ func runBundledWithArgs(b *bundle.Bundle, args []string) int {
 	}
 
 	stdlibDir := filepath.Join(tempDir, "stdlib")
+	modules.UseBundledStdlib(stdlibDir)
 	if info, err := os.Stat(stdlibDir); err == nil && info.IsDir() {
 		if err := os.Setenv("GEBLANG_STDLIB", stdlibDir); err != nil {
 			fmt.Fprintf(os.Stderr, "geblang: set GEBLANG_STDLIB: %v\n", err)

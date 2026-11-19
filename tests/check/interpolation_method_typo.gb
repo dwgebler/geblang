@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown method inside string
+ * interpolation: strings have `upper`, not `toUpper`.
+ */
+func shout(string name): string {
+    return "hello ${name.toUpper()}";
+}

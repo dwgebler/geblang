@@ -31,7 +31,7 @@ class InheritedConstructorTest extends test.Test {
     @test
     func requiredArgumentsAreSkipped(): void {
         this.assertEquals(1, SkipsRequired().value);
-        this.assertThrows(func(): void { Plain(1); });
+        this.assertThrows(func(): void { Plain(...[1]); }, "Plain constructor expects no arguments");
     }
     @test
     func ancestorErrorsPropagate(): void {

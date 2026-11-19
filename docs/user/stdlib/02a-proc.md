@@ -1,4 +1,4 @@
-# Subprocess Streaming
+# Subprocess streaming
 
 The `proc` module (1.1.0) spawns a child process and returns
 immediately, exposing `stdout`, `stderr`, and `stdin` as

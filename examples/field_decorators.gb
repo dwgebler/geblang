@@ -8,10 +8,18 @@
  */
 import io;
 
-func upper(string v): string { return v.upper(); }
-func trim(string v): string { return v.trim(); }
+func upper(string v): string {
+    return v.upper();
+}
+
+func trim(string v): string {
+    return v.trim();
+}
+
 func minLen(int min, string v): string {
-    if (v.length() < min) { throw RuntimeError("too short"); }
+    if (v.length() < min) {
+        throw RuntimeError("too short");
+    }
     return v;
 }
 
@@ -21,7 +29,9 @@ class User {
     @trim
     string name;
 
-    func User(string n) { this.name = n; }
+    func User(string n) {
+        this.name = n;
+    }
 }
 
 let u = User("  ada  ");
@@ -30,5 +40,8 @@ io.println(u.name);
 u.name = "  bo  ";
 io.println(u.name);
 
-try { u.name = "x"; }
-catch (RuntimeError e) { io.println(e.message); }
+try {
+    u.name = "x";
+} catch (RuntimeError e) {
+    io.println(e.message);
+}

@@ -108,14 +108,14 @@ only matter for a file). Run `connection.optimize()`
 let SQLite refresh its query-planner statistics.
 
 ```gb
-let db = db.Connection({
+let conn = db.Connection({
     "driver": "sqlite",
     "dsn": "/var/lib/app/app.sqlite",
     "wal": true,
     "synchronous": "NORMAL",
     "foreignKeys": true,
 });
-db.optimize();
+conn.optimize();
 ```
 
 A private in-memory database (`:memory:`) is distinct per connection, so its
@@ -143,7 +143,7 @@ string:
 ```gb
 let sqlite = db.Connection({
     "driver": "sqlite",
-    "path": "/tmp/app.sqlite"
+    "path": "/tmp/app.sqlite",
 });
 
 let postgres = db.Connection({
@@ -153,7 +153,7 @@ let postgres = db.Connection({
     "database": "app",
     "user": "app",
     "password": "secret",
-    "sslmode": "disable"
+    "sslmode": "disable",
 });
 
 let mysql = db.Connection({
@@ -163,7 +163,7 @@ let mysql = db.Connection({
     "database": "app",
     "user": "app",
     "password": "secret",
-    "parseTime": true
+    "parseTime": true,
 });
 ```
 
@@ -235,7 +235,7 @@ import db;
 
 let conn = db.Connection({
     "driver": "sqlite",
-    "path": "/tmp/app.sqlite"
+    "path": "/tmp/app.sqlite",
 });
 defer conn.close();
 
@@ -359,7 +359,7 @@ io.println(rows.columns());
 
 while (rows.next()) {
     let row = rows.row();
-    io.println(row["id"] as string + ": " + row["name"]);
+    io.println((row["id"] as string) + ": " + row["name"]);
 }
 ```
 

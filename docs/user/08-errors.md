@@ -93,6 +93,7 @@ subclass:
 
 ```gb
 class AppError extends Error {}
+
 class NetworkError extends RuntimeError {}
 
 try {
@@ -126,6 +127,7 @@ is also caught by `catch (Error e)`:
 
 ```gb
 class DatabaseError extends RuntimeError {}
+
 class QueryError extends DatabaseError {}
 
 try {

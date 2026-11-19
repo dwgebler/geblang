@@ -1,0 +1,115 @@
+/**
+ * @title Generators consuming generators
+ * @summary A generator that iterates another generator gets that generator's values lazily, whether the inner one is a function, method, static method, interface default, closure or recursive call.
+ */
+import test;
+
+func named(): generator<int> { yield 1; yield 2; }
+
+class Source {
+    func Source() {}
+    func each(): generator<int> { yield 3; }
+    static func stat(): generator<int> { yield 4; }
+}
+
+class Sub extends Source { func Sub() { parent(); } }
+
+interface Walk { func walk(): generator<int> { yield 5; } }
+class W implements Walk { func W() {} }
+
+let topClosure = func(): generator<int> { yield 6; };
+
+func helper(): list { return [v for v in named()]; }
+
+func deep(int depth): generator<int> {
+    if (depth == 0) {
+        yield 1;
+    } else {
+        for (v in deep(depth - 1)) {
+            yield v + 1;
+        }
+    }
+}
+
+func interleave(): generator<int> {
+    let a = named();
+    let b = named();
+    while (!a.done()) {
+        yield a.next();
+        yield b.next() * 100;
+    }
+}
+
+func scaled(any source): generator<int> {
+    for (v in source) {
+        yield v * 10;
+    }
+}
+
+func failing(): generator<int> {
+    yield 1;
+    throw ValueError("inner failed");
+}
+
+func drain(any source): list {
+    list out = [];
+    for (x in source) {
+        out.push(x);
+    }
+    return out;
+}
+
+class NestedGeneratorsTest extends test.Test {
+    @test
+    func everyInnerGeneratorKindStaysLazy(): void {
+        this.assertEquals([10, 20], drain(scaled(named())));
+        this.assertEquals([30], drain(scaled(Sub().each())));
+        this.assertEquals([40], drain(scaled(Source.stat())));
+        this.assertEquals([50], drain(scaled(W().walk())));
+        this.assertEquals([60], drain(scaled(topClosure())));
+    }
+
+    @test
+    func innerGeneratorCreatedInsideTheBody(): void {
+        let make = func(): generator<int> {
+            let inner = func(): generator<int> { yield 7; };
+            for (v in inner()) {
+                yield v * 10;
+            }
+        };
+        this.assertEquals([70], drain(make()));
+        let viaNamed = func(): generator<int> {
+            for (v in named()) {
+                yield v + 100;
+            }
+        };
+        this.assertEquals([101, 102], drain(viaNamed()));
+    }
+
+    @test
+    func helperCallsInsideTheBodyStayLazy(): void {
+        let viaHelper = func(): generator<int> {
+            for (v in helper()) {
+                yield v * 10;
+            }
+        };
+        this.assertEquals([10, 20], drain(viaHelper()));
+    }
+
+    @test
+    func recursiveAndInterleavedGenerators(): void {
+        this.assertEquals([5], drain(deep(4)));
+        this.assertEquals([1, 100, 2, 200], drain(interleave()));
+    }
+
+    @test
+    func innerErrorsReachTheConsumer(): void {
+        list seen = [];
+        this.assertThrowsOf(func(): void {
+            for (v in scaled(failing())) {
+                seen.push(v);
+            }
+        }, "ValueError", "inner failed");
+        this.assertEquals([10], seen);
+    }
+}

@@ -1,6 +1,7 @@
 package bytecode
 
 import (
+	"errors"
 	"fmt"
 	"geblang/internal/ast"
 	argbinding "geblang/internal/binding"
@@ -533,6 +534,8 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	if function.IsGenerator && vm.generatorExecution {
 		frame.generator = vm.generatorYield
 		frame.generatorDone = vm.generatorDone
+		// Only the entry call runs inline; generators the body calls must stay lazy.
+		vm.generatorExecution = false
 	} else {
 		frame.generator = nil
 		frame.generatorDone = nil
@@ -695,6 +698,7 @@ func (vm *VM) matchVMValueToTypeSpecWith(typeParams map[string]bool, inherited m
 // frameMeta is the per-function data a call frame needs for return checks and binding resolution.
 type frameMeta struct {
 	returnSpec    *vmTypeSpec
+	yieldSpec     *vmTypeSpec
 	typeParams    map[string]bool
 	ownTypeParams map[string]bool
 	needsBindings bool
@@ -750,12 +754,29 @@ func specMentionsTypeParam(spec vmTypeSpec, params map[string]bool) bool {
 
 func newFrameMeta(function FunctionInfo, spec func(string) vmTypeSpec) *frameMeta {
 	returnSpec := checkedReturnSpecFor(function, spec)
-	if returnSpec == nil && function.matchTypeParams == nil {
+	yieldSpec := checkedYieldSpecFor(function, spec)
+	if returnSpec == nil && yieldSpec == nil && function.matchTypeParams == nil {
 		return nil
 	}
-	meta := &frameMeta{returnSpec: returnSpec, typeParams: function.matchTypeParams, ownTypeParams: function.typeParamSet}
-	meta.needsBindings = returnSpec != nil && specMentionsTypeParam(*returnSpec, function.matchTypeParams)
+	meta := &frameMeta{returnSpec: returnSpec, yieldSpec: yieldSpec, typeParams: function.matchTypeParams, ownTypeParams: function.typeParamSet}
+	meta.needsBindings = (returnSpec != nil && specMentionsTypeParam(*returnSpec, function.matchTypeParams)) ||
+		(yieldSpec != nil && specMentionsTypeParam(*yieldSpec, function.matchTypeParams))
 	return meta
+}
+
+func checkedYieldSpecFor(function FunctionInfo, spec func(string) vmTypeSpec) *vmTypeSpec {
+	if !function.IsGenerator || function.ReturnCheckType == "" {
+		return nil
+	}
+	s := spec(function.ReturnCheckType)
+	if len(s.args) != 1 || (s.baseLower != "generator" && s.baseLower != "iterable") {
+		return nil
+	}
+	elem := s.args[0]
+	if elem.baseLower == "any" && elem.kind != vmTypeUnion && elem.kind != vmTypeIntersection {
+		return nil
+	}
+	return &elem
 }
 
 func checkedReturnSpecFor(function FunctionInfo, spec func(string) vmTypeSpec) *vmTypeSpec {
@@ -1076,6 +1097,8 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	if function.IsGenerator && vm.generatorExecution {
 		frame.generator = vm.generatorYield
 		frame.generatorDone = vm.generatorDone
+		// Only the entry call runs inline; generators the body calls must stay lazy.
+		vm.generatorExecution = false
 	} else {
 		frame.generator = nil
 		frame.generatorDone = nil
@@ -1286,7 +1309,7 @@ func (vm *VM) nativeCallSpread(instruction Instruction) error {
 	}
 	if hasNamed {
 		// The evaluator rejects named args mixed with spread on natives.
-		return recoverableNativeError{err: fmt.Errorf("named arguments are only supported for Geblang functions and methods")}
+		return recoverableNativeError{err: errors.New(runtime.NamedArgsUnsupported)}
 	}
 	vm.nativeCallLine = int(instruction.Line)
 	result, err := vm.evalNativeCall(name.Value, args)
@@ -1691,7 +1714,7 @@ func (vm *VM) bindNativeNamedArgs(name string, args []runtime.Value, names []str
 	}
 	sig, ok := native.NativeCallSignature(module, function, bargs)
 	if !ok {
-		return nil, false, fmt.Errorf("named arguments are only supported for Geblang functions and methods")
+		return nil, false, errors.New(runtime.NamedArgsUnsupported)
 	}
 	result, err := argbinding.Order(sig, bargs)
 	if err != nil {
@@ -3370,6 +3393,9 @@ func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime
 	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
 	if !ok {
+		if instance.Class.Module != vm.moduleName && vm.moduleLoader != nil {
+			return vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, args, vm)
+		}
 		return nil, fmt.Errorf("unknown class %s", instance.Class.Name)
 	}
 	indices, ok := vm.lookupMethod(classInfo, name)

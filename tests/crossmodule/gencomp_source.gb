@@ -1,0 +1,13 @@
+module gencomp_source;
+
+export func squares(list<int> xs): generator<int> {
+    return (x * x for x in xs);
+}
+
+export class Source {
+    list<int> items;
+    func Source(list<int> items) { this.items = items; }
+    func doubled(): generator<int> {
+        return (x * 2 for x in this.items);
+    }
+}

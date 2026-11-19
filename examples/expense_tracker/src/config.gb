@@ -9,6 +9,6 @@ export func defaults(): dict<string, any> {
     return {
         "currency": "GBP",
         "monthlyBudgetCents": 250000,
-        "warningRatio": 80
+        "warningRatio": 80,
     };
 }

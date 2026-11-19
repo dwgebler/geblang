@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a primitive method called with an argument
+ * count it does not accept: `substring` takes a start and an optional end.
+ */
+func head(string text): string {
+    return text.substring();
+}

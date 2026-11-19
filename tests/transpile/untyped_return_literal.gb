@@ -1,0 +1,25 @@
+import io;
+
+/* A function literal without a declared return type returns whatever it
+   returns, unchecked, and null when it falls off the end. Pinned output
+   across VM == evaluator == native. */
+
+let inc = func(int n) { return n + 1; };
+io.println(inc(1));
+
+let sign = func(int n) {
+    if (n > 0) {
+        return "positive";
+    }
+    if (n < 0) {
+        return "negative";
+    }
+};
+io.println(sign(5));
+io.println(sign(-5));
+io.println(sign(0));
+
+let note = func(string s) {
+    io.println("log: " + s);
+};
+note("hello");

@@ -40,9 +40,13 @@ export func main(list<string> args): int {
 /* Docker plus either Compose v2 (`docker compose`) or v1 (`docker-compose`). */
 func dockerAvailable(): bool {
     let docker = sys.shell("docker --version");
-    if ((docker["code"] as int) != 0) { return false; }
+    if ((docker["code"] as int) != 0) {
+        return false;
+    }
     let v2 = sys.shell("docker compose version");
-    if ((v2["code"] as int) == 0) { return true; }
+    if ((v2["code"] as int) == 0) {
+        return true;
+    }
     let v1 = sys.shell("docker-compose --version");
     return (v1["code"] as int) == 0;
 }

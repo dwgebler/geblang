@@ -12,14 +12,14 @@ func app(dict<string, any> request): dict<string, any> {
         return {
             "status": 200,
             "headers": {"Content-Type": "application/json"},
-            "body": "{\"ok\":true}"
+            "body": "{\"ok\":true}",
         };
     }
 
     return {
         "status": 404,
         "headers": {"Content-Type": "application/json"},
-        "body": "{\"error\":\"not found\"}"
+        "body": "{\"error\":\"not found\"}",
     };
 }
 
