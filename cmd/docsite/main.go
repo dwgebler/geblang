@@ -142,7 +142,7 @@ func rewriteMarkdownLink(dest string) []byte {
 	}
 	dir, base := filepath.Split(target)
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
-	rewritten := filepath.ToSlash(filepath.Join(dir, slugBase(stem)+".html")) + fragment
+	rewritten := filepath.ToSlash(filepath.Join(slugDir(dir), slugBase(stem)+".html")) + fragment
 	return []byte(rewritten)
 }
 
@@ -786,11 +786,16 @@ func slugDir(dir string) string {
 	if dir == "." || dir == "" {
 		return dir
 	}
-	parts := strings.Split(filepath.ToSlash(dir), "/")
+	slashed := filepath.ToSlash(dir)
+	parts := strings.Split(slashed, "/")
 	for i, part := range parts {
 		parts[i] = slugBase(part)
 	}
-	return filepath.Join(parts...)
+	joined := filepath.Join(parts...)
+	if strings.HasPrefix(slashed, "/") {
+		return "/" + joined
+	}
+	return joined
 }
 
 func titleFromMarkdown(content []byte, file string) string {

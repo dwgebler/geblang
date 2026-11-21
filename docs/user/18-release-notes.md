@@ -98,6 +98,14 @@
   decorator arguments instead of silently omitting them. Interface parameter
   decorator references resolve in their declaring module.
 
+### Documentation
+
+- The database reference has a pool sizing and concurrency guide: what holds a
+  connection, pool defaults, sizing `maxOpenConns` from the database's limits,
+  deadlines that include the pool wait, reading `stats()` and SQLite limits.
+  The HTTP reference explains how server concurrency limits and queues relate
+  to database pools.
+
 ## 1.43.0
 
 ### Added

@@ -55,8 +55,9 @@ The options-dict form accepts pool tuning alongside the driver and DSN, applied
 at connect time: `maxOpenConns`, `maxIdleConns`, `connMaxLifetimeMs`,
 `connMaxIdleTimeMs`. Setting `maxOpenConns` without `maxIdleConns` keeps the
 idle pool the same size; with no pool options the idle pool defaults to 8
-connections. Size `maxOpenConns` to your expected concurrency - a shared
-connection then serves parallel tasks and handlers at full speed:
+connections. Size `maxOpenConns` to what the database can serve, not to the
+number of concurrent callers; see
+[Pool sizing and concurrency](#pool-sizing-and-concurrency):
 
 ```gb
 let pool = db.Connection({
@@ -279,6 +280,142 @@ waits and their total duration since pool creation. Compare deltas between
 samples to observe contention. They include cancelled waits and do not measure
 SQL execution time or database lock waits. `inUse`, `idle`, and
 `maxOpenConnections` describe the pool at the sample time.
+
+## Pool sizing and concurrency
+
+A `db.Connection` is a pool, and it is safe to share between tasks, threads and
+server handlers. Open one per database per process at startup and pass it to
+the code that needs it. Opening a connection per request or per task pays the
+connect and authentication cost every time and defeats the pool.
+
+### What holds a connection
+
+Each operation borrows a connection from the pool and returns it when it is
+done. The pool runs out when connections are held longer than the work needs,
+so it helps to know when each one is returned:
+
+| Operation | Connection returned |
+|-----------|---------------------|
+| `exec`, `execWithTimeout` | When the statement finishes |
+| `queryOne` | Before it returns |
+| `query(...).all()`, or `first()` / `get(i)` / `isEmpty()` on an unstepped cursor | Before it returns |
+| `query(...)` stepped with `next()` or `for-in` | When the cursor is exhausted or closed |
+| `begin()` | When the transaction commits or rolls back (or its deadline expires) |
+| `prepare()` | Per execution; the statement itself holds no connection between calls |
+
+Two patterns hold more than one connection at once. A loop over a streaming
+cursor that runs another query per row holds the cursor's connection and
+borrows a second for each inner query. A query made through the pool while
+the same task has a transaction open also uses a second connection, and it does
+not see the transaction's uncommitted writes. With `maxOpenConns` set to 1 an
+untimed inner query in either pattern waits forever, because the only
+connection is held by the outer operation. Read the outer result with `all()`
+first, or run the inner queries on the transaction.
+
+### Defaults
+
+| Setting | Default |
+|---------|---------|
+| `maxOpenConns` | Unlimited |
+| `maxIdleConns` | 8, or equal to `maxOpenConns` when only that is set |
+| `connMaxLifetimeMs` | None: connections are reused until they fail |
+| `connMaxIdleTimeMs` | None |
+
+An unlimited pool opens a new connection whenever every existing one is busy.
+Under a traffic spike that can mean hundreds of connections, which exhausts the
+server's connection limit or slows every query down. Production code should
+always set `maxOpenConns`.
+
+### Choosing `maxOpenConns`
+
+The pool limit protects the database, so size it from the database side:
+
+1. Start from the server's connection limit (PostgreSQL's `max_connections`
+   defaults to 100; MySQL's `max_connections` to 151) minus connections reserved
+   for administration, migrations and other clients.
+2. Divide by the number of processes that each open their own pool: every app
+   instance, worker process and scheduled job runner counts. Two app replicas
+   and two worker processes with `maxOpenConns: 20` can open 80 connections.
+3. Prefer a smaller pool. A database executes only as many queries in parallel
+   as it has cores and disk bandwidth for; connections beyond that queue inside
+   the database instead of in the pool, with more memory per connection. A few
+   connections per database core is a common starting point.
+4. Measure under load and adjust (see [Reading contention](#reading-contention)).
+
+Leave `maxIdleConns` unset so it matches `maxOpenConns`. A smaller idle pool
+closes connections after every burst and reopens them on the next. Set it lower
+only when idle connections cost something, such as a per-connection licence or
+a shared server with a tight connection limit.
+
+Set `connMaxLifetimeMs` (for example 30 minutes) when connections pass through
+a load balancer, proxy or failover endpoint that drops long-lived connections,
+or when credentials rotate. `connMaxIdleTimeMs` closes connections that stay
+unused for that long, which shrinks the pool after a spike.
+
+```gb
+let conn = db.Connection({
+    "driver": "postgres",
+    "dsn": dsn,
+    "maxOpenConns": 16,
+    "connMaxLifetimeMs": 1800000,
+    "connMaxIdleTimeMs": 300000,
+});
+```
+
+### When callers outnumber connections
+
+A caller that finds every connection busy waits in the pool until one is
+returned. An untimed operation waits as long as it takes. A timed operation
+(`execWithTimeout`, `queryWithTimeout`, `begin(timeoutMs)`) counts the wait
+against its deadline and throws `TimeoutError` when the deadline passes:
+
+```gb
+try {
+    let rows = conn.queryWithTimeout(250, "select * from orders where id = ?", id).all();
+} catch (TimeoutError e) {
+    # pool or database too busy: fail this request instead of piling up
+}
+```
+
+A server that accepts more concurrent requests than the pool has connections is
+normal: requests that do not touch the database, and requests between queries,
+need no connection. Bound the server's concurrency as well, so that a spike
+cannot queue an unbounded number of requests behind the pool. The HTTP server's
+`maxConcurrent`, `queueSize` and `onOverload` options do this
+([Concurrency limits](../14-http-net.md#concurrency-limits)). A practical
+arrangement is:
+
+- `maxOpenConns` sized for the database, as above.
+- Server `maxConcurrent` sized for memory, usually several times
+  `maxOpenConns`.
+- Deadlines on database calls shorter than the client's own timeout, so a
+  request that cannot get a connection fails quickly with a clear error.
+
+Keep connection hold times short: use `queryOne` for single rows, close
+cursors on early exits, keep transactions to the statements that must be
+atomic, and make network calls (HTTP, mail, message brokers) before the
+transaction starts or after it ends.
+
+### Reading contention
+
+Sample `conn.stats()` periodically and compare `waitCount` and
+`waitDurationMs` between samples:
+
+| Observation | Meaning |
+|-------------|---------|
+| Waits rise, `inUse` equals `maxOpenConnections`, database has spare CPU | Pool too small, or connections held too long |
+| Waits rise and the database is saturated | Pool too large for the database; lower it and bound concurrency upstream |
+| `openConnections` swings up and down with `maxIdleClosed` rising | Idle pool smaller than the working set |
+| No waits | The pool is not the bottleneck |
+
+### SQLite
+
+SQLite runs in-process, so there is no server connection limit, but it allows
+only one writer at a time. A larger pool lets more reads run in parallel; it
+does not speed up writes. Writers queue on the database lock for up to
+`busyTimeoutMs`, not in the pool, so set `busyTimeoutMs` together with your
+operation deadlines and use `txLock: "immediate"` for transactions that read
+and then write. A private `:memory:` database always uses a single connection.
 
 ## Transactions And Statements
 

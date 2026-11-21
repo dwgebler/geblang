@@ -571,6 +571,21 @@ time a slow handler or a memory ceiling matters, and don't reach for a
 custom reactor until you have measurements proving the Go scheduler is
 the bottleneck (it usually isn't).
 
+#### Concurrency limits and database pools
+
+`maxConcurrent` and a database pool's `maxOpenConns` limit different things.
+`maxConcurrent` bounds requests in flight, which bounds memory. `maxOpenConns`
+bounds connections to the database, which protects the database. Size each
+for what it protects; `maxConcurrent` is usually several times `maxOpenConns`,
+because requests spend part of their time outside the database. Admitted
+requests that find every connection busy wait in the pool, so give database
+calls a deadline (`queryWithTimeout`, `execWithTimeout`, `begin(timeoutMs)`)
+to fail them quickly instead of letting them pile up. Pick `onOverload` by
+what clients should see at the cap: `"reject"` sheds load with an immediate
+503 that a load balancer or client can retry elsewhere, while `"wait"` queues
+requests and turns a spike into added latency. See
+[Pool sizing and concurrency](16-data-stores/01-database.md#pool-sizing-and-concurrency).
+
 ### Handler isolation (`shareHandler`)
 
 By default each request (`http.serve` / `http.listen`) or connection
