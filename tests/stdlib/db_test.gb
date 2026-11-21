@@ -204,4 +204,63 @@ class SqliteTuningTest extends test.Test {
             db.Connection({"driver": "sqlite", "dsn": file, "synchronous": "SOMETIMES"});
         });
     }
+
+    @test
+    func firstReleasesTheConnectionForTheNextStatement(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        conn.exec("CREATE TABLE t (id TEXT, n INTEGER)");
+        conn.exec("INSERT INTO t VALUES ('a', 1), ('b', 2)");
+        let rows = conn.query("SELECT * FROM t ORDER BY id");
+        this.assertEquals("a", rows.first()["id"]);
+        this.assertEquals("a", rows.row()["id"]);
+        this.assertEquals("b", rows.get(1)["id"]);
+        conn.exec("UPDATE t SET n = 3 WHERE id = 'a'");
+        this.assertFalse(conn.query("SELECT * FROM t").isEmpty());
+        conn.exec("UPDATE t SET n = 4 WHERE id = 'b'");
+        this.assertEquals(7, conn.query("SELECT sum(n) AS s FROM t").first()["s"]);
+        conn.close();
+    }
+
+    @test
+    func queryOneReturnsFirstRowOrNull(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        conn.exec("CREATE TABLE t (id TEXT, n INTEGER)");
+        conn.exec("INSERT INTO t VALUES ('a', 1), ('b', 2)");
+        this.assertEquals(2, conn.queryOne("SELECT n FROM t WHERE id = ?", "b")["n"]);
+        this.assertNull(conn.queryOne("SELECT n FROM t WHERE id = ?", "zz"));
+        conn.exec("DELETE FROM t WHERE id = 'a'");
+        this.assertEquals(1, conn.queryOne("SELECT count(*) AS c FROM t")["c"]);
+        conn.close();
+    }
+
+    @test
+    func migrateAppliesEachMigrationOnce(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        let migrations = [
+            {"id": "001", "sql": "CREATE TABLE m (id TEXT)"},
+            {"id": "002", "sql": "ALTER TABLE m ADD COLUMN n INTEGER"},
+        ];
+        let first = conn.migrate(migrations);
+        this.assertEquals(["001", "002"], first["applied"]);
+        this.assertEquals([], first["skipped"]);
+        migrations.push({"id": "003", "sql": "INSERT INTO m VALUES ('a', 1)"});
+        let second = db.migrate(conn, migrations);
+        this.assertEquals(["003"], second["applied"]);
+        this.assertEquals(["001", "002"], second["skipped"]);
+        this.assertEquals(1, conn.queryOne("SELECT n FROM m")["n"]);
+        conn.close();
+    }
+
+    @test
+    func migrateRollsBackEveryMigrationOnFailure(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        this.assertThrows(func(): void {
+            conn.migrate([
+                {"id": "001", "sql": "CREATE TABLE ok (id TEXT)"},
+                {"id": "002", "sql": "NOT SQL"},
+            ]);
+        });
+        this.assertEquals(0, conn.queryOne("SELECT count(*) AS c FROM sqlite_master WHERE name = 'ok'")["c"]);
+        conn.close();
+    }
 }

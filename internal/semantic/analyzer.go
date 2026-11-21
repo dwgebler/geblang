@@ -846,6 +846,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 	case *ast.ExportStatement:
 		a.analyzeStatement(stmt.Statement, fn)
 	case *ast.FunctionStatement:
+		a.checkNestedDecoratorReferences(stmt, fn)
 		a.declare(stmt.Name.Value, typeInfo{name: "func", known: true})
 		popTypeParams := a.pushTypeParams(stmt.Generics)
 		defer popTypeParams()
@@ -1520,12 +1521,22 @@ func (a *Analyzer) checkPrimitiveMethodCall(call *ast.CallExpression) {
 }
 
 func (a *Analyzer) checkPrimitiveMethodArity(call *ast.CallExpression, typeName string, selector *ast.SelectorExpression) {
-	for _, arg := range call.Arguments {
-		if arg.Spread || arg.Name != nil || arg.Hole {
+	method := selector.Name.Value
+	names := make([]string, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		if arg.Spread || arg.Hole {
 			return
 		}
+		if arg.Name != nil {
+			names[i] = arg.Name.Value
+		}
 	}
-	method := selector.Name.Value
+	if native.HasNames(names) {
+		if _, _, err := native.BindPrimitiveCall(typeName, method, native.ArgNames(names, len(names))); err != nil {
+			a.errorAt(selector.Name.Token, "%s", err.Error())
+		}
+		return
+	}
 	if fits, ok := native.PrimitiveArityFits(typeName, method, len(call.Arguments)); !ok || fits {
 		return
 	}

@@ -331,7 +331,7 @@ func mergeInterfaceMembers(stmt *ast.ClassStatement, ifaces []*runtime.Interface
 }
 
 func (e *Evaluator) buildInterface(stmt *ast.InterfaceStatement, env *runtime.Environment) (*runtime.Interface, error) {
-	iface := &runtime.Interface{Name: stmt.Name.Value, Doc: stmt.Doc, Module: e.currentModule, TypeParameters: typeParameterNames(stmt.Generics), Methods: e.resolveFunctionSignatures(stmt.Methods, env), Defaults: stmt.Defaults, Fields: stmt.Fields}
+	iface := &runtime.Interface{Env: env, Name: stmt.Name.Value, Doc: stmt.Doc, Module: e.currentModule, TypeParameters: typeParameterNames(stmt.Generics), Methods: e.resolveFunctionSignatures(stmt.Methods, env), Defaults: stmt.Defaults, Fields: stmt.Fields}
 	iface.DefinitionPath = e.currentDebugPath()
 	for _, parentRef := range stmt.Parents {
 		parentValue, ok, err := e.resolveTypeValue(parentRef, env)

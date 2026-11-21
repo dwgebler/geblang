@@ -1,5 +1,4 @@
 module messaging.kafka;
-
 import messaging.contract;
 import messaging.managed as managed;
 import secrets;
@@ -39,7 +38,7 @@ export class KafkaQueue implements contract.MessageQueue, contract.ManagedMessag
         return {
             "body":   m["value"],
             "id":     (m["offset"] as string),
-            "handle": m["offset"]
+            "handle": m["offset"],
         };
     }
 
@@ -52,18 +51,28 @@ export class KafkaQueue implements contract.MessageQueue, contract.ManagedMessag
     func consume(callable handler): void {
         while (this._closed == false) {
             let msg = this.receive(30000);
-            if (msg == null) { continue; }
+            if (msg == null) {
+                continue;
+            }
             handler(msg);
             this.ack(msg["handle"]);
         }
     }
 
-    func consumeUntil(callable handler, callable shouldStop): void { managed.consume(this, handler, shouldStop); }
+    func consumeUntil(callable handler, callable shouldStop): void {
+        managed.consume(this, handler, shouldStop);
+    }
 
     func close(): void {
-        if (this._closed) { return; }
+        if (this._closed) {
+            return;
+        }
         this._closed = true;
-        try { kafka.close(this.writer); } finally { kafka.close(this.reader); }
+        try {
+            kafka.close(this.writer);
+        } finally {
+            kafka.close(this.reader);
+        }
     }
 }
 
@@ -101,8 +110,12 @@ export func connect(dict<string, any> opts): KafkaQueue {
 }
 
 func payloadToBytes(any payload): bytes {
-    if (payload instanceof string) { return bytes.fromString(payload as string); }
-    if (payload instanceof bytes)  { return payload as bytes; }
+    if (payload instanceof string) {
+        return bytes.fromString(payload as string);
+    }
+    if (payload instanceof bytes) {
+        return payload as bytes;
+    }
     return bytes.fromString(json.stringify(payload));
 }
 
@@ -127,10 +140,19 @@ export class KafkaTopic implements contract.MessageTopic, contract.ManagedMessag
 
     func subscribeUntil(callable handler, callable shouldStop): void {
         let queue = KafkaQueue();
-        queue.writer = this.writer; queue.topic = this.topic; queue._closed = false;
-        queue.reader = kafka.reader({"brokers": this.brokers, "topic": this.topic, "groupId": "geblang-topic-" + secrets.randomHex(16)});
-        try { queue.consumeUntil(handler, shouldStop); }
-        finally { this._closed = true; }
+        queue.writer = this.writer;
+        queue.topic = this.topic;
+        queue._closed = false;
+        queue.reader = kafka.reader({
+            "brokers": this.brokers,
+            "topic": this.topic,
+            "groupId": "geblang-topic-" + secrets.randomHex(16),
+        });
+        try {
+            queue.consumeUntil(handler, shouldStop);
+        } finally {
+            this._closed = true;
+        }
     }
 
     func subscribe(callable handler): void {
@@ -139,22 +161,26 @@ export class KafkaTopic implements contract.MessageTopic, contract.ManagedMessag
          * embeds a counter so two concurrent subscribe calls on
          * the same topic handle stay distinct. */
         this.subSeq = this.subSeq + 1;
-        let groupId = "geblang-topic-sub-" + (this.subSeq as string) + "-" +
-            (datetime.nowUnix() as string);
+        let groupId = "geblang-topic-sub-"
+            + (this.subSeq as string)
+            + "-"
+            + (datetime.nowUnix() as string);
         let reader = kafka.reader({
             "brokers": this.brokers,
             "topic":   this.topic,
-            "groupId": groupId
+            "groupId": groupId,
         });
         try {
             while (this._closed == false) {
                 let msg = kafka.read(reader, 30000);
-                if (msg == null) { continue; }
+                if (msg == null) {
+                    continue;
+                }
                 let m = msg as dict<string, any>;
                 handler({
                     "body":   m["value"],
                     "id":     (m["offset"] as string),
-                    "handle": m["offset"]
+                    "handle": m["offset"],
                 });
                 kafka.commit(reader);
             }
@@ -166,7 +192,9 @@ export class KafkaTopic implements contract.MessageTopic, contract.ManagedMessag
     }
 
     func close(): void {
-        if (this._closed) { return; }
+        if (this._closed) {
+            return;
+        }
         this._closed = true;
         kafka.close(this.writer);
     }

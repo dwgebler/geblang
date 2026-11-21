@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(103)
+	Version = uint16(104)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -1569,6 +1569,16 @@ func appendMetadataValue(out []byte, value runtime.Value) ([]byte, error) {
 			}
 		}
 		return out, nil
+	case runtime.DecoratorThunk:
+		out = append(out, 10)
+		out = binary.BigEndian.AppendUint64(out, uint64(value.Function))
+		if value.Type {
+			out = append(out, 1)
+		} else {
+			out = append(out, 0)
+		}
+		out = binary.BigEndian.AppendUint32(out, uint32(len(value.Source)))
+		return append(out, value.Source...), nil
 	default:
 		return nil, fmt.Errorf("unsupported decorator metadata constant %s", value.TypeName())
 	}
@@ -1908,6 +1918,10 @@ func (r *byteReader) metadataValue() runtime.Value {
 			entries[native.DictKey(value)] = runtime.SetEntry{Value: value}
 		}
 		return runtime.Set{Elements: entries}
+	case 10:
+		fn := int64(r.u64())
+		isType := r.u8() != 0
+		return runtime.DecoratorThunk{Function: fn, Type: isType, Source: string(r.read(int(r.u32())))}
 	default:
 		if r.err == nil {
 			r.err = fmt.Errorf("unknown decorator metadata tag %d", tag)

@@ -331,14 +331,20 @@ if (result.isOk()) {
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `process.run(cmd, args...)` | `Result` | Run command and wait |
+| `process.run(cmd, args[, opts])` | `Result` | Run command and wait |
 | `process.runWithOptions(opts)` | `Result` | Run with options dict |
 | `process.shell(cmd)` | `Result` | Run through the host shell |
 | `process.start(cmd, args...)` | `Process` | Start a live process |
 | `process.startWithOptions(opts)` | `Process` | Start with options dict |
 
 Both `run` and `start` accept either variadic string arguments or a command
-followed by a list.
+followed by a list. `run` also takes an options dict after the list, with the
+same `cwd`, `env` and `timeoutMs` keys as `runWithOptions`:
+
+```gb
+let result = process.run("make", ["test"], {"cwd": "/srv/app", "timeoutMs": 60000});
+let here = process.run("pwd", opts: {"cwd": "/tmp"});
+```
 
 ### `process.Result`
 

@@ -1,5 +1,4 @@
 module llm.bedrock;
-
 import llm.contract;
 import bytes;
 import crypt;
@@ -46,7 +45,8 @@ export class BedrockClient implements contract.Client {
         if (model.startsWith("cohere.embed")) {
             return this.embedCohere(text, model, opts);
         }
-        throw RuntimeError("llm.bedrock.embed: model '" + model
+        throw RuntimeError("llm.bedrock.embed: model '"
+            + model
             + "' does not match a known embedding family (amazon.titan-embed*, cohere.embed*); use invoke() with the provider-specific payload for other models.");
     }
 
@@ -63,7 +63,7 @@ export class BedrockClient implements contract.Client {
         return {
             "vectors": vectors,
             "model":   model,
-            "usage":   {"inputTokens": totalIn, "outputTokens": 0, "totalTokens": totalIn}
+            "usage":   {"inputTokens": totalIn, "outputTokens": 0, "totalTokens": totalIn},
         };
     }
 
@@ -79,8 +79,8 @@ export class BedrockClient implements contract.Client {
             "usage": {
                 "inputTokens":  inTok,
                 "outputTokens": 0,
-                "totalTokens":  inTok
-            }
+                "totalTokens":  inTok,
+            },
         };
     }
 
@@ -92,7 +92,7 @@ export class BedrockClient implements contract.Client {
         string inputType = opts.contains("inputType") ? (opts["inputType"] as string) : "search_document";
         let resp = this.invoke(model, {
             "texts":      [text],
-            "input_type": inputType
+            "input_type": inputType,
         });
         let embeddings = (resp["embeddings"] ?? {}) as dict<string, any>;
         let floats = (embeddings["float"] ?? []) as list<any>;
@@ -103,8 +103,8 @@ export class BedrockClient implements contract.Client {
             "usage": {
                 "inputTokens":  0,
                 "outputTokens": 0,
-                "totalTokens":  0
-            }
+                "totalTokens":  0,
+            },
         };
     }
 
@@ -113,7 +113,7 @@ export class BedrockClient implements contract.Client {
         string b64 = encoding.base64Encode(image);
         list<dict<string, any>> content = [
             {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
-            {"type": "text", "text": prompt}
+            {"type": "text", "text": prompt},
         ];
         list<dict<string, any>> messages = [{"role": "user", "content": content}];
         return this.runMessages(messages, opts);
@@ -127,7 +127,8 @@ export class BedrockClient implements contract.Client {
         if (model.startsWith("stability.")) {
             return this.generateImageStability(prompt, model, opts);
         }
-        throw RuntimeError("llm.bedrock.generateImage: model '" + model
+        throw RuntimeError("llm.bedrock.generateImage: model '"
+            + model
             + "' does not match a known image-generation family (amazon.titan-image-*, stability.*); use invoke() with the provider-specific payload for other models.");
     }
 
@@ -146,11 +147,14 @@ export class BedrockClient implements contract.Client {
                 "numberOfImages": n,
                 "quality":        quality,
                 "width":          width,
-                "height":         height
-            }
+                "height":         height,
+            },
         };
         let resp = this.invoke(model, payload);
-        return {"images": decodeBase64Images((resp["images"] ?? []) as list<any>, "png"), "model": model};
+        return {
+            "images": decodeBase64Images((resp["images"] ?? []) as list<any>, "png"),
+            "model": model,
+        };
     }
 
     /* Stability AI SDXL family. Request takes a list of weighted
@@ -167,7 +171,7 @@ export class BedrockClient implements contract.Client {
             "cfg_scale":    cfgScale,
             "steps":        steps,
             "width":        width,
-            "height":       height
+            "height":       height,
         };
         if (opts.contains("seed")) {
             payload["seed"] = opts["seed"];
@@ -178,10 +182,12 @@ export class BedrockClient implements contract.Client {
         for (a in artifacts) {
             let art = a as dict<string, any>;
             string b64 = (art["base64"] ?? "") as string;
-            if (b64.isEmpty()) { continue; }
+            if (b64.isEmpty()) {
+                continue;
+            }
             images = images.push({
                 "bytes":  encoding.base64Decode(b64),
-                "format": "png"
+                "format": "png",
             });
         }
         return {"images": images, "model": model};
@@ -193,7 +199,7 @@ export class BedrockClient implements contract.Client {
         dict<string, any> payload = {
             "anthropic_version": "bedrock-2023-05-31",
             "messages":          messages,
-            "max_tokens":        maxTokens
+            "max_tokens":        maxTokens,
         };
         if (opts.contains("system")) {
             payload["system"] = opts["system"];
@@ -218,7 +224,11 @@ export class BedrockClient implements contract.Client {
                 text = text + ((block["text"] ?? "") as string);
             }
             if (bt == "tool_use") {
-                toolCalls = toolCalls.push({"id": block["id"], "name": block["name"], "arguments": block["input"] ?? {}});
+                toolCalls = toolCalls.push({
+                    "id": block["id"],
+                    "name": block["name"],
+                    "arguments": block["input"] ?? {},
+                });
             }
         }
         let usage = (resp["usage"] ?? {}) as dict<string, any>;
@@ -231,8 +241,8 @@ export class BedrockClient implements contract.Client {
             "usage": {
                 "inputTokens":  inTok,
                 "outputTokens": outTok,
-                "totalTokens":  inTok + outTok
-            }
+                "totalTokens":  inTok + outTok,
+            },
         };
         if (toolCalls.length() > 0) {
             result["toolCalls"] = toolCalls;
@@ -260,7 +270,7 @@ export class BedrockClient implements contract.Client {
             "content-type":         "application/json",
             "host":                 host,
             "x-amz-content-sha256": payloadHash,
-            "x-amz-date":           amzDate
+            "x-amz-date":           amzDate,
         };
         let canonical = canonicalRequest(method, path, "", headers, payloadHash);
         let scope = dateStamp + "/" + this.region + "/bedrock/aws4_request";
@@ -268,8 +278,14 @@ export class BedrockClient implements contract.Client {
         let key = signingKey(this.secretKey, dateStamp, this.region, "bedrock");
         let signature = crypt.hmacSha256(key, stringToSign);
         string signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
-        string authHeader = "AWS4-HMAC-SHA256 Credential=" + this.accessKey + "/" + scope +
-            ",SignedHeaders=" + signedHeaders + ",Signature=" + signature;
+        string authHeader = "AWS4-HMAC-SHA256 Credential="
+            + this.accessKey
+            + "/"
+            + scope
+            + ",SignedHeaders="
+            + signedHeaders
+            + ",Signature="
+            + signature;
         let resp = http.requestWithOptions({
             "timeoutMs": this.timeoutMs,
             "method":  method,
@@ -279,14 +295,20 @@ export class BedrockClient implements contract.Client {
                 "Host":                 host,
                 "X-Amz-Content-Sha256": payloadHash,
                 "X-Amz-Date":           amzDate,
-                "Authorization":        authHeader
+                "Authorization":        authHeader,
             },
-            "body": body
+            "body": body,
         });
         let status = resp["status"] as int;
         if (status < 200 || status >= 300) {
-            throw RuntimeError("llm.bedrock " + method + " " + path + " failed: " +
-                (status as string) + " " + (resp["body"] as string));
+            throw RuntimeError("llm.bedrock "
+                + method
+                + " "
+                + path
+                + " failed: "
+                + (status as string)
+                + " "
+                + (resp["body"] as string));
         }
         return json.parse(resp["body"] as string) as dict<string, any>;
     }
@@ -300,7 +322,7 @@ export class BedrockClient implements contract.Client {
             out = out.push({
                 "id":       (item["modelId"] ?? "") as string,
                 "name":     (item["modelName"] ?? "") as string,
-                "provider": (item["providerName"] ?? "") as string
+                "provider": (item["providerName"] ?? "") as string,
             });
         }
         return out;
@@ -316,7 +338,7 @@ export class BedrockClient implements contract.Client {
         dict<string, string> headers = {
             "host":                 host,
             "x-amz-content-sha256": payloadHash,
-            "x-amz-date":           amzDate
+            "x-amz-date":           amzDate,
         };
         let canonical = canonicalRequest(method, path, "", headers, payloadHash);
         let scope = dateStamp + "/" + this.region + "/bedrock/aws4_request";
@@ -324,8 +346,14 @@ export class BedrockClient implements contract.Client {
         let key = signingKey(this.secretKey, dateStamp, this.region, "bedrock");
         let signature = crypt.hmacSha256(key, stringToSign);
         string signedHeaders = "host;x-amz-content-sha256;x-amz-date";
-        string authHeader = "AWS4-HMAC-SHA256 Credential=" + this.accessKey + "/" + scope +
-            ",SignedHeaders=" + signedHeaders + ",Signature=" + signature;
+        string authHeader = "AWS4-HMAC-SHA256 Credential="
+            + this.accessKey
+            + "/"
+            + scope
+            + ",SignedHeaders="
+            + signedHeaders
+            + ",Signature="
+            + signature;
         let resp = http.requestWithOptions({
             "timeoutMs": this.timeoutMs,
             "method":  method,
@@ -334,13 +362,19 @@ export class BedrockClient implements contract.Client {
                 "Host":                 host,
                 "X-Amz-Content-Sha256": payloadHash,
                 "X-Amz-Date":           amzDate,
-                "Authorization":        authHeader
-            }
+                "Authorization":        authHeader,
+            },
         });
         let status = resp["status"] as int;
         if (status < 200 || status >= 300) {
-            throw RuntimeError("llm.bedrock " + method + " " + path + " failed: " +
-                (status as string) + " " + (resp["body"] as string));
+            throw RuntimeError("llm.bedrock "
+                + method
+                + " "
+                + path
+                + " failed: "
+                + (status as string)
+                + " "
+                + (resp["body"] as string));
         }
         return json.parse(resp["body"] as string) as dict<string, any>;
     }
@@ -365,12 +399,8 @@ export func connect(dict<string, any> opts): BedrockClient {
     c.region = opts["region"] as string;
     c.accessKey = opts["accessKey"] as string;
     c.secretKey = opts["secretKey"] as string;
-    c.endpoint = opts.contains("endpoint")
-        ? (opts["endpoint"] as string)
-        : ("https://bedrock-runtime." + c.region + ".amazonaws.com");
-    c.controlEndpoint = opts.contains("controlEndpoint")
-        ? (opts["controlEndpoint"] as string)
-        : ("https://bedrock." + c.region + ".amazonaws.com");
+    c.endpoint = opts.contains("endpoint") ? (opts["endpoint"] as string) : ("https://bedrock-runtime." + c.region + ".amazonaws.com");
+    c.controlEndpoint = opts.contains("controlEndpoint") ? (opts["controlEndpoint"] as string) : ("https://bedrock." + c.region + ".amazonaws.com");
     c.timeoutMs = opts.contains("timeoutMs") ? (opts["timeoutMs"] as int) : 600000;
     return c;
 }
@@ -391,10 +421,12 @@ func decodeBase64Images(list<any> b64s, string format): list<dict<string, any>> 
     list<dict<string, any>> images = [];
     for (entry in b64s) {
         string b64 = entry as string;
-        if (b64.isEmpty()) { continue; }
+        if (b64.isEmpty()) {
+            continue;
+        }
         images = images.push({
             "bytes":  encoding.base64Decode(b64),
-            "format": format
+            "format": format,
         });
     }
     return images;
@@ -414,7 +446,11 @@ func bedrockTools(list<any> tools): list<any> {
     list<any> out = [];
     for (t in tools) {
         let tool = t as dict<string, any>;
-        out = out.push({"name": tool["name"], "description": (tool["description"] ?? "") as string, "input_schema": tool["parameters"] ?? {}});
+        out = out.push({
+            "name": tool["name"],
+            "description": (tool["description"] ?? "") as string,
+            "input_schema": tool["parameters"] ?? {},
+        });
     }
     return out;
 }
@@ -428,12 +464,26 @@ func bedrockToolMessage(dict<string, any> m): dict<string, any> {
         }
         for (tc in m["toolCalls"] as list<any>) {
             let call = tc as dict<string, any>;
-            content = content.push({"type": "tool_use", "id": call["id"], "name": call["name"], "input": call["arguments"] ?? {}});
+            content = content.push({
+                "type": "tool_use",
+                "id": call["id"],
+                "name": call["name"],
+                "input": call["arguments"] ?? {},
+            });
         }
         return {"role": "assistant", "content": content};
     }
     if (((m["role"] ?? "") as string) == "tool") {
-        return {"role": "user", "content": [{"type": "tool_result", "tool_use_id": m["toolCallId"], "content": (m["content"] ?? "") as string}]};
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": m["toolCallId"],
+                    "content": (m["content"] ?? "") as string,
+                },
+            ],
+        };
     }
     return m;
 }
@@ -452,8 +502,17 @@ func canonicalRequest(string method, string canonicalUri, string canonicalQuery,
         canonicalHeaders = canonicalHeaders + (name as string) + ":" + headers[name as string] + "\n";
     }
     string signedHeaders = joinSlice(headerNames, ";");
-    return method + "\n" + canonicalUri + "\n" + canonicalQuery + "\n" +
-           canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHash;
+    return method
+        + "\n"
+        + canonicalUri
+        + "\n"
+        + canonicalQuery
+        + "\n"
+        + canonicalHeaders
+        + "\n"
+        + signedHeaders
+        + "\n"
+        + payloadHash;
 }
 
 func sortedKeys(dict<string, string> d): list<string> {
@@ -476,7 +535,9 @@ func sortedKeys(dict<string, string> d): list<string> {
 func joinSlice(list<string> parts, string sep): string {
     string out = "";
     for (let i = 0; i < parts.length(); i = i + 1) {
-        if (i > 0) { out = out + sep; }
+        if (i > 0) {
+            out = out + sep;
+        }
         out = out + parts[i];
     }
     return out;

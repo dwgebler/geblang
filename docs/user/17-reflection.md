@@ -288,6 +288,12 @@ for (f in reflect.fields(Dog, inherited: true)) {
 io.println(reflect.methods(Dog));   # ["greet"]
 ```
 
+`reflect.method(classOrInstance, name)` finds an own or inherited method,
+including across module boundaries. Passing an instance returns a bound callable.
+`reflect.staticMethod(class, name)` also searches ancestors and returns a callable
+that selects the matching overload. Both return `null` for a missing name.
+`reflect.staticMethods(class)` lists only the class's own static methods.
+
 `reflect.constructors(class)` returns one entry per constructor overload, each a
 list of parameter dicts (see [parameter metadata](#parameter-metadata) below):
 
@@ -452,6 +458,12 @@ value is an error.
 A decorator can act as pure metadata for reflection, as a callable wrapper, or
 both. See [Functions and callables](05-functions-callables.md#decorators) for
 how to define and apply decorators.
+
+Since 1.44.0, arguments can hold class, interface and enum references or function
+literals, including inside lists and dictionaries. They resolve in the module
+that declares the decorated item. Field, parameter, constructor and interface
+reflection use that same scope and report invalid arguments. See
+[Type and function arguments](06-classes-interfaces.md#type-and-function-arguments).
 
 ## Docblocks
 

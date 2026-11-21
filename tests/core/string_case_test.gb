@@ -1,0 +1,52 @@
+/**
+ * @title String case, slug and wrap helpers
+ * @summary words() splits at non-alphanumerics and case changes;
+ * snakeCase / camelCase / kebabCase / slugify build on it; center and
+ * wrap lay text out by character count.
+ */
+import test;
+
+class StringCaseTest extends test.Test {
+    @test
+    func wordsSplitsAtCaseAndSeparators(): void {
+        this.assertEquals(["parse", "HTTP", "Response2xx"], "parseHTTPResponse2xx".words());
+        this.assertEquals(["version2", "Go"], "version2Go".words());
+        this.assertEquals(["caf\u{e9}", "Bar"], "caf\u{e9}Bar".words());
+        this.assertEquals(["a", "b", "c"], "  a--b__c ".words());
+        this.assertEquals([], "".words());
+    }
+
+    @test
+    func caseConversions(): void {
+        this.assertEquals("parse_http_response", "parseHTTPResponse".snakeCase());
+        this.assertEquals("helloWorldFooBar", "Hello world-foo_bar".camelCase());
+        this.assertEquals("httpServer", "HTTPServer".camelCase());
+        this.assertEquals("http-server", "HTTPServer".kebabCase());
+        this.assertEquals("user_id", "user_id".snakeCase());
+    }
+
+    @test
+    func slugify(): void {
+        this.assertEquals("cafe-creme-brulee", "Caf\u{e9} & Cr\u{e8}me Br\u{fb}l\u{e9}e!".slugify());
+        this.assertEquals("hello-world", "--Hello, World--".slugify());
+        this.assertEquals("tokyo", "\u{65e5}\u{672c} Tokyo".slugify());
+        this.assertEquals("", "!!!".slugify());
+    }
+
+    @test
+    func center(): void {
+        this.assertEquals("*ab**", "ab".center(5, "*"));
+        this.assertEquals(" ab ", "ab".center(4));
+        this.assertEquals("abc", "abc".center(2));
+        this.assertThrows(() => "x".center(3, ""));
+    }
+
+    @test
+    func wrap(): void {
+        this.assertEquals(["the quick", "brown fox"], "the quick brown fox".wrap(10));
+        this.assertEquals(["a", "https://example.com/long"], "a https://example.com/long".wrap(5));
+        this.assertEquals(["one", "", "two"], "one\n\ntwo".wrap(10));
+        this.assertEquals([], "".wrap(5));
+        this.assertThrows(() => "x".wrap(0));
+    }
+}

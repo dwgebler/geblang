@@ -272,3 +272,15 @@ func TestSearchFormInjection(t *testing.T) {
 		}
 	}
 }
+
+func TestTitleFromMarkdownDropsInlineCodeBackticks(t *testing.T) {
+	for in, want := range map[string]string{
+		"# Repositories and `@ApiResource`\n\nBody.": "Repositories and @ApiResource",
+		"# The `gebweb` CLI\n":                       "The gebweb CLI",
+		"# Plain title\n":                            "Plain title",
+	} {
+		if got := titleFromMarkdown([]byte(in), "page.md"); got != want {
+			t.Fatalf("titleFromMarkdown(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

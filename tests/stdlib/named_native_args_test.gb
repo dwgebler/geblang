@@ -1,0 +1,28 @@
+/**
+ * @title Named arguments on native functions and classes
+ * @summary Named arguments to native module functions fill a skipped
+ * optional parameter from its documented default; methods of native
+ * classes such as db.Connection accept named arguments too.
+ */
+import test;
+import datetime;
+import db;
+
+class NamedNativeArgsTest extends test.Test {
+    @test
+    func skippedModuleDefaultIsFilled(): void {
+        this.assertEquals(datetime.make(2024, 1, 2, 0, 0, 5), datetime.make(2024, 1, 2, second: 5));
+        this.assertEquals(datetime.make(2024, 1, 2, 0, 30), datetime.make(2024, 1, 2, minute: 30));
+    }
+
+    @test
+    func nativeClassMethods(): void {
+        let c = db.connect("sqlite", ":memory:");
+        c.exec(sql: "create table t (n int)");
+        let tx = c.begin(opts: {"isolation": "default"});
+        tx.exec("insert into t values (1)");
+        tx.commit();
+        this.assertEquals(1, db.query(c.handle, "select count(*) as n from t")[0]["n"]);
+        this.assertThrows(() => c.begin(bogus: 1), "Connection.begin has no parameter bogus");
+    }
+}

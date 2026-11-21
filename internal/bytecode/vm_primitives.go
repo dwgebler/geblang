@@ -60,6 +60,16 @@ func primitiveReMatches(patternArg runtime.Value, text string) (runtime.Value, e
 }
 
 func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) (runtime.Value, error) {
+	result, err := builtinPrimitiveMethod(receiver, name, args)
+	if err != nil && native.IsUnknownMethod(err) {
+		if extended, ok, extErr := native.ExtendedMethod(receiver, name, args, nil); ok {
+			return extended, extErr
+		}
+	}
+	return result, err
+}
+
+func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.Value) (runtime.Value, error) {
 	switch name {
 	case "toIntOrNull", "toDecimalOrNull", "toFloatOrNull":
 		if text, ok := receiver.(runtime.String); ok {
@@ -222,74 +232,12 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			n = 0
 		}
 		return runtime.String{Value: strings.Repeat(value.Value, n)}, nil
-	case "padStart":
-		if len(args) < 1 || len(args) > 2 {
-			return nil, fmt.Errorf("string.padStart expects (length[, pad])")
-		}
+	case "padStart", "padEnd":
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, native.UnknownMethodError(receiver.TypeName(), "padStart")
+			return nil, native.UnknownMethodError(receiver.TypeName(), name)
 		}
-		targetLen, err := indexInt(args[0])
-		if err != nil {
-			return nil, fmt.Errorf("string.padStart: %v", err)
-		}
-		pad := " "
-		if len(args) == 2 {
-			padStr, ok := args[1].(runtime.String)
-			if !ok || len(padStr.Value) == 0 {
-				return nil, fmt.Errorf("string.padStart: pad must be a non-empty string")
-			}
-			pad = padStr.Value
-		}
-		runes := []rune(value.Value)
-		for len(runes) < targetLen {
-			padRunes := []rune(pad)
-			needed := targetLen - len(runes)
-			if needed < len(padRunes) {
-				runes = append([]rune(pad[:needed]), runes...)
-			} else {
-				runes = append(padRunes, runes...)
-			}
-		}
-		if len(runes) > targetLen {
-			runes = runes[len(runes)-targetLen:]
-		}
-		return runtime.String{Value: string(runes)}, nil
-	case "padEnd":
-		if len(args) < 1 || len(args) > 2 {
-			return nil, fmt.Errorf("string.padEnd expects (length[, pad])")
-		}
-		value, ok := receiver.(runtime.String)
-		if !ok {
-			return nil, native.UnknownMethodError(receiver.TypeName(), "padEnd")
-		}
-		targetLen, err := indexInt(args[0])
-		if err != nil {
-			return nil, fmt.Errorf("string.padEnd: %v", err)
-		}
-		pad := " "
-		if len(args) == 2 {
-			padStr, ok := args[1].(runtime.String)
-			if !ok || len(padStr.Value) == 0 {
-				return nil, fmt.Errorf("string.padEnd: pad must be a non-empty string")
-			}
-			pad = padStr.Value
-		}
-		runes := []rune(value.Value)
-		padRunes := []rune(pad)
-		for len(runes) < targetLen {
-			needed := targetLen - len(runes)
-			if needed < len(padRunes) {
-				runes = append(runes, padRunes[:needed]...)
-			} else {
-				runes = append(runes, padRunes...)
-			}
-		}
-		if len(runes) > targetLen {
-			runes = runes[:targetLen]
-		}
-		return runtime.String{Value: string(runes)}, nil
+		return native.StringPadMethod(name, value.Value, args)
 	case "chars":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("string.chars expects no arguments")

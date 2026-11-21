@@ -1,0 +1,17 @@
+module decorator_reference_args_donor;
+
+export class Schema {}
+
+export enum Level {
+    Low,
+    High
+}
+
+export func triple(int n): int {
+    return n * 3;
+}
+
+export class BaseHandler {
+    @Route(schema: Schema, level: Level, scale: (int n) => triple(n))
+    func show(): void {}
+}

@@ -27,7 +27,9 @@ dependencies:
 ```
 
 Source files live under `src/` (whatever `source` points at).
-Tests are `*_test.gb` files next to source.
+Tests are `*_test.gb` files next to source. `geblang install <git-url>[@tag]`
+adds a git dependency to the manifest (leaving the rest of the file alone) and
+fetches it into `vendor/`; plain `geblang install` fetches every declared one.
 
 ```
 geblang run main.gb              # run a script
@@ -90,6 +92,10 @@ int y = 2;                  # explicit
 const PI = 3.14;             # immutable; PI is decimal
 ```
 
+Decimals print with up to 10 places, trailing zeros dropped and at least one
+kept: `12.5` prints `12.5`, `7 / 7` prints `1.0`. Use `d.toString(2)` or
+`"${d:.2f}"` for a fixed number of places.
+
 `let x = 1.0` infers `decimal`, not `float`. Use `1.0f` or
 `1.0 as float` when you specifically want the float type.
 `decimal` is the default for floating-point literals because
@@ -141,8 +147,26 @@ set<int>          s  = {1, 2, 3};      # brace literal w/o ':' is a set
 - `xs.search(v)` / `xs.search(pred)` / `s.searchPattern(re)` return every
   matching locator (list indices, dict keys, string positions); `xs.fill(v, n)`
   appends n copies in place.
+- Callback predicates (`filter`, `find`, `any`, `all`, `count`, `partition`,
+  `takeWhile`, ...) must return `bool`; anything else is a `TypeError`.
+- `s.trim("/")` (also `trimStart` / `trimEnd`) strips the given characters
+  instead of whitespace; `s.upper(1)` / `s.lower(n)` change only the first `n`
+  characters (the last `-n` when negative): `"geblang".upper(1)` is `"Geblang"`.
 - Numeric-check predicates test before converting: `s.isInt()` / `s.isDecimal()`
   / `s.isNumeric()` on strings; `f.isInt()` / `d.isInt()` on float / decimal.
+- String validation predicates (ASCII-only classes, empty string is `false`):
+  `isDigits`, `isAlpha`, `isAlphanumeric`, `isLower`, `isUpper`, `isAscii`,
+  `isHex`, `isUuid`, `isEmail`, `isUrl` (absolute with host), `isUtf8`;
+  `b.isUtf8()` on bytes.
+- More primitive helpers: strings `words`, `snakeCase`, `camelCase`,
+  `kebabCase`, `slugify`, `center(width[, pad])`, `wrap(width)` (list of lines);
+  numbers `isBetween(lo, hi)` (inclusive), int `gcd`/`lcm`/`digits`/
+  `isPowerOfTwo`/`bitCount`, float `isCloseTo(other, relTol, absTol)`; bytes
+  `startsWith`/`endsWith`/`indexOf`; sets `isSubsetOf`/`isSupersetOf`/
+  `isDisjointFrom`/`symmetricDifference` and `filter`/`map`/`any`/`all`; dicts
+  `filter`/`any`/`all` with `(k, v)` callbacks, `mapValues((v) => ...)`,
+  `pick(keys)`, `omit(keys)`, `invert()`. Primitive methods take positional
+  arguments only.
 
 ### Ranges
 
@@ -166,7 +190,6 @@ for (x in xs) { }
 for (k, v in d) { }
 for (let int i = 0; i < n; i++) { }
 while (cond) { }
-do { } while (cond);
 outer: for (i in 1..3) { continue outer; }    # labeled loops
 
 let grade = score >= 50 ? "pass" : "fail";    # ternary
@@ -224,6 +247,11 @@ greet(...{"name": "Ada"});              # dict spread -> named args
 - Defaults, named args, variadics, and spread combine freely and
   work in every dispatch context: functions, lambdas, methods,
   static methods, constructors (1.17.0).
+- Built-in methods (string/number/list/dict/set/bytes/range), native
+  module functions and native class methods take named args by their
+  documented parameter names: `s.padStart(width: 5, pad: "0")`,
+  `xs.reduce(combine: f, initial: 0)`. Naming a later parameter fills a
+  skipped optional one with its documented default (1.44.0).
 - Dict spread silently drops keys that name no parameter.
 - Overloading: the same name with different signatures resolves by
   argument count and type at the call site.
@@ -273,8 +301,11 @@ for (n in counter()) {
 }
 ```
 
-Return type is `generator<T>`. Use `iterable<T>` for parameters
-that accept any iterable (generators, lists, sets, ranges).
+Return type is `generator<T>`; every yielded value is checked against `T`
+(an `int` yield widens for `generator<decimal>`). A bare `return;` ends a
+generator early; returning a value is an error. Use `iterable<T>` for
+parameters that accept anything `for-in` accepts (generators, lists, sets,
+ranges, dicts, strings, classes with `__iter`).
 Manual stepping: `next()` advances (`null` once exhausted), `done()` peeks for
 exhaustion, `close()` ends early; these compose with `for-in`.
 Errors thrown inside a generator keep their class in the
@@ -478,6 +509,14 @@ func double(int x): int { return x * 2; }
 Decorators are callable wrappers when the name resolves to a
 function, otherwise inspectable metadata (`reflect.decorators`).
 
+Decorator arguments are literals (including lists and dicts of literals), class
+/ interface / enum references, or function literals and arrows (1.44.0):
+`@Route(schema: User, retry: (int n) => n * 1000)`. They resolve in the
+declaring module; reflection returns the type value or callable, and a
+wrapping decorator receives them as ordinary arguments. Type and function
+arguments are allowed only on module-level declarations and their members, and
+not inside a set literal.
+
 ### Reflection
 
 ```gb
@@ -538,11 +577,12 @@ introspection builtins.
 | `json`, `yaml`, `toml`, `xml`, `csv`, `msgpack` | parse / stringify; insertion-ordered. |
 | `encoding` | base64, hex, URL encoding. |
 | `crypt` | AES, HMAC, SHA, bcrypt password hashing, JWT (`jwtSign(p, k, {alg})`). |
-| `secrets` | constant-time compare, random tokens. |
+| `secrets` | constant-time compare, random tokens, `requireEnv(name)` / `getEnv`. |
+| `dotenv` | `.env` files: `load`, `parse`, `apply`, `loadAndApply(path)` (overwrites existing variables). |
 | `bytes` | hex/base64, `concat`, `slice`. |
 | `strings` | `compare`, `equalsFold`, `fromCodePoint`, splitting helpers. |
 | `re`, `pcre` | regex (Go engine / PCRE-style). |
-| `db` | SQL connect/query/exec; sqlite, postgres, mysql; transactions, prepared statements. |
+| `db` | SQL connect/query/exec; sqlite, postgres, mysql; transactions, prepared statements. `conn.queryOne(sql, ...)` returns the first row or `null`; `conn.migrate([{"id", "sql"}])` applies each migration once. Close a `query` cursor you stop reading early (`defer rows.close()`). |
 | `redis` | client incl. pub/sub. |
 | `http` | client (`get`, `post`, `request(url)` fluent builder, `fetchAll`) and server (`serve`, TLS, autocert). |
 | `sockets`, `net` | TCP/UDP, low-level networking. |
@@ -580,7 +620,7 @@ func half(int n): int {
     if (n % 2 != 0) {
         throw ValueError("odd");
     }
-    return n / 2;
+    return n // 2;
 }
 
 class MathTest extends test.Test {

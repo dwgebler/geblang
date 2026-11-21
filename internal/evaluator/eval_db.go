@@ -214,9 +214,11 @@ func (e *Evaluator) dbBegin(call *ast.CallExpression, args []runtime.Value) (run
 	ctx := context.Background()
 	var cancel context.CancelFunc
 	if len(args) >= 2 {
-		ctx, cancel, err = dbTimeoutContext(args[1])
-		if err != nil {
-			return nil, err
+		if _, noTimeout := args[1].(runtime.Null); !noTimeout {
+			ctx, cancel, err = dbTimeoutContext(args[1])
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	tx, err := db.BeginTx(ctx, options)

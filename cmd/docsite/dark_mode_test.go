@@ -39,3 +39,28 @@ func TestManualPagesCarryThemeToggle(t *testing.T) {
 		t.Fatalf("theme must be applied before the stylesheet loads")
 	}
 }
+
+func TestManualCodeBlocksGetCopyButtons(t *testing.T) {
+	withSiteChrome(t, "", "", "", "", "Home")
+	pages := chromePages()
+	got := layout(pages, pages[2], &pages[0], nil)
+	for _, want := range []string{
+		`document.querySelectorAll("pre > code")`,
+		`btn.className = "copy-btn";`,
+		`btn.setAttribute("aria-label", "Copy code to clipboard");`,
+		`navigator.clipboard.writeText(text)`,
+		`document.execCommand("copy")`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("manual page missing %q", want)
+		}
+	}
+	if strings.Index(got, "highlightGeblang(block.textContent)") > strings.Index(got, `querySelectorAll("pre > code")`) {
+		t.Fatalf("copy buttons must be added after highlighting so the copied text is the plain source")
+	}
+	for _, want := range []string{".code-wrap { position: relative;", ".copy-btn {", "@media print { .copy-btn { display: none; } }"} {
+		if !strings.Contains(manualCSS, want) {
+			t.Fatalf("manual CSS missing %q", want)
+		}
+	}
+}

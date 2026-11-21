@@ -1,5 +1,4 @@
 module llm.openai;
-
 import llm.contract;
 import bytes;
 import encoding;
@@ -47,7 +46,7 @@ export class OpenaiClient implements contract.Client {
             "content":    (message["content"] ?? "") as string,
             "model":      (resp["model"] ?? model) as string,
             "stopReason": (choice["finish_reason"] ?? "") as string,
-            "usage":      usageDict(usage, "prompt_tokens", "completion_tokens", "total_tokens")
+            "usage":      usageDict(usage, "prompt_tokens", "completion_tokens", "total_tokens"),
         };
         if (message.contains("tool_calls") && message["tool_calls"] != null) {
             result["toolCalls"] = parseOpenaiToolCalls(message["tool_calls"] as list<any>);
@@ -74,8 +73,11 @@ export class OpenaiClient implements contract.Client {
         let stream = http.requestStream({
             "method":  "POST",
             "url":     this.endpoint + "/v1/chat/completions",
-            "headers": {"Content-Type": "application/json", "Authorization": "Bearer " + this.apiKey},
-            "body":    json.stringify(payload)
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + this.apiKey,
+            },
+            "body":    json.stringify(payload),
         });
         let status = stream.status();
         if (status < 200 || status >= 300) {
@@ -114,7 +116,12 @@ export class OpenaiClient implements contract.Client {
             line = stream.read();
         }
         stream.close();
-        return {"content": content, "model": respModel, "stopReason": finishReason, "usage": usageDict({}, "", "", "")};
+        return {
+            "content": content,
+            "model": respModel,
+            "stopReason": finishReason,
+            "usage": usageDict({}, "", "", ""),
+        };
     }
 
     func embed(string text, dict<string, any> opts): dict<string, any> {
@@ -131,7 +138,7 @@ export class OpenaiClient implements contract.Client {
         return {
             "vector": first["embedding"],
             "model":  (resp["model"] ?? model) as string,
-            "usage":  usageDict(usage, "prompt_tokens", "", "total_tokens")
+            "usage":  usageDict(usage, "prompt_tokens", "", "total_tokens"),
         };
     }
 
@@ -149,7 +156,7 @@ export class OpenaiClient implements contract.Client {
         return {
             "vectors": vectors,
             "model":   (resp["model"] ?? model) as string,
-            "usage":   usageDict(usage, "prompt_tokens", "", "total_tokens")
+            "usage":   usageDict(usage, "prompt_tokens", "", "total_tokens"),
         };
     }
 
@@ -159,7 +166,7 @@ export class OpenaiClient implements contract.Client {
         string b64 = encoding.base64Encode(image);
         list<dict<string, any>> content = [
             {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": "data:" + mime + ";base64," + b64}}
+            {"type": "image_url", "image_url": {"url": "data:" + mime + ";base64," + b64}},
         ];
         list<dict<string, any>> messages = [{"role": "user", "content": content}];
         dict<string, any> payload = {"model": model, "messages": messages};
@@ -177,7 +184,7 @@ export class OpenaiClient implements contract.Client {
             "content":    (message["content"] ?? "") as string,
             "model":      (resp["model"] ?? model) as string,
             "stopReason": (choice["finish_reason"] ?? "") as string,
-            "usage":      usageDict(usage, "prompt_tokens", "completion_tokens", "total_tokens")
+            "usage":      usageDict(usage, "prompt_tokens", "completion_tokens", "total_tokens"),
         };
     }
 
@@ -186,7 +193,7 @@ export class OpenaiClient implements contract.Client {
         dict<string, any> payload = {
             "model":           model,
             "prompt":          prompt,
-            "response_format": "b64_json"
+            "response_format": "b64_json",
         };
         copyOpt(opts, payload, "size", "size");
         copyOpt(opts, payload, "quality", "quality");
@@ -197,10 +204,12 @@ export class OpenaiClient implements contract.Client {
         for (entry in data) {
             let item = entry as dict<string, any>;
             string b64 = (item["b64_json"] ?? "") as string;
-            if (b64.isEmpty()) { continue; }
+            if (b64.isEmpty()) {
+                continue;
+            }
             images = images.push({
                 "bytes":  encoding.base64Decode(b64),
-                "format": "png"
+                "format": "png",
             });
         }
         return {"images": images, "model": model};
@@ -210,7 +219,7 @@ export class OpenaiClient implements contract.Client {
         string body = json.stringify(payload);
         dict<string, any> headers = {
             "Content-Type":  "application/json",
-            "Authorization": "Bearer " + this.apiKey
+            "Authorization": "Bearer " + this.apiKey,
         };
         if (this.organization != null) {
             headers["OpenAI-Organization"] = this.organization as string;
@@ -220,12 +229,16 @@ export class OpenaiClient implements contract.Client {
             "method":  "POST",
             "url":     this.endpoint + path,
             "headers": headers,
-            "body":    body
+            "body":    body,
         });
         let status = resp["status"] as int;
         if (status < 200 || status >= 300) {
-            throw RuntimeError("llm.openai POST " + path + " failed: " +
-                (status as string) + " " + (resp["body"] as string));
+            throw RuntimeError("llm.openai POST "
+                + path
+                + " failed: "
+                + (status as string)
+                + " "
+                + (resp["body"] as string));
         }
         return json.parse(resp["body"] as string) as dict<string, any>;
     }
@@ -239,7 +252,7 @@ export class OpenaiClient implements contract.Client {
             out = out.push({
                 "id":      (item["id"] ?? "") as string,
                 "ownedBy": (item["owned_by"] ?? "") as string,
-                "created": item["created"] ?? 0
+                "created": item["created"] ?? 0,
             });
         }
         return out;
@@ -250,11 +263,20 @@ export class OpenaiClient implements contract.Client {
         if (this.organization != null) {
             headers["OpenAI-Organization"] = this.organization as string;
         }
-        let resp = http.requestWithOptions({"timeoutMs": this.timeoutMs, "method": "GET", "url": this.endpoint + path, "headers": headers});
+        let resp = http.requestWithOptions({
+            "timeoutMs": this.timeoutMs,
+            "method": "GET",
+            "url": this.endpoint + path,
+            "headers": headers,
+        });
         let status = resp["status"] as int;
         if (status < 200 || status >= 300) {
-            throw RuntimeError("llm.openai GET " + path + " failed: " +
-                (status as string) + " " + (resp["body"] as string));
+            throw RuntimeError("llm.openai GET "
+                + path
+                + " failed: "
+                + (status as string)
+                + " "
+                + (resp["body"] as string));
         }
         return json.parse(resp["body"] as string) as dict<string, any>;
     }
@@ -305,7 +327,7 @@ func usageDict(dict<string, any> raw, string inKey, string outKey, string totalK
     return {
         "inputTokens":  inputTokens,
         "outputTokens": outputTokens,
-        "totalTokens":  totalTokens
+        "totalTokens":  totalTokens,
     };
 }
 
@@ -313,11 +335,14 @@ func openaiTools(list<any> tools): list<any> {
     list<any> out = [];
     for (t in tools) {
         let tool = t as dict<string, any>;
-        out = out.push({"type": "function", "function": {
-            "name":        tool["name"],
-            "description": (tool["description"] ?? "") as string,
-            "parameters":  tool["parameters"] ?? {}
-        }});
+        out = out.push({
+            "type": "function",
+            "function": {
+                "name":        tool["name"],
+                "description": (tool["description"] ?? "") as string,
+                "parameters":  tool["parameters"] ?? {},
+            },
+        });
     }
     return out;
 }
@@ -327,15 +352,27 @@ func openaiToolMessage(dict<string, any> m): dict<string, any> {
         list<any> calls = [];
         for (tc in m["toolCalls"] as list<any>) {
             let call = tc as dict<string, any>;
-            calls = calls.push({"id": call["id"], "type": "function", "function": {
-                "name":      call["name"],
-                "arguments": json.stringify(call["arguments"])
-            }});
+            calls = calls.push({
+                "id": call["id"],
+                "type": "function",
+                "function": {
+                    "name":      call["name"],
+                    "arguments": json.stringify(call["arguments"]),
+                },
+            });
         }
-        return {"role": (m["role"] ?? "assistant") as string, "content": (m["content"] ?? "") as string, "tool_calls": calls};
+        return {
+            "role": (m["role"] ?? "assistant") as string,
+            "content": (m["content"] ?? "") as string,
+            "tool_calls": calls,
+        };
     }
     if (((m["role"] ?? "") as string) == "tool") {
-        return {"role": "tool", "tool_call_id": m["toolCallId"], "content": (m["content"] ?? "") as string};
+        return {
+            "role": "tool",
+            "tool_call_id": m["toolCallId"],
+            "content": (m["content"] ?? "") as string,
+        };
     }
     return m;
 }

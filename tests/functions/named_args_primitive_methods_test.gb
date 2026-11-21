@@ -1,11 +1,10 @@
 /**
  * @title Named arguments on primitive methods
- * @summary Methods on lists, strings and dicts take positional arguments only;
- * a named argument raises the same error on both runtimes.
+ * @summary Methods on lists, strings and dicts bind named arguments by
+ * their documented parameter names; an unknown name raises the same
+ * error on both runtimes.
  */
 import test;
-
-const MESSAGE = "named arguments are only supported for Geblang functions and methods";
 
 class NamedArgsPrimitiveMethodsTest extends test.Test {
     func failure(func call): string {
@@ -18,26 +17,28 @@ class NamedArgsPrimitiveMethodsTest extends test.Test {
     }
 
     @test
-    func listMethodRejectsNamedArgs(): void {
+    func listMethodBindsNamedArgs(): void {
         let xs = [1, 2, 3];
-        this.assertEquals(MESSAGE, this.failure(func(): void {
-            xs.reduce(fn: func(int a, int b): int { return a + b; }, initial: 0);
+        this.assertEquals(6, xs.reduce(combine: func(int a, int b): int { return a + b; }, initial: 0));
+        any dyn = xs;
+        this.assertEquals("list.reduce has no parameter fn", this.failure(func(): void {
+            dyn.reduce(fn: func(int a, int b): int { return a + b; }, initial: 0);
         }));
     }
 
     @test
-    func stringMethodRejectsNamedArgs(): void {
-        this.assertEquals(MESSAGE, this.failure(func(): void {
-            "a,b".split(separator: ",");
+    func stringMethodBindsNamedArgs(): void {
+        this.assertEquals(["a", "b"], "a,b".split(separator: ","));
+        any dyn = "a,b";
+        this.assertEquals("string.split has no parameter sep", this.failure(func(): void {
+            dyn.split(sep: ",");
         }));
     }
 
     @test
-    func dictMethodRejectsNamedArgs(): void {
+    func dictMethodBindsNamedArgs(): void {
         let d = {"k": 1};
-        this.assertEquals(MESSAGE, this.failure(func(): void {
-            d.get(key: "k");
-        }));
+        this.assertEquals(1, d.get(key: "k"));
     }
 
     @test

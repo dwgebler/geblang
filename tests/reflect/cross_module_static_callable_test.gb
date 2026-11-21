@@ -38,7 +38,10 @@ class CrossModuleStaticCallableTest extends test.Test {
     }
 
     @test
-    func inheritedCrossModuleStaticIsNull(): void {
-        this.assertTrue(reflect.staticMethod(sd.SubGadget, "build") == null);
+    func inheritedCrossModuleStaticIsCallable(): void {
+        let m = reflect.staticMethod(sd.SubGadget, "build");
+        this.assertTrue(m != null);
+        this.assertEquals(30, m(3).v);
+        this.assertEquals(47, m(4, 7).v);
     }
 }

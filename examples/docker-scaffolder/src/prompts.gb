@@ -23,7 +23,14 @@ export func gather(): model.Project {
     for (lang in langs) {
         project.services.push(gatherService(lang as string));
     }
-    project.database = cli.choose("Database:", ["none", "postgres", "mysql", "mariadb", "mongodb", "sqlite"]);
+    project.database = cli.choose("Database:", [
+        "none",
+        "postgres",
+        "mysql",
+        "mariadb",
+        "mongodb",
+        "sqlite",
+    ]);
     project.cache = cli.confirm("Add a Redis cache? ", false);
     project.mail = cli.confirm("Add a Mailpit mail catcher? ", false);
     return project;

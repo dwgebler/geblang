@@ -40,13 +40,15 @@ io.println("missing:${reflect.staticMethod(sd.Gadget, "nope") == null}");
 `, "missing:true\n")
 }
 
-// An inherited static is not surfaced by reflect.staticMethod on either backend (own statics only).
+// Inherited statics retain their declaring module and overload selection.
 func TestParityReflectStaticCallableCrossModuleInherited(t *testing.T) {
 	runMultiModuleParity(t, map[string]string{"sdonor": staticCallableDonor}, `import io;
 import reflect;
 import sdonor as sd;
-io.println("inherited:${reflect.staticMethod(sd.SubGadget, "build") == null}");
-`, "inherited:true\n")
+let m = reflect.staticMethod(sd.SubGadget, "build");
+io.println("one:${m(3).v}");
+io.println("two:${m(4, 7).v}");
+`, "one:30\ntwo:47\n")
 }
 
 // The local (same-module) static callable path still works after the cross-module route was added.

@@ -1,0 +1,9 @@
+import entry_decorator_probe;
+import test;
+
+class EntryDecoratorTest extends test.Test {
+    @test
+    func entryDecoratorReferencesFromImportedReflection(): void {
+        entry_decorator_probe.main();
+    }
+}

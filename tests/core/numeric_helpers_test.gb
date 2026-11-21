@@ -1,0 +1,69 @@
+/**
+ * @title Numeric helpers
+ * @summary isBetween on int/float/decimal (inclusive, any numeric
+ * bounds), int gcd / lcm / digits / isPowerOfTwo / bitCount, and
+ * float.isCloseTo with relative and absolute tolerances.
+ */
+import test;
+import math;
+
+class NumericHelpersTest extends test.Test {
+    @test
+    func isBetweenIsInclusive(): void {
+        this.assertTrue(5.isBetween(1, 10));
+        this.assertTrue(1.isBetween(1, 10));
+        this.assertTrue(10.isBetween(1, 10));
+        this.assertFalse(11.isBetween(1, 10));
+    }
+
+    @test
+    func isBetweenMixesNumericTypes(): void {
+        this.assertTrue(5.isBetween(4.5, 5.5));
+        this.assertTrue((2.5f).isBetween(1, 3));
+        this.assertFalse((2.5).isBetween(3, 4));
+        this.assertFalse(math.nan().isBetween(0, 1));
+    }
+
+    @test
+    func isBetweenRejectsInvertedRange(): void {
+        this.assertThrows(() => 5.isBetween(10, 1));
+    }
+
+    @test
+    func gcdAndLcm(): void {
+        this.assertEquals(6, 12.gcd(-18));
+        this.assertEquals(0, 0.gcd(0));
+        this.assertEquals(12, 4.lcm(6));
+        this.assertEquals(12, (-4).lcm(6));
+        this.assertEquals(0, 0.lcm(5));
+    }
+
+    @test
+    func digitsAndBits(): void {
+        this.assertEquals([1, 2, 0], (-120).digits());
+        this.assertEquals([0], 0.digits());
+        this.assertTrue(64.isPowerOfTwo());
+        this.assertFalse(0.isPowerOfTwo());
+        this.assertFalse((-8).isPowerOfTwo());
+        this.assertEquals(2, (-5).bitCount());
+        this.assertEquals(8, 255.bitCount());
+    }
+
+    @test
+    func bigInts(): void {
+        let big = 2 ** 100;
+        this.assertTrue(big.isPowerOfTwo());
+        this.assertEquals(1, big.bitCount());
+        this.assertEquals(31, (big + 1).digits().length());
+    }
+
+    @test
+    func isCloseTo(): void {
+        this.assertTrue((0.1f + 0.2f).isCloseTo(0.3f));
+        this.assertFalse((1.0f).isCloseTo(1.1f));
+        this.assertTrue((1.0f).isCloseTo(1.1f, 0.2));
+        this.assertFalse((0.0f).isCloseTo(1e-12f));
+        this.assertTrue((0.0f).isCloseTo(1e-12f, 0, 1e-9));
+        this.assertThrows(() => (1.0f).isCloseTo(1.0f, -1));
+    }
+}

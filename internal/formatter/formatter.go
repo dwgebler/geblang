@@ -1444,11 +1444,22 @@ func (f *fmtr) multilineChain(e ast.Expression) string {
 			dot = "?."
 		}
 		seg := dot + s.name
-		if s.call != nil {
-			seg += f.typeArgs(s.call.TypeArguments) + "(" + f.callArgs(s.call.Arguments) + ")"
+		newLine := prevLine > 0 && s.line > prevLine
+		if newLine {
+			b.WriteString(f.sameLineComments(prevLine) + "\n" + f.ownLineComments(s.line, indent))
+			f.depth++
 		}
-		if prevLine > 0 && s.line > prevLine {
-			b.WriteString(f.sameLineComments(prevLine) + "\n" + f.ownLineComments(s.line, indent) + indent + seg)
+		if s.call != nil {
+			seg += f.typeArgs(s.call.TypeArguments)
+			if needsBreakAuthor(s.call) {
+				seg = f.renderBrokenArgs(s.call, seg, len(indent))
+			} else {
+				seg += "(" + f.callArgs(s.call.Arguments) + ")"
+			}
+		}
+		if newLine {
+			f.depth--
+			b.WriteString(indent + seg)
 		} else {
 			b.WriteString(seg)
 		}
@@ -1571,28 +1582,12 @@ func (f *fmtr) exprBare(e ast.Expression) string {
 		return f.fmtString(e.Raw, e.Quote, e.Triple)
 	case *ast.InterpolatedString:
 		return f.fmtInterpolated(e)
-	case *ast.ListLiteral:
-		parts := make([]string, 0, len(e.Elements))
-		for _, el := range e.Elements {
-			parts = append(parts, f.expr(el))
+	case *ast.ListLiteral, *ast.DictLiteral, *ast.SetLiteral:
+		// Keeps author breaks where no renderValue call sees the collection: casts, operands, receivers.
+		if !f.clean && needsBreakAuthor(e) {
+			return f.renderBrokenCollection(e)
 		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case *ast.DictLiteral:
-		parts := make([]string, 0, len(e.Entries))
-		for _, entry := range e.Entries {
-			if entry.Spread {
-				parts = append(parts, "..."+f.expr(entry.Value))
-				continue
-			}
-			parts = append(parts, f.expr(entry.Key)+": "+f.expr(entry.Value))
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
-	case *ast.SetLiteral:
-		parts := make([]string, 0, len(e.Elements))
-		for _, el := range e.Elements {
-			parts = append(parts, f.expr(el))
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
+		return f.flatCollection(e)
 	case *ast.PipeExpression:
 		return f.expr(e.Left) + " |> " + f.expr(e.Right)
 	case *ast.ListComprehension:
@@ -1944,15 +1939,24 @@ func (f *fmtr) renderValue(e ast.Expression, col int) string {
 			return f.renderBrokenCollection(e)
 		}
 	case *ast.CallExpression:
-		if strings.Contains(flat, "\n") { // already multi-line (a broken method chain)
+		// A broken method chain lays out its own arguments; a closure body's newlines must not hide author-broken arguments.
+		if strings.Contains(flat, "\n") && (f.shouldBreakChain(e) || !needsBreakAuthor(e)) {
 			return flat
 		}
 		if needsBreakAuthor(e) || col+len(flat) > fmtMaxWidth {
 			rewind()
 			return f.renderBrokenCall(e, col)
 		}
+	case *ast.AssignmentExpression:
+		op, value := "=", e.Value
+		if infix, ok := e.Value.(*ast.InfixExpression); ok && infix.Left == e.Left {
+			op, value = infix.Operator+"=", infix.Right
+		}
+		rewind()
+		prefix := f.expr(e.Left) + f.assignOp(e.Token, op)
+		return prefix + f.renderValue(value, col+len(prefix))
 	case *ast.PartialExpression:
-		if strings.Contains(flat, "\n") {
+		if strings.Contains(flat, "\n") && !needsBreakAuthor(e) {
 			return flat
 		}
 		if needsBreakAuthor(e) || col+len(flat) > fmtMaxWidth {
@@ -1961,6 +1965,34 @@ func (f *fmtr) renderValue(e ast.Expression, col int) string {
 		}
 	}
 	return flat
+}
+
+func (f *fmtr) flatCollection(e ast.Expression) string {
+	switch e := e.(type) {
+	case *ast.ListLiteral:
+		parts := make([]string, 0, len(e.Elements))
+		for _, el := range e.Elements {
+			parts = append(parts, f.expr(el))
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case *ast.DictLiteral:
+		parts := make([]string, 0, len(e.Entries))
+		for _, entry := range e.Entries {
+			if entry.Spread {
+				parts = append(parts, "..."+f.expr(entry.Value))
+				continue
+			}
+			parts = append(parts, f.expr(entry.Key)+": "+f.expr(entry.Value))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	case *ast.SetLiteral:
+		parts := make([]string, 0, len(e.Elements))
+		for _, el := range e.Elements {
+			parts = append(parts, f.expr(el))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	}
+	return ""
 }
 
 // renderBrokenCollection renders a list/dict/set literal one element per line (trailing comma), recursing so nested values can break too.
@@ -2021,7 +2053,14 @@ func (f *fmtr) renderBrokenCollection(e ast.Expression) string {
 
 // renderBrokenCall renders a call's arguments one per line; a single collection argument instead hugs the parens (callee([ ... ])).
 func (f *fmtr) renderBrokenCall(e *ast.CallExpression, col int) string {
-	callee := f.exprChild(e.Callee, !fmtIsPrimary(e.Callee)) + f.typeArgs(e.TypeArguments)
+	return f.renderBrokenArgs(e, f.exprChild(e.Callee, !fmtIsPrimary(e.Callee))+f.typeArgs(e.TypeArguments), col)
+}
+
+// renderBrokenArgs renders e's arguments broken across lines after an already-rendered callee.
+func (f *fmtr) renderBrokenArgs(e *ast.CallExpression, callee string, col int) string {
+	if len(e.Arguments) == 0 {
+		return callee + "()"
+	}
 	if len(e.Arguments) == 1 {
 		a := e.Arguments[0]
 		if !a.Spread && a.Name == nil && isCollection(a.Value) {

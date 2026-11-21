@@ -166,7 +166,13 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 		},
 		"process": {
 			"run": func(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-				spec, err := processSpecFromCombinedArgs(call, args)
+				var spec processSpec
+				var err error
+				if len(args) == 3 && isDictValue(args[2]) {
+					spec, err = processSpecWithOptions(call, args)
+				} else {
+					spec, err = processSpecFromCombinedArgs(call, args)
+				}
 				if err != nil {
 					return nil, err
 				}
@@ -941,14 +947,14 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"restoreAll": e.testRestoreAll,
 		},
 		"reflect": {
-			"decorators":       reflectDecorators,
-			"hasDecorator":     reflectHasDecorator,
-			"decorator":        reflectDecorator,
+			"decorators":       e.reflectDecorators,
+			"hasDecorator":     e.reflectHasDecorator,
+			"decorator":        e.reflectDecorator,
 			"parameters":       e.reflectParameters,
-			"returnType":       reflectReturnType,
+			"returnType":       e.reflectReturnType,
 			"returnClass":      e.reflectReturnClass,
-			"doc":              reflectDoc,
-			"docs":             reflectDocs,
+			"doc":              e.reflectDoc,
+			"docs":             e.reflectDocs,
 			"typeOf":           reflectTypeOf,
 			"location":         reflectLocation,
 			"exports":          reflectExports,
@@ -963,7 +969,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"interfaces":       reflectInterfaces,
 			"constructors":     e.reflectConstructorsResolved,
 			"typeBindings":     reflectTypeBindings,
-			"interfaceMethods": reflectInterfaceMethods,
+			"interfaceMethods": e.reflectInterfaceMethods,
 			"interfaceParents": reflectInterfaceParents,
 			"function":         reflectLookupRequiresEvaluator,
 			"class":            reflectLookupRequiresEvaluator,

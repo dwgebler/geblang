@@ -897,9 +897,9 @@ metadata only. The same name can mean different things in different
 scopes; that's fine.
 
 **Decorator arguments.** Literal values (strings, ints, floats,
-decimals, bools, null) and literal list / dict / set composites
-built from those. Names from scope are not resolved at decorator-arg
-time, so the metadata stays serialisable into the compiled chunk.
+decimals, bools, null), literal list / dict / set composites built
+from those, and the type and function arguments described in
+[Type and function arguments](#type-and-function-arguments).
 
 ```gb
 class Item {
@@ -933,9 +933,8 @@ func show(
 ): User { ... }
 ```
 
-Same arg rules as field decorators: literal strings, ints, floats,
-decimals, bools, null, and literal list/dict/set composites of
-those. Names from scope are not resolved.
+Same arg rules as field decorators: literals, literal list/dict/set
+composites, and type and function arguments.
 
 Reflection:
 
@@ -972,6 +971,51 @@ rule, every parameter list.
 instance (in which case the call delegates to the instance's class).
 Names match exactly: `@Assert.email` is the name `"Assert.email"`,
 not `"Assert"` with a sub-key.
+
+### Type and function arguments
+
+Since 1.44.0 a decorator argument can also name a type or be a function:
+
+- a class, interface or enum, written bare (`User`), module-qualified
+  (`models.User`) or brought in with `from ... import`;
+- a function literal or arrow function (`(int n) => n * 2`).
+
+Reflection returns the type value or a callable in `args` and `namedArgs`,
+including inside list and dict arguments:
+
+```gb
+import io;
+import reflect;
+
+class User {}
+
+@Route(schema: User, retry: (int attempt) => attempt * 1000)
+func show(string id): void {}
+
+let route = reflect.decorators(show)[0];
+io.println(route["namedArgs"]["schema"]);                       # <class User>
+io.println((route["namedArgs"]["retry"] as callable)(3));       # 3000
+```
+
+A behavioural decorator receives the type or callable as an ordinary
+argument.
+
+The arguments resolve in the scope of the module that declares the
+decorated item, so they can use that module's classes, functions and
+imports but not local variables. The rules:
+
+- A name must refer to a class, interface or enum. Any other name is an
+  error when the decorator is read (`argument LIMIT must be a literal, a
+  type, or a function`).
+- Type and function arguments are only allowed on module-level
+  declarations and their members (classes, their methods, fields and
+  parameters, interface parameters, and top-level functions). On a function
+  declared inside another function they are a compile-time error.
+- A set literal cannot hold them.
+- Invalid arguments raise an error when their decorator metadata is read,
+  including through field, parameter, constructor and interface reflection.
+- Native transpilation (`--native`) does not support these arguments yet;
+  use the bundled VM build.
 
 ### Built-in decorator: `@abstract`
 

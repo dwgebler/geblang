@@ -1,14 +1,14 @@
 # Geblang toolchain reference
 
 The `geblang` CLI. Run `geblang help <topic>` for the authoritative, version-
-matched text. Verified against Geblang 1.27.0.
+matched text. Checked against Geblang 1.44.0; confirm other options with CLI help.
 
 ## The two backends
 
 Every program that compiles must produce identical output on both:
 
-- the **tree-walking evaluator** - used by `geblang test`;
-- the **bytecode VM** - the default for running a script and for `geblang build`.
+- the **tree-walking evaluator** - selected by `geblang test --runtime evaluator`;
+- the **bytecode VM** - the default for scripts, `geblang test` and `geblang build`.
 
 Running a script attempts the VM and falls back to the evaluator on a construct
 the VM cannot compile yet. `geblang --vm-strict` fails instead of falling back;
@@ -23,7 +23,7 @@ geblang run app.gb [args...]        # explicit alias for the above
 geblang --disable-vm app.gb         # force the evaluator
 geblang --vm-strict app.gb          # VM only, no fallback
 geblang --no-assert app.gb          # elide assert(...) (args not evaluated)
-geblang -m app.main [args...]       # run a module's exported main()
+geblang -m app.main [args...]       # run a module's exported main(list<string> args)
 geblang repl                        # interactive session
 ```
 
@@ -43,7 +43,9 @@ Parses, type-checks, and lints without executing. The contract:
   cannot build yet (needs `--disable-vm` for a release build).
 
 Run `geblang check` on code you write, and fix every diagnostic (including
-pre-existing ones in files you touch).
+pre-existing ones in files you touch). It also reports built-in methods called
+with the wrong argument count and warns (`discarded-task`) when
+`async.sleep` / `all` / `race` / `timeout` is called without `await`.
 
 ## geblang fmt (formatting)
 
@@ -54,12 +56,18 @@ geblang fmt --strip-comments <file> # remove all comments
 ```
 
 `fmt` re-parses its own output and refuses to write anything that is not
-AST-identical to the input, so it can never change a program's meaning.
+AST-identical to the input, so it can never change a program's meaning. It
+keeps a collection or argument list you broke across lines broken (in `let`,
+`return` and assignments alike), breaks lines over 100 columns, keeps aligned
+columns aligned, and writes `module` and `import` lines as one block with no
+blank lines between them. It never adds method-chain breaks; break a long chain
+yourself and `fmt` keeps it.
 
 ## geblang test and the test framework
 
 ```sh
-geblang test <file-or-dir>          # discover and run *_test.gb (recursively)
+geblang test <file-or-dir>          # VM by default; discovers *_test.gb recursively
+geblang test --runtime evaluator <p> # evaluator parity run
 geblang test --tag integration <p>  # only @tag("integration") methods (repeatable)
 geblang test --class UserTest --method login <p>
 geblang test --verbose <p>          # per-method PASS/FAIL (testdox)
@@ -124,7 +132,8 @@ dependencies:
   somelib:
     path: ../somelib          # path dep (absolute, ~, $VAR also accepted)
   httplib:
-    git: github.com/acme/httplib@v1.2.0   # git dep (scheme-less resolves to https)
+    git: github.com/acme/httplib   # git dep (scheme-less resolves to https)
+    version: v1.2.0                # tag or branch; `latest` = newest semver tag
 permissions:
   ffi: true                   # bake capabilities into built binaries
   onnx: true
@@ -134,7 +143,7 @@ permissions:
 ```sh
 geblang init [--name n] [--source dir]   # scaffold geblang.yaml
 geblang install                          # fetch all deps into vendor/, pin geblang.lock
-geblang install <git-url>[@version] [<name>]   # add + fetch one dependency
+geblang install <git-url>[@version] [<name>]   # add/replace that one entry + fetch (rest of the file kept)
 geblang doc <file-or-dir> [--format markdown|json] [--out file]   # API docs
 ```
 

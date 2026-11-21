@@ -12,8 +12,19 @@ import (
 var stackFramePattern = regexp.MustCompile(`^\s*at\s+(.+?)(?:\s+\(line\s+([0-9]+)\))?\s*$`)
 
 // UnknownMethodError is the canonical unknown-method text on both backends.
+type unknownMethodError struct{ typeName, method string }
+
+func (e unknownMethodError) Error() string {
+	return fmt.Sprintf("unknown method %s.%s", e.typeName, e.method)
+}
+
 func UnknownMethodError(typeName, method string) error {
-	return fmt.Errorf("unknown method %s.%s", typeName, method)
+	return unknownMethodError{typeName: typeName, method: method}
+}
+
+func IsUnknownMethod(err error) bool {
+	_, ok := err.(unknownMethodError)
+	return ok
 }
 
 // UnsupportedOperandsError is the canonical bad-binary-operand text on both backends.

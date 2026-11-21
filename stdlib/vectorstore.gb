@@ -1,5 +1,4 @@
 module vectorstore;
-
 import async.sync as sync;
 import binary;
 import json;
@@ -106,7 +105,11 @@ export class MemoryVectorStore implements VectorStore {
         try {
             if (this._records.contains(id)) {
                 let rec = this._records[id] as dict<string, any>;
-                return VectorRecord(id, decodeVector(rec["blob"] as bytes), rec["metadata"] as dict<string, any>);
+                return VectorRecord(
+                    id,
+                    decodeVector(rec["blob"] as bytes),
+                    rec["metadata"] as dict<string, any>
+                );
             }
             return null;
         } finally {
@@ -183,9 +186,13 @@ export class MemoryVectorStore implements VectorStore {
     }
 
     func searchFilter(list<any> query, int k, dict<string, any> criteria): list<SearchHit> {
-        return this.searchWhere(query, k, func(any rec): bool {
-            return matchesCriteria((rec as VectorRecord).metadata, criteria);
-        });
+        return this.searchWhere(
+            query,
+            k,
+            func(any rec): bool {
+                return matchesCriteria((rec as VectorRecord).metadata, criteria);
+            }
+        );
     }
 }
 
@@ -218,14 +225,20 @@ export class SqliteVectorStore implements VectorStore {
         this._conn = conn;
         this._table = table;
         this._metric = metric;
-        conn.exec("CREATE TABLE IF NOT EXISTS " + table
+        conn.exec("CREATE TABLE IF NOT EXISTS "
+            + table
             + " (id TEXT PRIMARY KEY, vector BLOB NOT NULL, metadata TEXT NOT NULL)");
     }
 
     func add(string id, list<any> vector, dict<string, any> metadata): void {
-        this._conn.exec("INSERT OR REPLACE INTO " + this._table
-            + " (id, vector, metadata) VALUES (?, ?, ?)",
-            id, encodeVector(vector), json.stringify(metadata));
+        this._conn.exec(
+            "INSERT OR REPLACE INTO "
+                + this._table
+                + " (id, vector, metadata) VALUES (?, ?, ?)",
+            id,
+            encodeVector(vector),
+            json.stringify(metadata)
+        );
     }
 
     func addAll(list<VectorRecord> records): void {
@@ -236,7 +249,8 @@ export class SqliteVectorStore implements VectorStore {
     }
 
     func get(string id): ?VectorRecord {
-        let rows = this._conn.query("SELECT vector, metadata FROM " + this._table
+        let rows = this._conn.query("SELECT vector, metadata FROM "
+            + this._table
             + " WHERE id = ?", id).all();
         if (rows.length() == 0) {
             return null;
@@ -287,9 +301,13 @@ export class SqliteVectorStore implements VectorStore {
     }
 
     func searchFilter(list<any> query, int k, dict<string, any> criteria): list<SearchHit> {
-        return this.searchWhere(query, k, func(any rec): bool {
-            return matchesCriteria((rec as VectorRecord).metadata, criteria);
-        });
+        return this.searchWhere(
+            query,
+            k,
+            func(any rec): bool {
+                return matchesCriteria((rec as VectorRecord).metadata, criteria);
+            }
+        );
     }
 }
 
@@ -332,17 +350,30 @@ export class PgVectorStore implements VectorStore {
         this._dim = dimension;
         this._metric = metric;
         conn.exec("CREATE EXTENSION IF NOT EXISTS vector");
-        conn.exec("CREATE TABLE IF NOT EXISTS " + table + " (id text PRIMARY KEY, embedding vector("
-            + (dimension as string) + ") NOT NULL, metadata jsonb NOT NULL)");
-        conn.exec("CREATE INDEX IF NOT EXISTS " + table + "_embedding_idx ON " + table
-            + " USING hnsw (embedding " + pgOpsClass(metric) + ")");
+        conn.exec("CREATE TABLE IF NOT EXISTS "
+            + table
+            + " (id text PRIMARY KEY, embedding vector("
+            + (dimension as string)
+            + ") NOT NULL, metadata jsonb NOT NULL)");
+        conn.exec("CREATE INDEX IF NOT EXISTS "
+            + table
+            + "_embedding_idx ON "
+            + table
+            + " USING hnsw (embedding "
+            + pgOpsClass(metric)
+            + ")");
     }
 
     func add(string id, list<any> vector, dict<string, any> metadata): void {
-        this._conn.exec("INSERT INTO " + this._table
-            + " (id, embedding, metadata) VALUES (?, CAST(? AS vector), CAST(? AS jsonb))"
-            + " ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding, metadata = EXCLUDED.metadata",
-            id, vectorToPgText(vector), json.stringify(metadata));
+        this._conn.exec(
+            "INSERT INTO "
+                + this._table
+                + " (id, embedding, metadata) VALUES (?, CAST(? AS vector), CAST(? AS jsonb))"
+                + " ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding, metadata = EXCLUDED.metadata",
+            id,
+            vectorToPgText(vector),
+            json.stringify(metadata)
+        );
     }
 
     func addAll(list<VectorRecord> records): void {
@@ -358,8 +389,11 @@ export class PgVectorStore implements VectorStore {
             return null;
         }
         let r = rows[0] as dict<string, any>;
-        return VectorRecord(id, json.parse(r["embedding"] as string) as list<any>,
-            json.parse(r["metadata"] as string) as dict<string, any>);
+        return VectorRecord(
+            id,
+            json.parse(r["embedding"] as string) as list<any>,
+            json.parse(r["metadata"] as string) as dict<string, any>
+        );
     }
 
     func delete(string id): bool {
@@ -408,8 +442,10 @@ export class PgVectorStore implements VectorStore {
             params = params.push(p);
         }
         params = params.push(qtext);
-        string sql = "SELECT id, embedding, metadata, " + pgScoreExpr(this._metric)
-            + " AS score FROM " + this._table;
+        string sql = "SELECT id, embedding, metadata, "
+            + pgScoreExpr(this._metric)
+            + " AS score FROM "
+            + this._table;
         if (whereSql != "") {
             sql = sql + " WHERE " + whereSql;
         }
@@ -421,8 +457,11 @@ export class PgVectorStore implements VectorStore {
         let out = [];
         for (row in this._conn.query(sql, ...params).all()) {
             let r = row as dict<string, any>;
-            let rec = VectorRecord(r["id"] as string, json.parse(r["embedding"] as string) as list<any>,
-                json.parse(r["metadata"] as string) as dict<string, any>);
+            let rec = VectorRecord(
+                r["id"] as string,
+                json.parse(r["embedding"] as string) as list<any>,
+                json.parse(r["metadata"] as string) as dict<string, any>
+            );
             out = out.push(SearchHit(rec, r["score"] as float));
         }
         return out;
@@ -578,7 +617,11 @@ export class HnswVectorStore implements VectorStore {
 
     func toHit(dict<string, any> h): SearchHit {
         let id = h["id"] as string;
-        let rec = VectorRecord(id, h["vector"] as list<any>, (this._meta[id] ?? {}) as dict<string, any>);
+        let rec = VectorRecord(
+            id,
+            h["vector"] as list<any>,
+            (this._meta[id] ?? {}) as dict<string, any>
+        );
         return SearchHit(rec, h["score"] as float);
     }
 }
@@ -589,7 +632,11 @@ func rankHitsNative(list<string> ids, list<any> blobs, list<any> metas, list<any
     for (r in vecmath.topK(blobs, query, k, metric)) {
         let rr = r as dict<string, any>;
         int i = rr["index"] as int;
-        let rec = VectorRecord(ids[i] as string, decodeVector(blobs[i] as bytes), metas[i] as dict<string, any>);
+        let rec = VectorRecord(
+            ids[i] as string,
+            decodeVector(blobs[i] as bytes),
+            metas[i] as dict<string, any>
+        );
         out = out.push(SearchHit(rec, rr["score"] as float));
     }
     return out;
@@ -601,7 +648,11 @@ func rankFiltered(list<string> ids, list<any> blobs, list<any> metas, list<any> 
     let fblobs = [];
     let fmetas = [];
     for (i in 0..<ids.length()) {
-        let rec = VectorRecord(ids[i] as string, decodeVector(blobs[i] as bytes), metas[i] as dict<string, any>);
+        let rec = VectorRecord(
+            ids[i] as string,
+            decodeVector(blobs[i] as bytes),
+            metas[i] as dict<string, any>
+        );
         if (filter(rec)) {
             fids = fids.push(ids[i]);
             fblobs = fblobs.push(blobs[i]);
@@ -628,8 +679,11 @@ func decodeVector(bytes b): list<any> {
 }
 
 func rowToRecord(string id, dict<string, any> row): VectorRecord {
-    return VectorRecord(id, decodeVector(row["vector"] as bytes),
-        json.parse(row["metadata"] as string) as dict<string, any>);
+    return VectorRecord(
+        id,
+        decodeVector(row["vector"] as bytes),
+        json.parse(row["metadata"] as string) as dict<string, any>
+    );
 }
 
 /** Similarity score (higher = closer) between two vectors for the given metric. */
@@ -668,12 +722,24 @@ func matchOp(string op, any actual, any val): bool {
     if (actual == null) {
         return false;
     }
-    if (op == "eq") { return actual == val; }
-    if (op == "ne") { return actual != val; }
-    if (op == "gt") { return actual > val; }
-    if (op == "gte") { return actual >= val; }
-    if (op == "lt") { return actual < val; }
-    if (op == "lte") { return actual <= val; }
+    if (op == "eq") {
+        return actual == val;
+    }
+    if (op == "ne") {
+        return actual != val;
+    }
+    if (op == "gt") {
+        return actual > val;
+    }
+    if (op == "gte") {
+        return actual >= val;
+    }
+    if (op == "lt") {
+        return actual < val;
+    }
+    if (op == "lte") {
+        return actual <= val;
+    }
     throw ValueError("vectorstore: unknown filter operator '" + op + "'");
 }
 
@@ -686,29 +752,49 @@ func vectorToPgText(list<any> vector): string {
 }
 
 func pgOpsClass(string metric): string {
-    if (metric == "dot") { return "vector_ip_ops"; }
-    if (metric == "euclidean") { return "vector_l2_ops"; }
+    if (metric == "dot") {
+        return "vector_ip_ops";
+    }
+    if (metric == "euclidean") {
+        return "vector_l2_ops";
+    }
     return "vector_cosine_ops";
 }
 
 func pgOperator(string metric): string {
-    if (metric == "dot") { return "<#>"; }
-    if (metric == "euclidean") { return "<->"; }
+    if (metric == "dot") {
+        return "<#>";
+    }
+    if (metric == "euclidean") {
+        return "<->";
+    }
     return "<=>";
 }
 
 func pgScoreExpr(string metric): string {
     /* map the distance operator back to a "higher = closer" score */
-    if (metric == "dot") { return "-(embedding <#> CAST(? AS vector))"; }
-    if (metric == "euclidean") { return "-(embedding <-> CAST(? AS vector))"; }
+    if (metric == "dot") {
+        return "-(embedding <#> CAST(? AS vector))";
+    }
+    if (metric == "euclidean") {
+        return "-(embedding <-> CAST(? AS vector))";
+    }
     return "1 - (embedding <=> CAST(? AS vector))";
 }
 
 func pgCmpOp(string op): string {
-    if (op == "gt") { return ">"; }
-    if (op == "gte") { return ">="; }
-    if (op == "lt") { return "<"; }
-    if (op == "lte") { return "<="; }
+    if (op == "gt") {
+        return ">";
+    }
+    if (op == "gte") {
+        return ">=";
+    }
+    if (op == "lt") {
+        return "<";
+    }
+    if (op == "lte") {
+        return "<=";
+    }
     throw ValueError("vectorstore: unsupported comparison operator '" + op + "'");
 }
 
@@ -741,7 +827,9 @@ func pgWhere(dict<string, any> criteria): dict<string, any> {
                     }
                     clauses = clauses.push("(" + ors.join(" OR ") + ")");
                 } else {
-                    clauses = clauses.push("CAST(metadata->>? AS float8) " + pgCmpOp(op as string) + " ?");
+                    clauses = clauses.push(
+                        "CAST(metadata->>? AS float8) " + pgCmpOp(op as string) + " ?"
+                    );
                     params = params.push(field);
                     params = params.push(val as float);
                 }

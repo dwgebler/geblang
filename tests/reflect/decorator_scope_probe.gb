@@ -1,0 +1,70 @@
+module decorator_scope_probe;
+import decorator_scope_donor as donor;
+import io;
+import reflect;
+
+class Schema {}
+
+@Meta(schema: Schema)
+class Local extends donor.Base {
+    @Meta(schema: Schema)
+    string local;
+
+    func Local(string value) {
+        parent(value);
+        this.local = value;
+    }
+
+    @Meta(schema: Schema)
+    func own(): void {}
+}
+
+func check(dict<string, any> dec): void {
+    assert(dec["namedArgs"]["schema"] == donor.Schema);
+    assert((dec["namedArgs"]["callback"] as callable)(4) == 12);
+}
+
+export func verify(): void {
+    let classMeta = reflect.decorator(donor.Base, "Meta");
+    check(classMeta);
+    assert(classMeta["namedArgs"]["contract"] == donor.Contract);
+    assert(classMeta["namedArgs"]["mode"] == donor.Mode);
+    assert(classMeta["namedArgs"]["keyed"][donor.Schema] == "schema");
+    assert(donor.Mode == typeof(donor.Mode.Ready));
+    assert(donor.Mode is donor.Mode);
+    assert(reflect.decorator(Local, "Meta")["namedArgs"]["schema"] == Schema);
+    for (cls in [donor.Base, donor.Child, Local]) {
+        check(reflect.decorator(reflect.method(cls, "send"), "Meta"));
+        let method = reflect.staticMethod(cls, "create");
+        check(reflect.decorator(method, "Meta"));
+        assert(method(4) == 12);
+        assert(method(4, 2) == 14);
+        assert(
+            reflect.parameters(reflect.method(cls, "send"))[0]["decorators"][0]["namedArgs"]["schema"] == donor.Schema
+        );
+    }
+    for (instance in [donor.Base("a"), donor.Child("b"), Local("c")]) {
+        let method = reflect.method(instance, "send");
+        check(reflect.decorator(method, "Meta"));
+        assert(method("!") == instance.value + "!");
+        for (field in reflect.fields(instance, true)) {
+            if (field["name"] == "value" || field["name"] == "own") {
+                check(field["decorators"][0]);
+            } else {
+                assert(field["decorators"][0]["namedArgs"]["schema"] == Schema);
+            }
+        }
+    }
+    check(reflect.decorators(reflect.method(donor.Child, "extra"))[0]);
+    assert(reflect.decorators(reflect.method(Local, "own"))[0]["namedArgs"]["schema"] == Schema);
+    check(reflect.fields(donor.Base)[0]["decorators"][0]);
+    check(reflect.fields(donor.Child)[0]["decorators"][0]);
+    assert(reflect.fields(Local)[0]["decorators"][0]["namedArgs"]["schema"] == Schema);
+    check(reflect.constructors(donor.Base)[0][0]["decorators"][0]);
+    check(reflect.interfaceMethods(donor.Annotated)[0]["parameters"][0]["decorators"][0]);
+}
+
+export func main(): void {
+    verify();
+    io.println("decorator-scopes-ok");
+}

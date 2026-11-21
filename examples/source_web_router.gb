@@ -72,8 +72,7 @@ router.get(api, "/events", func(dict<string, any> request): dict<string, any> {
 
 router.get(api, "/inspect/:id", func(dict<string, any> request): dict<string, any> {
     let req = http.requestObject(request);
-    return http.responseObject(200, req.paramDefault("id", "none") + " " + req.header("x-mode")).header("X-Param", req.param("id")).toDict(
-    );
+    return http.responseObject(200, req.paramDefault("id", "none") + " " + req.header("x-mode")).header("X-Param", req.param("id")).toDict();
 });
 
 class UsersController {

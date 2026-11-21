@@ -22,6 +22,9 @@ var PrimitiveMethods = map[string][]string{
 		"trimStart", "upper",
 		"capitalize", "title", "isBlank", "lines", "removePrefix", "removeSuffix",
 		"equalsIgnoreCase", "containsIgnoreCase", "isInt", "isDecimal", "isNumeric",
+		"isDigits", "isAlpha", "isAlphanumeric", "isLower", "isUpper", "isAscii",
+		"isHex", "isUuid", "isEmail", "isUrl", "isUtf8",
+		"words", "snakeCase", "camelCase", "kebabCase", "slugify", "center", "wrap",
 	},
 	"list": {
 		"all", "any", "append", "averageBy", "binarySearch", "binarySearchBy", "bottomK", "chunk",
@@ -41,26 +44,28 @@ var PrimitiveMethods = map[string][]string{
 		"bfs", "clear", "contains", "copy", "delete", "dfs", "entries", "get",
 		"deepCopy", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge",
 		"remove", "search", "searchPattern", "set", "shortestPath", "topologicalSort", "values",
+		"filter", "mapValues", "any", "all", "pick", "omit", "invert",
 	},
 	"set": {
 		"add", "contains", "copy", "deepCopy", "difference", "intersection", "isEmpty",
 		"length", "remove", "toList", "union",
+		"symmetricDifference", "isSubsetOf", "isSupersetOf", "isDisjointFrom", "filter", "map", "any", "all",
 	},
 	"bytes": {
-		"contains", "get", "isEmpty", "length", "slice", "toBase64",
+		"contains", "endsWith", "get", "indexOf", "isEmpty", "isUtf8", "length", "slice", "startsWith", "toBase64",
 		"toBase64Url", "toHex", "toList", "toString",
 	},
 	"range": {"contains", "first", "isEmpty", "last", "length", "toList"},
 	"int": {
 		"abs", "clamp", "isEven", "isNegative", "isOdd", "isPositive", "isZero",
-		"sign", "toString",
+		"sign", "toString", "isBetween", "gcd", "lcm", "digits", "isPowerOfTwo", "bitCount",
 	},
 	"decimal": {
-		"abs", "ceil", "clamp", "floor", "format", "isInt", "isNegative", "isPositive",
+		"abs", "ceil", "clamp", "floor", "format", "isBetween", "isInt", "isNegative", "isPositive",
 		"isZero", "round", "sign", "toString", "truncate",
 	},
 	"float": {
-		"abs", "ceil", "clamp", "floor", "isInf", "isInt", "isNaN", "isNegative",
+		"abs", "ceil", "clamp", "floor", "isBetween", "isCloseTo", "isInf", "isInt", "isNaN", "isNegative",
 		"isPositive", "isZero", "round", "sign", "toString", "truncate",
 	},
 	"bool": {"not", "toString"},

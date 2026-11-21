@@ -1,0 +1,11 @@
+module inherited_reflect_donor;
+
+export class BaseController {
+    @Route("/show")
+    func show(): void {}
+
+    @Factory("make")
+    static func make(): int {
+        return 1;
+    }
+}

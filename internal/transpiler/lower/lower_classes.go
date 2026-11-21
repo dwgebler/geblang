@@ -801,6 +801,12 @@ func (l *Lowerer) emitDecoratorList(w *emit.Writer, decorators []ast.Decorator) 
 			if j > 0 {
 				w.WriteString(", ")
 			}
+			if ast.DecoratorHasReference(a.Value) {
+				l.errAt(d.Token.Line, d.Token.Column, "decorator @"+d.Name.Value+": type and function arguments are not supported by --native yet",
+					"use geblang build for the bundled VM binary")
+				w.WriteString("nil")
+				continue
+			}
 			l.lowerExpressionInto(w, a.Value)
 		}
 		w.WriteString("}); return __d }()")

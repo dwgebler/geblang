@@ -40,7 +40,8 @@ selector base without importing it is a semantic error.
 | Module | Purpose |
 |---|---|
 | `crypt` | AES, HMAC, SHA, bcrypt password hashing, JWT (`jwtSign(p, k, {alg})`, `jwtVerify`), JWK/JWKS (`jwk`, `jwks`), X.509 chain support (`verifyCertChain`, `parseCert`, `asn1Decode`). |
-| `secrets` | constant-time compare, random tokens. |
+| `secrets` | constant-time compare, random tokens, `requireEnv(name)` (throws when unset) / `getEnv`. |
+| `dotenv` | `.env` files: `load`, `parse`, `apply`, `loadAndApply(path)`; applying overwrites variables already set. |
 
 ## Networking and data stores
 
@@ -49,7 +50,9 @@ selector base without importing it is a semantic error.
 | `http` | client (`get`, `post`, `request(url)` fluent builder, `fetchAll`, `requestStream`/`fetchStream` for streaming) and server (`serve`, `listen`, `wait`, `shutdown`, TLS, autocert, `maxBodyBytes`). |
 | `sockets`, `net` | TCP/UDP, low-level networking. |
 | `ssh` | SSH client. |
-| `db` | SQL connect/query/exec; sqlite, postgres, mysql; transactions, prepared statements, streaming `Rows` cursor (`for (row in rows)`), pool options. |
+| `db` | SQL connect/query/exec; sqlite, postgres, mysql; transactions, prepared statements, streaming `Rows` cursor (`for (row in rows)`), pool options. `conn.queryOne(sql, ...)` returns the first row or `null` and releases the connection; `conn.migrate([{"id": ..., "sql": ...}])` applies each migration once in one transaction. Close a cursor you stop reading early. |
+| `config` | layered configuration from files and the environment with typed binding. |
+| `jobs` | durable SQL-backed job queue: retries, leases, scheduling, dead letters, worker processes. |
 | `redis` | client incl. pub/sub. |
 | `messaging` | RabbitMQ / Kafka / SQS / STOMP producers and consumers. |
 | `store` | synchronised cross-request / cross-goroutine state. |
@@ -62,6 +65,7 @@ selector base without importing it is a semantic error.
 | `collections` | `maxBy`, `groupBy`, `chunk`, `sortBy`, lazy `lazyMap`/`lazyFilter`, `range`. |
 | `streams` (seq) | lazy fluent collection pipelines (`Stream`). |
 | `strbuilder` | O(n) string accumulation. |
+| `money` | immutable currency amounts (`Money("12.34", "GBP")`), explicit rounding, total-preserving `split`/`allocate`. |
 
 ## Numerics and data science
 

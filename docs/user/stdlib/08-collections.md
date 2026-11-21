@@ -81,7 +81,7 @@ Validate before mutation when accepting dynamic data.
 | `contains(value)` | `bool` | `true` when `value` is in the list |
 | `indexOf(value)` | `int` | First index of `value`, or `-1` if absent |
 | `search(value)` | `list<int>` | Every index whose element equals `value`, or where the callable `value` returns true |
-| `searchPattern(regex)` | `list<int>` | Every index whose string element matches `regex` |
+| `searchPattern(pattern)` | `list<int>` | Every index whose string element matches `pattern` |
 
 ```gb
 import io;
@@ -194,7 +194,7 @@ string tail = queue.takeLast();    # "c"; queue is ["b"]
 | `copy()` | `list<T>` | New list with the same elements (shallow copy) |
 | `deepCopy()` | `list<T>` | New list with nested containers and objects cloned recursively |
 | `reversed()` | `list<T>` | New list with elements in reverse order |
-| `sorted([callback])` | `list<T>` | Sorted copy |
+| `sorted([compare])` | `list<T>` | Sorted copy |
 
 ```gb
 import io;
@@ -238,13 +238,13 @@ io.println(words);          # []
 |--------|---------|-------------|
 | `reverse()` | `list<T>` | Reverse in place; returns the receiver |
 | `reversed()` | `list<T>` | New reversed list; receiver unchanged |
-| `sort([callback])` | `list<T>` | Sort in place; optional `(a,b)->bool` less-than or `(a,b)->int` comparator; returns the receiver |
-| `sorted([callback])` | `list<T>` | Sorted copy; receiver unchanged |
-| `sortBy(selector[, descending])` | `list<T>` | Sort in place by selector key (`true` for descending); returns the receiver |
+| `sort([compare])` | `list<T>` | Sort in place; optional `(a,b)->bool` less-than or `(a,b)->int` comparator (`null` means natural order); returns the receiver |
+| `sorted([compare])` | `list<T>` | Sorted copy; receiver unchanged |
+| `sortBy(key[, descending])` | `list<T>` | Sort in place by the `key` function (`true` for descending); returns the receiver |
 | `binarySearch(value)` | `int` | Index of `value` in a sorted list, or -1 |
-| `binarySearchBy(selector, key)` | `int` | Index whose selector key equals `key` in a list sorted by it, or -1 |
+| `binarySearchBy(key, target)` | `int` | Index whose `key` equals `target` in a list sorted by it, or -1 |
 | `concat(other)` | `list<T>` | New list with `other` appended |
-| `join(sep)` | `string` | Elements joined into a string with separator `sep` |
+| `join(separator)` | `string` | Elements joined into a string with `separator` |
 | `flatten()` | `list<any>` | Flatten one level of nesting |
 | `unique()` | `list<T>` | New list with duplicate values removed |
 
@@ -318,19 +318,19 @@ points.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `map(fn)` | `list<U>` | Apply `fn` to each element; collect results |
-| `filter(fn)` | `list<T>` | Keep elements for which `fn` returns `true` |
-| `reduce(fn, initial)` | `U` | Fold elements left to right |
-| `find(fn)` | `T\|null` | First element matching `fn`, or `null` |
-| `findLast(fn)` | `T\|null` | Last element matching `fn`, or `null` |
-| `any(fn)` | `bool` | `true` when at least one element matches `fn` |
-| `all(fn)` | `bool` | `true` when every element matches `fn` |
-| `count(fn)` | `int` | Count of elements matching `fn` |
+| `map(transform)` | `list<U>` | Apply `transform` to each element; collect results |
+| `filter(predicate)` | `list<T>` | Keep elements for which `predicate` returns `true` |
+| `reduce(combine, initial)` | `U` | Fold elements left to right with `combine(acc, element)` |
+| `find(predicate)` | `T\|null` | First element matching `predicate`, or `null` |
+| `findLast(predicate)` | `T\|null` | Last element matching `predicate`, or `null` |
+| `any(predicate)` | `bool` | `true` when at least one element matches `predicate` |
+| `all(predicate)` | `bool` | `true` when every element matches `predicate` |
+| `count(predicate)` | `int` | Count of elements matching `predicate` |
 | `enumerate()` | `list<list<any>>` | Pair each element with its index: `[[0, x0], [1, x1], ...]` |
-| `flatMap(fn)` | `list<U>` | Map each element to a list, then concatenate (`fn` must return a list) |
-| `takeWhile(fn)` | `list<T>` | Leading elements while `fn` holds; stops at the first failure |
-| `dropWhile(fn)` | `list<T>` | Remaining elements after the leading run where `fn` holds |
-| `scan(initial, fn)` | `list<U>` | Running fold: `initial` followed by each successive accumulation |
+| `flatMap(transform)` | `list<U>` | Map each element to a list, then concatenate (`transform` must return a list) |
+| `takeWhile(predicate)` | `list<T>` | Leading elements while `predicate` holds; stops at the first failure |
+| `dropWhile(predicate)` | `list<T>` | Remaining elements after the leading run where `predicate` holds |
+| `scan(initial, combine)` | `list<U>` | Running fold: `initial` followed by each successive accumulation |
 
 A predicate (the `fn` passed to `filter`, `find`, `findLast`, `any`, `all`,
 `count`, `partition`, `takeWhile`, `dropWhile`, `indexBy`, or a callable
@@ -382,22 +382,22 @@ interchangeable.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `sortBy(fn)` | `list<T>` | New list sorted by the key `fn` returns for each element |
-| `minBy(fn)` | `T\|null` | Element with the smallest key; `null` if empty |
-| `maxBy(fn)` | `T\|null` | Element with the largest key; `null` if empty |
-| `topBy(fn, n)` | `list<T>` | Top `n` elements by key (descending) |
-| `topK(n)` | `list<T>` | Top `n` elements by natural ordering |
-| `bottomK(n)` | `list<T>` | Bottom `n` elements by natural ordering |
-| `sumBy(fn)` | `int\|decimal` | Sum of the numeric key for each element |
-| `averageBy(fn)` | `decimal` | Mean of the numeric key |
+| `sortBy(key[, descending])` | `list<T>` | Sort in place by the key `key` returns for each element; returns the receiver |
+| `minBy(key)` | `T\|null` | Element with the smallest key; `null` if empty |
+| `maxBy(key)` | `T\|null` | Element with the largest key; `null` if empty |
+| `topBy(key, k)` | `list<T>` | Top `k` elements by key (descending) |
+| `topK(k)` | `list<T>` | Top `k` elements by natural ordering |
+| `bottomK(k)` | `list<T>` | Bottom `k` elements by natural ordering |
+| `sumBy(key)` | `int\|decimal` | Sum of the numeric key for each element |
+| `averageBy(key)` | `decimal` | Mean of the numeric key |
 | `frequencies()` | `dict<any, int>` | Count of each distinct value |
 | `mode()` | `T\|null` | Most-frequent element |
-| `uniqueBy(fn)` | `list<T>` | Remove duplicates compared by `fn(element)` (keeps first) |
-| `indexBy(fn)` | `int` | Index of the first element for which the predicate `fn` returns `true`; `-1` if none |
-| `containsBy(value, fn)` | `bool` | `true` when `fn(element) == value` for any element |
-| `differenceBy(other, fn)` | `list<T>` | Elements whose key isn't in `other`'s keys |
-| `intersectionBy(other, fn)` | `list<T>` | Elements whose key is in both lists |
-| `zipWith(other, fn)` | `list<U>` | Pairwise combine via `fn(a, b)` |
+| `uniqueBy(key)` | `list<T>` | Remove duplicates compared by `key(element)` (keeps first) |
+| `indexBy(predicate)` | `int` | Index of the first element for which `predicate` returns `true`; `-1` if none |
+| `containsBy(value, key)` | `bool` | `true` when `key(element) == value` for any element |
+| `differenceBy(other, key)` | `list<T>` | Elements whose key isn't in `other`'s keys |
+| `intersectionBy(other, key)` | `list<T>` | Elements whose key is in both lists |
+| `zipWith(other, combine)` | `list<U>` | Pairwise combine via `combine(a, b)` |
 | `binarySearch(value)` | `int` | Index of `value` in a sorted list; `-1` if absent |
 | `lowerBound(value)` | `int` | First insertion index keeping a sorted list sorted |
 | `upperBound(value)` | `int` | Last insertion index keeping a sorted list sorted |
@@ -426,9 +426,9 @@ io.println(by_age[0]["name"]); # Ada
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `groupBy(fn)` | `dict<string, list<T>>` | Group elements by the key returned by `fn` |
+| `groupBy(key)` | `dict<string, list<T>>` | Group elements by the key returned by `key` |
 | `chunk(size)` | `list<list<T>>` | Split into non-overlapping sub-lists of at most `size` elements |
-| `partition(fn)` | `list<list<T>>` | `[[matching], [not-matching]]` |
+| `partition(predicate)` | `list<list<T>>` | `[[matching], [not-matching]]` |
 | `windowed(size, step=1)` | `list<list<T>>` | Overlapping sliding windows of `size` (full windows only) |
 | `zip(other)` | `list<list<any>>` | Pair elements with a second list |
 | `unzip()` | `list<list<any>>` | Inverse of `zip`: a list of pairs becomes `[firsts, seconds]` |
@@ -478,7 +478,7 @@ Dictionaries are mutable, key-value stores.  Keys must be primitive values
 | `items()` | `list<list<any>>` | All entries as `[key, value]` pairs |
 | `entries()` | `list<list<any>>` | Alias for `items` |
 | `search(value)` | `list<K>` | Keys whose value equals `value`, or where the callable `value` (over the value) returns true |
-| `searchPattern(regex)` | `list<K>` | Keys whose string value matches `regex` |
+| `searchPattern(pattern)` | `list<K>` | Keys whose string value matches `pattern` |
 | `copy()` | `dict<K, V>` | New dict with the same entries (shallow copy; preserves insertion order) |
 | `deepCopy()` | `dict<K, V>` | New dict with nested containers and objects cloned recursively |
 
@@ -535,6 +535,33 @@ let c = a.merge(b);
 io.println(c["x"]);  # 1
 io.println(c["y"]);  # 99  (b wins)
 io.println(c["z"]);  # 3
+```
+
+### Selecting And Transforming
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `filter(predicate)` | `dict<K, V>` | Entries where `predicate(key, value)` returns `true` |
+| `mapValues(transform)` | `dict<K, U>` | Same keys, each value replaced by `transform(value)` |
+| `any(predicate)` | `bool` | `true` if `predicate(key, value)` is `true` for some entry |
+| `all(predicate)` | `bool` | `true` if `predicate(key, value)` is `true` for every entry |
+| `pick(keys)` | `dict<K, V>` | Only the listed keys; keys not in the dict are skipped |
+| `omit(keys)` | `dict<K, V>` | Every entry except the listed keys |
+| `invert()` | `dict<V, K>` | Values become keys; a duplicate value throws `ValueError` |
+
+Each returns a new dict and keeps insertion order. `filter`, `any` and `all`
+callbacks must return `bool`, like the list versions.
+
+```gb
+import io;
+
+dict<string, int> stock = {"apple": 3, "pear": 0, "plum": 7};
+io.println(stock.filter((string k, int v) => v > 0));  # {"apple": 3, "plum": 7}
+io.println(stock.mapValues((int v) => v * 2));        # {"apple": 6, "pear": 0, "plum": 14}
+io.println(stock.any((string k, int v) => v == 0));   # true
+io.println(stock.pick(["plum", "kiwi"]));             # {"plum": 7}
+io.println(stock.omit(["pear"]));                     # {"apple": 3, "plum": 7}
+io.println({"a": 1, "b": 2}.invert());                # {1: "a", 2: "b"}
 ```
 
 ---
@@ -600,6 +627,10 @@ io.println(s3.contains(2));  # false
 | `union(other)` | `set<T>` | Elements in either set |
 | `intersection(other)` | `set<T>` | Elements in both sets |
 | `difference(other)` | `set<T>` | Elements in this set but not in `other` |
+| `symmetricDifference(other)` | `set<T>` | Elements in exactly one of the two sets |
+| `isSubsetOf(other)` | `bool` | `true` if every element is also in `other` |
+| `isSupersetOf(other)` | `bool` | `true` if every element of `other` is in this set |
+| `isDisjointFrom(other)` | `bool` | `true` if the sets share no element |
 | `toList()` | `list<T>` | Elements as a list (order not guaranteed) |
 
 ```gb
@@ -614,6 +645,30 @@ io.println(a.difference(b));   # set{1, 2}
 io.println(b.difference(a));   # set{5, 6}
 
 let members = a.union(b).toList();
+io.println(a.symmetricDifference(b));  # set{1, 2, 5, 6}
+io.println({3, 4}.isSubsetOf(a));      # true
+io.println(a.isDisjointFrom({7, 8}));  # true
+```
+
+### Callbacks
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `filter(predicate)` | `set<T>` | Elements where `predicate(value)` returns `true` |
+| `map(transform)` | `set<U>` | Set of `transform(value)` results; equal results collapse into one |
+| `any(predicate)` | `bool` | `true` if `predicate(value)` is `true` for some element |
+| `all(predicate)` | `bool` | `true` if `predicate(value)` is `true` for every element |
+
+Callbacks see elements in the same order as `toList()`, and predicates must
+return `bool`.
+
+```gb
+import io;
+
+set<int> nums = {1, 2, 3, 4};
+io.println(nums.filter((int n) => n % 2 == 0));  # set{2, 4}
+io.println(nums.map((int n) => n % 2));          # set{0, 1}
+io.println(nums.all((int n) => n > 0));          # true
 ```
 
 ### Conversion between list and set

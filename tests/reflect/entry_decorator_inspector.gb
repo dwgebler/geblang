@@ -1,0 +1,25 @@
+module entry_decorator_inspector;
+import reflect;
+
+export func verify(any cls, any instance, any fn, any contract, any schema): void {
+    list<any> targets = [
+        cls,
+        fn,
+        reflect.method(cls, "send"),
+        reflect.method(instance, "send"),
+        reflect.staticMethod(cls, "create"),
+    ];
+    for (target in targets) {
+        assert(reflect.decorator(target, "Meta")["namedArgs"]["schema"] == schema);
+        assert(reflect.decorators(target)[0]["namedArgs"]["schema"] == schema);
+    }
+    for (target in [fn, reflect.method(instance, "send")]) {
+        assert(reflect.parameters(target)[0]["decorators"][0]["namedArgs"]["schema"] == schema);
+    }
+    assert(
+        reflect.interfaceMethods(contract)[0]["parameters"][0]["decorators"][0]["namedArgs"]["schema"] == schema
+    );
+    assert(
+        reflect.fields(cls, inherited: true)[0]["decorators"][0]["namedArgs"]["schema"] == schema
+    );
+}

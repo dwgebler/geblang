@@ -18,8 +18,8 @@ description: >-
 
 Geblang is a statically-typed scripting language implemented in Go. Source
 files end in `.gb`. It runs on two backends that must produce identical output:
-a tree-walking evaluator (used by `geblang test`) and a bytecode VM (the default
-for `geblang run` / `geblang build`). Geblang targets backend services, CLIs,
+a tree-walking evaluator (`geblang test --runtime evaluator`) and a bytecode VM
+(the default for `geblang run`, `geblang test` and `geblang build`). Geblang targets backend services, CLIs,
 scripts, and tests.
 
 This skill keeps you accurate. Geblang borrows surface syntax from PHP, Python,
@@ -59,9 +59,9 @@ string-cast hook is `__string` (not `toString`); the parent call is `parent()`
    types are statically known - cast explicitly.
 4. **`parent(args)` calls the parent constructor; `parent.method(args)` calls a
    parent method.** `super` is not a keyword.
-5. **List mutators are in-place and return the receiver** (`push`, `pop`,
-   `insert`, `remove`, `removeAt`, `prepend`, `reverse`, `sort`, `sortBy`,
-   `fill`). `let ys = xs.sort();` leaves `xs` AND `ys` as the same sorted list.
+5. **List mutation is visible through aliases.** `push` returns the receiver;
+   do not assume every mutator does. Confirm each method's return type.
+   `let ys = xs.sort();` leaves `xs` AND `ys` as the same sorted list.
    Use `sorted()` / `reversed()` / `copy()` / `deepCopy()` for copies.
 6. **`as` is a CHECKED cast that throws on mismatch, not a type test.** Test with
    `instanceof`, then access with `as`:
@@ -79,13 +79,36 @@ string-cast hook is `__string` (not `toString`); the parent call is `parent()`
     an un-awaited call returns immediately.
 11. **`type` is a keyword** (type aliases: `type UserId = string;`), so it
     can't be a variable or parameter name.
+12. **Arrow functions need typed parameters** (`(int n) => n * 2`) except when
+    passed straight to a typed list's callback method (`xs.map((x) => x * 2)`).
+    Callback predicates (`filter`, `any`, `all`, `find`, ...) must return `bool`;
+    a truthy non-bool is a `TypeError`.
+13. **Decimals print short**: `12.5` prints `12.5` and `7 / 7` prints `1.0`.
+    Use `d.toString(2)` or `"${d:.2f}"` when output needs fixed places.
+14. **There is no `do { } while (...)` loop**; use `while (true) { ... if
+    (done) { break; } }`.
+
+## Application idioms
+
+Use explicit public signatures and concrete collection element types. Keep
+`any` at dynamic boundaries and validate before entering typed logic. Collection
+arguments are shared and `copy()` is shallow; PHP array copy-on-write does not
+apply. Choose decimal vs float deliberately and specify presentation rounding.
+
+Observe async results and failures. Give channel producers a close contract and
+consumers a drain/shutdown design; awaiting an unbuffered producer before
+receiving can deadlock. Prefer one owner for a mutable accumulator.
+
+`-m` invokes exported `main(list<string> args)`; a bundled build also accepts
+an argument-free main. Verify the actual entry mode, repeated VM execution,
+evaluator output and built path when distributing runnable examples.
 
 ## CLI workflow
 
 | Command | Use |
 |---|---|
 | `geblang <script.gb> [args]` or `geblang run <script.gb> [args]` | Run a script (VM, evaluator fallback). |
-| `geblang test <path>` | Discover and run `*_test.gb` files (evaluator). |
+| `geblang test <path>` | Discover and run `*_test.gb` files (VM by default; `--runtime evaluator` for parity). |
 | `geblang check [--strict] <path>` | Parse + type-check + lint, no execution. Run on code you write. |
 | `geblang fmt <file.gb> ...` | Format in place. `--clean` = minimal form; `--strip-comments` drops comments. |
 | `geblang doc <path>` | Print exact API signatures. |

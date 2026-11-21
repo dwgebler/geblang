@@ -687,7 +687,7 @@ func registerStats(r *Registry) {
 				ddof = int(n)
 			}
 		}
-		if exp == nil {
+		if len(exp) == 0 {
 			total := 0.0
 			for _, o := range obs {
 				total += o

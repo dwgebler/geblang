@@ -1,0 +1,57 @@
+module decorator_scope_donor;
+
+export class Schema {}
+
+export interface Contract {
+    func send(): void;
+}
+
+export interface Annotated {
+    func send(@Meta(schema: Schema, callback: (int n) => scale(n)) string text): void;
+}
+
+export enum Mode {
+    Ready,
+    Done
+}
+
+export func scale(int n): int {
+    return n * 3;
+}
+
+@Meta(schema: Schema, contract: Contract, mode: Mode, callback: (int n) => scale(n), keyed: {Schema: "schema"})
+export class Base {
+    @Meta(schema: Schema, callback: (int n) => scale(n))
+    string value;
+
+    func Base(@Meta(schema: Schema, callback: (int n) => scale(n)) string value) {
+        this.value = value;
+    }
+
+    @Meta(schema: Schema, callback: (int n) => scale(n))
+    func send(@Meta(schema: Schema) string text): string {
+        return this.value + text;
+    }
+
+    @Meta(schema: Schema, callback: (int n) => scale(n))
+    static func create(int n): int {
+        return scale(n);
+    }
+
+    static func create(int n, int extra): int {
+        return scale(n) + extra;
+    }
+}
+
+export class Child extends Base {
+    @Meta(schema: Schema, callback: (int n) => scale(n))
+    string own;
+
+    func Child(string value) {
+        parent(value);
+        this.own = value;
+    }
+
+    @Meta(schema: Schema, callback: (int n) => scale(n))
+    func extra(): void {}
+}

@@ -472,6 +472,7 @@ func valuesCompare(left, right runtime.Value) (int, error) {
 // sortElements stably sorts elements in place, via the optional
 // less/comparator callback in args.
 func (vm *VM) sortElements(elements []runtime.Value, args []runtime.Value) error {
+	args = native.WithoutNullComparator(args)
 	var sortErr error
 	sort.SliceStable(elements, func(i, j int) bool {
 		if sortErr != nil {
@@ -1894,5 +1895,5 @@ func (vm *VM) dictCollectionsMethod(graph runtime.Dict, name string, args []runt
 		}
 		return &runtime.List{Elements: path}, true, nil
 	}
-	return nil, false, nil
+	return native.ExtendedMethod(graph, name, args, vm.callCallable)
 }

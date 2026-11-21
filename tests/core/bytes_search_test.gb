@@ -1,0 +1,28 @@
+/**
+ * @title Bytes search helpers
+ * @summary startsWith / endsWith / indexOf take bytes or a single int
+ * byte value, like contains; indexOf returns -1 when absent.
+ */
+import test;
+import bytes;
+
+class BytesSearchTest extends test.Test {
+    @test
+    func prefixAndSuffix(): void {
+        let png = bytes.fromHex("89504e470d0a1a0a");
+        this.assertTrue(png.startsWith(bytes.fromHex("89504e47")));
+        this.assertTrue(png.startsWith(0x89));
+        this.assertFalse(png.startsWith(0x50));
+        this.assertTrue(png.endsWith(0x0a));
+        this.assertTrue(png.endsWith(bytes.fromHex("")));
+    }
+
+    @test
+    func indexOf(): void {
+        let data = bytes.fromString("hello");
+        this.assertEquals(2, data.indexOf(bytes.fromString("ll")));
+        this.assertEquals(4, data.indexOf(0x6f));
+        this.assertEquals(-1, data.indexOf(bytes.fromString("z")));
+        this.assertEquals(-1, data.indexOf(300));
+    }
+}

@@ -1,0 +1,32 @@
+import io;
+import bytes;
+
+let samples = [
+    "0123",
+    "",
+    "abcXYZ",
+    "a1B2",
+    "hello world 1",
+    "ABC-9",
+    "caf\u{e9}",
+    "DEADbeef",
+    "0xff",
+    "123e4567-E89B-12d3-a456-426614174000",
+    "a.b+c@mail.example.org",
+    "a@b",
+    "a b@c.io",
+    "https://example.com/p?q=1",
+    "postgres://h:5432/db",
+    "/rel",
+    "mailto:a@b.io",
+    "http://",
+];
+for (s in samples) {
+    io.println(
+        "${s}: ${s.isDigits()} ${s.isAlpha()} ${s.isAlphanumeric()} ${s.isLower()} ${s.isUpper()} ${s.isAscii()} ${s.isHex()} ${s.isUuid()} ${s.isEmail()} ${s.isUrl()} ${s.isUtf8()}"
+    );
+}
+any dyn = "42";
+io.println(dyn.isDigits());
+io.println(bytes.fromString("hi").isUtf8());
+io.println(bytes.fromHex("ff").isUtf8());

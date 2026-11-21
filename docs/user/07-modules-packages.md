@@ -509,8 +509,10 @@ geblang install https://github.com/acme/httplib              # add one and fetch
 geblang install https://github.com/acme/httplib@v1.4.0 http  # pin a version, dependency key http
 ```
 
-The add form appends the dependency to `geblang.yaml`, inferring the dependency key
-from the URL's last path segment when you omit it. A git dependency that has not
+The add form adds or replaces that one entry under `dependencies:` in
+`geblang.yaml`, inferring the dependency key from the URL's last path segment when
+you omit it. The rest of the file, including comments and keys that tools other
+than `geblang` read, is kept. A git dependency that has not
 been installed is skipped during resolution until you run `geblang install`.
 Commit `geblang.lock` so collaborators and CI resolve the same commits:
 

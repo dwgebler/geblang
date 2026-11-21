@@ -1089,6 +1089,11 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					return nil
 				}
 			}
+			if hasNamedMethodArgs {
+				if positional, ok := c.positionalPrimitiveCall(expr, selector); ok {
+					return c.compileExpression(positional)
+				}
+			}
 			receiverStart := len(c.chunk.Instructions)
 			if err := c.compileExpression(selector.Object); err != nil {
 				return err
@@ -1639,6 +1644,11 @@ func (s *freeVarSet) scanMatchCase(mc ast.MatchCase) {
 }
 
 func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
+	return c.compileFunctionLiteralAt(expr, -1)
+}
+
+// compileFunctionLiteralAt compiles expr into a fresh function slot, or into reserved when it is not negative.
+func (c *Compiler) compileFunctionLiteralAt(expr *ast.FunctionLiteral, reserved int64) error {
 
 	// Collect free variables: identifiers used in body not declared as params.
 	scanner := newFreeVarSet(expr.Parameters)
@@ -1665,7 +1675,10 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 		}
 	}
 
-	index := c.declareFunction("<closure>")
+	index := reserved
+	if index < 0 {
+		index = c.declareFunction("<closure>")
+	}
 	c.chunk.Functions[index].DefLine = int64(expr.Token.Line)
 	c.chunk.Functions[index].DefColumn = int64(expr.Token.Column)
 	skipJump := c.emitJump(OpJump, expr.Token.Line, expr.Token.Column)

@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"errors"
 	"fmt"
 	"geblang/internal/ast"
 	"geblang/internal/native"
@@ -372,7 +373,7 @@ func stringList(names []string) *runtime.List {
 	return &runtime.List{Elements: elements}
 }
 
-func reflectDecorators(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) reflectDecorators(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 && len(args) != 2 {
 		return nil, fmt.Errorf("%s expects value and optional decorator name", call.Callee.String())
 	}
@@ -381,16 +382,16 @@ func reflectDecorators(call *ast.CallExpression, args []runtime.Value) (runtime.
 		return nil, err
 	}
 	if overloaded, ok := args[0].(runtime.OverloadedFunction); ok {
-		return overloadedDecoratorListValue(overloaded, filter)
+		return e.overloadedDecoratorListValue(overloaded, filter)
 	}
-	decorators, target, err := reflectTargetDecorators(call, args[0])
+	decorators, target, env, err := reflectTargetDecorators(call, args[0])
 	if err != nil {
 		return nil, err
 	}
-	return decoratorListValue(decorators, target, filter)
+	return e.decoratorListValue(decorators, target, filter, env)
 }
 
-func reflectHasDecorator(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) reflectHasDecorator(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("%s expects value and decorator name", call.Callee.String())
 	}
@@ -406,14 +407,14 @@ func reflectHasDecorator(call *ast.CallExpression, args []runtime.Value) (runtim
 		}
 		return runtime.Bool{Value: false}, nil
 	}
-	decorators, _, err := reflectTargetDecorators(call, args[0])
+	decorators, _, _, err := reflectTargetDecorators(call, args[0])
 	if err != nil {
 		return nil, err
 	}
 	return runtime.Bool{Value: hasDecorator(decorators, name.Value)}, nil
 }
 
-func reflectDecorator(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) reflectDecorator(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("%s expects value and decorator name", call.Callee.String())
 	}
@@ -426,19 +427,19 @@ func reflectDecorator(call *ast.CallExpression, args []runtime.Value) (runtime.V
 			target := reflectFunctionTarget(overload)
 			for position, decorator := range overload.Decorators {
 				if strings.EqualFold(decorator.Name.Value, name.Value) {
-					return decoratorValue(decorator, target, position, overloadIndex)
+					return e.decoratorValue(decorator, target, position, overloadIndex, reflectDeclaringEnv(overload))
 				}
 			}
 		}
 		return runtime.Null{}, nil
 	}
-	decorators, target, err := reflectTargetDecorators(call, args[0])
+	decorators, target, env, err := reflectTargetDecorators(call, args[0])
 	if err != nil {
 		return nil, err
 	}
 	for position, decorator := range decorators {
 		if strings.EqualFold(decorator.Name.Value, name.Value) {
-			return decoratorValue(decorator, target, position, 0)
+			return e.decoratorValue(decorator, target, position, 0, env)
 		}
 	}
 	return runtime.Null{}, nil
@@ -448,9 +449,25 @@ func (e *Evaluator) reflectParameters(call *ast.CallExpression, args []runtime.V
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects value", call.Callee.String())
 	}
-	fn, ok := reflectFunctionMetadataValue(args[0])
+	fn, ok := e.reflectFunctionMetadataValue(args[0])
 	if !ok {
 		return nil, fmt.Errorf("%s expects function or method, got %s", call.Callee.String(), args[0].TypeName())
+	}
+	var source *runtime.Function
+	switch value := args[0].(type) {
+	case runtime.Function:
+		source = &value
+	case runtime.OverloadedFunction:
+		if len(value.Overloads) > 0 {
+			source = &value.Overloads[0]
+		}
+	}
+	if source != nil {
+		var err error
+		fn, err = e.functionMetadataWithParameterDecorators(*source)
+		if err != nil {
+			return nil, err
+		}
 	}
 	scope := reflectDeclaringEnv(args[0])
 	values := make([]runtime.Value, 0, len(fn.Parameters))
@@ -525,7 +542,7 @@ func (e *Evaluator) reflectReturnClass(call *ast.CallExpression, args []runtime.
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects value", call.Callee.String())
 	}
-	fn, ok := reflectFunctionMetadataValue(args[0])
+	fn, ok := e.reflectFunctionMetadataValue(args[0])
 	if !ok {
 		return nil, fmt.Errorf("%s expects function or method, got %s", call.Callee.String(), args[0].TypeName())
 	}
@@ -537,19 +554,19 @@ func (e *Evaluator) reflectReturnClass(call *ast.CallExpression, args []runtime.
 	return runtime.DictFromEntries(entries, nil), nil
 }
 
-func reflectReturnType(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) reflectReturnType(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects value", call.Callee.String())
 	}
-	fn, ok := reflectFunctionMetadataValue(args[0])
+	fn, ok := e.reflectFunctionMetadataValue(args[0])
 	if !ok {
 		return nil, fmt.Errorf("%s expects function or method, got %s", call.Callee.String(), args[0].TypeName())
 	}
 	return runtime.String{Value: fn.ReturnType}, nil
 }
 
-func reflectDoc(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	doc, ok, err := reflectDocText(call, args)
+func (e *Evaluator) reflectDoc(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	doc, ok, err := e.reflectDocText(call, args)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -559,8 +576,8 @@ func reflectDoc(call *ast.CallExpression, args []runtime.Value) (runtime.Value, 
 	return runtime.String{Value: doc}, nil
 }
 
-func reflectDocs(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	doc, ok, err := reflectDocText(call, args)
+func (e *Evaluator) reflectDocs(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	doc, ok, err := e.reflectDocText(call, args)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -570,11 +587,11 @@ func reflectDocs(call *ast.CallExpression, args []runtime.Value) (runtime.Value,
 	return docMetadataValue(doc), nil
 }
 
-func reflectDocText(call *ast.CallExpression, args []runtime.Value) (string, bool, error) {
+func (e *Evaluator) reflectDocText(call *ast.CallExpression, args []runtime.Value) (string, bool, error) {
 	if len(args) != 1 {
 		return "", false, fmt.Errorf("%s expects value", call.Callee.String())
 	}
-	if fn, ok := reflectFunctionMetadataValue(args[0]); ok {
+	if fn, ok := e.reflectFunctionMetadataValue(args[0]); ok {
 		return fn.Doc, true, nil
 	}
 	if metadata, err := reflectClassMetadataValue(call, args); err == nil {
@@ -735,10 +752,11 @@ func (e *Evaluator) reflectOwnFields(call *ast.CallExpression, args []runtime.Va
 			} else {
 				putDict(fd, "doc", runtime.String{Value: field.Doc})
 			}
-			decs, derr := decoratorListValue(field.Decorators, "field", "")
-			if derr == nil {
-				putDict(fd, "decorators", decs)
+			decs, derr := e.decoratorListValue(field.Decorators, "field", "", cls.Env)
+			if derr != nil {
+				return nil, derr
 			}
+			putDict(fd, "decorators", decs)
 			className, elementName := runtime.ParameterClassNames(typeRefToString(field.Type))
 			putDict(fd, "class", e.resolveScopedClass(className, cls.Env))
 			putDict(fd, "elementClass", e.resolveScopedClass(elementName, cls.Env))
@@ -906,7 +924,7 @@ func reflectInterfaces(call *ast.CallExpression, args []runtime.Value) (runtime.
 }
 
 func (e *Evaluator) reflectConstructorsResolved(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	result, err := reflectConstructors(call, args)
+	result, err := e.reflectConstructors(call, args)
 	if err != nil || len(args) != 1 {
 		return result, err
 	}
@@ -934,7 +952,7 @@ func (e *Evaluator) reflectConstructorsResolved(call *ast.CallExpression, args [
 	return result, nil
 }
 
-func reflectConstructors(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) reflectConstructors(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects class", call.Callee.String())
 	}
@@ -942,7 +960,10 @@ func reflectConstructors(call *ast.CallExpression, args []runtime.Value) (runtim
 	case *runtime.Class:
 		overloads := make([]runtime.Value, 0, len(value.Constructors))
 		for _, ctor := range value.Constructors {
-			md := functionMetadataFromRuntimeFunction(ctor)
+			md, err := e.functionMetadataWithParameterDecorators(ctor)
+			if err != nil {
+				return nil, err
+			}
 			paramValues := make([]runtime.Value, 0, len(md.Parameters))
 			for _, p := range md.Parameters {
 				paramValues = append(paramValues, parameterMetadataValue(p))
@@ -997,7 +1018,7 @@ func reflectTypeBindings(call *ast.CallExpression, args []runtime.Value) (runtim
 	return runtime.DictFromEntries(entries, nil), nil
 }
 
-func reflectInterfaceMethods(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) reflectInterfaceMethods(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects interface", call.Callee.String())
 	}
@@ -1025,12 +1046,16 @@ func reflectInterfaceMethods(call *ast.CallExpression, args []runtime.Value) (ru
 			if param.Type != nil {
 				ptype = param.Type.String()
 			}
+			decorators, err := e.decoratorsMetadataFromAST(param.Decorators, "parameter", iface.Env)
+			if err != nil {
+				return nil, err
+			}
 			pm := runtime.ParameterMetadata{
 				Name:       pname,
 				Type:       ptype,
 				Variadic:   param.Variadic,
 				HasDefault: param.Default != nil,
-				Decorators: decoratorsMetadataFromAST(param.Decorators, "parameter"),
+				Decorators: decorators,
 			}
 			params = append(params, parameterMetadataValue(pm))
 		}
@@ -1358,11 +1383,13 @@ func reflectStaticMethod(call *ast.CallExpression, args []runtime.Value) (runtim
 	if !ok {
 		return nil, fmt.Errorf("%s static method name must be string", call.Callee.String())
 	}
-	overloads, ok := class.StaticMethods[strings.ToLower(name.Value)]
-	if !ok {
-		return runtime.Null{}, nil
+	key := strings.ToLower(name.Value)
+	for owner := class; owner != nil; owner = owner.Parent {
+		if overloads, ok := owner.StaticMethods[key]; ok {
+			return reflectFunctionValue(name.Value, overloads), nil
+		}
 	}
-	return reflectFunctionValue(name.Value, overloads), nil
+	return runtime.Null{}, nil
 }
 
 func reflectClassArg(call *ast.CallExpression, value runtime.Value) (*runtime.Class, error) {
@@ -1383,16 +1410,16 @@ func reflectFunctionValue(name string, overloads []runtime.Function) runtime.Val
 	return runtime.OverloadedFunction{Name: name, Overloads: append([]runtime.Function(nil), overloads...)}
 }
 
-func reflectTargetDecorators(call *ast.CallExpression, value runtime.Value) ([]ast.Decorator, string, error) {
+func reflectTargetDecorators(call *ast.CallExpression, value runtime.Value) ([]ast.Decorator, string, *runtime.Environment, error) {
 	switch value := value.(type) {
 	case runtime.Function:
-		return value.Decorators, reflectFunctionTarget(value), nil
+		return value.Decorators, reflectFunctionTarget(value), reflectDeclaringEnv(value), nil
 	case *runtime.Class:
-		return value.Decorators, "class", nil
+		return value.Decorators, "class", value.Env, nil
 	case runtime.DecoratorTarget:
-		return nil, value.Target, nil
+		return nil, value.Target, nil, nil
 	default:
-		return nil, "", fmt.Errorf("%s expects function or class, got %s", call.Callee.String(), value.TypeName())
+		return nil, "", nil, fmt.Errorf("%s expects function or class, got %s", call.Callee.String(), value.TypeName())
 	}
 }
 
@@ -1403,15 +1430,15 @@ func reflectFunctionTarget(fn runtime.Function) string {
 	return "function"
 }
 
-func reflectFunctionMetadataValue(value runtime.Value) (runtime.FunctionMetadata, bool) {
+func (e *Evaluator) reflectFunctionMetadataValue(value runtime.Value) (runtime.FunctionMetadata, bool) {
 	switch value := value.(type) {
 	case runtime.Function:
-		return functionMetadataFromRuntimeFunction(value), true
+		return e.functionMetadataFromRuntimeFunction(value), true
 	case runtime.OverloadedFunction:
 		if len(value.Overloads) == 0 {
 			return runtime.FunctionMetadata{}, false
 		}
-		return functionMetadataFromRuntimeFunction(value.Overloads[0]), true
+		return e.functionMetadataFromRuntimeFunction(value.Overloads[0]), true
 	case runtime.DecoratorTarget:
 		if value.Function != nil {
 			return *value.Function, true
@@ -1431,7 +1458,7 @@ func reflectFunctionMetadataValue(value runtime.Value) (runtime.FunctionMetadata
 	return runtime.FunctionMetadata{}, false
 }
 
-func functionMetadataFromRuntimeFunction(fn runtime.Function) runtime.FunctionMetadata {
+func (e *Evaluator) functionMetadataFromRuntimeFunction(fn runtime.Function) runtime.FunctionMetadata {
 	fn.Parameters = fn.CallParameters()
 	if fn.OriginalEnv != nil {
 		fn.ReturnType = fn.OriginalReturnType
@@ -1451,7 +1478,6 @@ func functionMetadataFromRuntimeFunction(fn runtime.Function) runtime.FunctionMe
 			Type:       typ,
 			Variadic:   param.Variadic,
 			HasDefault: param.Default != nil,
-			Decorators: decoratorsMetadataFromAST(param.Decorators, "parameter"),
 		})
 	}
 	returnType := "void"
@@ -1480,13 +1506,13 @@ func optionalDecoratorName(call *ast.CallExpression, args []runtime.Value) (stri
 	return name.Value, nil
 }
 
-func decoratorListValue(decorators []ast.Decorator, target string, filter string) (runtime.Value, error) {
+func (e *Evaluator) decoratorListValue(decorators []ast.Decorator, target string, filter string, env *runtime.Environment) (runtime.Value, error) {
 	values := make([]runtime.Value, 0, len(decorators))
 	for position, decorator := range decorators {
 		if filter != "" && !strings.EqualFold(decorator.Name.Value, filter) {
 			continue
 		}
-		value, err := decoratorValue(decorator, target, position, 0)
+		value, err := e.decoratorValue(decorator, target, position, 0, env)
 		if err != nil {
 			return nil, err
 		}
@@ -1495,7 +1521,7 @@ func decoratorListValue(decorators []ast.Decorator, target string, filter string
 	return &runtime.List{Elements: values}, nil
 }
 
-func overloadedDecoratorListValue(overloaded runtime.OverloadedFunction, filter string) (runtime.Value, error) {
+func (e *Evaluator) overloadedDecoratorListValue(overloaded runtime.OverloadedFunction, filter string) (runtime.Value, error) {
 	values := []runtime.Value{}
 	for overloadIndex, overload := range overloaded.Overloads {
 		target := reflectFunctionTarget(overload)
@@ -1503,7 +1529,7 @@ func overloadedDecoratorListValue(overloaded runtime.OverloadedFunction, filter 
 			if filter != "" && !strings.EqualFold(decorator.Name.Value, filter) {
 				continue
 			}
-			value, err := decoratorValue(decorator, target, position, overloadIndex)
+			value, err := e.decoratorValue(decorator, target, position, overloadIndex, reflectDeclaringEnv(overload))
 			if err != nil {
 				return nil, err
 			}
@@ -1513,7 +1539,7 @@ func overloadedDecoratorListValue(overloaded runtime.OverloadedFunction, filter 
 	return &runtime.List{Elements: values}, nil
 }
 
-func decoratorValue(decorator ast.Decorator, target string, position int, overload int) (runtime.Value, error) {
+func (e *Evaluator) decoratorValue(decorator ast.Decorator, target string, position int, overload int, env *runtime.Environment) (runtime.Value, error) {
 	entries := map[string]runtime.DictEntry{}
 	name := ""
 	if decorator.Name != nil {
@@ -1529,8 +1555,12 @@ func decoratorValue(decorator ast.Decorator, target string, position int, overlo
 		if arg.Spread {
 			return nil, fmt.Errorf("decorator %s metadata does not support spread arguments", name)
 		}
-		value, err := decoratorMetadataValue(arg.Value)
+		value, err := e.decoratorArgValue(name, arg.Value, env)
 		if err != nil {
+			var refErr decoratorRefError
+			if errors.As(err, &refErr) {
+				return nil, err
+			}
 			return nil, fmt.Errorf("decorator %s metadata: %w", name, err)
 		}
 		if arg.Name != nil {
@@ -1581,9 +1611,21 @@ func decoratorMetadataDictValue(metadata runtime.DecoratorMetadata) runtime.Valu
 	return runtime.DictFromEntries(entries, nil)
 }
 
-func decoratorsMetadataFromAST(decorators []ast.Decorator, target string) []runtime.DecoratorMetadata {
+func (e *Evaluator) functionMetadataWithParameterDecorators(fn runtime.Function) (runtime.FunctionMetadata, error) {
+	metadata := e.functionMetadataFromRuntimeFunction(fn)
+	for i, param := range fn.CallParameters() {
+		decorators, err := e.decoratorsMetadataFromAST(param.Decorators, "parameter", reflectDeclaringEnv(fn))
+		if err != nil {
+			return runtime.FunctionMetadata{}, err
+		}
+		metadata.Parameters[i].Decorators = decorators
+	}
+	return metadata, nil
+}
+
+func (e *Evaluator) decoratorsMetadataFromAST(decorators []ast.Decorator, target string, env *runtime.Environment) ([]runtime.DecoratorMetadata, error) {
 	if len(decorators) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]runtime.DecoratorMetadata, 0, len(decorators))
 	for position, dec := range decorators {
@@ -1598,9 +1640,9 @@ func decoratorsMetadataFromAST(decorators []ast.Decorator, target string) []runt
 			item.Name = dec.Name.Value
 		}
 		for _, arg := range dec.Arguments {
-			value, err := decoratorMetadataValue(arg.Value)
+			value, err := e.decoratorArgValue(item.Name, arg.Value, env)
 			if err != nil {
-				continue
+				return nil, err
 			}
 			if arg.Name != nil {
 				item.NamedArgs[arg.Name.Value] = value
@@ -1610,10 +1652,11 @@ func decoratorsMetadataFromAST(decorators []ast.Decorator, target string) []runt
 		}
 		out = append(out, item)
 	}
-	return out
+	return out, nil
 }
 
-func decoratorMetadataValue(expr ast.Expression) (runtime.Value, error) {
+// decoratorArgValue converts a decorator argument to its metadata value; type and function arguments evaluate in the declaring scope.
+func (e *Evaluator) decoratorArgValue(decoratorName string, expr ast.Expression, env *runtime.Environment) (runtime.Value, error) {
 	switch expr := expr.(type) {
 	case *ast.StringLiteral:
 		return runtime.String{Value: expr.Value}, nil
@@ -1645,7 +1688,7 @@ func decoratorMetadataValue(expr ast.Expression) (runtime.Value, error) {
 	case *ast.ListLiteral:
 		values := make([]runtime.Value, 0, len(expr.Elements))
 		for _, element := range expr.Elements {
-			value, err := decoratorMetadataValue(element)
+			value, err := e.decoratorArgValue(decoratorName, element, env)
 			if err != nil {
 				return nil, err
 			}
@@ -1655,11 +1698,11 @@ func decoratorMetadataValue(expr ast.Expression) (runtime.Value, error) {
 	case *ast.DictLiteral:
 		entries := map[string]runtime.DictEntry{}
 		for _, entry := range expr.Entries {
-			key, err := decoratorMetadataValue(entry.Key)
+			key, err := e.decoratorArgValue(decoratorName, entry.Key, env)
 			if err != nil {
 				return nil, err
 			}
-			value, err := decoratorMetadataValue(entry.Value)
+			value, err := e.decoratorArgValue(decoratorName, entry.Value, env)
 			if err != nil {
 				return nil, err
 			}
@@ -1667,9 +1710,12 @@ func decoratorMetadataValue(expr ast.Expression) (runtime.Value, error) {
 		}
 		return runtime.DictFromEntries(entries, nil), nil
 	case *ast.SetLiteral:
+		if ast.DecoratorHasReference(expr) {
+			return nil, decoratorRefError{fmt.Sprintf("decorator @%s: a set cannot hold type or function arguments", decoratorName)}
+		}
 		entries := map[string]runtime.SetEntry{}
 		for _, element := range expr.Elements {
-			value, err := decoratorMetadataValue(element)
+			value, err := e.decoratorArgValue(decoratorName, element, env)
 			if err != nil {
 				return nil, err
 			}
@@ -1677,6 +1723,21 @@ func decoratorMetadataValue(expr ast.Expression) (runtime.Value, error) {
 		}
 		return runtime.Set{Elements: entries}, nil
 	default:
-		return nil, fmt.Errorf("unsupported decorator argument expression %s", expr.String())
+		kind := ast.DecoratorReferenceKind(expr)
+		if kind == "" || env == nil {
+			return nil, fmt.Errorf("unsupported decorator argument expression %s", expr.String())
+		}
+		value, err := e.evalExpression(expr, env)
+		if err != nil {
+			return nil, err
+		}
+		if kind == "type" && !isTypeValue(value) {
+			return nil, decoratorRefError{fmt.Sprintf("decorator @%s: argument %s must be a literal, a type, or a function", decoratorName, expr.String())}
+		}
+		return value, nil
 	}
 }
+
+type decoratorRefError struct{ message string }
+
+func (err decoratorRefError) Error() string { return err.message }

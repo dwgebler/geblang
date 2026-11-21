@@ -77,6 +77,7 @@ Common to all three numeric types:
 | `abs()` | same type | Absolute value. |
 | `sign()` | `int` | `-1`, `0`, or `1` by sign. |
 | `clamp(lo, hi)` | same type | Constrain to the range `[lo, hi]`. |
+| `isBetween(lo, hi)` | `bool` | True if `lo <= value <= hi`. Bounds may be any numeric type; `lo > hi` throws `ValueError`, and `NaN` is never between. |
 | `isPositive()` | `bool` | True if `> 0`. |
 | `isNegative()` | `bool` | True if `< 0`. |
 | `isZero()` | `bool` | True if `== 0`. |
@@ -89,7 +90,12 @@ Common to all three numeric types:
 | `isEven()` | `bool` | True if divisible by 2. |
 | `isOdd()` | `bool` | True if not divisible by 2. |
 | `toString(base = 10)` | `string` | Format in base 2-36. |
-| `toDecimal(places = 0)` | `decimal` | Convert, optionally rounded. |
+| `gcd(other)` | `int` | Greatest common divisor; never negative, `0.gcd(0)` is `0`. |
+| `lcm(other)` | `int` | Least common multiple; never negative, `0` if either value is `0`. |
+| `digits()` | `list<int>` | Decimal digits of the absolute value: `(-120).digits()` is `[1, 2, 0]`. |
+| `isPowerOfTwo()` | `bool` | True for `1, 2, 4, 8, ...`; false for zero and negatives. |
+| `bitCount()` | `int` | Number of 1 bits in the absolute value. |
+| `toDecimal([places])` | `decimal` | Convert; with `places`, rounded to that many digits. |
 | `toFloat()` | `float` | Convert to float. |
 
 `decimal` and `float` add the value-keeping rounding family (each takes
@@ -103,7 +109,13 @@ an optional `places`, default 0, and rounds half away from zero for
 | `ceil(places = 0)` | same type | Round up to `places` digits. |
 | `truncate(places = 0)` | same type | Round toward zero to `places` digits. |
 
-`float` additionally has `isNaN()` and `isInf()`. `decimal`
+`float` additionally has `isNaN()`, `isInf()` and
+`isCloseTo(other, relTol = 1e-9, absTol = 0)`, which is true when
+`|a - b| <= max(relTol * max(|a|, |b|), absTol)`. The relative tolerance
+scales with the values, so comparing against zero needs an `absTol`:
+`(0.1f + 0.2f).isCloseTo(0.3f)` is `true`, `(0.0f).isCloseTo(1e-12f)` is
+`false` and `(0.0f).isCloseTo(1e-12f, 0, 1e-9)` is `true`. Primitive
+methods take positional arguments only. `decimal`
 additionally has `format(scale)` and `toString(scale)` for
 fixed-scale rendering (a `decimal` is an exact value with no stored
 scale, so the default display shows up to 10 places with trailing zeros
@@ -530,6 +542,11 @@ string carries three non-throwing predicates:
 - `isNumeric()` is `true` when the string parses as an int or a decimal
   (`isInt() || isDecimal()`).
 
+Strings also carry validation predicates: ASCII character classes
+(`isDigits`, `isAlpha`, `isAlphanumeric`, `isLower`, `isUpper`,
+`isAscii`), format checks (`isHex`, `isUuid`, `isEmail`, `isUrl`) and
+`isUtf8`. See the text reference for the exact rules.
+
 The value-keeping rounding methods (`round`, `floor`, `ceil`,
 `truncate`) and the `sign` / `clamp` helpers also live on the numeric
 types; see [Numeric methods](#numeric-methods) above for the full list.
@@ -682,7 +699,7 @@ let both = bytes.concat(raw, hex);             # join two byte sequences
 | `length()` | `int` | Number of bytes (also available as the `.length` property) |
 | `isEmpty()` | `bool` | True when length is zero |
 | `get(int index)` | `int` | Byte value at position (0-255) |
-| `contains(int byte)` | `bool` | True if the byte value appears anywhere |
+| `contains(needle)` | `bool` | True if the byte value or byte sequence `needle` appears anywhere |
 | `toString()` | `string` | Decode as UTF-8; throws on invalid bytes |
 | `toHex()` | `string` | Lowercase hex representation |
 | `toBase64()` | `string` | Standard Base64 encoding |

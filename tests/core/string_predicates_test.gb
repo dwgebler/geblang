@@ -1,0 +1,101 @@
+/**
+ * @title String validation predicates
+ * @summary ASCII character-class checks, format checks (hex, UUID, email,
+ * URL) and UTF-8 validity on strings and bytes. Every predicate returns
+ * false for the empty string except isUtf8.
+ */
+import test;
+import bytes;
+
+class StringPredicatesTest extends test.Test {
+    @test
+    func characterClasses(): void {
+        this.assertTrue("0123".isDigits());
+        this.assertFalse("-1".isDigits());
+        this.assertFalse("1.5".isDigits());
+        this.assertTrue("abcXYZ".isAlpha());
+        this.assertFalse("ab cd".isAlpha());
+        this.assertTrue("a1B2".isAlphanumeric());
+        this.assertFalse("a_1".isAlphanumeric());
+        this.assertTrue("plain text!".isAscii());
+    }
+
+    @test
+    func characterClassesAreAsciiOnly(): void {
+        this.assertFalse("\u{0663}".isDigits());
+        this.assertFalse("\u{e9}".isAlpha());
+        this.assertFalse("caf\u{e9}".isAlphanumeric());
+        this.assertFalse("caf\u{e9}".isAscii());
+    }
+
+    @test
+    func emptyStringIsFalse(): void {
+        this.assertFalse("".isDigits());
+        this.assertFalse("".isAlpha());
+        this.assertFalse("".isAlphanumeric());
+        this.assertFalse("".isLower());
+        this.assertFalse("".isUpper());
+        this.assertFalse("".isAscii());
+        this.assertFalse("".isHex());
+        this.assertFalse("".isUuid());
+        this.assertFalse("".isEmail());
+        this.assertFalse("".isUrl());
+        this.assertTrue("".isUtf8());
+    }
+
+    @test
+    func letterCase(): void {
+        this.assertTrue("hello world 1".isLower());
+        this.assertFalse("Hello".isLower());
+        this.assertFalse("123".isLower());
+        this.assertTrue("ABC-9".isUpper());
+        this.assertFalse("ABc".isUpper());
+    }
+
+    @test
+    func hexAndUuid(): void {
+        this.assertTrue("DEADbeef09".isHex());
+        this.assertFalse("0xff".isHex());
+        this.assertFalse("fg".isHex());
+        this.assertTrue("123e4567-E89B-12d3-a456-426614174000".isUuid());
+        this.assertFalse("123e4567e89b12d3a456426614174000".isUuid());
+        this.assertFalse("123e4567-e89b-12d3-a456-42661417400g".isUuid());
+    }
+
+    @test
+    func email(): void {
+        this.assertTrue("a.b+c@mail.example.org".isEmail());
+        this.assertFalse("a@b".isEmail());
+        this.assertFalse("a b@c.io".isEmail());
+        this.assertFalse("a@@b.io".isEmail());
+        this.assertFalse("a@b..io".isEmail());
+        this.assertFalse("@b.io".isEmail());
+    }
+
+    @test
+    func url(): void {
+        this.assertTrue("https://example.com/p?q=1#f".isUrl());
+        this.assertTrue("postgres://u:p@h:5432/db".isUrl());
+        this.assertFalse("/relative/path".isUrl());
+        this.assertFalse("example.com".isUrl());
+        this.assertFalse("mailto:a@b.io".isUrl());
+        this.assertFalse("http://".isUrl());
+        this.assertFalse("http://a b".isUrl());
+    }
+
+    @test
+    func utf8(): void {
+        this.assertTrue("ok \u{e9}".isUtf8());
+        this.assertFalse(bytes.rawString(bytes.fromHex("ff")).isUtf8());
+        this.assertTrue(bytes.fromString("hi").isUtf8());
+        this.assertFalse(bytes.fromHex("ff").isUtf8());
+        this.assertTrue(bytes.fromHex("").isUtf8());
+    }
+
+    @test
+    func dynamicAndHigherOrder(): void {
+        any value = "42";
+        this.assertTrue(value.isDigits());
+        this.assertEquals(["1", "22"], ["1", "a", "22"].filter((string s) => s.isDigits()));
+    }
+}

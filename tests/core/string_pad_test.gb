@@ -1,0 +1,38 @@
+/**
+ * @title String padding
+ * @summary padStart / padEnd pad to at least the given width, never
+ * truncate, and repeat the pad from its first character.
+ */
+import test;
+
+class StringPadTest extends test.Test {
+    @test
+    func padsToWidth(): void {
+        this.assertEquals("0007", "7".padStart(4, "0"));
+        this.assertEquals("7   ", "7".padEnd(4));
+    }
+
+    @test
+    func longerStringIsUnchanged(): void {
+        this.assertEquals("hello", "hello".padStart(3));
+        this.assertEquals("hello", "hello".padEnd(3, "*"));
+    }
+
+    @test
+    func multiCharacterPadCycles(): void {
+        this.assertEquals("abax", "x".padStart(4, "ab"));
+        this.assertEquals("xaba", "x".padEnd(4, "ab"));
+    }
+
+    @test
+    func multiBytePad(): void {
+        this.assertEquals("\u{e9}-\u{e9}x", "x".padStart(4, "\u{e9}-"));
+        this.assertEquals("x\u{e9}-\u{e9}", "x".padEnd(4, "\u{e9}-"));
+        this.assertEquals("00\u{e9}", "\u{e9}".padStart(3, "0"));
+    }
+
+    @test
+    func emptyPadThrows(): void {
+        this.assertThrows(() => "x".padStart(3, ""));
+    }
+}

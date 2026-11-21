@@ -1,0 +1,10 @@
+import io;
+
+io.println("hello".padStart(3));
+io.println("hello".padEnd(3));
+io.println("x".padStart(4, "ab"));
+io.println("x".padEnd(4, "ab"));
+io.println("x".padStart(4, "\u{e9}-"));
+io.println("x".padEnd(4, "\u{e9}-"));
+any dyn = "hello";
+io.println(dyn.padStart(2));

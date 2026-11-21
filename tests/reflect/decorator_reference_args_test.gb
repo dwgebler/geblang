@@ -1,0 +1,90 @@
+/**
+ * @title Type and function decorator arguments
+ * @summary Decorator arguments can name a class, interface or enum, or be a
+ * function literal or arrow; reflection returns the type value or callable,
+ * including for members inherited from another module.
+ */
+import test;
+import reflect;
+import decorator_reference_args_donor as donor;
+
+interface Notifier {
+    func send(): void;
+}
+
+enum Color {
+    Red,
+    Green
+}
+
+class User {}
+
+func Twice(callable fn, callable step): callable {
+    return func(int n): int { return fn(step(n)); };
+}
+
+@Meta(User, kinds: [Notifier, Color], byName: {"user": User}, byType: {User: "user"}, double: (int n) => n * 2)
+class Service {
+    @Field(kind: User)
+    string name;
+
+    @Route(schema: User, retry: func(int attempt): int { return attempt * 10; })
+    func handle(@Param(User) string id): void {}
+}
+
+class Handler extends donor.BaseHandler {
+    @Route(schema: donor.Schema, list: [User])
+    func own(): void {}
+}
+
+@Twice((int n) => n + 1)
+func increment(int n): int {
+    return n;
+}
+
+class DecoratorReferenceArgsTest extends test.Test {
+    @test
+    func classDecoratorHoldsTypeValues(): void {
+        let d = reflect.decorators(Service)[0];
+        this.assertEquals(User, d["args"][0]);
+        this.assertEquals(Notifier, d["namedArgs"]["kinds"][0]);
+        this.assertEquals(Color, d["namedArgs"]["kinds"][1]);
+        this.assertEquals(User, d["namedArgs"]["byName"]["user"]);
+        this.assertEquals("user", d["namedArgs"]["byType"][User]);
+    }
+
+    @test
+    func functionArgumentsAreCallable(): void {
+        let d = reflect.decorators(Service)[0];
+        this.assertEquals(42, (d["namedArgs"]["double"] as callable)(21));
+        let m = reflect.decorators(reflect.method(Service, "handle"))[0];
+        this.assertEquals(30, (m["namedArgs"]["retry"] as callable)(3));
+    }
+
+    @test
+    func fieldAndParameterDecorators(): void {
+        this.assertEquals(User, reflect.fields(Service)[0]["decorators"][0]["namedArgs"]["kind"]);
+        let param = reflect.parameters(reflect.method(Service, "handle"))[0];
+        this.assertEquals(User, param["decorators"][0]["args"][0]);
+    }
+
+    @test
+    func callableDecoratorReceivesFunction(): void {
+        this.assertEquals(6, increment(5));
+    }
+
+    @test
+    func ownMemberOfCrossModuleSubclass(): void {
+        let d = reflect.decorators(reflect.method(Handler, "own"))[0];
+        this.assertEquals(donor.Schema, d["namedArgs"]["schema"]);
+        this.assertEquals(User, d["namedArgs"]["list"][0]);
+    }
+
+    @test
+    func inheritedMemberResolvesInDeclaringModule(): void {
+        let d = reflect.decorators(reflect.method(Handler(), "show"))[0];
+        this.assertEquals(donor.Schema, d["namedArgs"]["schema"]);
+        this.assertEquals(donor.Level, d["namedArgs"]["level"]);
+        this.assertEquals(12, (d["namedArgs"]["scale"] as callable)(4));
+    }
+}

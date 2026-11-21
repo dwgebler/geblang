@@ -1,5 +1,4 @@
 module mailer;
-
 import smtp;
 
 ## File or in-memory attachment for an email message.

@@ -102,15 +102,17 @@ func TestStringPad(t *testing.T) {
 	if StringPadEnd("7", 3, "0") != "700" {
 		t.Fatalf("padEnd = %q", StringPadEnd("7", 3, "0"))
 	}
-	// Interpreter truncates to the last targetLen runes when already longer.
-	if StringPadStart("abcd", 2, "0") != "cd" {
-		t.Fatalf("padStart over-length = %q, want cd", StringPadStart("abcd", 2, "0"))
+	if StringPadStart("abcd", 2, "0") != "abcd" {
+		t.Fatalf("padStart over-length = %q, want abcd", StringPadStart("abcd", 2, "0"))
 	}
-	if StringPadEnd("abcd", 2, "0") != "ab" {
-		t.Fatalf("padEnd over-length = %q, want ab", StringPadEnd("abcd", 2, "0"))
+	if StringPadEnd("abcd", 2, "0") != "abcd" {
+		t.Fatalf("padEnd over-length = %q, want abcd", StringPadEnd("abcd", 2, "0"))
 	}
-	if StringPadStart("x", 4, "ab") != "aabx" {
-		t.Fatalf("padStart multi-char = %q, want aabx", StringPadStart("x", 4, "ab"))
+	if StringPadStart("x", 4, "ab") != "abax" {
+		t.Fatalf("padStart multi-char = %q, want abax", StringPadStart("x", 4, "ab"))
+	}
+	if StringPadStart("x", 4, "\u00e9-") != "\u00e9-\u00e9x" {
+		t.Fatalf("padStart multi-byte = %q", StringPadStart("x", 4, "\u00e9-"))
 	}
 }
 

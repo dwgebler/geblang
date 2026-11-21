@@ -203,8 +203,11 @@ type dbRowsHandle struct {
 	cache      []runtime.Value
 	caching    bool
 	prefetched runtime.Value
-	closed     bool
-	exhausted  bool
+	// streaming is set once next() or for-in steps the cursor; random access
+	// on a non-streaming handle drains it so the connection is released.
+	streaming bool
+	closed    bool
+	exhausted bool
 }
 
 type dbStmtHandle struct {
@@ -3117,6 +3120,7 @@ func (e *Evaluator) resolveUserIterator(instance *runtime.Instance) (*runtime.In
 // sortElements stably sorts elements in place, via the optional
 // less/comparator callback in args.
 func (e *Evaluator) sortElements(elements []runtime.Value, args []runtime.Value) error {
+	args = native.WithoutNullComparator(args)
 	var sortErr error
 	sort.SliceStable(elements, func(i, j int) bool {
 		if sortErr != nil {
@@ -3557,7 +3561,7 @@ func (e *Evaluator) evalNativeCallArguments(call *ast.CallExpression, env *runti
 			bargs[i].Name = arg.Name.Value
 		}
 	}
-	sig, ok := native.NativeCallSignature(module, function, bargs)
+	sources, ok, bindErr := native.BindNativeCall(module, function, bargs)
 	if !ok {
 		return e.evalCallArguments(call, env)
 	}
@@ -3569,19 +3573,10 @@ func (e *Evaluator) evalNativeCallArguments(call *ast.CallExpression, env *runti
 		}
 		values[i] = v
 	}
-	result, err := binding.Order(sig, bargs)
-	if err != nil {
-		return nil, err
+	if bindErr != nil {
+		return nil, bindErr
 	}
-	indices, err := binding.NativeArgOrder(sig, result)
-	if err != nil {
-		return nil, err
-	}
-	ordered := make([]runtime.Value, len(indices))
-	for k, idx := range indices {
-		ordered[k] = values[idx]
-	}
-	return ordered, nil
+	return native.ApplyArgSources(sources, values), nil
 }
 
 func (e *Evaluator) moduleExportExists(module, name string, env *runtime.Environment) bool {
@@ -4386,6 +4381,12 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 	}
 	if instance, ok := receiver.(*runtime.Instance); ok {
 		methods := lookupMethodOverloads(instance.Class, name)
+		if args, bound, err := e.evalCatalogNamedArguments(receiver, name, call, env); bound {
+			if err != nil {
+				return nil, err
+			}
+			return e.applyFunctionWithThis(methods[0], args, instance)
+		}
 		if len(methods) > 0 {
 			return e.applyOverloadedFunction(instance.Class.Name+"."+name, methods, call, env, instance, nil)
 		}
@@ -4401,7 +4402,10 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 		}
 		return nil, native.UnknownMethodError(instance.Class.Name, name)
 	}
-	args, err := e.evalCallArguments(call, env)
+	args, bound, err := e.evalCatalogNamedArguments(receiver, name, call, env)
+	if !bound {
+		args, err = e.evalCallArguments(call, env)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -7678,4 +7682,38 @@ func bytesElement(value runtime.Bytes, i int) (runtime.Value, error) {
 		return nil, runtime.ClassifiedError{Class: "ValueError", Message: "bytes index out of range"}
 	}
 	return runtime.NewInt64(int64(value.Value[i])), nil
+}
+
+// evalCatalogNamedArguments binds a named-argument call on a primitive or Go-backed class receiver by its catalog signature; bound is false when there is nothing to bind.
+func (e *Evaluator) evalCatalogNamedArguments(receiver runtime.Value, name string, call *ast.CallExpression, env *runtime.Environment) (args []runtime.Value, bound bool, err error) {
+	hasNamed := false
+	for _, arg := range call.Arguments {
+		if arg.Spread || arg.Hole {
+			return nil, false, nil
+		}
+		hasNamed = hasNamed || arg.Name != nil
+	}
+	if !hasNamed {
+		return nil, false, nil
+	}
+	names := make([]string, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		if arg.Name != nil {
+			names[i] = arg.Name.Value
+		}
+	}
+	sources, found, bindErr := native.BindReceiverCall(receiver, name, native.ArgNames(names, len(names)))
+	if !found {
+		return nil, false, nil
+	}
+	values := make([]runtime.Value, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		if values[i], err = e.evalExpression(arg.Value, env); err != nil {
+			return nil, true, err
+		}
+	}
+	if bindErr != nil {
+		return nil, true, bindErr
+	}
+	return native.ApplyArgSources(sources, values), true, nil
 }

@@ -17,6 +17,8 @@ import (
 )
 
 type Compiler struct {
+	decoratorThunks map[ast.Expression]runtime.DecoratorThunk
+	pendingThunks   []ast.Expression
 	chunk           Chunk
 	loops           []*loopContext
 	globals         map[string]int64
@@ -184,6 +186,7 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 		enums:               map[string]int64{},
 		typeAliases:         map[string]*ast.TypeRef{},
 		reflectFuncs:        map[string]runtime.DecoratorTarget{},
+		decoratorThunks:     map[ast.Expression]runtime.DecoratorThunk{},
 		reflectClasses:      map[string]runtime.DecoratorTarget{},
 		reflectMethods:      map[string]map[string]runtime.DecoratorTarget{},
 		reflectStatics:      map[string]map[string]runtime.DecoratorTarget{},
@@ -322,6 +325,9 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 		if err := c.compileStatement(stmt); err != nil {
 			return Chunk{}, c.withStatementLocation(stmt, err)
 		}
+	}
+	if err := c.compileDecoratorThunks(); err != nil {
+		return Chunk{}, err
 	}
 	c.emit(OpReturn)
 	c.chunk.TopLevelLocalCount = c.locals

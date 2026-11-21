@@ -1,0 +1,32 @@
+import entry_decorator_inspector as inspector;
+import io;
+
+class Schema {}
+
+interface Contract {
+    func send(@Meta(schema: Schema) string text): void;
+}
+
+@Meta(schema: Schema)
+class Base {
+    @Meta(schema: Schema)
+    string value;
+
+    @Meta(schema: Schema)
+    func send(@Meta(schema: Schema) string text): void {}
+
+    @Meta(schema: Schema)
+    static func create(): void {}
+}
+
+@Meta(schema: Schema)
+class Child extends Base {}
+
+@Meta(schema: Schema)
+func send(@Meta(schema: Schema) string text): void {}
+
+export func main(): void {
+    inspector.verify(Base, Base(), send, Contract, Schema);
+    inspector.verify(Child, Child(), send, Contract, Schema);
+    io.println("entry-decorators-ok");
+}

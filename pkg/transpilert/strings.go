@@ -3,6 +3,7 @@ package transpilert
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Typed adapters for Geblang's string methods on the transpiler's unboxed
@@ -157,28 +158,24 @@ func padString(s string, targetLen int, pad string, atStart bool, label string) 
 	if pad == "" {
 		panic(NewError("RuntimeError", label+": pad must be a non-empty string"))
 	}
-	runes := []rune(s)
+	fill := padFill(pad, targetLen-utf8.RuneCountInString(s))
+	if atStart {
+		return fill + s
+	}
+	return s + fill
+}
+
+// padFill repeats pad from its first character to exactly n characters.
+func padFill(pad string, n int) string {
+	if n <= 0 {
+		return ""
+	}
 	padRunes := []rune(pad)
-	for len(runes) < targetLen {
-		needed := targetLen - len(runes)
-		chunk := padRunes
-		if needed < len(padRunes) {
-			chunk = padRunes[:needed]
-		}
-		if atStart {
-			runes = append(append([]rune{}, chunk...), runes...)
-		} else {
-			runes = append(runes, chunk...)
-		}
+	out := make([]rune, n)
+	for i := range out {
+		out[i] = padRunes[i%len(padRunes)]
 	}
-	if len(runes) > targetLen {
-		if atStart {
-			runes = runes[len(runes)-targetLen:]
-		} else {
-			runes = runes[:targetLen]
-		}
-	}
-	return string(runes)
+	return string(out)
 }
 
 // StringCapitalize upper-cases the first rune and lower-cases the rest.

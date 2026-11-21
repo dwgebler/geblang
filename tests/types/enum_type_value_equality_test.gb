@@ -1,0 +1,51 @@
+/**
+ * @title Enum type values compare by identity
+ * @summary An enum used as a value equals itself under ==, is and
+ * assertEquals, equals the typeof of its variants, and stays distinct
+ * from a same-named enum in another module.
+ */
+import test;
+import enum_type_value_donor as donor;
+
+enum Color {
+    Red,
+    Green
+}
+
+enum Shade {
+    Red,
+    Green
+}
+
+enum Level {
+    Low,
+    High
+}
+
+class EnumTypeValueEqualityTest extends test.Test {
+    @test
+    func enumEqualsItself(): void {
+        let c = Color;
+        this.assertTrue(c == Color);
+        this.assertTrue(Color is Color);
+        this.assertEquals(Color, c);
+        this.assertEquals([Color], [c]);
+    }
+
+    @test
+    func distinctEnumsDiffer(): void {
+        this.assertFalse(Color == Shade);
+        this.assertFalse(Level == donor.Level);
+    }
+
+    @test
+    func variantTypeMatchesEnum(): void {
+        this.assertTrue(typeof(Color.Red) == Color);
+    }
+
+    @test
+    func crossModuleEnumEqualsItself(): void {
+        this.assertEquals(donor.Level, donor.levelType());
+        this.assertTrue([donor.Level].contains(donor.levelType()));
+    }
+}

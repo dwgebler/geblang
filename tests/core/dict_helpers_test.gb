@@ -1,0 +1,40 @@
+/**
+ * @title Dict callback and key helpers
+ * @summary filter / any / all take (key, value); mapValues takes the
+ * value; pick / omit select keys (pick skips missing keys); invert
+ * swaps keys and values and throws on a duplicate value.
+ */
+import test;
+
+class DictHelpersTest extends test.Test {
+    @test
+    func callbacks(): void {
+        let d = {"a": 1, "b": 2, "c": 3};
+        this.assertEquals({"b": 2, "c": 3}, d.filter((string k, int v) => v > 1));
+        this.assertEquals({"a": 10, "b": 20, "c": 30}, d.mapValues((int v) => v * 10));
+        this.assertTrue(d.any((string k, int v) => k == "c"));
+        this.assertFalse(d.all((string k, int v) => v > 1));
+        this.assertEquals({"a": 1, "b": 2, "c": 3}, d);
+    }
+
+    @test
+    func pickAndOmit(): void {
+        let d = {"a": 1, "b": 2, "c": 3};
+        this.assertEquals({"a": 1, "c": 3}, d.pick(["c", "a", "z"]));
+        this.assertEquals({"b": 2}, d.omit(["a", "c", "z"]));
+        this.assertEquals({}, d.pick([]));
+    }
+
+    @test
+    func invert(): void {
+        this.assertEquals({1: "a", 2: "b"}, {"a": 1, "b": 2}.invert());
+        let dup = {"a": 1, "b": 1};
+        this.assertThrows(() => dup.invert());
+    }
+
+    @test
+    func predicateMustReturnBool(): void {
+        let d = {"a": 1};
+        this.assertThrows(() => d.any((string k, int v) => v));
+    }
+}

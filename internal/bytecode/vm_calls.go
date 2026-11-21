@@ -1712,23 +1712,14 @@ func (vm *VM) bindNativeNamedArgs(name string, args []runtime.Value, names []str
 			bargs[i].Name = names[i]
 		}
 	}
-	sig, ok := native.NativeCallSignature(module, function, bargs)
+	sources, ok, err := native.BindNativeCall(module, function, bargs)
 	if !ok {
 		return nil, false, errors.New(runtime.NamedArgsUnsupported)
 	}
-	result, err := argbinding.Order(sig, bargs)
 	if err != nil {
 		return nil, false, err
 	}
-	indices, err := argbinding.NativeArgOrder(sig, result)
-	if err != nil {
-		return nil, false, err
-	}
-	ordered := make([]runtime.Value, len(indices))
-	for k, idx := range indices {
-		ordered[k] = args[idx]
-	}
-	return ordered, true, nil
+	return native.ApplyArgSources(sources, args), true, nil
 }
 
 func (vm *VM) evalNativeCallWithNames(name string, args []runtime.Value, names []string) (runtime.Value, error) {
@@ -2977,7 +2968,7 @@ func (vm *VM) ReflectConstructorsForChunkClass(class runtime.BytecodeClass) (run
 }
 
 func (vm *VM) ReflectFieldsForChunkClass(class runtime.BytecodeClass) (runtime.Value, error) {
-	return vm.reflectFieldsResult(class, runtime.ClassMetadata{}), nil
+	return vm.reflectFieldsResult(class, runtime.ClassMetadata{})
 }
 
 func (vm *VM) collectChunkClasses(chunk Chunk) []runtime.Value {

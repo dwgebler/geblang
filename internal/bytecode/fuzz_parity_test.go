@@ -449,6 +449,14 @@ func (g *fuzzGen) collectionsBlock() (decls string, calls []string) {
 		"io.println(dd.length());",
 		"io.println(dd.contains(\"x\"));",
 		"io.println(\"${dd}\");",
+		"io.println(xs.reduce(initial: "+c+", combine: (int acc, int n) => acc - n));",
+		"any nxs = xs;",
+		"io.println(\"${nxs.sortBy(descending: true, key: (int n) => n % 3)}\");",
+		"io.println(\"${\"\"+"+a+"}\".padStart(pad: \"*\", width: 6));",
+		"io.println((1.0f * "+b+").isCloseTo("+b+".0f, absTol: 0.5));",
+		"func nDefer() { defer xs.insert(value: "+a+", index: 0); }",
+		"nDefer();",
+		"io.println(\"${xs}\");",
 	)
 	return "", calls
 }

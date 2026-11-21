@@ -1,0 +1,9 @@
+import decorator_scope_probe;
+import test;
+
+class DecoratorScopeTest extends test.Test {
+    @test
+    func referencesKeepTheirDeclaringModuleAcrossReflectionTargets(): void {
+        decorator_scope_probe.verify();
+    }
+}

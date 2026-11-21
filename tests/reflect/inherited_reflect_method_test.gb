@@ -1,0 +1,48 @@
+/**
+ * @title Reflecting inherited methods
+ * @summary reflect.method and reflect.staticMethod find a method a class
+ * inherits, whether the parent is in the same module or another one, given
+ * the class value or an instance.
+ */
+import test;
+import reflect;
+import inherited_reflect_donor as donor;
+
+class Child extends donor.BaseController {
+    @Route("/extra")
+    func extra(): void {}
+}
+
+class Local {
+    @Factory("local")
+    static func build(): int {
+        return 2;
+    }
+}
+
+class LocalChild extends Local {}
+
+class InheritedReflectMethodTest extends test.Test {
+    func firstArg(any target): any {
+        return reflect.decorators(target)[0]["args"][0];
+    }
+
+    @test
+    func inheritedInstanceMethodFromAnotherModule(): void {
+        this.assertEquals("/show", this.firstArg(reflect.method(Child, "show")));
+        this.assertEquals("/show", this.firstArg(reflect.method(Child(), "show")));
+        this.assertEquals("/extra", this.firstArg(reflect.method(Child, "extra")));
+    }
+
+    @test
+    func inheritedStaticMethods(): void {
+        this.assertEquals("make", this.firstArg(reflect.staticMethod(Child, "make")));
+        this.assertEquals("local", this.firstArg(reflect.staticMethod(LocalChild, "build")));
+    }
+
+    @test
+    func missingMethodsAreNull(): void {
+        this.assertNull(reflect.method(Child, "missing"));
+        this.assertNull(reflect.staticMethod(LocalChild, "missing"));
+    }
+}

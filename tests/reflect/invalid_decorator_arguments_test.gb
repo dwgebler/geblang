@@ -1,0 +1,61 @@
+import reflect;
+import test;
+
+const LIMIT = 5;
+
+class Schema {}
+
+class BadField {
+    @Meta(LIMIT) string value;
+}
+
+class BadConstructor {
+    func BadConstructor(@Meta(LIMIT) string value) {}
+}
+
+interface BadInterface {
+    func send(@Meta(LIMIT) string value): void;
+}
+
+func badParameter(@Meta(LIMIT) string value): void {}
+
+class BadSet {
+    @Meta({Schema}) string value;
+}
+
+class InvalidDecoratorArgumentsTest extends test.Test {
+    @test
+    func fieldMetadataRejectsNonTypeNames(): void {
+        this.assertThrowsOf(func(): void {
+            reflect.fields(BadField);
+        }, "RuntimeError");
+    }
+
+    @test
+    func parameterMetadataRejectsNonTypeNames(): void {
+        this.assertThrowsOf(func(): void {
+            reflect.parameters(badParameter);
+        }, "RuntimeError");
+    }
+
+    @test
+    func constructorMetadataRejectsNonTypeNames(): void {
+        this.assertThrowsOf(func(): void {
+            reflect.constructors(BadConstructor);
+        }, "RuntimeError");
+    }
+
+    @test
+    func interfaceMetadataRejectsNonTypeNames(): void {
+        this.assertThrowsOf(func(): void {
+            reflect.interfaceMethods(BadInterface);
+        }, "RuntimeError");
+    }
+
+    @test
+    func fieldMetadataRejectsReferenceSets(): void {
+        this.assertThrowsOf(func(): void {
+            reflect.fields(BadSet);
+        }, "RuntimeError");
+    }
+}

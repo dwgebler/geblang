@@ -62,32 +62,9 @@ func DisplayName(name string) string {
 	return name
 }
 
-// NativeArgOrder returns the call-site arg indices to pass to a native in parameter order; the native applies its own defaults, so a trailing omitted optional is dropped and a middle gap (omitted then provided) errors.
-func NativeArgOrder(sig Signature, result Result) ([]int, error) {
-	variadicIndex := sig.variadicIndex()
-	indices := make([]int, 0, len(result.Slots)+len(result.TailArgs))
-	gapAt := -1
-	for i, slot := range result.Slots {
-		if i == variadicIndex {
-			continue
-		}
-		if slot >= 0 {
-			if gapAt >= 0 {
-				return nil, fmt.Errorf("%s missing argument %s", sig.displayName(), sig.ParamNames[gapAt])
-			}
-			indices = append(indices, slot)
-		} else if gapAt < 0 {
-			gapAt = i
-		}
-	}
-	if variadicIndex >= 0 && result.Slots[variadicIndex] >= 0 {
-		if gapAt >= 0 {
-			return nil, fmt.Errorf("%s missing argument %s", sig.displayName(), sig.ParamNames[gapAt])
-		}
-		indices = append(indices, result.Slots[variadicIndex])
-	}
-	indices = append(indices, result.TailArgs...)
-	return indices, nil
+// MissingArgumentError is the canonical error for parameter i left unfilled.
+func MissingArgumentError(sig Signature, i int) error {
+	return fmt.Errorf("%s missing argument %s", sig.displayName(), sig.ParamNames[i])
 }
 
 func (sig Signature) hasDefaultAt(i int) bool {

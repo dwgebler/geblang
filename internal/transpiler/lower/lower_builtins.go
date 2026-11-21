@@ -196,12 +196,16 @@ func registerBytesMethods(t map[builtinMethodKey]builtinMethodFn) {
 		}
 	}
 	t[builtinMethodKey{types.KindBytes, "toHex"}] = noArg("BytesToHex")
+	t[builtinMethodKey{types.KindBytes, "isUtf8"}] = noArg("BytesIsUtf8")
 	t[builtinMethodKey{types.KindBytes, "toBase64"}] = noArg("BytesToBase64")
 	t[builtinMethodKey{types.KindBytes, "toBase64Url"}] = noArg("BytesToBase64Url")
 	t[builtinMethodKey{types.KindBytes, "toList"}] = noArg("BytesToList")
 	t[builtinMethodKey{types.KindBytes, "toString"}] = lowerBytesToString
 	t[builtinMethodKey{types.KindBytes, "get"}] = lowerBytesGet
 	t[builtinMethodKey{types.KindBytes, "contains"}] = lowerBytesContains
+	t[builtinMethodKey{types.KindBytes, "startsWith"}] = lowerBytesNeedle("BytesStartsWith")
+	t[builtinMethodKey{types.KindBytes, "endsWith"}] = lowerBytesNeedle("BytesEndsWith")
+	t[builtinMethodKey{types.KindBytes, "indexOf"}] = lowerBytesNeedle("BytesIndexOf")
 	t[builtinMethodKey{types.KindBytes, "slice"}] = lowerBytesSlice
 }
 
@@ -260,6 +264,21 @@ func lowerBytesContains(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, 
 	l.lowerExpression(args[0].Value)
 	l.w.WriteString("))")
 	return true
+}
+
+func lowerBytesNeedle(helper string) builtinMethodFn {
+	return func(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, args []ast.CallArgument) bool {
+		if len(args) != 1 {
+			return false
+		}
+		l.Module.AddImport(types.OrderedDictImport)
+		l.w.WriteString("transpilert." + helper + "(")
+		l.lowerExpression(sel.Object)
+		l.w.WriteString(", any(")
+		l.lowerExpression(args[0].Value)
+		l.w.WriteString("))")
+		return true
+	}
 }
 
 func lowerBytesSlice(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, args []ast.CallArgument) bool {
@@ -446,6 +465,33 @@ func lowerToString(l *Lowerer, sel *ast.SelectorExpression, ty *types.Type, args
 	default:
 		return false
 	}
+	return true
+}
+
+func lowerStringSlugifyDiagnose(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, _ []ast.CallArgument) bool {
+	l.errAt(sel.Token.Line, sel.Token.Column,
+		"the transpiler does not support string.slugify",
+		"accent stripping needs Unicode normalization; build with 'geblang build' for the bundled VM binary")
+	l.w.WriteString(`""`)
+	return true
+}
+
+func lowerStringCenter(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, args []ast.CallArgument) bool {
+	if len(args) < 1 || len(args) > 2 {
+		return false
+	}
+	l.Module.AddImport(types.OrderedDictImport)
+	l.w.WriteString("transpilert.StringCenter(")
+	l.lowerExpression(sel.Object)
+	l.w.WriteString(", ")
+	l.lowerExpression(args[0].Value)
+	l.w.WriteString(", ")
+	if len(args) == 2 {
+		l.lowerExpression(args[1].Value)
+	} else {
+		l.w.WriteString(`" "`)
+	}
+	l.w.WriteString(")")
 	return true
 }
 
@@ -753,6 +799,15 @@ func registerStringErgoMethods(t map[builtinMethodKey]builtinMethodFn) {
 			return true
 		}
 	}
+	oneArg := func(helper string) builtinMethodFn {
+		return func(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, args []ast.CallArgument) bool {
+			if len(args) != 1 {
+				return false
+			}
+			l.emitStringHelper(helper, sel.Object, args[0].Value)
+			return true
+		}
+	}
 	oneStr := func(helper string) builtinMethodFn {
 		return func(l *Lowerer, sel *ast.SelectorExpression, _ *types.Type, args []ast.CallArgument) bool {
 			if len(args) != 1 {
@@ -786,6 +841,24 @@ func registerStringErgoMethods(t map[builtinMethodKey]builtinMethodFn) {
 	t[builtinMethodKey{types.KindString, "isInt"}] = noArg("StringIsInt")
 	t[builtinMethodKey{types.KindString, "isDecimal"}] = noArg("StringIsDecimal")
 	t[builtinMethodKey{types.KindString, "isNumeric"}] = noArg("StringIsNumeric")
+	t[builtinMethodKey{types.KindString, "isDigits"}] = noArg("StringIsDigits")
+	t[builtinMethodKey{types.KindString, "isAlpha"}] = noArg("StringIsAlpha")
+	t[builtinMethodKey{types.KindString, "isAlphanumeric"}] = noArg("StringIsAlphanumeric")
+	t[builtinMethodKey{types.KindString, "isLower"}] = noArg("StringIsLower")
+	t[builtinMethodKey{types.KindString, "isUpper"}] = noArg("StringIsUpper")
+	t[builtinMethodKey{types.KindString, "isAscii"}] = noArg("StringIsAscii")
+	t[builtinMethodKey{types.KindString, "isHex"}] = noArg("StringIsHex")
+	t[builtinMethodKey{types.KindString, "isUuid"}] = noArg("StringIsUuid")
+	t[builtinMethodKey{types.KindString, "isEmail"}] = noArg("StringIsEmail")
+	t[builtinMethodKey{types.KindString, "isUrl"}] = noArg("StringIsUrl")
+	t[builtinMethodKey{types.KindString, "isUtf8"}] = noArg("StringIsUtf8")
+	t[builtinMethodKey{types.KindString, "words"}] = noArg("StringWords")
+	t[builtinMethodKey{types.KindString, "snakeCase"}] = noArg("StringSnakeCase")
+	t[builtinMethodKey{types.KindString, "camelCase"}] = noArg("StringCamelCase")
+	t[builtinMethodKey{types.KindString, "kebabCase"}] = noArg("StringKebabCase")
+	t[builtinMethodKey{types.KindString, "wrap"}] = oneArg("StringWrap")
+	t[builtinMethodKey{types.KindString, "center"}] = lowerStringCenter
+	t[builtinMethodKey{types.KindString, "slugify"}] = lowerStringSlugifyDiagnose
 	t[builtinMethodKey{types.KindString, "lines"}] = noArg("StringLines")
 	t[builtinMethodKey{types.KindString, "removePrefix"}] = oneStr("StringRemovePrefix")
 	t[builtinMethodKey{types.KindString, "removeSuffix"}] = oneStr("StringRemoveSuffix")
@@ -1213,13 +1286,15 @@ func builtinMethodReturnType(method string, recv *types.Type) *types.Type {
 		case "length", "indexOf", "lastIndexOf", "count":
 			return &types.Type{Kind: types.KindInt}
 		case "isEmpty", "contains", "startsWith", "endsWith", "isBlank", "equalsIgnoreCase", "containsIgnoreCase", "matchesRegex",
-			"isInt", "isDecimal", "isNumeric":
+			"isInt", "isDecimal", "isNumeric", "isDigits", "isAlpha", "isAlphanumeric", "isLower", "isUpper",
+			"isAscii", "isHex", "isUuid", "isEmail", "isUrl", "isUtf8":
 			return &types.Type{Kind: types.KindBool}
 		case "lower", "upper", "trim", "trimStart", "trimEnd", "repeat", "replace",
 			"reverse", "slice", "substring", "padStart", "padEnd",
-			"capitalize", "title", "removePrefix", "removeSuffix", "replaceRegex":
+			"capitalize", "title", "removePrefix", "removeSuffix", "replaceRegex",
+			"snakeCase", "camelCase", "kebabCase", "slugify", "center":
 			return &types.Type{Kind: types.KindString}
-		case "split", "chars", "lines", "splitRegex":
+		case "split", "chars", "lines", "splitRegex", "words", "wrap":
 			return &types.Type{Kind: types.KindList, Elem: &types.Type{Kind: types.KindString}}
 		case "codePoints":
 			return &types.Type{Kind: types.KindList, Elem: &types.Type{Kind: types.KindInt}}
@@ -1266,9 +1341,9 @@ func builtinMethodReturnType(method string, recv *types.Type) *types.Type {
 		}
 	case types.KindBytes:
 		switch method {
-		case "length", "get":
+		case "length", "get", "indexOf":
 			return &types.Type{Kind: types.KindInt}
-		case "isEmpty", "contains":
+		case "isEmpty", "contains", "isUtf8", "startsWith", "endsWith":
 			return &types.Type{Kind: types.KindBool}
 		case "toHex", "toBase64", "toBase64Url", "toString":
 			return &types.Type{Kind: types.KindString}

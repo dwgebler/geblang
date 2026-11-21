@@ -1,0 +1,13 @@
+import io;
+
+io.println("parseHTTPResponse2xx version2Go caf\u{e9}Bar  --x".words());
+io.println("parseHTTPResponse".snakeCase());
+io.println("Hello world-foo_bar".camelCase());
+io.println("HTTPServer".kebabCase());
+io.println("[" + "ab".center(5, "*") + "][" + "abc".center(2) + "][" + "x".center(4) + "]");
+io.println("the quick brown fox jumps over\n\nhttps://a-very-long-url.example".wrap(10));
+any dyn = "fooBarBaz";
+io.println(dyn.snakeCase());
+io.println(dyn.words());
+io.println(dyn.wrap(3));
+io.println(dyn.center(11, "."));

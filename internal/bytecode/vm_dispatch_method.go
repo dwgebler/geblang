@@ -279,6 +279,11 @@ func (vm *VM) callDeferredValueMethod(instruction Instruction, receiver runtime.
 			return result, err
 		}
 	}
+	if set, ok := receiver.(runtime.Set); ok {
+		if result, handled, err := native.ExtendedMethod(set, name, args, vm.callCallable); handled {
+			return result, err
+		}
+	}
 	if nativeObject, ok := receiver.(runtime.NativeObject); ok {
 		caller, ok := vm.statefulNative.(nativeObjectMethodCaller)
 		if !ok {
@@ -1244,6 +1249,15 @@ func (vm *VM) dispatchPrimitiveMethod(instruction Instruction, ip int, receiver 
 			vm.push(result)
 			return ip, nil
 		}
+	case runtime.Set:
+		result, handled, err := native.ExtendedMethod(r, nameValue.Value, args, vm.callCallable)
+		if err != nil {
+			return vm.propagateCallbackError(instruction, ip, err)
+		}
+		if handled {
+			vm.push(result)
+			return ip, nil
+		}
 	case runtime.NativeObject:
 		caller, ok := vm.statefulNative.(nativeObjectMethodCaller)
 		if !ok {
@@ -1372,7 +1386,30 @@ func (vm *VM) dispatchCrossModuleNamedConstruct(instruction Instruction, ip int,
 }
 
 // dispatchNamedCall invokes a callable receiver with named/positional argument metadata. Shared by OpMethodCallNamed and the dict-spread path of OpMethodCallSpread.
+// bindCatalogNamedArgs orders a named-argument call on a primitive or Go-backed class receiver by its catalog signature; ok is false when the method has no catalog entry.
+func bindCatalogNamedArgs(receiver runtime.Value, method string, args []runtime.Value, names []string) (ordered []runtime.Value, ok bool, err error) {
+	if !native.HasNames(names) {
+		return nil, false, nil
+	}
+	sources, found, err := native.BindReceiverCall(receiver, method, native.ArgNames(names, len(args)))
+	if !found || err != nil {
+		return nil, found, err
+	}
+	return native.ApplyArgSources(sources, args), true, nil
+}
+
 func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtime.Value, methodName string, args []runtime.Value, names []string) (int, error) {
+	if ordered, ok, err := bindCatalogNamedArgs(receiver, methodName, args, names); ok {
+		vm.pendingCallTypeArgs = nil
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(receiver)
+		for _, a := range ordered {
+			vm.push(a)
+		}
+		return vm.methodCall(Instruction{Op: OpMethodCall, Operands: []int64{instruction.Operands[0], int64(len(ordered))}, Line: instruction.Line, Column: instruction.Column}, ip)
+	}
 	callTypeArgs := vm.pendingCallTypeArgs
 	vm.pendingCallTypeArgs = nil
 	previousTypeArgs := vm.typeArgHandoff

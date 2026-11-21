@@ -198,8 +198,7 @@ export class Queue {
         }
         if ((opts["_migration"] ?? false) != true) {
             string marker = "migration_" + crypt.sha256(this.namespace).substring(0, 40);
-            let migration = conn.query("SELECT version FROM " + this.prefix + "_meta WHERE component = ?", marker).all(
-            );
+            let migration = conn.query("SELECT version FROM " + this.prefix + "_meta WHERE component = ?", marker).all();
             if (migration.length() > 0 && migration[0]["version"] != 1) {
                 throw JobError("jobs: migration is incomplete; resume it before starting producers or workers");
             }
@@ -231,8 +230,7 @@ export class Queue {
             throw ValueError("jobs: attempt page limit exceeds 1000");
         }
         int after = integer(opts, "afterSequence", 0);
-        return this.conn.queryWithTimeout(this.operationTimeoutMs, "SELECT a.sequence, a.owner, a.started_at_ms, a.finished_at_ms, a.outcome, a.error FROM " + this.prefix + "_attempts a JOIN " + this.prefix + "_items j ON j.id = a.job_id WHERE j.namespace = ? AND j.id = ? AND a.sequence > ? ORDER BY a.sequence LIMIT ?", this.namespace, id, after, limit).all(
-        );
+        return this.conn.queryWithTimeout(this.operationTimeoutMs, "SELECT a.sequence, a.owner, a.started_at_ms, a.finished_at_ms, a.outcome, a.error FROM " + this.prefix + "_attempts a JOIN " + this.prefix + "_items j ON j.id = a.job_id WHERE j.namespace = ? AND j.id = ? AND a.sequence > ? ORDER BY a.sequence LIMIT ?", this.namespace, id, after, limit).all();
     }
 
     func register(string name, callable handler, dict<string, any> opts = {}): void {
@@ -295,8 +293,7 @@ export class Queue {
                 0
             );
         }
-        let versions = this.conn.query("SELECT version FROM " + meta + " WHERE component = ?", "jobs").all(
-        );
+        let versions = this.conn.query("SELECT version FROM " + meta + " WHERE component = ?", "jobs").all();
         if (versions.length() == 0 && autoCreate) {
             /* A concurrent initializer has created the table but not yet its row. */
             this.conn.exec(
@@ -447,8 +444,7 @@ export class Queue {
                 key,
                 id
             );
-            let rows = tx.query("SELECT original_key, job_id FROM " + this.prefix + "_dedupe WHERE namespace = ? AND name = ? AND key_hash = ?" + this._lock(), this.namespace, name, hash).all(
-            );
+            let rows = tx.query("SELECT original_key, job_id FROM " + this.prefix + "_dedupe WHERE namespace = ? AND name = ? AND key_hash = ?" + this._lock(), this.namespace, name, hash).all();
             /* The previous holder can finish between the insert and the locking read. */
             if (rows.length() == 0) {
                 continue;
@@ -537,8 +533,7 @@ export class Queue {
                     }
                     sql += ")";
                 }
-                let rows = tx.query(sql + " ORDER BY run_at_ms, created_at_ms, id LIMIT 1" + this._lock(true), ...args).all(
-                );
+                let rows = tx.query(sql + " ORDER BY run_at_ms, created_at_ms, id LIMIT 1" + this._lock(true), ...args).all();
                 if (rows.length() == 0) {
                     continue;
                 }
@@ -565,7 +560,13 @@ export class Queue {
                     int resolvedDelay = this._delay(policy, attempt);
                     any backoff = policy["backoffMs"] ?? [1000, 5000, 30000, 120000, 600000];
                     bool callableBackoff = backoff instanceof callable;
-                    retryJson = json.stringify({"maxAttempts": resolvedMaximum, "timeoutMs": resolvedTimeout, "backoffMs": callableBackoff ? [resolvedDelay] : backoff, "backoffCallable": callableBackoff, "jitter": policy["jitter"] ?? false});
+                    retryJson = json.stringify({
+                        "maxAttempts": resolvedMaximum,
+                        "timeoutMs": resolvedTimeout,
+                        "backoffMs": callableBackoff ? [resolvedDelay] : backoff,
+                        "backoffCallable": callableBackoff,
+                        "jitter": policy["jitter"] ?? false,
+                    });
                     maximum = resolvedMaximum;
                     timeout = resolvedTimeout;
                     delay = resolvedDelay;
@@ -633,8 +634,7 @@ export class Queue {
         let tx = this._begin();
         try {
             int now = this._now(tx);
-            let rows = tx.query("SELECT * FROM " + this.prefix + "_items WHERE id = ? AND namespace = ? AND status = 'running' AND claim_token = ? AND lease_until_ms > ?" + this._lock(), claim["id"], this.namespace, claim["claim_token"], now).all(
-            );
+            let rows = tx.query("SELECT * FROM " + this.prefix + "_items WHERE id = ? AND namespace = ? AND status = 'running' AND claim_token = ? AND lease_until_ms > ?" + this._lock(), claim["id"], this.namespace, claim["claim_token"], now).all();
             if (rows.length() == 0) {
                 tx.commit();
                 return false;
@@ -682,8 +682,7 @@ export class Queue {
         let tx = this._begin();
         try {
             int now = this._now(tx);
-            let rows = tx.query("SELECT * FROM " + this.prefix + "_items WHERE namespace = ? AND status = 'running' AND lease_until_ms <= ? ORDER BY lease_until_ms LIMIT 100" + this._lock(true), this.namespace, now).all(
-            );
+            let rows = tx.query("SELECT * FROM " + this.prefix + "_items WHERE namespace = ? AND status = 'running' AND lease_until_ms <= ? ORDER BY lease_until_ms LIMIT 100" + this._lock(true), this.namespace, now).all();
             for (row in rows) {
                 string status = (row["attempts"] as int) >= (row["max_attempts"] as int) ? "failed" : "pending";
                 this._transition(tx, row, status, "worker lost: claim lease expired", now);
@@ -697,8 +696,7 @@ export class Queue {
     }
 
     func get(string id): ?JobSnapshot {
-        let rows = this.conn.queryWithTimeout(this.operationTimeoutMs, "SELECT * FROM " + this.prefix + "_items WHERE id = ? AND namespace = ?", id, this.namespace).all(
-        );
+        let rows = this.conn.queryWithTimeout(this.operationTimeoutMs, "SELECT * FROM " + this.prefix + "_items WHERE id = ? AND namespace = ?", id, this.namespace).all();
         return rows.length() == 0 ? null : JobSnapshot(rows[0]);
     }
 
@@ -707,8 +705,7 @@ export class Queue {
         try {
             int now = this._now(tx);
             let result = QueueStats();
-            let rows = tx.query("SELECT status, COUNT(*) AS n FROM " + this.prefix + "_items WHERE namespace = ? GROUP BY status", this.namespace).all(
-            );
+            let rows = tx.query("SELECT status, COUNT(*) AS n FROM " + this.prefix + "_items WHERE namespace = ? GROUP BY status", this.namespace).all();
             for (row in rows) {
                 int n = row["n"] as int;
                 if (row["status"] == "pending") {
@@ -745,8 +742,7 @@ export class Queue {
             throw ValueError("jobs: limit exceeds 1000");
         }
         string after = (opts["afterId"] ?? opts["after"] ?? "") as string;
-        let rows = this.conn.queryWithTimeout(this.operationTimeoutMs, "SELECT * FROM " + this.prefix + "_items WHERE namespace = ? AND status = 'failed' AND id > ? ORDER BY id LIMIT ?", this.namespace, after, limit).all(
-        );
+        let rows = this.conn.queryWithTimeout(this.operationTimeoutMs, "SELECT * FROM " + this.prefix + "_items WHERE namespace = ? AND status = 'failed' AND id > ? ORDER BY id LIMIT ?", this.namespace, after, limit).all();
         list<JobSnapshot> result = [];
         for (row in rows) {
             result.push(JobSnapshot(row));
@@ -757,8 +753,7 @@ export class Queue {
     func retry(string id): bool {
         let tx = this._begin();
         try {
-            let rows = tx.query("SELECT * FROM " + this.prefix + "_items WHERE id = ? AND namespace = ? AND status = 'failed'" + this._lock(), id, this.namespace).all(
-            );
+            let rows = tx.query("SELECT * FROM " + this.prefix + "_items WHERE id = ? AND namespace = ? AND status = 'failed'" + this._lock(), id, this.namespace).all();
             if (rows.length() == 0) {
                 tx.commit();
                 return false;
@@ -787,8 +782,7 @@ export class Queue {
     func purge(string id): bool {
         let tx = this._begin();
         try {
-            let rows = tx.query("SELECT id FROM " + this.prefix + "_items WHERE namespace = ? AND id = ? AND status IN ('completed', 'failed', 'cancelled')" + this._lock(), this.namespace, id).all(
-            );
+            let rows = tx.query("SELECT id FROM " + this.prefix + "_items WHERE namespace = ? AND id = ? AND status IN ('completed', 'failed', 'cancelled')" + this._lock(), this.namespace, id).all();
             if (rows.length() == 0) {
                 tx.commit();
                 return false;
@@ -815,8 +809,7 @@ export class Queue {
         }
         let tx = this._begin();
         try {
-            let rows = tx.query("SELECT id FROM " + this.prefix + "_items WHERE namespace = ? AND status IN ('completed', 'failed', 'cancelled') AND completed_at_ms < ? ORDER BY completed_at_ms, id LIMIT ?" + this._lock(true), this.namespace, before, limit).all(
-            );
+            let rows = tx.query("SELECT id FROM " + this.prefix + "_items WHERE namespace = ? AND status IN ('completed', 'failed', 'cancelled') AND completed_at_ms < ? ORDER BY completed_at_ms, id LIMIT ?" + this._lock(true), this.namespace, before, limit).all();
             for (row in rows) {
                 tx.exec("DELETE FROM " + this.prefix + "_attempts WHERE job_id = ?", row["id"]);
                 tx.exec(
@@ -939,7 +932,9 @@ export class Worker {
             }
             this.queueConcurrency[q] = cap;
         }
-        this.workerId = label((opts["workerId"] ?? (sys.hostname() + ":" + (sys.pid() as string))) as string);
+        this.workerId = label(
+            (opts["workerId"] ?? (sys.hostname() + ":" + (sys.pid() as string))) as string
+        );
         this._drainCheck = opts["drainCheck"] as ?callable;
     }
 
@@ -1083,7 +1078,10 @@ export class Worker {
                             bool owned = true;
                             if (jobState.get("finalized") != true && jobState.get("lost") != true) {
                                 try {
-                                    owned = this.queue._renew(entry["claim"] as dict<string, any>, this.leaseMs);
+                                    owned = this.queue._renew(
+                                        entry["claim"] as dict<string, any>,
+                                        this.leaseMs
+                                    );
                                     if (owned) {
                                         entry["leaseUntil"] = now + this.leaseMs;
                                     }
@@ -1375,8 +1373,7 @@ export class Scheduler {
     }
 
     func revision(string id): ?string {
-        let rows = this.queue.conn.queryWithTimeout(this.queue.operationTimeoutMs, "SELECT revision FROM " + this.queue.prefix + "_schedules WHERE namespace = ? AND id = ?", this.queue.namespace, id).all(
-        );
+        let rows = this.queue.conn.queryWithTimeout(this.queue.operationTimeoutMs, "SELECT revision FROM " + this.queue.prefix + "_schedules WHERE namespace = ? AND id = ?", this.queue.namespace, id).all();
         return rows.length() == 0 ? null : (rows[0]["revision"] as string);
     }
 
@@ -1433,8 +1430,7 @@ export class Scheduler {
         let tx = this.queue._begin(false);
         try {
             int now = this.queue._now(tx);
-            let rows = tx.query("SELECT id, revision, enabled, next_due_ms, replay_floor_ms FROM " + this.queue.prefix + "_schedules WHERE namespace = ? AND id > ? ORDER BY id LIMIT ?", this.queue.namespace, after, limit).all(
-            );
+            let rows = tx.query("SELECT id, revision, enabled, next_due_ms, replay_floor_ms FROM " + this.queue.prefix + "_schedules WHERE namespace = ? AND id > ? ORDER BY id LIMIT ?", this.queue.namespace, after, limit).all();
             for (row in rows) {
                 row["lagMs"] = row["enabled"] == 1 && (row["next_due_ms"] as int) < now ? now - (row["next_due_ms"] as int) : 0;
             }
@@ -1452,8 +1448,7 @@ export class Scheduler {
             throw ValueError("jobs: occurrence page limit exceeds 1000");
         }
         int after = (opts["afterMs"] ?? -1) as int;
-        return this.queue.conn.queryWithTimeout(this.queue.operationTimeoutMs, "SELECT due_ms, revision, job_id, disposition, skipped_until_ms FROM " + this.queue.prefix + "_occurrences WHERE namespace = ? AND schedule_id = ? AND due_ms > ? ORDER BY due_ms LIMIT ?", this.queue.namespace, id, after, limit).all(
-        );
+        return this.queue.conn.queryWithTimeout(this.queue.operationTimeoutMs, "SELECT due_ms, revision, job_id, disposition, skipped_until_ms FROM " + this.queue.prefix + "_occurrences WHERE namespace = ? AND schedule_id = ? AND due_ms > ? ORDER BY due_ms LIMIT ?", this.queue.namespace, id, after, limit).all();
     }
 
     func tick(): int {
@@ -1464,8 +1459,7 @@ export class Scheduler {
             let tx = q._begin();
             try {
                 int now = q._now(tx);
-                let rows = tx.query("SELECT * FROM " + q.prefix + "_schedules WHERE namespace = ? AND id = ? AND enabled = 1" + q._lock(true), q.namespace, id).all(
-                );
+                let rows = tx.query("SELECT * FROM " + q.prefix + "_schedules WHERE namespace = ? AND id = ? AND enabled = 1" + q._lock(true), q.namespace, id).all();
                 if (rows.length() == 0) {
                     tx.commit();
                     continue;
@@ -1512,8 +1506,7 @@ export class Scheduler {
                 }
                 int count = 0;
                 while (due <= now && count < (definition["batchSize"] as int)) {
-                    let occurrence = tx.query("SELECT disposition FROM " + q.prefix + "_occurrences WHERE namespace = ? AND schedule_id = ? AND due_ms = ?", q.namespace, id, due).all(
-                    );
+                    let occurrence = tx.query("SELECT disposition FROM " + q.prefix + "_occurrences WHERE namespace = ? AND schedule_id = ? AND due_ms = ?", q.namespace, id, due).all();
                     if (occurrence.length() == 0) {
                         bool overlap = false;
                         if (definition["overlap"] == "skip") {
@@ -1522,7 +1515,18 @@ export class Scheduler {
                         ?string jobId = null;
                         bool coalesced = false;
                         if (!overlap) {
-                            jobId = q._enqueue(tx, definition["job"] as string, definition["payload"] as dict<string, any>, {"queue": definition["queue"], "dedupeKey": definition["dedupeKey"], "scheduleId": id, "occurrenceAtMs": due, "runAtMs": due});
+                            jobId = q._enqueue(
+                                tx,
+                                definition["job"] as string,
+                                definition["payload"] as dict<string, any>,
+                                {
+                                    "queue": definition["queue"],
+                                    "dedupeKey": definition["dedupeKey"],
+                                    "scheduleId": id,
+                                    "occurrenceAtMs": due,
+                                    "runAtMs": due,
+                                }
+                            );
                             let selected = tx.query("SELECT schedule_id, occurrence_at_ms FROM " + q.prefix + "_items WHERE id = ?", jobId).all()[0];
                             coalesced = selected["schedule_id"] != id || selected["occurrence_at_ms"] != due;
                             if (!coalesced) {
@@ -1630,8 +1634,7 @@ export func migrateLegacy(db.Connection conn, dict<string, any> opts = {}): Migr
     int defaultMaximum = integer(opts, "maxAttempts", 5, 1);
     string after = "";
     while (true) {
-        let rows = conn.queryWithTimeout(5000, "SELECT * FROM " + source + " WHERE id > ? ORDER BY id LIMIT 1000", after).all(
-        );
+        let rows = conn.queryWithTimeout(5000, "SELECT * FROM " + source + " WHERE id > ? ORDER BY id LIMIT 1000", after).all();
         if (rows.length() == 0) {
             break;
         }
@@ -1690,8 +1693,7 @@ export func migrateLegacy(db.Connection conn, dict<string, any> opts = {}): Migr
     );
     after = "";
     while (true) {
-        let rows = conn.queryWithTimeout(5000, "SELECT * FROM " + source + " WHERE id > ? ORDER BY id LIMIT 100", after).all(
-        );
+        let rows = conn.queryWithTimeout(5000, "SELECT * FROM " + source + " WHERE id > ? ORDER BY id LIMIT 100", after).all();
         if (rows.length() == 0) {
             break;
         }
@@ -1700,8 +1702,7 @@ export func migrateLegacy(db.Connection conn, dict<string, any> opts = {}): Migr
             for (row in rows) {
                 string id = row["id"] as string;
                 after = id;
-                let existing = tx.query("SELECT namespace, name, payload_json FROM " + queue.prefix + "_items WHERE id = ?" + queue._lock(), id).all(
-                );
+                let existing = tx.query("SELECT namespace, name, payload_json FROM " + queue.prefix + "_items WHERE id = ?" + queue._lock(), id).all();
                 if (existing.length() > 0) {
                     if (existing[0]["namespace"] != namespace || existing[0]["name"] != row["name"] || existing[0]["payload_json"] != row["payload_json"]) {
                         throw ConflictError("jobs: migration ID conflict " + id);
@@ -1984,7 +1985,9 @@ export func cli(Worker worker, ?Scheduler scheduler, list<string> args): int {
         bool signals = !selected.drainOnce;
         try {
             if (signals) {
-                let request = func(string signal): void { stop.store(true); };
+                let request = func(string signal): void {
+                    stop.store(true);
+                };
                 sys.onSignal("SIGTERM", request);
                 sys.onSignal("SIGINT", request);
             }

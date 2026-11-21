@@ -1,5 +1,4 @@
 module llm.anthropic;
-
 import llm.contract;
 import bytes;
 import encoding;
@@ -29,7 +28,12 @@ export class AnthropicClient implements contract.Client {
     func chatStream(list<dict<string, any>> messages, dict<string, any> opts, callable callback): dict<string, any> {
         string model = requireString(opts, "model", "llm.anthropic.chatStream");
         int maxTokens = opts.contains("maxTokens") ? (opts["maxTokens"] as int) : 1024;
-        dict<string, any> payload = {"model": model, "messages": textMessages(messages), "max_tokens": maxTokens, "stream": true};
+        dict<string, any> payload = {
+            "model": model,
+            "messages": textMessages(messages),
+            "max_tokens": maxTokens,
+            "stream": true,
+        };
         if (opts.contains("system")) {
             payload["system"] = opts["system"];
         }
@@ -45,8 +49,12 @@ export class AnthropicClient implements contract.Client {
         let stream = http.requestStream({
             "method":  "POST",
             "url":     this.endpoint + "/v1/messages",
-            "headers": {"Content-Type": "application/json", "x-api-key": this.apiKey, "anthropic-version": this.apiVersion},
-            "body":    json.stringify(payload)
+            "headers": {
+                "Content-Type": "application/json",
+                "x-api-key": this.apiKey,
+                "anthropic-version": this.apiVersion,
+            },
+            "body":    json.stringify(payload),
         });
         let status = stream.status();
         if (status < 200 || status >= 300) {
@@ -79,7 +87,12 @@ export class AnthropicClient implements contract.Client {
             line = stream.read();
         }
         stream.close();
-        return {"content": content, "model": model, "stopReason": stopReason, "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}};
+        return {
+            "content": content,
+            "model": model,
+            "stopReason": stopReason,
+            "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+        };
     }
 
     func embed(string text, dict<string, any> opts): dict<string, any> {
@@ -95,7 +108,7 @@ export class AnthropicClient implements contract.Client {
         string b64 = encoding.base64Encode(image);
         list<dict<string, any>> content = [
             {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
-            {"type": "text", "text": prompt}
+            {"type": "text", "text": prompt},
         ];
         list<dict<string, any>> messages = [{"role": "user", "content": content}];
         return this.runMessages(messages, opts);
@@ -132,7 +145,11 @@ export class AnthropicClient implements contract.Client {
                 text = text + ((block["text"] ?? "") as string);
             }
             if (bt == "tool_use") {
-                toolCalls = toolCalls.push({"id": block["id"], "name": block["name"], "arguments": block["input"] ?? {}});
+                toolCalls = toolCalls.push({
+                    "id": block["id"],
+                    "name": block["name"],
+                    "arguments": block["input"] ?? {},
+                });
             }
         }
         let usage = (resp["usage"] ?? {}) as dict<string, any>;
@@ -145,8 +162,8 @@ export class AnthropicClient implements contract.Client {
             "usage": {
                 "inputTokens":  inTok,
                 "outputTokens": outTok,
-                "totalTokens":  inTok + outTok
-            }
+                "totalTokens":  inTok + outTok,
+            },
         };
         if (toolCalls.length() > 0) {
             result["toolCalls"] = toolCalls;
@@ -163,14 +180,18 @@ export class AnthropicClient implements contract.Client {
             "headers": {
                 "Content-Type":      "application/json",
                 "x-api-key":         this.apiKey,
-                "anthropic-version": this.apiVersion
+                "anthropic-version": this.apiVersion,
             },
-            "body": body
+            "body": body,
         });
         let status = resp["status"] as int;
         if (status < 200 || status >= 300) {
-            throw RuntimeError("llm.anthropic POST " + path + " failed: " +
-                (status as string) + " " + (resp["body"] as string));
+            throw RuntimeError("llm.anthropic POST "
+                + path
+                + " failed: "
+                + (status as string)
+                + " "
+                + (resp["body"] as string));
         }
         return json.parse(resp["body"] as string) as dict<string, any>;
     }
@@ -183,7 +204,7 @@ export class AnthropicClient implements contract.Client {
             let item = entry as dict<string, any>;
             out = out.push({
                 "id":          (item["id"] ?? "") as string,
-                "displayName": (item["display_name"] ?? "") as string
+                "displayName": (item["display_name"] ?? "") as string,
             });
         }
         return out;
@@ -196,13 +217,17 @@ export class AnthropicClient implements contract.Client {
             "url":     this.endpoint + path,
             "headers": {
                 "x-api-key":         this.apiKey,
-                "anthropic-version": this.apiVersion
-            }
+                "anthropic-version": this.apiVersion,
+            },
         });
         let status = resp["status"] as int;
         if (status < 200 || status >= 300) {
-            throw RuntimeError("llm.anthropic GET " + path + " failed: " +
-                (status as string) + " " + (resp["body"] as string));
+            throw RuntimeError("llm.anthropic GET "
+                + path
+                + " failed: "
+                + (status as string)
+                + " "
+                + (resp["body"] as string));
         }
         return json.parse(resp["body"] as string) as dict<string, any>;
     }
@@ -247,7 +272,11 @@ func anthropicTools(list<any> tools): list<any> {
     list<any> out = [];
     for (t in tools) {
         let tool = t as dict<string, any>;
-        out = out.push({"name": tool["name"], "description": (tool["description"] ?? "") as string, "input_schema": tool["parameters"] ?? {}});
+        out = out.push({
+            "name": tool["name"],
+            "description": (tool["description"] ?? "") as string,
+            "input_schema": tool["parameters"] ?? {},
+        });
     }
     return out;
 }
@@ -261,12 +290,26 @@ func anthropicToolMessage(dict<string, any> m): dict<string, any> {
         }
         for (tc in m["toolCalls"] as list<any>) {
             let call = tc as dict<string, any>;
-            content = content.push({"type": "tool_use", "id": call["id"], "name": call["name"], "input": call["arguments"] ?? {}});
+            content = content.push({
+                "type": "tool_use",
+                "id": call["id"],
+                "name": call["name"],
+                "input": call["arguments"] ?? {},
+            });
         }
         return {"role": "assistant", "content": content};
     }
     if (((m["role"] ?? "") as string) == "tool") {
-        return {"role": "user", "content": [{"type": "tool_result", "tool_use_id": m["toolCallId"], "content": (m["content"] ?? "") as string}]};
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": m["toolCallId"],
+                    "content": (m["content"] ?? "") as string,
+                },
+            ],
+        };
     }
     return m;
 }

@@ -1,0 +1,13 @@
+import io;
+import bytes;
+
+let b = bytes.fromHex("89504e47");
+io.println(b.startsWith(bytes.fromHex("8950")));
+io.println(b.startsWith(0x89));
+io.println(b.endsWith(0x47));
+io.println(b.indexOf(0x4e));
+io.println(b.indexOf(bytes.fromHex("00")));
+io.println(b.indexOf(999));
+any dyn = bytes.fromString("hello");
+io.println(dyn.indexOf(bytes.fromString("ll")));
+io.println(dyn.endsWith(bytes.fromString("lo")));

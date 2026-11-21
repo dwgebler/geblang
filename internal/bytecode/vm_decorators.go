@@ -78,6 +78,16 @@ func (vm *VM) applyCallableDecoratorsForClass(index int64, classInfo ClassInfo) 
 		if decorator.Name == "" {
 			continue
 		}
+		if decoratorHasThunk(decorator) {
+			if !vm.decoratorIsCallable(decorator.Name) {
+				continue
+			}
+			resolved, err := vm.resolveDecorator(decorator, vm.moduleName)
+			if err != nil {
+				return nil, false, vm.decoratorFault(classInfo.DefLine, "decorator @"+decorator.Name+": ", err)
+			}
+			decorator = resolved
+		}
 		args, names, err := decoratorCallArguments(current, decorator)
 		if err != nil {
 			return nil, false, vm.decoratorFault(classInfo.DefLine, "decorator @"+decorator.Name+": ", err)
@@ -122,6 +132,16 @@ func (vm *VM) applyFunctionDecorators(function FunctionInfo, current runtime.Val
 			if raw, ok := current.(runtime.BytecodeFunction); ok {
 				vm.methodReceiverFuncs[raw.Index] = true
 			}
+		}
+		if decoratorHasThunk(decorator) {
+			if !vm.decoratorIsCallable(decorator.Name) {
+				continue
+			}
+			resolved, err := vm.resolveDecorator(decorator, vm.moduleName)
+			if err != nil {
+				return nil, false, vm.decoratorFault(function.DefLine, "decorator @"+decorator.Name+": ", err)
+			}
+			decorator = resolved
 		}
 		args, names, err := decoratorCallArguments(current, decorator)
 		if err != nil {
@@ -250,6 +270,14 @@ func (vm *VM) callDecorator(name string, args []runtime.Value, names []string) (
 	}
 	result, err := vm.callCallable(imported, ordered)
 	return result, true, err
+}
+
+func (vm *VM) decoratorIsCallable(name string) bool {
+	if len(vm.decoratorFunctionIndices(name)) > 0 {
+		return true
+	}
+	imported, err := vm.importedDecorator(name)
+	return err != nil || imported != nil
 }
 
 // importedDecorator resolves a name bound by `from m import f` to m's exported callable, loading m if needed.
@@ -453,6 +481,16 @@ func (vm *VM) applyFieldDecorators(instruction Instruction, classInfo ClassInfo,
 		dec := decorators[i]
 		if dec.Name == "" {
 			continue
+		}
+		if decoratorHasThunk(dec) {
+			if !vm.decoratorIsCallable(dec.Name) {
+				continue
+			}
+			resolved, err := vm.resolveDecorator(dec, vm.moduleName)
+			if err != nil {
+				return nil, err
+			}
+			dec = resolved
 		}
 		callArgs := make([]runtime.Value, 0, len(dec.Args)+1)
 		callArgs = append(callArgs, dec.Args...)

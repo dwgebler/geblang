@@ -798,7 +798,8 @@ func titleFromMarkdown(content []byte, file string) string {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "# ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "# "))
+			// Titles are plain text (nav, <title>, search), so inline-code backticks would show literally.
+			return strings.ReplaceAll(strings.TrimSpace(strings.TrimPrefix(line, "# ")), "`", "")
 		}
 	}
 	return strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
@@ -1267,6 +1268,46 @@ func layout(pages []page, current page, prev, next *page) string {
     }
     document.querySelectorAll("pre code.language-gb, pre code.language-geblang").forEach(function (block) {
       block.innerHTML = highlightGeblang(block.textContent);
+    });
+    function copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      return new Promise(function (resolve, reject) {
+        var area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        var ok = false;
+        try { ok = document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(area);
+        ok ? resolve() : reject();
+      });
+    }
+    document.querySelectorAll("pre > code").forEach(function (block) {
+      var pre = block.parentNode;
+      var wrap = document.createElement("div");
+      wrap.className = "code-wrap";
+      pre.parentNode.insertBefore(wrap, pre);
+      wrap.appendChild(pre);
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "copy-btn";
+      btn.textContent = "copy";
+      btn.setAttribute("aria-label", "Copy code to clipboard");
+      btn.addEventListener("click", function () {
+        copyText(block.textContent.replace(/\n$/, "")).then(function () {
+          btn.textContent = "copied";
+        }, function () {
+          btn.textContent = "failed";
+        }).then(function () {
+          setTimeout(function () { btn.textContent = "copy"; }, 1200);
+        });
+      });
+      wrap.appendChild(btn);
     });
     var toggle = document.querySelector(".theme-toggle");
     if (toggle) {

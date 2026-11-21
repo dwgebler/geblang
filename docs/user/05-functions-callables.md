@@ -129,6 +129,26 @@ io.println(window(5));       # 5..15
 io.println(window(5, 7));    # 5..7
 ```
 
+### Built-in methods and native functions
+
+Methods on strings, numbers, lists, dicts, sets, bytes and ranges, native
+module functions, and methods of native classes such as `db.Connection` take
+named arguments too. The names are the parameter names shown in the reference
+tables and in editor hover:
+
+```gb
+"7".padStart(pad: "0", width: 3);                  # "007"
+[1, 2, 3].reduce(initial: 10, combine: (int a, int b) => a + b);
+(1.0f).isCloseTo(1.1f, absTol: 0.2);               # relTol keeps its default
+datetime.make(2024, 1, 2, second: 5);              # hour and minute default to 0
+```
+
+Naming a later parameter while skipping an optional one before it gives the
+skipped parameter its documented default; a skipped parameter without a fixed
+default raises a missing-argument error. When the receiver's type is known at compile
+time, the call compiles to an ordinary positional call and costs nothing extra
+at run time; on an `any` value the names are matched when the call runs.
+
 Named arguments also feed overload resolution. When overloads share
 an arity, naming an argument can pick the intended one:
 

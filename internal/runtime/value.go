@@ -1001,6 +1001,16 @@ type DecoratorMetadata struct {
 	Column    int64
 }
 
+// DecoratorThunk is a VM decorator argument compiled to a zero-parameter module function; readers call it in the declaring module.
+type DecoratorThunk struct {
+	Function int64
+	Type     bool
+	Source   string
+}
+
+func (DecoratorThunk) TypeName() string  { return "decoratorArgument" }
+func (v DecoratorThunk) Inspect() string { return v.Source }
+
 type ParameterMetadata struct {
 	Name       string
 	Type       string
@@ -1045,6 +1055,7 @@ type ClassMetadata struct {
 
 type DecoratorTarget struct {
 	Target     string
+	Module     string
 	Decorators []DecoratorMetadata
 	Function   *FunctionMetadata
 	Class      *ClassMetadata
@@ -1595,6 +1606,7 @@ func (v *Class) DeclaringModule() string {
 }
 
 type Interface struct {
+	Env            *Environment
 	DefinitionPath string
 	Name           string
 	Doc            string

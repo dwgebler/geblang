@@ -112,6 +112,9 @@ func stringMethod(s string, name string, args []any) any {
 	case "isBlank":
 		wantArgs("string", name, len(args), 0)
 		return StringIsBlank(s)
+	case "isInt", "isDecimal", "isNumeric", "isDigits", "isAlpha", "isAlphanumeric", "isLower", "isUpper", "isAscii", "isHex", "isUuid", "isEmail", "isUrl", "isUtf8":
+		wantArgs("string", name, len(args), 0)
+		return stringPredicates[name](s)
 	case "contains":
 		wantArgs("string", name, len(args), 1)
 		return strings.Contains(s, argString(args[0], "string.contains expects string"))
@@ -184,6 +187,32 @@ func stringMethod(s string, name string, args []any) any {
 		return strPad(s, args, false)
 	case "substring", "slice":
 		return strSlice(s, args)
+	case "words":
+		wantArgs("string", name, len(args), 0)
+		return strSliceToAny(StringWords(s))
+	case "snakeCase":
+		wantArgs("string", name, len(args), 0)
+		return StringSnakeCase(s)
+	case "camelCase":
+		wantArgs("string", name, len(args), 0)
+		return StringCamelCase(s)
+	case "kebabCase":
+		wantArgs("string", name, len(args), 0)
+		return StringKebabCase(s)
+	case "wrap":
+		wantArgs("string", name, len(args), 1)
+		return strSliceToAny(StringWrap(s, int64(indexInt(args[0]))))
+	case "center":
+		if len(args) < 1 || len(args) > 2 {
+			panic(NewError("RuntimeError", "string.center expects (width[, pad])"))
+		}
+		pad := " "
+		if len(args) == 2 {
+			pad = argString(args[1], "string.center: pad must be a non-empty string")
+		}
+		return StringCenter(s, int64(indexInt(args[0])), pad)
+	case "slugify":
+		panic(NewError("RuntimeError", "string.slugify is not supported in native builds"))
 	case "toString":
 		wantArgs("string", name, len(args), 0)
 		return s
@@ -249,6 +278,18 @@ func bytesMethod(b []byte, name string, args []any) any {
 	case "toHex":
 		wantArgs("bytes", name, len(args), 0)
 		return BytesToHex(b)
+	case "isUtf8":
+		wantArgs("bytes", name, len(args), 0)
+		return BytesIsUtf8(b)
+	case "startsWith":
+		wantArgs("bytes", name, len(args), 1)
+		return BytesStartsWith(b, args[0])
+	case "endsWith":
+		wantArgs("bytes", name, len(args), 1)
+		return BytesEndsWith(b, args[0])
+	case "indexOf":
+		wantArgs("bytes", name, len(args), 1)
+		return BytesIndexOf(b, args[0])
 	case "toBase64":
 		wantArgs("bytes", name, len(args), 0)
 		return BytesToBase64(b)

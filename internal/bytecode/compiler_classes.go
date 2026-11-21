@@ -5,6 +5,7 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
+	"geblang/internal/token"
 	"sort"
 	"strings"
 )
@@ -1062,8 +1063,54 @@ func (c *Compiler) decoratorConstantValue(expr ast.Expression) (runtime.Value, e
 		}
 		return runtime.Set{Elements: entries}, nil
 	default:
+		if kind := ast.DecoratorReferenceKind(expr); kind != "" {
+			return c.decoratorThunk(expr, kind == "type")
+		}
 		return nil, fmt.Errorf("unsupported decorator argument expression %s", expr.String())
 	}
+}
+
+// decoratorThunk reserves a module-scope function returning a type or function decorator argument; its body is compiled once every module-level name is declared.
+func (c *Compiler) decoratorThunk(expr ast.Expression, isType bool) (runtime.Value, error) {
+	if thunk, ok := c.decoratorThunks[expr]; ok {
+		return thunk, nil
+	}
+	thunk := runtime.DecoratorThunk{Function: c.declareFunction("<closure>"), Type: isType, Source: expr.String()}
+	c.decoratorThunks[expr] = thunk
+	c.pendingThunks = append(c.pendingThunks, expr)
+	return thunk, nil
+}
+
+func (c *Compiler) compileDecoratorThunks() error {
+	for _, expr := range c.pendingThunks {
+		tok := decoratorArgToken(expr)
+		index := c.decoratorThunks[expr].Function
+		literal := &ast.FunctionLiteral{
+			Token: tok,
+			Body:  &ast.BlockStatement{Token: tok, Statements: []ast.Statement{&ast.ReturnStatement{Token: tok, Value: expr}}},
+		}
+		if err := c.compileFunctionLiteralAt(literal, index); err != nil {
+			return fmt.Errorf("line %d:%d: decorator argument %s: %w", tok.Line, tok.Column, expr.String(), err)
+		}
+		if c.chunk.Functions[index].UpvalueCount > 0 {
+			return fmt.Errorf("line %d:%d: decorator argument %s may only reference module-level names", tok.Line, tok.Column, expr.String())
+		}
+		c.emitAt(OpPop, tok.Line, tok.Column)
+	}
+	c.pendingThunks = nil
+	return nil
+}
+
+func decoratorArgToken(expr ast.Expression) token.Token {
+	switch e := expr.(type) {
+	case *ast.Identifier:
+		return e.Token
+	case *ast.SelectorExpression:
+		return e.Token
+	case *ast.FunctionLiteral:
+		return e.Token
+	}
+	return token.Token{}
 }
 
 func (c *Compiler) classExtendsBuiltinError(classInfo ClassInfo) bool {

@@ -1,6 +1,6 @@
 # Geblang language reference
 
-Verified against Geblang 1.27.0. When a signature matters, confirm it with
+Verified against Geblang 1.44.0. When a signature matters, confirm it with
 `geblang doc <file>` or a five-line `geblang check` probe rather than trusting
 memory.
 
@@ -63,6 +63,18 @@ Integers are arbitrary precision (no overflow). Strings are UTF-8.
   when both operand types are known. Cast with `as float` (drops decimal
   exactness) or `as decimal` (adopts the float's binary imprecision).
 
+Decimals print with up to 10 places, trailing zeros dropped and at least one
+kept (1.43.0): `12.5` prints `12.5`, `7 / 7` prints `1.0`, in `println`,
+interpolation, `as string`, `toString()` and JSON/YAML/CSV output.
+`d.toString(n)` and `d.format(n)` give exactly `n` places.
+
+`decimal.format(scale)` returns a string rounded to that many decimal places,
+with halfway values rounded away from zero: `(1.245).format(2)` is `"1.25"`
+and `(-1.245).format(2)` is `"-1.25"`. It does not mutate the decimal. Use
+`round(scale)` for a rounded decimal, or `truncate(scale).format(scale)` to
+render after cutting toward zero. A scale is digits after the decimal point:
+`(0.05).format(1)` is `"0.1"`, while `.format(2)` is `"0.05"`.
+
 Strings interpolate inside double quotes only:
 
 ```gb
@@ -72,9 +84,29 @@ io.println("${3.14159:.2f}");      # -> 3.14  (format spec)
 io.println("${42:04d}");           # -> 0042
 ```
 
+`s.trim("/")`, `trimStart(chars)` and `trimEnd(chars)` strip the given
+characters instead of whitespace; `s.upper(n)` / `s.lower(n)` change the first
+`n` characters (the last `-n` when negative): `"geblang".upper(1)` is
+`"Geblang"`.
+
 Numeric-check predicates test before converting: `s.isInt()`, `s.isDecimal()`,
 `s.isNumeric()` on strings; `f.isInt()` / `d.isInt()` on `float` / `decimal`
 (whole-number test).
+
+Validation predicates on strings (ASCII-only character classes; `false` for the
+empty string): `isDigits()`, `isAlpha()`, `isAlphanumeric()`, `isLower()`,
+`isUpper()`, `isAscii()`, `isHex()`, `isUuid()`, `isEmail()`, `isUrl()`
+(absolute, with scheme and host), `isUtf8()` (also on `bytes`).
+
+Layout and conversion helpers: strings `words()`, `snakeCase()`, `camelCase()`,
+`kebabCase()`, `slugify()`, `center(width[, pad])`, `wrap(width)` -> list of
+lines; `n.isBetween(lo, hi)` (inclusive) on all numbers; int `gcd`, `lcm`,
+`digits`, `isPowerOfTwo`, `bitCount`; float `isCloseTo(other, relTol, absTol)`
+(`x.isCloseTo(y, absTol: 1e-9)` keeps relTol's default); bytes `startsWith` / `endsWith` / `indexOf`; sets
+`isSubsetOf` / `isSupersetOf` / `isDisjointFrom` / `symmetricDifference`,
+`filter` / `map` / `any` / `all`; dicts `filter` / `any` / `all` with
+`(k, v) => bool`, `mapValues((v) => ...)`, `pick(keys)`, `omit(keys)`,
+`invert()` (throws on duplicate values).
 
 ## Collections
 
@@ -97,7 +129,12 @@ set<int>          s  = {1, 2, 3};     # brace literal without ':' is a set
 - Slicing is Python-style: `xs[1:3]`, `xs[:2]`, `s[-3:]`; negative indexes count
   from the end.
 - Comprehensions: `[x * x for x in 1..5]`, `[x for x in xs if x > 0]`,
-  `{k: v * 2 for k, v in d}`.
+  `{k: v * 2 for k, v in d}`. `(x * 2 for x in xs if x > 0)` is a lazy
+  `generator`: the first source is evaluated where it is written, the rest as
+  values are read.
+- Callback predicates (`filter`, `find`, `findLast`, `any`, `all`, `count`,
+  `partition`, `takeWhile`, `dropWhile`, `indexBy`, ...) must return `bool`; any
+  other result is a `TypeError`.
 - `instanceof list<T>` works at runtime (generics are reified).
 
 ## Ranges
@@ -118,8 +155,7 @@ if (cond) { } else if (other) { } else { }
 for (x in xs) { }
 for (k, v in d) { }
 for (let int i = 0; i < n; i++) { }
-while (cond) { }
-do { } while (cond);
+while (cond) { }                               # there is no do/while loop
 outer: for (i in 1..3) { continue outer; }     # labeled loops
 
 let grade = score >= 50 ? "pass" : "fail";     # ternary
@@ -155,6 +191,9 @@ let bio = user?.profile?.bio ?? "";                 # optional chaining
 ```gb
 func add(int a, int b): int { return a + b; }
 let inc = func(int n): int { return n + 1; };
+let twice = (int n) => n * 2;            # arrow function
+let total = (int a, int b) => { return a + b; };
+[1, 2, 3].map((x) => x * 10);            # x is typed int from the list
 
 func greet(string name, string greeting = "Hello"): string { ... }
 greet("Ada", greeting: "Hi");            # named argument
@@ -170,6 +209,11 @@ greet(...{"name": "Ada"});               # dict spread -> named args (extra keys
 - Defaults, named args, variadics, and spread combine and work in every dispatch
   context: functions, lambdas, methods, static methods, constructors, native
   builtins, module functions, callable objects.
+- Built-in methods (string/number/list/dict/set/bytes/range) and native class
+  methods take named args by their documented parameter names
+  (`s.padStart(width: 5, pad: "0")`, `xs.reduce(combine: f, initial: 0)`,
+  `xs.sortBy(key: f)`, `xs.map(transform: f)`). Naming a later parameter fills
+  a skipped optional one with its documented default.
 - **Partial application**: a call with one or more `_` placeholders returns a new
   callable with those positions open: `add(_, 10)`, `wrap(_, "-", _)`,
   `open(mode: _)`. Non-hole arguments are captured once at creation. (Compiled
@@ -181,6 +225,12 @@ greet(...{"name": "Ada"});               # dict spread -> named args (extra keys
   captures it directly (e.g. spawning tasks in a loop and reading the loop variable
   inside them) sees the final value; bind a fresh `let n = i;` per iteration first.
 - Pipe: `x |> f(y)` calls `f(x, y)`; chains read left to right.
+- Arrow functions (1.43.0): `(params) => expr`, `(params) => { ... }`,
+  `() => value`, `async (int n) => ...`. A parameter may omit its type only when
+  the arrow is passed straight to a callback method of a list with a known
+  element type (`map`, `filter`, `sortBy`, `reduce`, ...); elsewhere an untyped
+  parameter is an error. No defaults or variadics; the return value is
+  unchecked.
 
 ## Generics
 
@@ -217,8 +267,12 @@ func counter(): generator<int> {
 for (n in counter()) { io.println(n); }
 ```
 
-Return type is `generator<T>`; use `iterable<T>` for parameters accepting any
-iterable (generators, lists, sets, ranges). Manual stepping: `next()` advances
+Return type is `generator<T>`, and every yielded value is checked against `T`
+(an `int` yield widens for `generator<decimal>` / `generator<float>`). A bare
+`return;` ends a generator early; returning a value is an error. Use
+`iterable<T>` for parameters accepting anything `for-in` accepts (generators,
+lists, sets, ranges, dicts, strings, classes with `__iter` or
+`__next`/`__done`). Manual stepping: `next()` advances
 (returns `null` once exhausted), `done()` peeks for exhaustion, `close()` ends
 early; these compose with `for-in`. An error thrown inside a generator keeps its
 class in the consuming loop's `catch`.
@@ -230,7 +284,7 @@ import async;
 
 let t1 = async.run(func(): int { return work(1); });
 let t2 = async.run(func(): int { return work(2); });
-io.println(async.all([t1, t2]));         # parallel on real cores
+io.println(await async.all([t1, t2]));   # [1, 4]; parallel on real cores
 
 import async.channel as ch;
 let c = ch.Channel<int>(8);
@@ -387,6 +441,22 @@ func double(int x): int { return x * 2; }
 A decorator that resolves to a function is a callable wrapper; otherwise it is
 inspectable metadata (`reflect.decorators(target)`).
 
+Decorator arguments (1.44.0) are literals (including lists and dicts of
+literals), class / interface / enum references (bare, qualified or
+from-imported), or function literals and arrows:
+
+```gb
+@Route(schema: User, kinds: [Notifier, Color], retry: (int n) => n * 1000)
+func handle(): void {}
+```
+
+They resolve in the declaring module. `reflect.decorators` returns the type
+value or callable (call it with `(d["namedArgs"]["retry"] as callable)(3)`), and
+a wrapping decorator receives them as ordinary arguments. Type and function
+arguments are allowed only on module-level declarations and their members, and
+not inside a set literal; a bare name that is not a type (such as a constant) is
+an error when the decorator is read.
+
 ## Reflection
 
 ```gb
@@ -425,6 +495,7 @@ introspection builtins.
 
 1. `//` is integer division, not a comment.
 2. `/` yields `decimal`; `int n = a / b` is a compile error - use `//`.
+   Decimals print short (`12.5`, `1.0`); use `toString(n)` for fixed places.
 3. List mutators are in-place and return the receiver; `sorted()` copies.
 4. `as` is a checked cast, not a test; use `instanceof` to test.
 5. Floating literals are `decimal`; suffix `f` or cast for IEEE `float`.

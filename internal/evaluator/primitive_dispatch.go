@@ -2094,66 +2094,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				n = 0
 			}
 			return runtime.String{Value: strings.Repeat(value.Value, n)}, nil
-		case "padStart":
-			if len(args) < 1 || len(args) > 2 {
-				return nil, fmt.Errorf("string.padStart expects (length[, pad])")
-			}
-			targetLen, err := indexInt(args[0])
-			if err != nil {
-				return nil, fmt.Errorf("string.padStart: %v", err)
-			}
-			pad := " "
-			if len(args) == 2 {
-				padStr, ok := args[1].(runtime.String)
-				if !ok || len(padStr.Value) == 0 {
-					return nil, fmt.Errorf("string.padStart: pad must be a non-empty string")
-				}
-				pad = padStr.Value
-			}
-			runes := []rune(value.Value)
-			padRunes := []rune(pad)
-			for len(runes) < targetLen {
-				needed := targetLen - len(runes)
-				if needed < len(padRunes) {
-					runes = append(padRunes[:needed], runes...)
-				} else {
-					runes = append(padRunes, runes...)
-				}
-			}
-			if len(runes) > targetLen {
-				runes = runes[len(runes)-targetLen:]
-			}
-			return runtime.String{Value: string(runes)}, nil
-		case "padEnd":
-			if len(args) < 1 || len(args) > 2 {
-				return nil, fmt.Errorf("string.padEnd expects (length[, pad])")
-			}
-			targetLen, err := indexInt(args[0])
-			if err != nil {
-				return nil, fmt.Errorf("string.padEnd: %v", err)
-			}
-			pad := " "
-			if len(args) == 2 {
-				padStr, ok := args[1].(runtime.String)
-				if !ok || len(padStr.Value) == 0 {
-					return nil, fmt.Errorf("string.padEnd: pad must be a non-empty string")
-				}
-				pad = padStr.Value
-			}
-			runes := []rune(value.Value)
-			padRunes := []rune(pad)
-			for len(runes) < targetLen {
-				needed := targetLen - len(runes)
-				if needed < len(padRunes) {
-					runes = append(runes, padRunes[:needed]...)
-				} else {
-					runes = append(runes, padRunes...)
-				}
-			}
-			if len(runes) > targetLen {
-				runes = runes[:targetLen]
-			}
-			return runtime.String{Value: string(runes)}, nil
+		case "padStart", "padEnd":
+			return native.StringPadMethod(name, value.Value, args)
 		case "chars":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.chars expects no arguments")
@@ -2817,6 +2759,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			return native.NumericClamp(value, args[0], args[1])
 		}
+	}
+	if result, ok, err := native.ExtendedMethod(receiver, name, args, e.callValue); ok {
+		return result, err
 	}
 	return nil, native.UnknownMethodError(receiver.TypeName(), name)
 }

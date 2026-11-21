@@ -1,0 +1,53 @@
+/**
+ * @title Documented defaults passed explicitly
+ * @summary A documented default passed explicitly behaves like leaving
+ * the argument out: a null sort comparator, a null transaction timeout,
+ * an empty chi-squared expected list. process.run takes an options dict.
+ */
+import test;
+import collections;
+import db;
+import stats;
+import process;
+
+class CatalogDefaultsTest extends test.Test {
+    @test
+    func nullComparatorIsNaturalOrder(): void {
+        let xs = [3, 1, 2];
+        xs.sort(null);
+        this.assertEquals([1, 2, 3], xs);
+        this.assertEquals([1, 2, 3], [2, 3, 1].sorted(null));
+        this.assertEquals(["a", "b"], collections.sorted(["b", "a"], null));
+    }
+
+    @test
+    func nullTimeoutStartsAnOpenTransaction(): void {
+        let conn = db.open("sqlite", ":memory:");
+        db.exec(conn, "create table t (n int)");
+        let tx = db.begin(conn, opts: {"isolation": "default"});
+        db.txExec(tx, "insert into t values (1)");
+        db.commit(tx);
+        let c = db.connect("sqlite", ":memory:");
+        let tx2 = c.begin(null, {"isolation": "serializable"});
+        tx2.rollback();
+        this.assertEquals(1, db.query(conn, "select count(*) as n from t")[0]["n"]);
+        this.assertThrows(() => db.begin(conn, "soon"), "timeoutMs must be int");
+    }
+
+    @test
+    func emptyExpectedIsUniform(): void {
+        let base = stats.chiSquareTest([10, 20, 30]);
+        this.assertEquals(base, stats.chiSquareTest([10, 20, 30], []));
+        this.assertEquals(base, stats.chiSquareTest([10, 20, 30], opts: {"ddof": 0}));
+        this.assertThrows(() => stats.chiSquareTest([10, 20], [1, 2, 3]), "expected length must match observed");
+    }
+
+    @test
+    func processRunOptions(): void {
+        let r = process.run("sh", ["-c", "pwd; printf %s \"$GEB_X\""], {"cwd": "/", "env": {"GEB_X": "hi", "PATH": "/usr/bin:/bin"}});
+        this.assertEquals("/\nhi", r.stdout());
+        this.assertEquals("/\n", process.run("pwd", opts: {"cwd": "/"}).stdout());
+        this.assertTrue(process.run("sleep", ["5"], {"timeoutMs": 50}).timedOut());
+        this.assertThrows(() => process.run("pwd", [], {"args": ["x"]}), "options.args is not allowed");
+    }
+}

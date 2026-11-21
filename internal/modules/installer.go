@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -230,24 +231,60 @@ func writeLockFile(path string, lock LockFile) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// addDependency updates or inserts a git dependency in manifestPath.
-// The manifest is re-marshalled; comments are not preserved.
+// addDependency updates or inserts a git dependency in manifestPath, editing the YAML tree so comments and keys it does not model survive.
 func addDependency(manifestPath, name, gitURL, version string) error {
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return err
 	}
-	var mf manifestFile
-	if err := yamllib.Unmarshal(data, &mf); err != nil {
+	var doc yamllib.Node
+	if err := yamllib.Unmarshal(data, &doc); err != nil {
 		return err
 	}
-	if mf.Dependencies == nil {
-		mf.Dependencies = map[string]Dependency{}
+	if len(doc.Content) == 0 {
+		doc = yamllib.Node{Kind: yamllib.DocumentNode, Content: []*yamllib.Node{{Kind: yamllib.MappingNode, Tag: "!!map"}}}
 	}
-	mf.Dependencies[name] = Dependency{Git: normalizeGitURL(gitURL), Version: version}
-	out, err := yamllib.Marshal(&mf)
-	if err != nil {
+	root := doc.Content[0]
+	if root.Kind != yamllib.MappingNode {
+		return fmt.Errorf("%s: top level must be a mapping", manifestPath)
+	}
+	deps := mappingValue(root, "dependencies")
+	if deps == nil {
+		deps = &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map"}
+		root.Content = append(root.Content, yamlScalar("dependencies"), deps)
+	} else if deps.Kind != yamllib.MappingNode {
+		*deps = yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map", HeadComment: deps.HeadComment, LineComment: deps.LineComment}
+	}
+	entry := &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map", Content: []*yamllib.Node{yamlScalar("git"), yamlScalar(normalizeGitURL(gitURL))}}
+	if version != "" {
+		entry.Content = append(entry.Content, yamlScalar("version"), yamlScalar(version))
+	}
+	if existing := mappingValue(deps, name); existing != nil {
+		*existing = *entry
+	} else {
+		deps.Content = append(deps.Content, yamlScalar(name), entry)
+	}
+	var buf bytes.Buffer
+	enc := yamllib.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
 		return err
 	}
-	return os.WriteFile(manifestPath, out, 0o644)
+	if err := enc.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(manifestPath, buf.Bytes(), 0o644)
+}
+
+func mappingValue(mapping *yamllib.Node, key string) *yamllib.Node {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func yamlScalar(value string) *yamllib.Node {
+	return &yamllib.Node{Kind: yamllib.ScalarNode, Tag: "!!str", Value: value}
 }

@@ -750,6 +750,20 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			value := vm.constantValue(index)
 			switch x := value.(type) {
+			case runtime.DecoratorTarget:
+				// Compiler reflection constants belong to the chunk that loads them.
+				x.Module = vm.moduleName
+				if x.Function != nil {
+					metadata := *x.Function
+					metadata.Module = vm.moduleName
+					x.Function = &metadata
+				}
+				if x.Class != nil {
+					metadata := *x.Class
+					metadata.Module = vm.moduleName
+					x.Class = &metadata
+				}
+				vm.push(x)
 			case runtime.SmallInt:
 				vm.pushVM(runtime.VMValueSmallInt(x.Value))
 			case runtime.Bool:
@@ -5993,7 +6007,18 @@ func (vm *VM) runDeferredAction(instruction Instruction, action deferredAction) 
 				args, names = vm.dropUnknownFor(instruction, action.receiver, action.name, spread)
 			}
 		}
-		if instance, ok := action.receiver.(*runtime.Instance); ok {
+		if ordered, ok, err := bindCatalogNamedArgs(action.receiver, action.name, args, names); ok {
+			if err == nil {
+				if instance, isInstance := action.receiver.(*runtime.Instance); isInstance {
+					_, err = vm.CallMethod(instance, action.name, ordered)
+				} else {
+					_, err = vm.callDeferredValueMethod(instruction, action.receiver, action.name, ordered)
+				}
+			}
+			if err != nil {
+				return vm.wrapDeferError(instruction, action.line, err, "deferred method call %s: %v", action.name, err)
+			}
+		} else if instance, ok := action.receiver.(*runtime.Instance); ok {
 			if len(names) > 0 {
 				if _, err := vm.callInstanceMethodNamed(instruction, instance, action.name, args, names); err != nil {
 					return vm.wrapDeferError(instruction, action.line, err, "deferred method call %s: %v", action.name, err)

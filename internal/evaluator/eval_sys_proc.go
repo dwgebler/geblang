@@ -414,16 +414,52 @@ func processSpecFromOptions(call *ast.CallExpression, args []runtime.Value) (pro
 		return processSpec{}, fmt.Errorf("%s options.command must be string", call.Callee.String())
 	}
 	spec := processSpec{command: command}
+	if err := applyProcessOptions(call, &spec, options); err != nil {
+		return processSpec{}, err
+	}
+	return spec, nil
+}
+
+func isDictValue(v runtime.Value) bool {
+	_, ok := v.(runtime.Dict)
+	return ok
+}
+
+// processSpecWithOptions parses process.run's (cmd, args, opts) form.
+func processSpecWithOptions(call *ast.CallExpression, args []runtime.Value) (processSpec, error) {
+	options, ok := args[2].(runtime.Dict)
+	if !ok {
+		return processSpec{}, fmt.Errorf("%s options must be dict", call.Callee.String())
+	}
+	spec, err := processSpecFromCombinedArgs(call, args[:2])
+	if err != nil {
+		return processSpec{}, err
+	}
+	if _, ok := args[1].(*runtime.List); !ok {
+		return processSpec{}, fmt.Errorf("%s args must be list<string> when options are given", call.Callee.String())
+	}
+	for _, key := range []string{"command", "args"} {
+		if _, exists := dictField(options, key); exists {
+			return processSpec{}, fmt.Errorf("%s options.%s is not allowed; pass it as an argument", call.Callee.String(), key)
+		}
+	}
+	if err := applyProcessOptions(call, &spec, options); err != nil {
+		return processSpec{}, err
+	}
+	return spec, nil
+}
+
+func applyProcessOptions(call *ast.CallExpression, spec *processSpec, options runtime.Dict) error {
 	if value, ok := dictField(options, "args"); ok {
 		list, ok := value.(*runtime.List)
 		if !ok {
-			return processSpec{}, fmt.Errorf("%s options.args must be list<string>", call.Callee.String())
+			return fmt.Errorf("%s options.args must be list<string>", call.Callee.String())
 		}
 		spec.args = make([]string, 0, len(list.Elements))
 		for _, element := range list.Elements {
 			text, ok := element.(runtime.String)
 			if !ok {
-				return processSpec{}, fmt.Errorf("%s options.args must be list<string>", call.Callee.String())
+				return fmt.Errorf("%s options.args must be list<string>", call.Callee.String())
 			}
 			spec.args = append(spec.args, text.Value)
 		}
@@ -434,7 +470,7 @@ func processSpecFromOptions(call *ast.CallExpression, args []runtime.Value) (pro
 	if value, ok := dictField(options, "env"); ok {
 		env, ok := value.(runtime.Dict)
 		if !ok {
-			return processSpec{}, fmt.Errorf("%s options.env must be dict<string, string>", call.Callee.String())
+			return fmt.Errorf("%s options.env must be dict<string, string>", call.Callee.String())
 		}
 		spec.env = map[string]string{}
 		for _, __dk := range env.EntryKeys() {
@@ -442,7 +478,7 @@ func processSpecFromOptions(call *ast.CallExpression, args []runtime.Value) (pro
 			key, keyOK := entry.Key.(runtime.String)
 			value, valueOK := entry.Value.(runtime.String)
 			if !keyOK || !valueOK {
-				return processSpec{}, fmt.Errorf("%s options.env must be dict<string, string>", call.Callee.String())
+				return fmt.Errorf("%s options.env must be dict<string, string>", call.Callee.String())
 			}
 			spec.env[key.Value] = value.Value
 		}
@@ -450,14 +486,14 @@ func processSpecFromOptions(call *ast.CallExpression, args []runtime.Value) (pro
 	if value, ok := dictField(options, "timeoutMs"); ok {
 		n, ok := native.AsInt64(value)
 		if !ok {
-			return processSpec{}, fmt.Errorf("%s options.timeoutMs must be int", call.Callee.String())
+			return fmt.Errorf("%s options.timeoutMs must be int", call.Callee.String())
 		}
 		if n < 0 {
-			return processSpec{}, fmt.Errorf("%s options.timeoutMs must be >= 0", call.Callee.String())
+			return fmt.Errorf("%s options.timeoutMs must be >= 0", call.Callee.String())
 		}
 		spec.timeout = time.Duration(n) * time.Millisecond
 	}
-	return spec, nil
+	return nil
 }
 
 func commandFromSpec(spec processSpec) (*exec.Cmd, context.CancelFunc, context.Context) {

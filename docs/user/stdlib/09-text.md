@@ -18,7 +18,7 @@ value - the original is unchanged.
 | `codePoints()` | `list<int>` | All Unicode code points as a list |
 | `graphemes()` | `list<string>` | Grapheme clusters (user-perceived characters) |
 | `graphemeLength()` | `int` | Number of grapheme clusters |
-| `truncateGraphemes(n)` | `string` | First `n` grapheme clusters |
+| `truncateGraphemes(count)` | `string` | First `count` grapheme clusters |
 
 ```gb
 import io;
@@ -69,8 +69,8 @@ io.println("geblang".graphemes().reverse().join("")); # reverse by grapheme
 | `endsWith(suffix)` | `bool` | `true` when the string ends with `suffix` |
 | `indexOf(needle)` | `int` | First index of `needle`, or `-1` if not found |
 | `lastIndexOf(needle)` | `int` | Last index of `needle`, or `-1` if not found |
-| `search(needle)` | `list<int>` | Every (rune) start position of `needle`, or every character index where the callable `needle` returns true |
-| `searchPattern(regex)` | `list<int>` | Every match start position (rune index) for `regex` |
+| `search(value)` | `list<int>` | Every (rune) start position of `value`, or every character index where the callable `value` returns true |
+| `searchPattern(pattern)` | `list<int>` | Every match start position (rune index) for `pattern` |
 | `count(needle)` | `int` | Number of non-overlapping occurrences of `needle` |
 | `equalsIgnoreCase(other)` | `bool` | Case-insensitive equality |
 | `containsIgnoreCase(needle)` | `bool` | Case-insensitive substring test |
@@ -120,13 +120,13 @@ io.println(s.slice(0, -6));      # hello
 | `trim([chars])` | `string` | Leading and trailing whitespace removed, or any of the characters in `chars` |
 | `trimStart([chars])` | `string` | Leading whitespace removed, or any of the characters in `chars` |
 | `trimEnd([chars])` | `string` | Trailing whitespace removed, or any of the characters in `chars` |
-| `replace(old, new[, n])` | `string` | Replace occurrences of `old` with `new`; `n` limits replacements |
+| `replace(from, to[, count])` | `string` | Replace occurrences of `from` with `to`; `count` limits replacements |
 | `reverse()` | `string` | Characters in reversed order |
-| `repeat(n)` | `string` | String repeated `n` times |
-| `padStart(len[, pad])` | `string` | Pad to at least `len` characters on the left |
-| `padEnd(len[, pad])` | `string` | Pad to at least `len` characters on the right |
-| `removePrefix(p)` | `string` | Strip prefix `p` if present, else unchanged |
-| `removeSuffix(s)` | `string` | Strip suffix `s` if present, else unchanged |
+| `repeat(count)` | `string` | String repeated `count` times |
+| `padStart(width[, pad])` | `string` | Pad to at least `width` characters on the left; a longer string is returned unchanged and `pad` repeats from its first character |
+| `padEnd(width[, pad])` | `string` | Pad to at least `width` characters on the right; a longer string is returned unchanged |
+| `removePrefix(prefix)` | `string` | Strip `prefix` if present, else unchanged |
+| `removeSuffix(suffix)` | `string` | Strip `suffix` if present, else unchanged |
 
 ```gb
 import io;
@@ -155,7 +155,7 @@ io.println("report.txt".removeSuffix(".txt")); # report
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `split(sep)` | `list<string>` | Split on `sep`; returns list of parts |
+| `split(separator)` | `list<string>` | Split on `separator`; returns list of parts |
 | `lines()` | `list<string>` | Split on line boundaries (LF and CRLF); no trailing empty line |
 | `format(...)` | `string` | `printf`-style formatting with `%` placeholders (`%s`, `%d`, `%.2f`) |
 
@@ -186,6 +186,72 @@ These predicates never throw, so you can test a string before converting
 instead of wrapping the cast in try/catch. They reuse the exact `toInt` /
 `toDecimal` parse, so `s.isInt()` is `true` if and only if `s.toInt()`
 does not raise.
+
+### Case, Slugs And Layout
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `words()` | `list<string>` | Words split at any non-letter/digit character and at case changes |
+| `snakeCase()` | `string` | Words lowercased and joined with `_` |
+| `camelCase()` | `string` | First word lowercased, the rest capitalized, no separator |
+| `kebabCase()` | `string` | Words lowercased and joined with `-` |
+| `slugify()` | `string` | URL slug: accents stripped, lowercase ASCII letters and digits joined by `-` |
+| `center(width[, pad])` | `string` | Centered within `width` characters; the extra character goes on the right |
+| `wrap(width)` | `list<string>` | Lines of at most `width` characters, breaking between words |
+
+`words()` keeps an acronym together and attaches digits to the word before
+them: `"parseHTTPResponse2xx".words()` is `["parse", "HTTP", "Response2xx"]`.
+Letters are Unicode-aware here, so `"caf\u{e9}Bar".words()` is `["caf\u{e9}",
+"Bar"]`. `slugify()` removes accents (`"Cr\u{e8}me Br\u{fb}l\u{e9}e"` becomes
+`"creme-brulee"`) and drops characters with no ASCII form. `slugify()` is not
+available in `--native` builds.
+
+`center` repeats `pad` like `padStart` and returns a longer string unchanged.
+`wrap` wraps each existing line separately, keeps blank lines as `""`, and
+puts a word longer than `width` (such as a URL) on its own line rather than
+splitting it.
+
+```gb
+io.println("userAccountID".snakeCase());   # user_account_id
+io.println("user account id".camelCase()); # userAccountId
+io.println("Hello, World!".slugify());     # hello-world
+io.println("ab".center(6, "*"));           # **ab**
+io.println("the quick brown fox".wrap(10)); # ["the quick", "brown fox"]
+```
+
+### Validation
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `isDigits()` | `bool` | Every character is an ASCII digit `0-9` (no sign, point or separator) |
+| `isAlpha()` | `bool` | Every character is an ASCII letter |
+| `isAlphanumeric()` | `bool` | Every character is an ASCII letter or digit |
+| `isLower()` | `bool` | Has at least one ASCII letter and no ASCII uppercase letter |
+| `isUpper()` | `bool` | Has at least one ASCII letter and no ASCII lowercase letter |
+| `isAscii()` | `bool` | Every character is 7-bit ASCII |
+| `isHex()` | `bool` | Every character is a hex digit; a `0x` prefix is not accepted |
+| `isUuid()` | `bool` | 8-4-4-4-12 hyphenated hex digits, any version, either case |
+| `isEmail()` | `bool` | One `@`, a non-empty local part, a dotted domain with no empty labels, no whitespace |
+| `isUrl()` | `bool` | An absolute URL with a scheme and a host (`https://x.io`, `postgres://h/db`) |
+| `isUtf8()` | `bool` | The string holds valid UTF-8 |
+
+The character classes are ASCII-only: `"\u{e9}".isAlpha()` and
+`"\u{0663}".isDigits()` are `false`, so `isDigits()` agrees with what
+`toInt()` accepts as plain digits. Every predicate except `isUtf8()` is
+`false` for the empty string. `isEmail()` is a practical syntax check,
+not full RFC 5322 validation. `isUrl()` rejects relative references and
+host-less URIs such as `mailto:a@b.io`.
+
+Strings decoded from bytes are always valid UTF-8; `isUtf8()` is `false`
+only for a string built with `bytes.rawString()` from invalid bytes. Use
+`b.isUtf8()` on a `bytes` value to check before calling `toString()`.
+
+```gb
+io.println("2026".isDigits());          # true
+io.println("ab_1".isAlphanumeric());    # false
+io.println("a@example.org".isEmail());  # true
+io.println("example.org".isUrl());      # false (no scheme)
+```
 
 Cast with `as int`, `as decimal`, `as float`, `as bool` where needed. Also new in 1.0.2: `as bytes` encodes the string as UTF-8, and a `bytes` value cast back `as string` decodes UTF-8 (the cast raises a catchable `RuntimeError` if the byte sequence is not valid UTF-8).
 

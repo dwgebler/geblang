@@ -20,6 +20,38 @@ import (
 	"geblang/internal/runtime"
 )
 
+func TestParityEntryDecoratorReferencesFromImportedReflection(t *testing.T) {
+	dir := t.TempDir()
+	donor, err := os.ReadFile("../../tests/reflect/entry_decorator_inspector.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeModule(t, dir, "entry_decorator_inspector", string(donor))
+	source, err := os.ReadFile("../../tests/reflect/entry_decorator_probe.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, string(source)+"\nmain();", "entry-decorators-ok\n")
+}
+
+func TestParityDecoratorReferencesAcrossReflectionScopes(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"decorator_scope_donor.gb", "decorator_scope_probe.gb"} {
+		source, err := os.ReadFile(filepath.Join("../../tests/reflect", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), source, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ev, vm := parityOutputsModulesDir(t, dir, "import decorator_scope_probe; decorator_scope_probe.main();")
+	if ev != "decorator-scopes-ok\n" || vm != ev {
+		t.Fatalf("evaluator %q, VM %q", ev, vm)
+	}
+}
+
 func TestCastTargetInManuallyAssembledChunkCallback(t *testing.T) {
 	const source = `func text(any value): any { return value as string; }`
 	p := parser.New(lexer.New(source))

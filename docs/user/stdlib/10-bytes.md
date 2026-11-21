@@ -22,7 +22,19 @@ Bytes values also expose `b.toHex()`, `b.toBase64()`, and
 `bytes.fromList`); `b.get(i)` / `b[i]` reads a single byte value (out of
 range, `get` returns `null` and `b[i]` throws a `ValueError`).
 `bytes.toString(data)` and `data.toString()` decode valid UTF-8 and throw a
-`RuntimeError` when the bytes are not valid UTF-8.
+`RuntimeError` when the bytes are not valid UTF-8. `b.isUtf8()` reports
+whether they would decode, so you can check first instead of catching.
+
+`b.startsWith(prefix)`, `b.endsWith(suffix)` and `b.indexOf(needle)` search
+the bytes. Like `b.contains`, each takes either a `bytes` value or one byte as
+an `int`; an `int` outside 0-255 never matches. `indexOf` returns `-1` when
+the needle is absent.
+
+```gb
+let png = bytes.fromHex("89504e470d0a1a0a");
+io.println(png.startsWith(bytes.fromHex("89504e47")));  # true
+io.println(png.indexOf(0x0d));                          # 4
+```
 
 `b.contains(n)` tests for a single BYTE VALUE (an int 0-255), not a
 sub-sequence: `bytes.fromString("hi").contains(104)` is `true`

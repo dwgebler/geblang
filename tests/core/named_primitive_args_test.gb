@@ -1,0 +1,67 @@
+/**
+ * @title Named arguments on built-in methods
+ * @summary Methods on strings, numbers, collections and bytes accept
+ * named arguments bound by their documented parameter names. A skipped
+ * optional parameter before a named one takes its documented default.
+ */
+import test;
+
+class Label {
+    string text;
+    func Label(string text) { this.text = text.padEnd(pad: ".", width: 4); }
+    func wide(int width): string { return this.text.padStart(width: width, pad: "_"); }
+}
+
+class Tag extends Label {
+    func Tag() { parent("t"); }
+}
+
+class NamedPrimitiveArgsTest extends test.Test {
+    @test
+    func stringsAndNumbers(): void {
+        this.assertEquals("abax", "x".padStart(pad: "ab", width: 4));
+        this.assertEquals("a+b-c", "a-b-c".replace("-", "+", count: 1));
+        this.assertEquals("ff", 255.toString(base: 16));
+        this.assertTrue(5.isBetween(hi: 9, lo: 1));
+        this.assertEquals("b", "abc".slice(1, end: 2));
+    }
+
+    @test
+    func skippedDefaultIsFilled(): void {
+        this.assertTrue((1.0f).isCloseTo(1.1f, absTol: 0.2));
+        this.assertFalse((1.0f).isCloseTo(1.1f));
+        this.assertTrue((0.0f).isCloseTo(1e-12f, absTol: 1e-9));
+    }
+
+    @test
+    func collections(): void {
+        let xs = [3, 1, 2];
+        this.assertEquals(16, xs.reduce(initial: 10, combine: (int a, int b) => a + b));
+        this.assertEquals([6, 2, 4], xs.map(transform: (int x) => x * 2));
+        this.assertEquals([3, 2, 1], [1, 3, 2].sortBy(key: (int x) => x, descending: true));
+        this.assertEquals({"a": 2}, {"a": 1}.mapValues(transform: (int v) => v + 1));
+        this.assertEquals({0, 1}, {1, 2}.map(transform: (int x) => x % 2));
+    }
+
+    @test
+    func dynamicReceiver(): void {
+        any s = "x";
+        any n = 255;
+        this.assertEquals("--x", s.padStart(pad: "-", width: 3));
+        this.assertEquals("11111111", n.toString(base: 2));
+    }
+
+    @test
+    func classesAndSubclasses(): void {
+        this.assertEquals("__ab..", Label("ab").wide(6));
+        this.assertEquals("_t...", Tag().wide(width: 5));
+    }
+
+    @test
+    func bindingErrors(): void {
+        any s = "x";
+        this.assertThrows(() => s.padStart(wdth: 3), "string.padStart has no parameter wdth");
+        this.assertThrows(() => s.padStart(pad: "-"), "string.padStart missing argument width");
+        this.assertThrows(() => s.slice(end: 1), "string.slice missing argument start");
+    }
+}

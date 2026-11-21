@@ -1,0 +1,10 @@
+module enum_type_value_donor;
+
+export enum Level {
+    Low,
+    High
+}
+
+export func levelType(): any {
+    return Level;
+}

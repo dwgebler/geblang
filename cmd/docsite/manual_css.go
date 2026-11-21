@@ -58,6 +58,11 @@ code { color: var(--m-code); overflow-wrap: break-word; }
 pre { display: block; background: #15171a; color: #f8f9fa; padding: 1rem; border-radius: .5rem; overflow: auto; }
 pre code { color: inherit; font-size: inherit; overflow-wrap: normal; }
 pre code.language-gb, pre code.language-geblang { color: #d6deeb; }
+.code-wrap { position: relative; margin-bottom: 1rem; }
+.code-wrap > pre { margin-bottom: 0; padding-right: 4.5rem; }
+.copy-btn { position: absolute; top: .4rem; right: .5rem; background: #15171a; color: #9aa5b1; border: 1px solid #3a4048; border-radius: 4px; padding: .1rem .5rem; font: .72rem/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; cursor: pointer; }
+.copy-btn:hover, .copy-btn:focus-visible { color: #f8f9fa; border-color: #9aa5b1; }
+@media print { .copy-btn { display: none; } }
 blockquote { margin: 1.25rem 0; padding: 1rem 1.25rem; border-left: .35rem solid var(--m-link); background: var(--m-quote-bg); color: var(--m-quote-text); border-radius: 0 .5rem .5rem 0; }
 blockquote > :last-child { margin-bottom: 0; }
 

@@ -1,5 +1,103 @@
 # Release Notes
 
+## 1.44.0
+
+### Added
+
+- Decorator arguments can name a class, interface or enum (bare, qualified or
+  from-imported) or be a function literal or arrow function:
+  `@Route(schema: User, retry: (int n) => n * 1000)`. Reflection returns the
+  type value or callable, and behavioural decorators receive it as an argument.
+  They resolve in the declaring module and are allowed on module-level
+  declarations and their members.
+- `Connection.queryOne(sql, args...)` runs a query and returns its first row, or
+  `null`, closing the cursor before it returns.
+- String validation predicates: `isDigits()`, `isAlpha()`, `isAlphanumeric()`,
+  `isLower()`, `isUpper()`, `isAscii()` (ASCII-only character classes),
+  `isHex()`, `isUuid()`, `isEmail()`, `isUrl()` (absolute, with scheme and
+  host) and `isUtf8()`. All but `isUtf8()` are `false` for the empty string.
+- `b.isUtf8()` on `bytes` reports whether `toString()` would succeed.
+- String layout helpers: `words()`, `snakeCase()`, `camelCase()`, `kebabCase()`,
+  `slugify()`, `center(width[, pad])` and `wrap(width)`.
+- `isBetween(lo, hi)` on `int`, `float` and `decimal`; `gcd`, `lcm`, `digits`,
+  `isPowerOfTwo` and `bitCount` on `int`; `isCloseTo(other, relTol, absTol)` on
+  `float`.
+- `b.startsWith`, `b.endsWith` and `b.indexOf` on `bytes`, taking bytes or one
+  byte value like `b.contains`.
+- Set comparisons `isSubsetOf`, `isSupersetOf`, `isDisjointFrom` and
+  `symmetricDifference`, and set `filter`, `map`, `any` and `all`.
+- Dict `filter`, `any` and `all` (callbacks take key and value), `mapValues`,
+  `pick`, `omit` and `invert`.
+- Named arguments on methods of strings, numbers, lists, dicts, sets, bytes and
+  ranges, and on methods of native classes such as `db.Connection`, bound by the
+  documented parameter names: `s.padStart(width: 5, pad: "0")`. On a receiver
+  whose type is known at compile time the call compiles to a plain positional
+  call. Several built-in method parameters were renamed for consistency before
+  becoming nameable: `pad`, `needle`, `count`, `key`, `target`, `transform` and
+  `combine`.
+- A named argument that skips an optional parameter of a native function or
+  built-in method fills it with its documented default
+  (`datetime.make(2024, 1, 2, second: 5)`); this was a "missing argument" error.
+- `process.run(cmd, args, opts)` accepts the documented options dict with `cwd`,
+  `env` and `timeoutMs`.
+
+### Fixed
+
+- `list.sort(null)`, `list.sorted(null)` and `collections.sorted(xs, null)` sort
+  in natural order; a `null` comparator threw "value is not callable".
+- `db.begin(conn, null)` and `Connection.begin(null)` start a transaction without
+  a deadline; a `null` timeout was rejected.
+- `stats.chiSquareTest(observed, [])` treats an empty expected list as uniform,
+  the same as leaving it out.
+- On the VM, a deferred method call on a list, string or other built-in value
+  ignored argument names and passed the values in source order.
+- Editor hover no longer shows `toDecimal(places = 0)`; leaving `places` out keeps
+  full precision, while `0` rounds to a whole number.
+
+- `s.padStart(n)` and `s.padEnd(n)` return a string longer than `n` unchanged;
+  they had cut it to `n` characters. A multi-character pad now repeats from its
+  first character (`"x".padStart(4, "ab")` is `"abax"`), and a pad containing
+  non-ASCII characters no longer produces invalid text on the VM or a
+  different result on the evaluator.
+- Reflection from imported code resolves entry-script decorator arguments and
+  interface metadata in the entry script, including inherited methods.
+- `Rows.first()`, `get(i)` and `isEmpty()` on a cursor that has not been stepped
+  now read the whole result and close the cursor, returning the connection to
+  the pool. Before, the cursor stayed open, so a later statement on an in-memory
+  SQLite database (one connection) waited forever.
+- The editor catalog types `sys.getenv` as `?string`; it returns `null` for an
+  unset variable.
+- The editor catalog types `db.migrate` and `Connection.migrate` as taking a
+  list of `{id, sql}` dicts and returning the applied and skipped ids; it listed
+  a `list<string>` argument and a `void` result. The database reference now
+  documents migrations.
+- `geblang fmt` keeps a dict, list or argument list broken across lines when one
+  of its entries is a closure with a multi-line body; it had pulled the entries
+  up onto the opening line. Closure bodies and broken arguments inside a broken
+  method chain segment are now indented one level past the segment.
+- `geblang fmt` keeps a collection that was broken across lines in an
+  assignment statement (`x = {...}`, `out["k"] = [...]`, `y += [...]`) broken,
+  and breaks an over-wide assigned call or collection, as it already did for
+  `let` and `return`; it had joined them onto one line. An over-wide call with
+  no arguments is no longer split as `trim(` and `)` on separate lines.
+- `geblang fmt` keeps a list, dict or set broken across lines when it sits
+  inside a cast (`{...} as dict<string, any>`), an operator such as `??` or
+  `&&`, a ternary branch, or before a method call (`[...].length()`); it had
+  joined them onto one line.
+- `geblang install <url>` adds or replaces only that dependency in
+  `geblang.yaml`. It had rewritten the whole file, dropping comments and keys it
+  did not recognise and adding empty `workspace`, `package` and `permissions`
+  blocks.
+- An enum used as a value now equals itself under `==`, `is` and
+  `assertEquals`, and equals the `typeof` of its variants. It compared unequal
+  to itself on both runtimes.
+- On the VM, `reflect.method(SomeClass, name)` finds a method inherited from a
+  parent class in another module; it returned `null`. On the evaluator,
+  `reflect.staticMethod` finds an inherited static method; it returned `null`.
+- Field, parameter, constructor and interface reflection report invalid
+  decorator arguments instead of silently omitting them. Interface parameter
+  decorator references resolve in their declaring module.
+
 ## 1.43.0
 
 ### Added

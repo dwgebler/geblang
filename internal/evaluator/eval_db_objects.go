@@ -53,6 +53,9 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("Rows.next expects no arguments")
 		}
+		if h, err := e.dbRowsHandle(this); err == nil {
+			h.streaming = true
+		}
 		return e.dbRowsNext(this)
 	}}}
 	rowsClass.Methods["row"] = []runtime.Function{{Name: "row", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -146,6 +149,7 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		if err != nil {
 			return nil, err
 		}
+		h.streaming = true
 		ok, err := dbRowsPrefetch(h)
 		if err != nil {
 			return nil, err
@@ -157,6 +161,7 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		if err != nil {
 			return nil, err
 		}
+		h.streaming = true
 		ok, err := dbRowsAdvance(h)
 		if err != nil {
 			return nil, err
@@ -246,6 +251,32 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 	}}}
 	connectionClass.Methods["query"] = []runtime.Function{{Name: "query", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		return e.dbQueryRows(syntheticCall("db.Connection.query"), append([]runtime.Value{this.Fields["handle"]}, args...))
+	}}}
+	connectionClass.Methods["queryone"] = []runtime.Function{{Name: "queryOne", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		rows, err := e.dbQueryRows(syntheticCall("db.Connection.queryOne"), append([]runtime.Value{this.Fields["handle"]}, args...))
+		if err != nil {
+			return nil, err
+		}
+		instance, ok := rows.(*runtime.Instance)
+		if !ok {
+			return nil, fmt.Errorf("Connection.queryOne: query did not return Rows")
+		}
+		h, err := e.dbRowsHandle(instance)
+		if err != nil {
+			return nil, err
+		}
+		found, err := dbRowsAdvance(h)
+		if err != nil {
+			return nil, err
+		}
+		row := h.current
+		if _, err := e.dbRowsClose(instance); err != nil {
+			return nil, err
+		}
+		if !found {
+			return runtime.Null{}, nil
+		}
+		return row, nil
 	}}}
 	connectionClass.Methods["execwithtimeout"] = []runtime.Function{{Name: "execWithTimeout", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		return e.dbTimedOperation(this.Fields["handle"], args, false)
@@ -478,7 +509,8 @@ func (e *Evaluator) dbRowsGet(instance *runtime.Instance, index int64) (runtime.
 		return nil, err
 	}
 	rows.caching = true
-	for int64(len(rows.cache)) <= index && !rows.closed && !rows.exhausted {
+	reached := int64(len(rows.cache)) > index
+	for (!rows.streaming || int64(len(rows.cache)) <= index) && !rows.closed && !rows.exhausted {
 		next, err := e.dbRowsNext(instance)
 		if err != nil {
 			return nil, err
@@ -490,6 +522,9 @@ func (e *Evaluator) dbRowsGet(instance *runtime.Instance, index int64) (runtime.
 	}
 	if index >= int64(len(rows.cache)) {
 		return runtime.Null{}, nil
+	}
+	if !reached {
+		rows.current = rows.cache[int(index)]
 	}
 	return rows.cache[int(index)], nil
 }

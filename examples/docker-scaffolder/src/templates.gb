@@ -186,7 +186,13 @@ func composeService(model.Service svc, string database): dict<string, any> {
     }
     if (svc.gpu) {
         /* Compose GPU reservation: requires the host NVIDIA container toolkit. */
-        out["deploy"] = {"resources": {"reservations": {"devices": [{"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}]}}};
+        out["deploy"] = {
+            "resources": {
+                "reservations": {
+                    "devices": [{"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}],
+                },
+            },
+        };
     }
     return out;
 }
@@ -196,7 +202,11 @@ func databaseService(string kind): ?dict<string, any> {
     dict<string, any> common = {"restart": "unless-stopped", "networks": [netName]};
     if (kind == "postgres") {
         common["image"] = "postgres:18-alpine";
-        common["environment"] = {"POSTGRES_DB": "app", "POSTGRES_USER": "app", "POSTGRES_PASSWORD": "secret"};
+        common["environment"] = {
+            "POSTGRES_DB": "app",
+            "POSTGRES_USER": "app",
+            "POSTGRES_PASSWORD": "secret",
+        };
         common["volumes"] = ["dbdata:/var/lib/postgresql/data"];
         common["ports"] = ["5432:5432"];
         common["healthcheck"] = healthcheck(["CMD-SHELL", "pg_isready -U app -d app"]);
@@ -214,7 +224,10 @@ func databaseService(string kind): ?dict<string, any> {
         common["image"] = "mongo:8";
         common["volumes"] = ["dbdata:/data/db"];
         common["ports"] = ["27017:27017"];
-        common["healthcheck"] = healthcheck(["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping')\""]);
+        common["healthcheck"] = healthcheck([
+            "CMD-SHELL",
+            "mongosh --quiet --eval \"db.adminCommand('ping')\"",
+        ]);
         return {"service": common, "volume": "dbdata"};
     }
     return null;

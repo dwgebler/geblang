@@ -118,6 +118,8 @@ func LeafValuesEqual(left Value, right Value) (equal bool, handled bool) {
 			return leftValue.Name == rv.Name, true
 		case *Class:
 			return leftValue.Name == rv.Name, true
+		case *EnumDef:
+			return leftValue.Name == bareTypeName(rv.Name), true
 		case String:
 			return leftValue.Name == rv.Value, true
 		}
@@ -136,6 +138,14 @@ func LeafValuesEqual(left Value, right Value) (equal bool, handled bool) {
 	case *Interface:
 		rightValue, ok := right.(*Interface)
 		return ok && sameInterface(leftValue, rightValue), true
+	case *EnumDef:
+		switch rv := right.(type) {
+		case *EnumDef:
+			return sameEnumDef(leftValue, rv), true
+		case Type:
+			return bareTypeName(leftValue.Name) == rv.Name, true
+		}
+		return false, true
 	case *Complex:
 		rightValue, ok := right.(*Complex)
 		return ok && leftValue.C == rightValue.C, true
@@ -168,6 +178,17 @@ func nativeObjectsEqual(left NativeObject, right NativeObject) bool {
 		return left.Payload == right.Payload
 	}
 	return reflect.DeepEqual(left.Payload, right.Payload)
+}
+
+// The VM materialises enum definitions per load, so compare their declarations.
+func sameEnumDef(left, right *EnumDef) bool {
+	if left == right {
+		return true
+	}
+	if left == nil || right == nil {
+		return false
+	}
+	return left.Module == right.Module && bareTypeName(left.Name) == bareTypeName(right.Name)
 }
 
 // sameInterface compares declarations, since the VM materialises an interface value per load.

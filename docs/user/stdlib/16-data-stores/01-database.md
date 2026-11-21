@@ -218,8 +218,9 @@ SQL connection pool and returns a connection object.
 |--------|---------|-------------|
 | `exec(sql, args...)` | `dict` | Execute a statement; returns `rowsAffected` and `lastInsertId` |
 | `query(sql, args...)` | `db.Rows` | Run a query and return a streaming cursor |
+| `queryOne(sql, args...)` | `dict|null` | Run a query and return its first row, or `null`; the cursor is closed before it returns (1.44.0) |
 | `driver()` | `string` | Normalized driver name: `sqlite`, `postgres` or `mysql`; no credentials or connection URL |
-| `begin(timeoutMs?, opts?)` | `db.Transaction` | Start a transaction with an optional lifetime deadline |
+| `begin(timeoutMs?, opts?)` | `db.Transaction` | Start a transaction with an optional lifetime deadline; a `null` timeout means none, so `begin(opts: {...})` sets only the isolation level |
 | `execWithTimeout(timeoutMs, sql, args...)` | `dict` | Execute with a deadline, including pool wait |
 | `queryWithTimeout(timeoutMs, sql, args...)` | `db.Rows` | Query with a deadline, including pool wait and streaming |
 | `prepare(sql)` | `db.Statement` | Prepare a reusable statement |
@@ -332,6 +333,15 @@ called. Mixing styles is allowed and has remaining-rows semantics: rows
 already consumed by `next()` before the first random-access call are not
 replayed - `rows.next(); rows.all()` returns everything after the first row.
 
+On a cursor that has not been stepped with `next()` or `for-in`, `first()`,
+`get(i)`, and `isEmpty()` read the whole result into the cache, which closes
+the cursor and returns its connection to the pool (1.44.0). A single-row lookup
+such as `conn.query(sql, id).first()` therefore never holds a connection open.
+Use `conn.queryOne(sql, args...)` when only one row is wanted, or add a `LIMIT`,
+so a large result is not buffered. Once a cursor is being stepped, these methods
+read only as far as they need and the cursor stays open until it is exhausted
+or closed.
+
 The functional API (`db.query`, `db.txQuery`, and `db.stmtQuery`) keeps returning
 an eager `list<dict>` for code that expects materialized result sets. As of
 1.19.0 the functional helpers also accept `Connection`/`Transaction`/`Statement`
@@ -346,9 +356,9 @@ exactly like the class API.
 | `close()` | `void` | Close the cursor |
 | `all()` | `list<dict>` | Drain the cursor and return the cached and remaining rows |
 | `length()` | `int` | Drain the cursor and return the number of rows |
-| `isEmpty()` | `bool` | Read enough to determine whether the result set is empty |
-| `first()` | `dict|null` | First row or `null`; reads and caches it if needed |
-| `get(index)` | `dict|null` | Row by zero-based index; drains until that index is available |
+| `isEmpty()` | `bool` | Whether the result set is empty; drains an unstepped cursor |
+| `first()` | `dict|null` | First row or `null`; drains an unstepped cursor |
+| `get(index)` | `dict|null` | Row by zero-based index; drains an unstepped cursor, otherwise reads until that index |
 | `toList()` | `list<dict>` | Alias for `all()` |
 
 ```gb
@@ -362,6 +372,33 @@ while (rows.next()) {
     io.println((row["id"] as string) + ": " + row["name"]);
 }
 ```
+
+### Migrations
+
+`conn.migrate(migrations)` takes a list of `{"id": string, "sql": string}`
+dicts. It creates a `geblang_migrations` table if needed, runs the SQL of each
+migration whose `id` is not yet recorded, and records it. All migrations run in
+one transaction, so a failing statement applies none of them. The result lists
+the ids it ran and the ids it skipped:
+
+```gb
+import io;
+import db;
+
+let conn = db.Connection("sqlite", ":memory:");
+defer conn.close();
+
+let migrations = [
+    {"id": "001-users", "sql": "create table users (id text, name text)"},
+    {"id": "002-email", "sql": "alter table users add column email text"},
+];
+io.println(conn.migrate(migrations));
+io.println(conn.migrate(migrations));
+```
+
+The first call prints `{"applied": ["001-users", "002-email"], "skipped": []}`;
+the second applies nothing and lists both ids as skipped. Keep each `sql` to one
+statement, and never change a migration once it has been applied: add a new one.
 
 ## Low-Level Functions
 

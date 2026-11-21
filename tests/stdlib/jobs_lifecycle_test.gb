@@ -47,7 +47,9 @@ class JobsLifecycleTest extends test.Test {
             events.send("cancelled");
             release.recv();
         }, {"timeoutMs": 10, "maxAttempts": 1});
-        queue.register("next", func(jobs.Job job): void { effects.set("next", true); });
+        queue.register("next", func(jobs.Job job): void {
+            effects.set("next", true);
+        });
         let slow = queue.enqueue("slow", {}, {"queue": "high"});
         queue.enqueue("next", {});
 
@@ -117,8 +119,7 @@ class JobsLifecycleTest extends test.Test {
         });
         let id = queue.enqueue("work", {});
 
-        let handle = jobs.Worker(queue, {"drainOnce": true, "leaseMs": 1000, "heartbeatMs": 10}).start(
-        );
+        let handle = jobs.Worker(queue, {"drainOnce": true, "leaseMs": 1000, "heartbeatMs": 10}).start();
         this.assertEquals("started", this.event(events));
         clock.incr("now", 500);
         int deadline = time.monotonic() + 5000;
@@ -132,8 +133,7 @@ class JobsLifecycleTest extends test.Test {
         }
         this.assertTrue(lease >= 1704067201500);
         clock.incr("now", 700);
-        let other = jobs.Worker(queue, {"drainOnce": true, "leaseMs": 1000, "heartbeatMs": 10}).run(
-        );
+        let other = jobs.Worker(queue, {"drainOnce": true, "leaseMs": 1000, "heartbeatMs": 10}).run();
         this.assertEquals(0, other.started);
         release.send(true);
 
