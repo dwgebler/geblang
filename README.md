@@ -6,7 +6,7 @@ executable. It is a general-purpose language implemented in Go. Current
 version: **1.44.0**. It combines the ergonomics of PHP and Python with strong
 static typing, generics, decorators, async, and runtime reflection.
 
-[Website](https://geblang.com) | [Documentation](https://geblang.com/docs) |
+[Website](https://geblang.com) | [Documentation](https://geblang.com/docs/) |
 [Downloads](https://geblang.com/downloads) |
 [Gebweb web framework](https://geblang.com/gebweb)
 
@@ -79,7 +79,7 @@ The full language and stdlib reference is in
 release notes are at
 [docs/user/18-release-notes.md](docs/user/18-release-notes.md).
 The same reference is rendered as a browsable HTML site at
-[geblang.com/docs](https://geblang.com/docs).
+[geblang.com/docs](https://geblang.com/docs/).
 
 ## Install
 

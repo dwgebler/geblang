@@ -139,7 +139,7 @@ into your workspace's `.vscode/` folder.
 
 ## Learn more
 
-- [Geblang manual](https://geblang.com/docs)
+- [Geblang manual](https://geblang.com/docs/)
 - [Source and issues](https://github.com/dwgebler/geblang)
 
 ## License
