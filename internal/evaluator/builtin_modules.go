@@ -947,7 +947,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"restore":    e.testRestore,
 			"restoreAll": e.testRestoreAll,
 		},
-		"reflect": {
+		"reflect": unwrapClassArgsAll(map[string]builtinFunc{
 			"decorators":       e.reflectDecorators,
 			"hasDecorator":     e.reflectHasDecorator,
 			"decorator":        e.reflectDecorator,
@@ -977,7 +977,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"module":           reflectLookupRequiresEvaluator,
 			"method":           e.reflectMethodBound,
 			"staticMethod":     reflectStaticMethod,
-		},
+		}),
 		"log": {
 			"stdout":   e.logStdout,
 			"stderr":   e.logStderr,

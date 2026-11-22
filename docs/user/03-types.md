@@ -939,6 +939,63 @@ io.println(t.isCorrectType("Grace"));   # true
 io.println(t.isCorrectType(42));        # false
 ```
 
+### Type parameters as values
+
+Inside generic code, a type parameter can be used anywhere a class reference
+is accepted (1.46.0). `T` evaluates to whatever it is bound to at runtime, so a
+generic helper can hand it to `json.parseAs`, `reflect`, or construct it:
+
+```gb
+import json;
+
+class User {
+    int id = 0;
+    string name = "";
+}
+
+func decode<T>(string body): T {
+    return json.parseAs(body, T);
+}
+
+func make<T>(): T {
+    return T();
+}
+
+let u = decode<User>("{\"id\": 1, \"name\": \"Mara\"}");   # a checked User
+let blank = make<User>();
+```
+
+What `T` evaluates to depends on its binding:
+
+| Binding | `T` as a value |
+|---------|----------------|
+| A class (`User`) | The class, exactly as writing `User`. |
+| A generic class (`Box<int>`) | The class carrying its type arguments, shown as `<class Box<int>>`. |
+| A builtin type (`int`, `string`) | The same `Type` value as writing `int`. |
+| A collection, union or nullable type (`list<User>`, `int \| string`, `?User`) | A `TypeError` naming `T` and its binding. |
+| Unbound | A `TypeError` naming `T`; pass a type argument. |
+
+A generic class binding keeps its arguments wherever the class is used.
+`json.parseAs(body, T)` with `T` bound to `Box<int>` builds a `Box<int>` and
+rejects a field that is not an `int`, and nested fields typed `T` hydrate as
+the bound class. Calling `T(...)` constructs it with the same checks as
+writing `Box<int>(...)`. A bound class compares equal only to the same class
+with the same arguments, so `T == Box` is `false` when `T` is `Box<int>`.
+
+`T` is bound by an explicit type argument (`decode<User>(...)`) or inferred
+from an argument whose parameter type mentions `T`. The expected type of the
+call does not bind it, so `User u = make();` leaves `T` unbound. `geblang check`
+reports a call that can never bind a `T` the function uses as a value:
+
+```gb
+func make<T>(): T {
+    return T();
+}
+
+make();          # error: type parameter T of make cannot be inferred; pass a type argument
+make<User>();    # ok
+```
+
 ### Inspecting type bindings
 
 `reflect.typeBindings(instance)` returns a dict mapping each type parameter

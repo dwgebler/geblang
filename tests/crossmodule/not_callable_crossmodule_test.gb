@@ -1,0 +1,32 @@
+/**
+ * @title Calling imported values that are not callable
+ * @summary Imported non-callable values and instances report the callee by
+ * name, while imported and inherited __invoke still dispatch.
+ */
+import test;
+import not_callable_donor as donor;
+
+class Tripler extends donor.Doubler {}
+
+class NotCallableCrossModuleTest extends test.Test {
+    @test
+    func importedValuesNameTheCallee(): void {
+        let p = donor.Plain();
+        try {
+            p();
+        } catch (RuntimeError e) {
+            this.assertEquals("p is not callable", e.message);
+        }
+        try {
+            donor.count();
+        } catch (RuntimeError e) {
+            this.assertEquals("donor.count is not callable", e.message);
+        }
+    }
+
+    @test
+    func importedInvokeStillDispatches(): void {
+        this.assertEquals(12, donor.Doubler()(6));
+        this.assertEquals(10, Tripler()(5));
+    }
+}

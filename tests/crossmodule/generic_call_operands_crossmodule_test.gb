@@ -1,0 +1,16 @@
+/**
+ * @title Imported generic calls as operator operands
+ * @summary A qualified call with explicit type arguments is a complete
+ * operand for prefix and binary operators.
+ */
+import test;
+import generic_call_operands_donor as donor;
+
+class GenericCallOperandsCrossModuleTest extends test.Test {
+    @test
+    func qualifiedGenericCallIsAnOperand(): void {
+        this.assertEquals(2, -donor.neg<int>(2));
+        this.assertEquals(-1, 1 + donor.neg<int>(2));
+        this.assertEquals(7, await donor.later<int>(7));
+    }
+}

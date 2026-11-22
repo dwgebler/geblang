@@ -9,6 +9,7 @@ import (
 )
 
 func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value, error) {
+	args = runtime.UnwrapClassArgs(args)
 	switch fn {
 	case "function", "class":
 		return vm.reflectLookupNativeCall(fn, args)

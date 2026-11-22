@@ -550,6 +550,21 @@ func (c *Compiler) emitAt(op Op, line int, column int, operands ...int64) {
 	c.chunk.Instructions = append(c.chunk.Instructions, Instruction{Op: op, Operands: operands, Line: int32(line), Column: clampColumn(column)})
 }
 
+func (c *Compiler) recordCallee(line, column int, callee ast.Expression) {
+	if c.chunk.CalleeNames == nil {
+		c.chunk.CalleeNames = map[int64]string{}
+	}
+	c.chunk.CalleeNames[CallSiteKey(int32(line), clampColumn(column))] = callee.String()
+}
+
+// invokeNameConstant adds the "__invoke" name for a value call and records its callee text for not-callable errors.
+func (c *Compiler) invokeNameConstant(call *ast.CallExpression) int64 {
+	c.recordCallee(call.Token.Line, call.Token.Column, call.Callee)
+	index := int64(len(c.chunk.Constants))
+	c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+	return index
+}
+
 func (c *Compiler) emitJump(op Op, line int, column int) int {
 	c.emitAt(op, line, column, -1)
 	return len(c.chunk.Instructions) - 1

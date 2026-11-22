@@ -163,6 +163,74 @@ func TestLayoutRendersTableOfContents(t *testing.T) {
 	}
 }
 
+func TestLayoutRendersCollapsedInlineTOCAfterTitle(t *testing.T) {
+	body := markdownToHTML([]byte("# Guide\n\nIntro.\n\n## Alpha\n\na\n\n### Detail\n\nd\n\n## Beta\n\nb\n"))
+	p := page{Output: "guide.html", Title: "Guide", HTML: body}
+	out := layout([]page{p}, p, nil, nil)
+	inline := strings.Index(out, `<details class="toc-inline d-lg-none">`)
+	if inline < 0 {
+		t.Fatalf("layout missing inline TOC: %q", out)
+	}
+	if h1 := strings.Index(out, "</h1>"); h1 < 0 || inline < h1 || inline > strings.Index(out, "<p>Intro.") {
+		t.Errorf("inline TOC must sit between the title and the first paragraph")
+	}
+	block := out[inline : strings.Index(out[inline:], "</details>")+inline]
+	for _, want := range []string{"<summary>On this page</summary>", `href="#alpha"`, `toc-sub"><a href="#detail"`, `href="#beta"`} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("inline TOC missing %q: %q", want, block)
+		}
+	}
+	if strings.Contains(block, " open") {
+		t.Errorf("inline TOC must start collapsed: %q", block)
+	}
+}
+
+func TestLayoutOmitsInlineTOCForSingleSection(t *testing.T) {
+	body := markdownToHTML([]byte("# Only\n\n## One Section\n\ntext\n"))
+	p := page{Output: "only.html", Title: "Only", HTML: body}
+	if out := layout([]page{p}, p, nil, nil); strings.Contains(out, "toc-inline") {
+		t.Errorf("expected no inline TOC for a single section")
+	}
+}
+
+func TestInlineTOCWithoutTitleLeadsBody(t *testing.T) {
+	body := markdownToHTML([]byte("## Alpha\n\na\n\n## Beta\n\nb\n"))
+	if got := withInlineTOC(body); !strings.HasPrefix(got, `<details class="toc-inline`) {
+		t.Errorf("inline TOC should lead a body with no h1: %q", got)
+	}
+}
+
+func TestLayoutCollapsesChapterNavOnNarrowScreens(t *testing.T) {
+	a := page{Output: "a.html", Title: "Alpha & Co", HTML: "<h1>Alpha</h1>"}
+	b := page{Output: "b.html", Title: "Beta", HTML: "<h1>Beta</h1>"}
+	out := layout([]page{a, b}, a, nil, &b)
+	start := strings.Index(out, `<details class="chapter-nav">`)
+	if start < 0 {
+		t.Fatalf("layout missing collapsed chapter nav: %q", out)
+	}
+	block := out[start : strings.Index(out[start:], "</details>")+start]
+	for _, want := range []string{`<span class="chapter-nav-current">Alpha &amp; Co</span>`, `active" href="a.html"`, `href="b.html"`} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("chapter nav missing %q: %q", want, block)
+		}
+	}
+	if !strings.Contains(out, `<aside class="col-lg-3 d-none d-lg-block">`) {
+		t.Errorf("desktop sidebar must be hidden below 992px")
+	}
+	if !strings.Contains(out, `class="pager d-flex`) {
+		t.Errorf("prev/next row must carry the pager class")
+	}
+}
+
+func TestSearchFormCarriesNavbarSearchClass(t *testing.T) {
+	old := searchURL
+	searchURL = "/search"
+	defer func() { searchURL = old }()
+	if !strings.Contains(searchFormHTML(), `class="navbar-search`) {
+		t.Errorf("search form must carry navbar-search for the mobile navbar layout")
+	}
+}
+
 func TestLoadExamplePagesBuildsIndexGroupAndFilePages(t *testing.T) {
 	dir := t.TempDir()
 	appDir := filepath.Join(dir, "app")

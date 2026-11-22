@@ -1,0 +1,17 @@
+module zero_param_type_args_donor;
+
+export class Item {
+    int n = 0;
+}
+
+export func isItem<T>(): bool {
+    return Item() instanceof T;
+}
+
+export func ignore<T>(): bool {
+    return true;
+}
+
+export func probe<T>(any value): bool {
+    return value instanceof T;
+}

@@ -1,5 +1,37 @@
 # Release Notes
 
+## 1.46.0
+
+### Added
+
+- Inside generic code a type parameter can be used anywhere a class reference
+  is accepted: `json.parseAs(body, T)` (and the yaml, toml and xml forms),
+  `T(...)`, `reflect` functions, equality and dict keys. A binding to a generic
+  class keeps its type arguments, so `T` bound to `Box<int>` builds and checks a
+  `Box<int>`. A collection, union, nullable or missing binding raises a
+  `TypeError` naming `T`.
+- `geblang check` reports a call that can never bind a type parameter the
+  function uses as a value, such as `make()` for `func make<T>(): T { return T(); }`.
+
+### Fixed
+
+- On the bytecode VM, explicit type arguments on a generic function with no
+  parameters (`make<User>()`) are now bound inside the function; before, `T`
+  was left unbound there and the arguments carried over into the next call,
+  where they could bind the wrong type.
+- A call with explicit type arguments is a complete operand for prefix
+  operators, `await`, and arithmetic, shift and comparison operators:
+  `await load<User>()`, `-f<int>(x)` and `1 + f<int>(x)` parse as calls. Before,
+  `await` rejected them and the other operators read the `<` as a comparison.
+- Calling a value that is not callable raises `x is not callable`, naming the
+  callee, on both backends and for deferred calls too. The bytecode VM used to
+  report `unknown method int.__invoke`, and a deferred call on the evaluator
+  named the callee `<precomputed>`.
+- When an exported `main` raises an uncaught error, the trace's `<top level>`
+  frame shows the line `main` is declared on, under `geblang run` and in built
+  binaries alike. Before, it showed a line from runtime-generated code that
+  differed between the two.
+
 ## 1.45.0
 
 ### Added

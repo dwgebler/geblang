@@ -341,7 +341,7 @@ func (l fakeModuleLoader) FindFunctionByName(name string) (runtime.Value, bool) 
 	return nil, false
 }
 
-func (l fakeModuleLoader) DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
+func (l fakeModuleLoader) DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value, typeArgs []string) (runtime.Value, error) {
 	return nil, fmt.Errorf("module %s is not loaded", class.Module)
 }
 

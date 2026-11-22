@@ -31,6 +31,9 @@ func ValuesIdentical(left, right Value) bool {
 	case *Class:
 		r, ok := right.(*Class)
 		return ok && l == r
+	case BoundClass:
+		r, ok := right.(BoundClass)
+		return ok && boundClassesEqual(l, r)
 	case *List:
 		r, ok := right.(*List)
 		return ok && l == r

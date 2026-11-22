@@ -104,6 +104,9 @@ func LeafValuesEqual(left Value, right Value) (equal bool, handled bool) {
 			return leftValue.Name == rv.Name, true
 		}
 		return false, true
+	case BoundClass:
+		rightValue, ok := right.(BoundClass)
+		return ok && boundClassesEqual(leftValue, rightValue), true
 	case NativeObject:
 		rightValue, ok := right.(NativeObject)
 		return ok && nativeObjectsEqual(leftValue, rightValue), true

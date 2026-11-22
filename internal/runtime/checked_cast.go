@@ -201,6 +201,14 @@ func SubstituteNestedTypeBindings(typ *ast.TypeRef, bindings map[string]string, 
 	return substituteBoundArgs(typ, bindings, parse)
 }
 
+// SubstituteTypeBindings binds type-parameter names anywhere in typ, including the root.
+func SubstituteTypeBindings(typ *ast.TypeRef, bindings map[string]string, parse func(string) *ast.TypeRef) (*ast.TypeRef, bool) {
+	if len(bindings) == 0 {
+		return typ, false
+	}
+	return substituteBoundRef(typ, bindings, parse)
+}
+
 func substituteBoundRef(typ *ast.TypeRef, bindings map[string]string, parse func(string) *ast.TypeRef) (*ast.TypeRef, bool) {
 	if typ == nil {
 		return nil, false

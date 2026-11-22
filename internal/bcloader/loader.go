@@ -746,7 +746,7 @@ func (l *Loader) FieldsForModuleClass(class runtime.BytecodeClass) (runtime.Valu
 // DeserializeModuleClass picks the right chunk for a class returned
 // from another module (or the main program) and runs the local
 // deserialize path on a sub-VM bound to that chunk.
-func (l *Loader) DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
+func (l *Loader) DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value, typeArgs []string) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if class.Module == "" {
 		if !l.hasMainChunk {
@@ -761,7 +761,7 @@ func (l *Loader) DeserializeModuleClass(class runtime.BytecodeClass, value runti
 		chunk = c
 	}
 	vm, pool := l.moduleVM(class.Module, chunk, nil)
-	result, err := vm.DeserializeIntoChunkClass(class, value)
+	result, err := vm.DeserializeIntoChunkClass(class, value, typeArgs)
 	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }

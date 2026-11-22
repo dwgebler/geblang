@@ -1,0 +1,141 @@
+/**
+ * @title Type parameters as values
+ * @summary Inside generic code a type parameter can be passed wherever a class
+ * reference is accepted, constructed, compared and used as a dict key, with its
+ * binding enforced.
+ */
+import test;
+import json;
+import yaml;
+import reflect;
+
+class User {
+    int id = 0;
+    string name = "";
+
+    static func label(): string {
+        return "user";
+    }
+}
+
+class Box<T> {
+    T v;
+
+    func Box(T v) {
+        this.v = v;
+    }
+}
+
+class Wrap<T> {
+    T inner;
+}
+
+class Repo<T> {
+    func load(string body): T {
+        return json.parseAs(body, T);
+    }
+}
+
+class UserRepo extends Repo<User> {}
+
+func decode<T>(string body): T {
+    return json.parseAs(body, T);
+}
+
+func make<T>(any v): T {
+    return T(v);
+}
+
+func blank<T>(): T {
+    return T();
+}
+
+func kind<T>(): any {
+    return T;
+}
+
+func viaYaml<T>(string body): T {
+    return yaml.parseAs(body, T);
+}
+
+func unbound<T>(any x): any {
+    return T;
+}
+
+func typeErrorOf(callable f): string {
+    try {
+        f();
+    } catch (TypeError e) {
+        return e.message;
+    }
+    return "no error";
+}
+
+class TypeParamValuesTest extends test.Test {
+    @test
+    func parsesIntoTheBoundClass(): void {
+        let u = decode<User>("{\"id\": 1, \"name\": \"Mara\"}");
+        this.assertTrue(u instanceof User);
+        this.assertEquals("Mara", u.name);
+        this.assertEquals(7, viaYaml<User>("id: 7").id);
+        this.assertEquals("cannot assign string to int field User.id", typeErrorOf(func(): void {
+            decode<User>("{\"id\": \"x\"}");
+        }));
+    }
+
+    @test
+    func boundGenericClassKeepsItsArguments(): void {
+        let b = decode<Box<int>>("{\"v\": 5}");
+        this.assertTrue(b instanceof Box<int>);
+        this.assertEquals({"T": "int"}, reflect.typeBindings(b));
+        this.assertEquals("Box expects T for parameter 'v', got string", typeErrorOf(func(): void {
+            decode<Box<int>>("{\"v\": \"x\"}");
+        }));
+        this.assertTrue(decode<Wrap<User>>("{\"inner\": {\"id\": 2}}").inner instanceof User);
+    }
+
+    @test
+    func constructsTheBoundClass(): void {
+        this.assertEquals(3, make<Box<int>>(3).v);
+        this.assertTrue(blank<User>() instanceof User);
+        this.assertEquals("type parameter T is bound to int, which cannot be constructed", typeErrorOf(func(): void {
+            blank<int>();
+        }));
+    }
+
+    @test
+    func behavesAsAClassReference(): void {
+        this.assertEquals("<class User>", "${kind<User>()}");
+        this.assertEquals("int", "${kind<int>()}");
+        this.assertEquals("<class Box<string>>", "${kind<Box<string>>()}");
+        this.assertTrue(kind<User>() == User);
+        this.assertTrue(kind<Box<int>>() == kind<Box<int>>());
+        this.assertFalse(kind<Box<int>>() == kind<Box<string>>());
+        this.assertFalse(kind<Box<int>>() == Box);
+        this.assertEquals("Box", reflect.className(kind<Box<int>>()));
+        this.assertEquals("user", kind<User>().label());
+        dict<any, int> d = {};
+        d[kind<Box<int>>()] = 1;
+        this.assertEquals(1, d[kind<Box<int>>()]);
+    }
+
+    @test
+    func classLevelParameterIncludingSubclasses(): void {
+        this.assertEquals(9, UserRepo().load("{\"id\": 9}").id);
+        this.assertEquals(4, Repo<User>().load("{\"id\": 4}").id);
+    }
+
+    @test
+    func rejectsBindingsThatAreNotClasses(): void {
+        this.assertEquals("type parameter T is bound to list<User>, which is not a class", typeErrorOf(func(): void {
+            kind<list<User>>();
+        }));
+        this.assertEquals("type parameter T is bound to ?User, which is not a class", typeErrorOf(func(): void {
+            kind<?User>();
+        }));
+        let viaRef = unbound;
+        this.assertEquals("type parameter T of unbound is not bound; pass a type argument", typeErrorOf(func(): void {
+            viaRef(1);
+        }));
+    }
+}

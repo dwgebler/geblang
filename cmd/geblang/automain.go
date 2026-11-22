@@ -20,15 +20,12 @@ func appendMainInvocation(program *ast.Program) bool {
 	if len(main.Parameters) == 0 {
 		callArgs = ""
 	}
-	var body strings.Builder
+	body := "main(" + callArgs + ");"
 	if returnsValue(main) {
-		body.WriteString("let __geb_main_result = main(" + callArgs + ");\n")
-		body.WriteString("if (__geb_main_result != null) { sys.exit(__geb_main_result as int); }\n")
-	} else {
-		body.WriteString("main(" + callArgs + ");\n")
+		body = "let __geb_main_result = main(" + callArgs + "); if (__geb_main_result != null) { sys.exit(__geb_main_result as int); }"
 	}
 
-	bodyStmts := parseStatements(body.String())
+	bodyStmts := parseStatements(onLine(main.Token.Line, body))
 	if bodyStmts == nil {
 		return false
 	}
@@ -49,13 +46,21 @@ func appendMainInvocation(program *ast.Program) bool {
 	if init := existingInit(program); init != nil {
 		init.Body.Statements = append(init.Body.Statements, bodyStmts...)
 	} else {
-		initStmts := parseStatements("init {\n" + body.String() + "}\n")
+		initStmts := parseStatements(onLine(main.Token.Line, "init { "+body+" }"))
 		if initStmts == nil {
 			return false
 		}
 		program.Statements = append(program.Statements, initStmts...)
 	}
 	return true
+}
+
+// onLine places synthetic source on line so the runtime's call into main reports main's own line in traces.
+func onLine(line int, src string) string {
+	if line < 1 {
+		line = 1
+	}
+	return strings.Repeat("\n", line-1) + src + "\n"
 }
 
 func parseStatements(src string) []ast.Statement {

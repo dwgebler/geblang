@@ -1,0 +1,21 @@
+/**
+ * @title Explicit type arguments on imported parameterless generics
+ * @summary An imported generic function with no parameters binds its explicit
+ * type arguments, and the bindings do not leak into the next call.
+ */
+import test;
+import zero_param_type_args_donor as donor;
+
+class ZeroParamTypeArgsCrossModuleTest extends test.Test {
+    @test
+    func importedFunctionBindsExplicitTypeArgument(): void {
+        this.assertTrue(donor.isItem<donor.Item>());
+        this.assertFalse(donor.isItem<string>());
+    }
+
+    @test
+    func bindingsDoNotLeakAcrossModules(): void {
+        donor.ignore<donor.Item>();
+        this.assertFalse(donor.probe(donor.Item()));
+    }
+}

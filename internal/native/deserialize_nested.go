@@ -3,6 +3,7 @@ package native
 import (
 	"strings"
 
+	"geblang/internal/ast"
 	"geblang/internal/runtime"
 )
 
@@ -117,6 +118,29 @@ func splitTopLevelCommas(s string) []string {
 // unchanged when nothing recurses. resolveClass reports whether a name
 // is a user class (yielding the class value to deserialize into);
 // deserialize performs the nested parseAs.
+// BindFieldTypes substitutes a bound generic class's type arguments into its declared field types so T-typed fields hydrate as the concrete class.
+func BindFieldTypes(fields []FieldTypeInfo, bindings map[string]string, parse func(string) *ast.TypeRef) []FieldTypeInfo {
+	if len(bindings) == 0 {
+		return fields
+	}
+	out := make([]FieldTypeInfo, len(fields))
+	for i, f := range fields {
+		out[i] = f
+		if f.Type == "" {
+			continue
+		}
+		ref := parse(f.Type)
+		if ref == nil {
+			continue
+		}
+		if bound, changed := runtime.SubstituteTypeBindings(ref, bindings, parse); changed {
+			out[i].Type = bound.String()
+			out[i].Class = nil
+		}
+	}
+	return out
+}
+
 func HydrateNestedClassFields(
 	fields []FieldTypeInfo,
 	value runtime.Dict,

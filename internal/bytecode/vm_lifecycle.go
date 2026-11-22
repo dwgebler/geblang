@@ -72,6 +72,10 @@ func newVMWithCapacities(chunk Chunk, stdout io.Writer, caps vmCapacities) *VM {
 // to positional constructor calls with dict keys matched against
 // constructor parameter names.
 func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value) (runtime.Value, error) {
+	var typeArgs []string
+	if bound, isBound := classValue.(runtime.BoundClass); isBound {
+		classValue, typeArgs = bound.Class, bound.TypeArgs
+	}
 	class, ok := classValue.(runtime.BytecodeClass)
 	if !ok {
 		// `reflect.class("Name")` on the VM can compile-time-resolve
@@ -105,9 +109,9 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 	// (class.Module=="" while vm.moduleName!=""), and the main VM
 	// holding an imported-module class.
 	if vm.moduleLoader != nil && class.Module != vm.moduleName {
-		return vm.moduleLoader.DeserializeModuleClass(class, value)
+		return vm.moduleLoader.DeserializeModuleClass(class, value, typeArgs)
 	}
-	return vm.DeserializeIntoChunkClass(class, value)
+	return vm.DeserializeIntoChunkClass(class, value, typeArgs)
 }
 
 // deserializeViaInheritedFactory runs a static __deserialize factory inherited from a cross-module ancestor (same-chunk ancestors handled by lookupStaticDunder); found is false when none declares it.
@@ -203,6 +207,10 @@ func classHasMethod(class *runtime.Class, method string) bool {
 // loaderClassDeserializer deserializes into a class on a loader worker; a reflect-style class target resolves through FindClassByName.
 func loaderClassDeserializer(loader ModuleLoader) native.ClassDeserializerFunc {
 	return func(classValue runtime.Value, value runtime.Value) (runtime.Value, error) {
+		var typeArgs []string
+		if bound, isBound := classValue.(runtime.BoundClass); isBound {
+			classValue, typeArgs = bound.Class, bound.TypeArgs
+		}
 		class, ok := classValue.(runtime.BytecodeClass)
 		if !ok {
 			target, isTarget := classValue.(runtime.DecoratorTarget)
@@ -218,7 +226,7 @@ func loaderClassDeserializer(loader ModuleLoader) native.ClassDeserializerFunc {
 				return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
 			}
 		}
-		return loader.DeserializeModuleClass(class, value)
+		return loader.DeserializeModuleClass(class, value, typeArgs)
 	}
 }
 

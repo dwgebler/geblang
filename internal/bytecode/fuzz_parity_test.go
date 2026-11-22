@@ -165,7 +165,10 @@ func (g *fuzzGen) faultStmt() string {
 	// for constant faults is a known, accepted difference.
 	rt := func(n int) string { return "(\"" + strconv.Itoa(n) + "\".toInt())" }
 	var body string
-	switch g.rng.Intn(6) {
+	switch g.rng.Intn(7) {
+	case 6:
+		values := []string{g.intLit(), g.stringLit(), "null", "[1]", "{\"k\": 1}", "int"}
+		body = "any nc = " + values[g.rng.Intn(len(values))] + "; let c = nc();"
 	case 0:
 		body = "let q = " + g.intLit() + " / " + rt(g.rng.Intn(3)) + ";"
 	case 1:
@@ -721,6 +724,52 @@ func (g *fuzzGen) unionForwardBlock() (decls string, calls []string) {
 	return d.String(), calls
 }
 
+// explicitTypeArgsBlock calls generics with explicit type arguments on every arity, as operator operands and as type-parameter values, and checks no binding leaks into an inferring call (all 1.46.0).
+func (g *fuzzGen) explicitTypeArgsBlock() (decls string, calls []string) {
+	var d strings.Builder
+	d.WriteString("class FItem { int n = 0; }\n")
+	d.WriteString("func fZero<T>(): bool { return FItem() instanceof T; }\n")
+	d.WriteString("func fOne<T>(int x): bool { return FItem() instanceof T; }\n")
+	d.WriteString("func fNoop<T>(): bool { return true; }\n")
+	d.WriteString("func fProbe<T>(any v): bool { return v instanceof T; }\n")
+	d.WriteString("func fNeg<T>(int v): int { return -v; }\n")
+	d.WriteString("class FBox<T> { T v; func FBox(T v) { this.v = v; } }\n")
+	d.WriteString("func fKind<T>(): any { return T; }\n")
+	d.WriteString("func fMake<T>(any v): any { return T(v); }\n")
+	d.WriteString("class FSvc {\n  func zero<T>(): bool { return FItem() instanceof T; }\n  static func szero<T>(): bool { return FItem() instanceof T; }\n}\n")
+	types := []string{"FItem", "string", "int", "list<int>"}
+	pick := func() string { return types[g.rng.Intn(len(types))] }
+	shapes := []func() string{
+		func() string { return "io.println(fZero<" + pick() + ">());" },
+		func() string { return "io.println(fOne<" + pick() + ">(" + g.intLit() + "));" },
+		func() string { return "io.println(FSvc().zero<" + pick() + ">());" },
+		func() string { return "io.println(FSvc.szero<" + pick() + ">());" },
+		func() string { return "fNoop<" + pick() + ">(); io.println(fProbe(FItem()));" },
+		func() string { return "io.println(-fNeg<int>(" + g.intLit() + "));" },
+		func() string { return "io.println(!fZero<" + pick() + ">());" },
+		func() string {
+			return "try { io.println(fKind<" + pick() + ">()); } catch (TypeError e) { io.println(e.message); }"
+		},
+		func() string {
+			return "try { io.println(fMake<FBox<int>>(" + g.intLit() + ").v); } catch (TypeError e) { io.println(e.message); }"
+		},
+		func() string {
+			return "try { io.println(fMake<FBox<int>>(" + g.stringLit() + ").v); } catch (TypeError e) { io.println(e.message); }"
+		},
+		func() string {
+			return "io.println(fKind<FBox<int>>() == fKind<FBox<" + pick() + ">>());"
+		},
+		func() string {
+			ops := []string{"+", "-", "*", "<", ">="}
+			return "io.println(" + g.intLit() + " " + ops[g.rng.Intn(len(ops))] + " fNeg<int>(" + g.intLit() + "));"
+		},
+	}
+	for i := 0; i < 3+g.rng.Intn(4); i++ {
+		calls = append(calls, shapes[g.rng.Intn(len(shapes))]())
+	}
+	return d.String(), calls
+}
+
 // reflectTypesBlock reflects generic, nullable, collection and class types on every callable shape and field (returnType erased type args on the VM until 1.41.3).
 func (g *fuzzGen) reflectTypesBlock() (decls string, calls []string) {
 	types := [][2]string{
@@ -784,7 +833,7 @@ func (g *fuzzGen) program() string {
 	// declarations cannot collide; the rest of the budget is scalar
 	// expressions and fault statements.
 	var sectionCalls []string
-	switch g.rng.Intn(16) {
+	switch g.rng.Intn(17) {
 	case 0:
 		decls, calls := g.classBlock()
 		b.WriteString(decls)
@@ -847,6 +896,10 @@ func (g *fuzzGen) program() string {
 		sectionCalls = calls
 	case 15:
 		decls, calls := g.predicateBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 16:
+		decls, calls := g.explicitTypeArgsBlock()
 		b.WriteString(decls)
 		sectionCalls = calls
 	}

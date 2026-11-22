@@ -37,13 +37,14 @@ type Diagnostic struct {
 }
 
 type Analyzer struct {
-	diagnostics []Diagnostic
-	scopes      []map[string]typeInfo
-	functions   map[string][]methodInfo
-	classes     map[string]classInfo
-	interfaces  map[string]interfaceInfo
-	enums       map[string]enumInfo
-	aliases     map[string]typeInfo
+	typeParamValues typeParamValueState
+	diagnostics     []Diagnostic
+	scopes          []map[string]typeInfo
+	functions       map[string][]methodInfo
+	classes         map[string]classInfo
+	interfaces      map[string]interfaceInfo
+	enums           map[string]enumInfo
+	aliases         map[string]typeInfo
 	// typeParamScope counts in-scope generic type-param names so the
 	// unknown-type check accepts `func f<T>(T x)`.
 	typeParamScope map[string]int
@@ -276,6 +277,7 @@ func (a *Analyzer) Analyze(program *ast.Program) []Diagnostic {
 				moduleTopLevelKind(stmt))
 		}
 	}
+	a.reportUninferableTypeParamCalls()
 	return a.diagnostics
 }
 
@@ -419,6 +421,7 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 			info := a.methodInfoFromFunction(stmt)
 			key := strings.ToLower(info.name)
 			a.functions[key] = append(a.functions[key], info)
+			a.recordTopLevelFunction(stmt)
 		case *ast.ClassStatement:
 			info := classInfo{name: stmt.Name.Value, decorated: len(stmt.Decorators) > 0, methods: map[string][]methodInfo{}}
 			for _, generic := range stmt.Generics {
@@ -850,6 +853,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		a.declare(stmt.Name.Value, typeInfo{name: "func", known: true})
 		popTypeParams := a.pushTypeParams(stmt.Generics)
 		defer popTypeParams()
+		defer a.pushTypeParamFunction(stmt)()
 		a.pushScope()
 		for _, param := range stmt.Parameters {
 			if param.Default != nil {
@@ -2892,6 +2896,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	switch expr := expr.(type) {
 	case *ast.Identifier:
 		a.checkBindingNotDestroyed(expr)
+		a.noteTypeParamValueUse(expr.Value)
 		if _, shadowed := a.lookup(expr.Value); a.moduleAliases[expr.Value] && !shadowed {
 			a.errorAt(expr.Token, "'%s' is a module, not a value; reference its members as '%s.<name>' or alias the import with 'import %s as <name>'", expr.Value, expr.Value, expr.Value)
 		}
@@ -3003,6 +3008,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		a.checkDeprecatedCall(expr)
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
 			if overloads := a.functions[strings.ToLower(ident.Value)]; len(overloads) > 0 {
+				a.noteUntypedGenericCall(expr, ident)
 				a.checkGenericCallInference(expr, ident.Value, overloads)
 				a.checkFunctionCallTypeArgs(expr, ident.Value, overloads)
 			}
@@ -3131,6 +3137,9 @@ func (a *Analyzer) checkBareCalleeKnown(ident *ast.Identifier) {
 		return
 	}
 	if _, ok := a.lookup(name); ok {
+		return
+	}
+	if a.typeParamScope[name] > 0 {
 		return
 	}
 	if _, ok := a.functions[strings.ToLower(name)]; ok {

@@ -1297,7 +1297,7 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 
 	for !p.peekTokenIs(token.Semicolon) && !p.peekTokenIs(token.RParen) && !p.peekTokenIs(token.RBracket) &&
 		!p.peekTokenIs(token.Comma) && !p.peekTokenIs(token.Colon) && !p.peekTokenIs(token.Arrow) &&
-		precedence < p.peekPrecedence() {
+		precedence < p.peekPrecedenceAfter(left) {
 		p.nextToken()
 		left = p.parseInfix(left)
 		if left == nil {
@@ -1538,14 +1538,20 @@ func canBeGenericCallCallee(expr ast.Expression) bool {
 // over-accept. When this returns false the caller falls back to the regular
 // less-than infix path so chained comparisons keep working.
 func (p *Parser) looksLikeGenericCallTypeArgs() bool {
-	if !p.curTokenIs(token.LT) {
-		return false
+	// p.curToken sits at p.position-2 in the lexed token slice, so the token after `<` is at p.position-1.
+	return p.curTokenIs(token.LT) && p.typeArgsCloseBeforeCall(p.position-1)
+}
+
+// peekPrecedenceAfter gives a `<` that opens a generic call on left the precedence of a call, so `-f<int>(x)` and `a + f<int>(x)` take the whole call as their operand.
+func (p *Parser) peekPrecedenceAfter(left ast.Expression) int {
+	if p.peekTokenIs(token.LT) && canBeGenericCallCallee(left) && p.typeArgsCloseBeforeCall(p.position) {
+		return call
 	}
-	// p.curToken sits at p.position-2 in the lexed token slice; the token
-	// immediately following `<` is at p.position-1 (the current peek). Walk
-	// forward from there, tracking nesting depth so nested generic
-	// arguments like `Box<list<int>>(...)` close correctly.
-	idx := p.position - 1
+	return p.peekPrecedence()
+}
+
+// typeArgsCloseBeforeCall walks a type-argument list starting at token idx (just after `<`), tracking nesting so `Box<list<int>>(...)` closes correctly.
+func (p *Parser) typeArgsCloseBeforeCall(idx int) bool {
 	depth := 1
 	for idx < len(p.tokens) && depth > 0 {
 		tok := p.tokens[idx].Type

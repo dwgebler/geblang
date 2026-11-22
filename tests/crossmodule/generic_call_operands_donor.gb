@@ -1,0 +1,9 @@
+module generic_call_operands_donor;
+
+export func neg<T>(int v): int {
+    return -v;
+}
+
+export async func later<T>(int v): int {
+    return v;
+}

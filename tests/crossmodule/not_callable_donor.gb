@@ -1,0 +1,13 @@
+module not_callable_donor;
+
+export int count = 3;
+
+export class Plain {
+    int n = 0;
+}
+
+export class Doubler {
+    func __invoke(int x): int {
+        return x * 2;
+    }
+}

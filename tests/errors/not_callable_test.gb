@@ -1,0 +1,57 @@
+/**
+ * @title Calling a value that is not callable
+ * @summary Calling a value that is not a function, class or instance with
+ * __invoke raises a RuntimeError naming the callee, including for deferred calls.
+ */
+import test;
+
+class Plain {
+    int n = 0;
+}
+
+class Doubler {
+    func __invoke(int x): int {
+        return x * 2;
+    }
+}
+
+func messageOf(callable f): string {
+    try {
+        f();
+    } catch (RuntimeError e) {
+        return e.message;
+    }
+    return "no error";
+}
+
+func deferredCall(): void {
+    let n = 1;
+    defer n();
+}
+
+class NotCallableTest extends test.Test {
+    @test
+    func namesTheCallee(): void {
+        let x = 5;
+        let label = "a";
+        let p = Plain();
+        let items = [1, 2];
+        this.assertEquals("x is not callable", messageOf(func(): void { x(); }));
+        this.assertEquals("label is not callable", messageOf(func(): void { label(1); }));
+        this.assertEquals("p is not callable", messageOf(func(): void { p(); }));
+        this.assertEquals("items[0] is not callable", messageOf(func(): void { items[0](); }));
+        this.assertEquals("x is not callable", messageOf(func(): void { x(a: 1); }));
+    }
+
+    @test
+    func deferredCallNamesTheCallee(): void {
+        this.assertEquals("n is not callable", messageOf(deferredCall));
+    }
+
+    @test
+    func callableValuesStillCall(): void {
+        this.assertEquals(8, Doubler()(4));
+        let f = func(int a): int { return a + 1; };
+        this.assertEquals(2, f(1));
+    }
+}

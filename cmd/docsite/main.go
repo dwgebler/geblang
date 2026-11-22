@@ -382,7 +382,7 @@ func searchFormHTML() string {
 		scope = `<input type="hidden" name="product" value="` + searchScope + `">`
 	}
 	return `
-      <form class="d-flex ms-auto me-3" role="search" action="` + searchURL + `" method="get">
+      <form class="navbar-search d-flex ms-auto me-3" role="search" action="` + searchURL + `" method="get">
         <input class="form-control form-control-sm me-2" type="search" name="q" placeholder="Search this manual">` + scope + `
         <button class="btn btn-outline-light btn-sm" type="submit">Search</button>
       </form>`
@@ -872,8 +872,8 @@ var (
 	tagPattern     = regexp.MustCompile(`<[^>]+>`)
 )
 
-// tableOfContents builds an "On this page" nav from the h2/h3 headings; "" when fewer than two.
-func tableOfContents(body string) string {
+// tocItems renders the h2/h3 headings as list items; "" when fewer than two.
+func tocItems(body string) string {
 	matches := headingPattern.FindAllStringSubmatch(body, -1)
 	if len(matches) < 2 {
 		return ""
@@ -890,7 +890,29 @@ func tableOfContents(body string) string {
 		}
 		items.WriteString(`<li class="toc-item` + sub + `"><a href="#` + m[2] + `">` + label + `</a></li>`)
 	}
-	return `<nav class="toc"><div class="toc-title">On this page</div><ul class="toc-list">` + items.String() + `</ul></nav>`
+	return items.String()
+}
+
+func tableOfContents(body string) string {
+	items := tocItems(body)
+	if items == "" {
+		return ""
+	}
+	return `<nav class="toc"><div class="toc-title">On this page</div><ul class="toc-list">` + items + `</ul></nav>`
+}
+
+// withInlineTOC places a collapsed TOC after the h1 for screens too narrow for the TOC column.
+func withInlineTOC(body string) string {
+	items := tocItems(body)
+	if items == "" {
+		return body
+	}
+	block := `<details class="toc-inline d-lg-none"><summary>On this page</summary><nav><ul class="toc-list">` + items + `</ul></nav></details>`
+	if i := strings.Index(body, "</h1>"); i >= 0 {
+		i += len("</h1>")
+		return body[:i] + block + body[i:]
+	}
+	return block + body
 }
 
 func writePage(outDir string, pages []page, index int) error {
@@ -1067,7 +1089,7 @@ func layout(pages []page, current page, prev, next *page) string {
 		}
 		nav.WriteString(`<a class="list-group-item list-group-item-action` + active + depthClass + `" href="` + relHref(current.Output, p.Output) + `">` + html.EscapeString(p.Title) + `</a>`)
 	}
-	pager := `<div class="d-flex justify-content-between border-top pt-4 mt-5">`
+	pager := `<div class="pager d-flex justify-content-between border-top pt-4 mt-5">`
 	if prev != nil {
 		pager += `<a class="btn btn-outline-secondary" href="` + relHref(current.Output, prev.Output) + `">&larr; ` + html.EscapeString(prev.Title) + `</a>`
 	} else {
@@ -1107,14 +1129,20 @@ func layout(pages []page, current page, prev, next *page) string {
   </nav>
   <main class="container-fluid manual-shell py-4">
     <div class="row g-4">
-      <aside class="col-lg-3">
+      <div class="d-lg-none">
+        <details class="chapter-nav">
+          <summary><span class="chapter-nav-label">Chapters</span> <span class="chapter-nav-current">` + html.EscapeString(current.Title) + `</span></summary>
+          <div class="list-group shadow-sm">` + nav.String() + `</div>
+        </details>
+      </div>
+      <aside class="col-lg-3 d-none d-lg-block">
         <div class="sidebar">
           <div class="list-group shadow-sm">` + nav.String() + `</div>
         </div>
       </aside>
       <article class="` + articleClass + `">
         <div class="content p-4 p-lg-5 shadow-sm">
-` + current.HTML + pager + `
+` + withInlineTOC(current.HTML) + pager + `
         </div>
       </article>` + tocAside + `
     </div>

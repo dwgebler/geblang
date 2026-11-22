@@ -457,6 +457,12 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 		return 0, vm.runtimeError(instruction, "method name constant must be string")
 	}
 	// A no-argument call on a string/list/dict/set/bytes needs no argument slice at all.
+	if nameValue.Value == "__invoke" {
+		if recv := len(vm.stack) - 1 - argc; recv >= 0 && notInvokable(vm.stack[recv].ToValue()) {
+			vm.truncateStack(recv)
+			return vm.notCallableError(instruction, ip)
+		}
+	}
 	if top := len(vm.stack) - 1; argc == 0 && top >= 0 && isPrimitiveReceiverVM(vm.stack[top]) {
 		receiver := vm.stack[top].Boxed
 		vm.truncateStack(top)
@@ -477,6 +483,12 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 	}
 	slots[0] = receiver
 	receiver = vm.bindCallableTypeArgs(receiver, callTypeArgs)
+	if bound, ok := receiver.(runtime.BoundClass); ok {
+		receiver, slots[0] = bound.Class, bound.Class
+		if nameValue.Value == "__invoke" && len(callTypeArgs) == 0 {
+			callTypeArgs = bound.TypeArgs
+		}
+	}
 	args := slots[1:]
 	switch receiver.(type) {
 	case runtime.String, *runtime.List, runtime.Dict, runtime.Set, runtime.Bytes:
@@ -1422,6 +1434,15 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 	vm.typeArgHandoff = callTypeArgs
 	defer func() { vm.typeArgHandoff = previousTypeArgs }()
 	receiver = vm.bindCallableTypeArgs(receiver, callTypeArgs)
+	if methodName == "__invoke" && notInvokable(receiver) {
+		return vm.notCallableError(instruction, ip)
+	}
+	if bound, ok := receiver.(runtime.BoundClass); ok {
+		receiver = bound.Class
+		if methodName == "__invoke" && len(callTypeArgs) == 0 {
+			callTypeArgs = bound.TypeArgs
+		}
+	}
 	if set, ok := receiver.(runtime.OverloadedFunction); ok && len(set.Callables) > 0 && methodName == "__invoke" {
 		selected, ordered, err := vm.selectBoundNamed(instruction, set, args, names)
 		if err != nil {

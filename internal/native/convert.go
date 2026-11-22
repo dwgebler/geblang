@@ -230,6 +230,8 @@ func DictKey(value runtime.Value) string {
 		return fmt.Sprintf("module:%p", value)
 	case *runtime.Class:
 		return fmt.Sprintf("class:%p", value)
+	case runtime.BoundClass:
+		return "bound-class:" + DictKey(value.Class) + "<" + strings.Join(value.TypeArgs, ",") + ">"
 	case *runtime.Interface:
 		return fmt.Sprintf("interface:%p", value)
 	case *runtime.Instance:

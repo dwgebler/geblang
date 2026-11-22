@@ -3,6 +3,7 @@ package bytecode
 import (
 	"fmt"
 	"geblang/internal/ast"
+	argbinding "geblang/internal/binding"
 	"geblang/internal/runtime"
 	"maps"
 	"sort"
@@ -628,6 +629,29 @@ func (c *Compiler) currentClassTypeParamConstraintExprs() []string {
 	return c.chunk.Classes[classIndex].TypeParamConstraintExprs
 }
 
+// typeParamOwner names the declarer of an in-scope type parameter for unbound-use errors; "" when only captured from an enclosing function.
+func (c *Compiler) typeParamOwner(name string) (string, bool) {
+	if idx := c.currentFuncIndex; idx >= 0 && int(idx) < len(c.chunk.Functions) {
+		fn := c.chunk.Functions[idx]
+		for _, param := range fn.TypeParameters {
+			if param == name {
+				return argbinding.DisplayName(fn.Name), true
+			}
+		}
+		for _, param := range fn.OuterTypeParameters {
+			if param == name {
+				return "", true
+			}
+		}
+	}
+	for _, param := range c.currentClassTypeParams() {
+		if param == name {
+			return c.chunk.Classes[c.classStack[len(c.classStack)-1]].Name, true
+		}
+	}
+	return "", false
+}
+
 func (c *Compiler) enclosingTypeParameters() []string {
 	var names []string
 	if idx := c.currentFuncIndex; idx >= 0 && int(idx) < len(c.chunk.Functions) {
@@ -1054,6 +1078,7 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 	if !ok {
 		return fmt.Errorf("bytecode compiler only supports deferring calls, not %T; use --disable-vm to run with the tree-walking evaluator", stmt.Value)
 	}
+	c.recordCallee(stmt.Token.Line, stmt.Token.Column, call.Callee)
 	// Plain identifier call: defer someFunc(args)
 	if ident, ok := call.Callee.(*ast.Identifier); ok {
 		if c.namesLocalClass(ident.Value) {

@@ -952,6 +952,10 @@ func isErrorDerived(class *runtime.Class) bool {
 }
 
 func (e *Evaluator) instantiateClass(class *runtime.Class, args []runtime.Value) (runtime.Value, error) {
+	return e.instantiateClassWithBindings(class, args, nil)
+}
+
+func (e *Evaluator) instantiateClassWithBindings(class *runtime.Class, args []runtime.Value, bindings map[string]string) (runtime.Value, error) {
 	if reason, abstract := classAbstractnessReason(class); abstract {
 		return nil, thrownError{value: e.withTrace(runtime.Error{Class: "RuntimeError", Message: reason, Parents: []string{"RuntimeError", "Error"}})}
 	}
@@ -969,6 +973,13 @@ func (e *Evaluator) instantiateClass(class *runtime.Class, args []runtime.Value)
 		return runtime.Error{Class: class.Name, Message: msg, Parents: declaredErrorParents(class)}, nil
 	}
 	instance := &runtime.Instance{Class: class, Fields: map[string]runtime.Value{}}
+	if len(bindings) > 0 {
+		instance.TypeBindings = make(map[string]string, len(bindings))
+		for k, v := range bindings {
+			instance.TypeBindings[k] = v
+		}
+		runtime.ResolveInheritedTypeBindings(instance)
+	}
 	if err := e.initializeFields(instance, class); err != nil {
 		return nil, err
 	}
@@ -976,6 +987,13 @@ func (e *Evaluator) instantiateClass(class *runtime.Class, args []runtime.Value)
 		constructor, err := selectOverload(class.Name, class.Constructors, args)
 		if err != nil {
 			return nil, err
+		}
+		if len(bindings) > 0 {
+			bound := constructor
+			bound.TypeBindings = mergeStringMaps(constructor.TypeBindings, instance.TypeBindings)
+			if err := functionArgumentsMatchError(bound, args, nil); err != nil {
+				return nil, err
+			}
 		}
 		if err := e.applyAutoParentConstructor(instance, constructor); err != nil {
 			return nil, err

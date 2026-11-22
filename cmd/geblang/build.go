@@ -311,6 +311,7 @@ func runBuild(args []string) {
 		Name:          appName,
 		AppVersion:    appVersion,
 		EntryMainArgs: entrySig.WantsArgs,
+		EntryMainLine: entrySig.Line,
 		Modules:       records,
 		Resources:     resourcePaths,
 		Permissions:   resolveBundlePermissions(manifestPerm, cliAllowFFI, cliAllowOnnx, cliAllowProcessControl, cliAllowBrowser),
@@ -392,6 +393,7 @@ func runBuild(args []string) {
 type entryMainSig struct {
 	WantsArgs  bool
 	ReturnsInt bool
+	Line       int
 }
 
 const entryMainExpected = "expected `export func main()` or `export func main(list<string> args)`, optionally returning : int"
@@ -411,7 +413,7 @@ func validateEntryMain(prog *ast.Program, entry string) (entryMainSig, error) {
 		if fn.Async || len(fn.Generics) > 0 {
 			return entryMainSig{}, fmt.Errorf("entry module %q exports an incompatible main; %s", entry, entryMainExpected)
 		}
-		sig := entryMainSig{ReturnsInt: isIntTypeRef(fn.ReturnType)}
+		sig := entryMainSig{ReturnsInt: isIntTypeRef(fn.ReturnType), Line: fn.Token.Line}
 		switch len(fn.Parameters) {
 		case 0:
 		case 1:
@@ -618,22 +620,16 @@ func runBundledWithArgs(b *bundle.Bundle, args []string) int {
 	if p := b.Manifest.Permissions; p != nil {
 		allowFFI = p.FFI
 	}
-	return runBundledEntry(b.Manifest.Entry, b.Manifest.EntryMainArgs, args, filepath.Join(tempDir, "src"), allowFFI)
+	return runBundledEntry(b.Manifest.Entry, b.Manifest.EntryMainArgs, b.Manifest.EntryMainLine, args, filepath.Join(tempDir, "src"), allowFFI)
 }
 
-func runBundledEntry(entry string, wantsArgs bool, args []string, srcDir string, allowFFI []string) int {
+func runBundledEntry(entry string, wantsArgs bool, mainLine int, args []string, srcDir string, allowFFI []string) int {
 	mainCall := "__geb_module.main()"
 	if wantsArgs {
 		mainCall = "__geb_module.main(sys.args())"
 	}
-	source := []byte(fmt.Sprintf(`import sys;
-import %s as __geb_module;
-
-let __geb_result = %s;
-if (__geb_result != null) {
-    sys.exit(__geb_result as int);
-}
-`, entry, mainCall))
+	call := fmt.Sprintf("let __geb_result = %s; if (__geb_result != null) { sys.exit(__geb_result as int); }", mainCall)
+	source := []byte(fmt.Sprintf("import sys; import %s as __geb_module;", entry) + onLine(mainLine, call))
 
 	sourcePath := filepath.Join(srcDir, "__geblang_bundle__.gb")
 	program, err := parseAndAnalyze(sourcePath, string(source))

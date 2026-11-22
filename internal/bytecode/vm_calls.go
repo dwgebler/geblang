@@ -585,6 +585,9 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	if vm.forwardThis != nil {
 		vm.inheritInstanceTypeBindings(vm.forwardThis)
 	}
+	if len(vm.pendingTypeBindings) > 0 {
+		vm.mergePendingTypeBindings()
+	}
 	return int(function.Entry) - 1, nil
 }
 
@@ -1192,19 +1195,25 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	// bindings are consumed here; the closure-inheritance path uses
 	// save/restore semantics around its caller so the restore still sees
 	// the original prev value regardless of this clear.
-	if len(vm.pendingTypeBindings) > 0 && len(vm.frames) > 0 {
-		frame := &vm.frames[len(vm.frames)-1]
-		if frame.typeBindings == nil {
-			frame.typeBindings = map[string]string{}
-		}
-		for k, v := range vm.pendingTypeBindings {
-			if _, exists := frame.typeBindings[k]; !exists {
-				frame.typeBindings[k] = v
-			}
-		}
-		vm.pendingTypeBindings = nil
-	}
+	vm.mergePendingTypeBindings()
 	return int(function.Entry) - 1, nil
+}
+
+// mergePendingTypeBindings consumes staged explicit or closure-inherited bindings into the new frame; without it a call that infers nothing would leak them into the next call.
+func (vm *VM) mergePendingTypeBindings() {
+	if len(vm.pendingTypeBindings) == 0 || len(vm.frames) == 0 {
+		return
+	}
+	frame := &vm.frames[len(vm.frames)-1]
+	if frame.typeBindings == nil {
+		frame.typeBindings = map[string]string{}
+	}
+	for k, v := range vm.pendingTypeBindings {
+		if _, exists := frame.typeBindings[k]; !exists {
+			frame.typeBindings[k] = v
+		}
+	}
+	vm.pendingTypeBindings = nil
 }
 
 func (vm *VM) startClosureFunction(instruction Instruction, ip int, closure runtime.BytecodeClosure, args []runtime.Value) (int, error) {
@@ -3019,7 +3028,7 @@ func dedupeClassValues(values []runtime.Value) []runtime.Value {
 // to deserialize a class declared in this VM's chunk. It bypasses the
 // cross-module dispatch in deserializeIntoClass (we are already on the
 // right VM) and goes straight to the local logic.
-func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
+func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runtime.Value, typeArgs []string) (runtime.Value, error) {
 	if class.Index < 0 || int(class.Index) >= len(vm.chunk.Classes) {
 		return nil, fmt.Errorf("deserialize %s: class index out of range", class.Name)
 	}
@@ -3040,14 +3049,14 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
 	}
 	inherited := runtime.InheritedFields(vm.RuntimeClassValue(class.Index))
-	infos := vm.resolvedFieldTypeInfos(class)
+	infos := vm.boundFieldTypeInfos(class, typeArgs)
 	hydrated, herr := native.HydrateNestedClassFields(infos, dict, vm.resolveDeserializeClass, vm.deserializeIntoClass)
 	if herr != nil {
 		return nil, herr
 	}
 	dict = hydrated
 	if len(classInfo.ConstructorIndices) == 0 {
-		v, err := vm.ConstructClass(class.Index, nil)
+		v, err := vm.ConstructClassWithTypeArgs(class.Index, nil, typeArgs)
 		if err != nil {
 			return nil, err
 		}
@@ -3104,7 +3113,7 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 		}
 		args = append(args, value)
 	}
-	return vm.ConstructClass(class.Index, args)
+	return vm.ConstructClassWithTypeArgs(class.Index, args, typeArgs)
 }
 
 // stageTypeArgsAsBindings zips positional explicit `<TypeArgs>` against
@@ -4032,7 +4041,7 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 	switch instruction.Op {
 	case OpCast:
 		instruction.Operands[0] += int64(constantShift)
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpCallStaticMethodSpread, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpCallSpread, OpConstructClassSpread, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpDeferMethodCallSpread, OpDeferNativeCallSpread, OpDeferFuncCallSpread, OpDeferCallableCallSpread, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt, OpBuildDictConstKeys, OpPrimMethod, OpLoadInterface, OpPrimMethodGlobal, OpPrimMethodLocal:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpCallStaticMethodSpread, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpCallSpread, OpConstructClassSpread, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpDeferMethodCallSpread, OpDeferNativeCallSpread, OpDeferFuncCallSpread, OpDeferCallableCallSpread, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt, OpBuildDictConstKeys, OpPrimMethod, OpLoadInterface, OpLoadTypeParam, OpPrimMethodGlobal, OpPrimMethodLocal:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -4069,7 +4078,7 @@ func isConstantOperand(op Op, index int) bool {
 		return index == 0
 	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpGetField, OpSetField, OpMethodCall, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpAddStringConst, OpLoadModuleValue, OpLoadInterface:
 		return index == 0
-	case OpTypeAssert:
+	case OpTypeAssert, OpLoadTypeParam:
 		return index <= 1
 	case OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		return index == 1

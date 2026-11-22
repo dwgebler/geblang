@@ -1,0 +1,40 @@
+/**
+ * @title Type parameters as values across modules
+ * @summary An imported generic function or class resolves a type parameter
+ * bound to the caller's class, its own classes, or a bound generic class.
+ */
+import test;
+import type_param_values_donor as donor;
+
+class User {
+    int id = 0;
+}
+
+class UserRepo extends donor.Repo<User> {}
+
+class TypeParamValuesCrossModuleTest extends test.Test {
+    @test
+    func importedGenericResolvesEitherModulesClass(): void {
+        this.assertEquals(3, donor.decode<User>("{\"id\": 3}").id);
+        this.assertEquals(4, donor.decode<donor.Item>("{\"n\": 4}").n);
+        this.assertTrue(donor.make<User>() instanceof User);
+    }
+
+    @test
+    func boundGenericClassAcrossModules(): void {
+        let b = donor.decode<donor.Box<int>>("{\"v\": 5}");
+        this.assertTrue(b instanceof donor.Box<int>);
+        try {
+            donor.decode<donor.Box<int>>("{\"v\": \"x\"}");
+            this.fail("expected a TypeError");
+        } catch (TypeError e) {
+            this.assertTrue(e.message.contains("T"));
+        }
+    }
+
+    @test
+    func inheritedClassLevelParameter(): void {
+        this.assertEquals(6, UserRepo().load("{\"id\": 6}").id);
+        this.assertEquals(7, donor.Repo<donor.Item>().load("{\"n\": 7}").n);
+    }
+}

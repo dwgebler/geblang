@@ -1,0 +1,53 @@
+/**
+ * @title Generic calls as operator operands
+ * @summary A call with explicit type arguments is a complete operand for
+ * prefix operators, await and tighter-binding binary operators.
+ */
+import test;
+
+async func later<T>(int v): int {
+    return v;
+}
+
+func isA<T>(any v): bool {
+    return v instanceof T;
+}
+
+func neg<T>(int v): int {
+    return -v;
+}
+
+class Calc {
+    func twice<T>(int v): int {
+        return v * 2;
+    }
+}
+
+class GenericCallOperandsTest extends test.Test {
+    @test
+    func prefixOperatorsTakeTheWholeCall(): void {
+        this.assertEquals(5, await later<int>(5));
+        this.assertEquals("6", "${await later<int>(6)}");
+        this.assertFalse(!isA<int>(1));
+        this.assertEquals(2, -neg<int>(2));
+        this.assertEquals(1, ~neg<int>(2));
+    }
+
+    @test
+    func binaryOperatorsTakeTheWholeCall(): void {
+        this.assertEquals(-1, 1 + neg<int>(2));
+        this.assertEquals(-6, 2 * neg<int>(3));
+        this.assertEquals(4, 10 - Calc().twice<int>(3));
+        this.assertFalse(1 < neg<int>(2));
+        this.assertEquals(-1, neg<int>(2) + 1);
+    }
+
+    @test
+    func comparisonsStillCompare(): void {
+        let a = 1;
+        let b = 2;
+        this.assertTrue(a < b);
+        this.assertTrue(a + b < 4);
+        this.assertFalse(-a < -b);
+    }
+}

@@ -215,6 +215,8 @@ func isClassValue(value runtime.Value) bool {
 		return true
 	case runtime.DecoratorTarget:
 		return v.Target == "class"
+	case runtime.BoundClass:
+		return isClassValue(v.Class)
 	}
 	return false
 }

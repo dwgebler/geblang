@@ -1,0 +1,24 @@
+module type_param_values_donor;
+import json;
+
+export class Item {
+    int n = 0;
+}
+
+export class Box<T> {
+    T v;
+}
+
+export func decode<T>(string body): T {
+    return json.parseAs(body, T);
+}
+
+export func make<T>(): T {
+    return T();
+}
+
+export class Repo<T> {
+    func load(string body): T {
+        return json.parseAs(body, T);
+    }
+}

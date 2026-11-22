@@ -294,7 +294,7 @@ type ModuleLoader interface {
 	// loader resolves the right chunk by class.Module and dispatches
 	// to a VM bound to it. Used when a stdlib module receives a
 	// class value originating from the user's main program.
-	DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error)
+	DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value, typeArgs []string) (runtime.Value, error)
 	// ConstructorsForModuleClass returns `reflect.constructors(class)`
 	// for a class declared in another chunk. The loader dispatches to
 	// a VM bound to the right chunk so the metadata reflects the
@@ -419,6 +419,8 @@ type deferredAction struct {
 	names []string
 	// line is the defer statement's source line; trace frames for a throwing deferred call show it as the caller's call site.
 	line int
+	// callee is the deferred callable's source text, for a not-callable error when it fires.
+	callee string
 }
 
 type exceptionHandler struct {
@@ -1675,6 +1677,8 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					vm.push(runtime.Type{Name: v.Name})
 				case runtime.BytecodeClass:
 					vm.push(runtime.Type{Name: v.Name})
+				case runtime.BoundClass:
+					vm.push(runtime.Type{Name: runtime.ClassValueName(v.Class)})
 				default:
 					vm.push(runtime.Type{Name: value.TypeName()})
 				}
@@ -2227,7 +2231,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, line: int(instruction.Line)})
+			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, line: int(instruction.Line), callee: vm.calleeText(*instruction)})
 		case OpDeferNativeCallNamed:
 			if len(instruction.Operands) < 2 {
 				return vm.fatalError(*instruction, "defer named native call has invalid operands")
@@ -2308,7 +2312,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, names: names, line: int(instruction.Line)})
+			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, names: names, line: int(instruction.Line), callee: vm.calleeText(*instruction)})
 		case OpDeferFuncCallSpread:
 			if len(instruction.Operands) < 2 {
 				return vm.fatalError(*instruction, "defer func call-spread instruction has invalid operands")
@@ -2388,7 +2392,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, names: names, spreadMask: mask, line: int(instruction.Line)})
+			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, names: names, spreadMask: mask, line: int(instruction.Line), callee: vm.calleeText(*instruction)})
 		case OpPrintln:
 			value, err := vm.pop()
 			if err != nil {
@@ -2831,10 +2835,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			vm.pendingCallTypeArgs = names
 		default:
 			// Rare opcodes stay out of the switch: adding hot-loop cases shifts code layout.
-			if instruction.Op != OpLoadInterface {
-				return vm.fatalError(*instruction, "unknown opcode %d", instruction.Op)
-			}
-			if err := vm.loadInterface(*instruction); err != nil {
+			if err := vm.execRareOp(*instruction); err != nil {
 				return err
 			}
 		}
@@ -6034,6 +6035,9 @@ func (vm *VM) runDeferredAction(instruction Instruction, action deferredAction) 
 			return vm.wrapDeferError(instruction, action.line, err, "deferred method call %s: %v", action.name, err)
 		}
 	case deferKindCallable:
+		if notInvokable(action.value) {
+			return vm.runtimeError(atDeferLine(instruction, action.line), "%s is not callable", calleeOrValue(action.callee))
+		}
 		if class, ok := action.value.(runtime.BytecodeClass); ok {
 			if _, err := vm.constructDeferred(instruction, action, class); err != nil {
 				return vm.wrapDeferError(instruction, action.line, err, "deferred construction: %v", err)

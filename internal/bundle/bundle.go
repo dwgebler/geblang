@@ -37,7 +37,9 @@ type Manifest struct {
 	Name       string `json:"name,omitempty"`
 	AppVersion string `json:"appVersion,omitempty"`
 	// EntryMainArgs: entry main takes args, so the launcher calls main(sys.args()).
-	EntryMainArgs bool           `json:"entryMainArgs,omitempty"`
+	EntryMainArgs bool `json:"entryMainArgs,omitempty"`
+	// EntryMainLine is main's declaration line, where the launcher places its call so traces point at it.
+	EntryMainLine int            `json:"entryMainLine,omitempty"`
 	Modules       []ModuleRecord `json:"modules"`
 	Resources     []string       `json:"resources,omitempty"`
 	Permissions   *Permissions   `json:"permissions,omitempty"`

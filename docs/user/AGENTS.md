@@ -288,6 +288,13 @@ class-type-parameter method parameters are enforced on both backends, and
 constraints accept interface, class, and primitive leaves combined with `|`/`&`
 (`<T implements string|int>`, or the bare `<T string|int>`).
 
+Inside generic code `T` is a value wherever a class reference is accepted:
+`json.parseAs(body, T)`, `T(...)`, `reflect.fields(T)`. A generic-class binding
+keeps its arguments (`T` bound to `Box<int>` builds a checked `Box<int>`); a
+collection, union, nullable or missing binding raises `TypeError`. Pass a type
+argument when no parameter mentions `T` (`make<User>()`); the expected type does
+not bind it.
+
 ### Generators
 
 ```gb

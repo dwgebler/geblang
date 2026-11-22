@@ -764,11 +764,18 @@ func (e *Literal) String() string       { return e.Token.Literal }
 type PrecomputedValue struct {
 	Token token.Token
 	Value any
+	// Source is the expression text the value replaced, for diagnostics.
+	Source string
 }
 
 func (*PrecomputedValue) expressionNode()        {}
 func (e *PrecomputedValue) TokenLiteral() string { return e.Token.Literal }
-func (e *PrecomputedValue) String() string       { return "<precomputed>" }
+func (e *PrecomputedValue) String() string {
+	if e.Source != "" {
+		return e.Source
+	}
+	return "<precomputed>"
+}
 
 type StringLiteral struct {
 	Token  token.Token

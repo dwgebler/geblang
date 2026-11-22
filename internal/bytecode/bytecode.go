@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(105)
+	Version = uint16(107)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -363,6 +363,8 @@ const (
 	OpJumpIfLocalCmpIntConst
 	// OpCheckIterable raises a TypeError unless the value on top of the stack is one for-in accepts; it leaves the value in place.
 	OpCheckIterable
+	// OpLoadTypeParam {nameIndex, ownerIndex[, callee]} pushes the frame's binding of an in-scope type parameter as a value; callee=1 rejects a builtin binding about to be called.
+	OpLoadTypeParam
 )
 
 // Method IDs carried by OpPrimMethod.
@@ -385,6 +387,11 @@ func hotPrimitiveMethodID(name string, argc int) int64 {
 		return primMethodContains
 	}
 	return 0
+}
+
+// CallSiteKey identifies an instruction's source position for per-call-site diagnostics.
+func CallSiteKey(line int32, column uint16) int64 {
+	return int64(line)<<16 | int64(column)
 }
 
 type Instruction struct {
@@ -432,6 +439,8 @@ type Chunk struct {
 	GlobalCount int64
 	// GlobalNames maps global slots to source names for runtime diagnostics.
 	GlobalNames []string
+	// CalleeNames maps a value call's CallSiteKey to its callee source text for not-callable errors.
+	CalleeNames map[int64]string
 	// Embeds pins every embed(...) file folded into a constant, so a cached chunk can revalidate against disk.
 	Embeds []EmbedRecord
 	// ModuleAliases and FromImports let the runtime resolve imported type aliases written in this chunk.
@@ -636,6 +645,16 @@ func Encode(chunk Chunk) ([]byte, error) {
 	out = binary.BigEndian.AppendUint32(out, uint32(len(chunk.GlobalNames)))
 	for _, name := range chunk.GlobalNames {
 		out = appendString(out, name)
+	}
+	calleeKeys := make([]int64, 0, len(chunk.CalleeNames))
+	for key := range chunk.CalleeNames {
+		calleeKeys = append(calleeKeys, key)
+	}
+	sort.Slice(calleeKeys, func(i, j int) bool { return calleeKeys[i] < calleeKeys[j] })
+	out = binary.BigEndian.AppendUint32(out, uint32(len(calleeKeys)))
+	for _, key := range calleeKeys {
+		out = binary.BigEndian.AppendUint64(out, uint64(key))
+		out = appendString(out, chunk.CalleeNames[key])
 	}
 	out = binary.BigEndian.AppendUint32(out, uint32(len(chunk.Constants)))
 	for _, constant := range chunk.Constants {
@@ -976,6 +995,13 @@ func Decode(data []byte) (Chunk, error) {
 	chunk.GlobalNames = make([]string, 0, globalNameCount)
 	for i := 0; i < globalNameCount; i++ {
 		chunk.GlobalNames = append(chunk.GlobalNames, reader.string())
+	}
+	if calleeCount := int(reader.u32()); calleeCount > 0 {
+		chunk.CalleeNames = make(map[int64]string, calleeCount)
+		for i := 0; i < calleeCount; i++ {
+			key := int64(reader.u64())
+			chunk.CalleeNames[key] = reader.string()
+		}
 	}
 	constantCount := int(reader.u32())
 	chunk.Constants = make([]runtime.Value, 0, constantCount)

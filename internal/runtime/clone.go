@@ -239,6 +239,8 @@ func (s *cloneState) cloneValue(value Value) Value {
 		return value
 	case BytecodeClass:
 		return value
+	case BoundClass:
+		return BoundClass{Class: s.cloneValue(value.Class), TypeArgs: value.TypeArgs}
 	case *BytecodeCell:
 		if value == nil {
 			return value

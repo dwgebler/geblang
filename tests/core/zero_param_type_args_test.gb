@@ -1,0 +1,92 @@
+/**
+ * @title Explicit type arguments on parameterless generics
+ * @summary A generic function with no parameters still binds its explicit
+ * type arguments, and those bindings do not leak into the next call.
+ */
+import test;
+
+class User {
+    int id = 0;
+}
+
+func isUser<T>(): bool {
+    return User() instanceof T;
+}
+
+async func isUserLater<T>(): bool {
+    return User() instanceof T;
+}
+
+func isUserStream<T>(): generator<bool> {
+    yield User() instanceof T;
+}
+
+func forwarded<T>(): bool {
+    return isUser<T>();
+}
+
+func passthrough(callable f): callable {
+    return f;
+}
+
+@passthrough
+func decorated<T>(): bool {
+    return User() instanceof T;
+}
+
+func countdown<T>(int n): bool {
+    if (n == 0) {
+        return isUser<T>();
+    }
+    return countdown<T>(n - 1);
+}
+
+func ignore<T>(): bool {
+    return true;
+}
+
+func probe<T>(any value): bool {
+    return value instanceof T;
+}
+
+class Checker {
+    func isUser<T>(): bool {
+        return User() instanceof T;
+    }
+    static func staticIsUser<T>(): bool {
+        return User() instanceof T;
+    }
+}
+
+class ZeroParamTypeArgsTest extends test.Test {
+    @test
+    func functionBindsExplicitTypeArgument(): void {
+        this.assertTrue(isUser<User>());
+        this.assertFalse(isUser<string>());
+    }
+
+    @test
+    func everyCallShapeBinds(): void {
+        let task = isUserLater<User>();
+        let later = await task;
+        this.assertTrue(later);
+        for (v in isUserStream<User>()) {
+            this.assertTrue(v);
+        }
+        this.assertTrue(forwarded<User>());
+        this.assertFalse(forwarded<string>());
+        this.assertTrue(decorated<User>());
+        this.assertTrue(countdown<User>(3));
+        this.assertTrue(Checker().isUser<User>());
+        this.assertTrue(Checker.staticIsUser<User>());
+    }
+
+    @test
+    func bindingsDoNotLeakIntoTheNextCall(): void {
+        let u = User();
+        ignore<User>();
+        this.assertFalse(probe(u));
+        isUserStream<User>();
+        this.assertFalse(probe(u));
+    }
+}

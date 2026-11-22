@@ -608,6 +608,13 @@ func (e *Evaluator) resolveDeserializeClass(name string) (runtime.Value, bool) {
 }
 
 func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime.Value) (runtime.Value, error) {
+	var bindings map[string]string
+	if bound, isBound := classValue.(runtime.BoundClass); isBound {
+		classValue = bound.Class
+		if class, ok := classValue.(*runtime.Class); ok {
+			bindings = boundTypeBindings(class, bound.TypeArgs)
+		}
+	}
 	class, ok := classValue.(*runtime.Class)
 	if !ok {
 		return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
@@ -620,7 +627,8 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
 	}
 	fields := append(append([]runtime.Field(nil), class.Fields...), runtime.InheritedFields(class)...)
-	hydrated, herr := native.HydrateNestedClassFields(e.resolvedFieldTypeInfos(class), dict, e.resolveDeserializeClass, e.deserializeIntoClass)
+	fieldInfos := native.BindFieldTypes(e.resolvedFieldTypeInfos(class), bindings, parseBoundTypeRefOrNil)
+	hydrated, herr := native.HydrateNestedClassFields(fieldInfos, dict, e.resolveDeserializeClass, e.deserializeIntoClass)
 	if herr != nil {
 		return nil, herr
 	}
@@ -630,7 +638,7 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 		// populated directly from the dict, matching the implicit
 		// "data class" shape. Missing keys leave the default; extra
 		// keys are ignored.
-		v, err := e.instantiateClass(class, nil)
+		v, err := e.instantiateClassWithBindings(class, nil, bindings)
 		if err != nil {
 			return nil, err
 		}
@@ -683,7 +691,7 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 		}
 		return nil, fmt.Errorf("deserialize %s: missing field %q", class.Name, paramName)
 	}
-	return e.instantiateClass(class, args)
+	return e.instantiateClassWithBindings(class, args, bindings)
 }
 
 // invokeInstanceMethod implements native.InstanceInvoker for the
@@ -1530,6 +1538,9 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 	case *ast.Identifier:
 		if value, ok := env.Get(expr.Value); ok {
 			return value, nil
+		}
+		if value, handled, err := e.typeParamValue(expr.Value, env); handled {
+			return value, err
 		}
 		if runtime.IsBuiltinTypeName(expr.Value) {
 			return runtime.Type{Name: strings.ToLower(expr.Value)}, nil
@@ -3227,6 +3238,20 @@ func (e *Evaluator) applyCallableValueRaw(callee runtime.Value, call *ast.CallEx
 	if class, ok := callee.(*runtime.Class); ok {
 		return e.instantiateClassFromCall(class, call, env, expected)
 	}
+	if bound, ok := callee.(runtime.BoundClass); ok {
+		if class, ok := bound.Class.(*runtime.Class); ok {
+			return e.instantiateClassFromCall(class, callWithTypeArgs(call, bound.TypeArgs), env, expected)
+		}
+	}
+	if builtin, ok := callee.(runtime.Type); ok {
+		if ident, isIdent := call.Callee.(*ast.Identifier); isIdent {
+			if _, declared := env.Get(ident.Value); !declared {
+				if _, isTypeParam := e.typeParamOwner(ident.Value); isTypeParam {
+					return nil, runtime.TypeParamNotConstructibleError(ident.Value, builtin.Name)
+				}
+			}
+		}
+	}
 	if instance, ok := callee.(*runtime.Instance); ok {
 		method, ok := lookupMethod(instance.Class, "__invoke")
 		if !ok {
@@ -3333,6 +3358,8 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 			return nil, fmt.Errorf("typeof expects exactly one argument")
 		}
 		switch evalTypeofArg := args[0].(type) {
+		case runtime.BoundClass:
+			return runtime.Type{Name: runtime.ClassValueName(evalTypeofArg.Class)}, nil
 		case *runtime.Class:
 			return runtime.Type{Name: evalTypeofArg.Name}, nil
 		case runtime.BytecodeClass:
@@ -6497,7 +6524,7 @@ func (e *Evaluator) freezeDeferCallee(callee ast.Expression, env *runtime.Enviro
 		if !ok {
 			return nil, callee, nil
 		}
-		return value, &ast.PrecomputedValue{Token: c.Token, Value: value}, nil
+		return value, &ast.PrecomputedValue{Token: c.Token, Value: value, Source: c.String()}, nil
 	case *ast.SelectorExpression:
 		if objIdent, ok := c.Object.(*ast.Identifier); ok {
 			if objVal, found := env.Get(objIdent.Value); found {
@@ -6514,13 +6541,13 @@ func (e *Evaluator) freezeDeferCallee(callee ast.Expression, env *runtime.Enviro
 		if err != nil {
 			return nil, callee, nil
 		}
-		return value, &ast.PrecomputedValue{Token: c.Token, Value: value}, nil
+		return value, &ast.PrecomputedValue{Token: c.Token, Value: value, Source: c.String()}, nil
 	default:
 		value, err := e.evalExpression(callee, env)
 		if err != nil {
 			return nil, callee, nil
 		}
-		return value, &ast.PrecomputedValue{Value: value}, nil
+		return value, &ast.PrecomputedValue{Value: value, Source: callee.String()}, nil
 	}
 }
 
@@ -7616,8 +7643,8 @@ func dictKey(value runtime.Value) string {
 		return fmt.Sprintf("class:%p", value)
 	case *runtime.Interface:
 		return fmt.Sprintf("interface:%p", value)
-	case *runtime.Instance:
-		// Delegate so a frozen instance keys by value identically to the VM.
+	case *runtime.Instance, runtime.BoundClass:
+		// Delegate so a frozen instance or bound class keys identically to the VM.
 		return native.DictKey(value)
 	default:
 		return fmt.Sprintf("%T:%p", value, &value)

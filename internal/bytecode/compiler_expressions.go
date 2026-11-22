@@ -289,6 +289,10 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpLoadInterface, expr.Token.Line, expr.Token.Column, c.addConstant(runtime.String{Value: expr.Value}))
 				return nil
 			}
+			if owner, ok := c.typeParamOwner(expr.Value); ok {
+				c.emitAt(OpLoadTypeParam, expr.Token.Line, expr.Token.Column, c.addConstant(runtime.String{Value: expr.Value}), c.addConstant(runtime.String{Value: owner}))
+				return nil
+			}
 			if runtime.IsBuiltinTypeName(expr.Value) {
 				c.emitConstant(runtime.Type{Name: strings.ToLower(expr.Value)}, expr.Token.Line, expr.Token.Column)
 				return nil
@@ -800,10 +804,18 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				}
 				return nil
 			}
-			if resolved, ok := c.resolveName(ident.Value); ok {
-				if resolved.kind == "local" {
+			resolved, isVar := c.resolveName(ident.Value)
+			typeParamOwner, isTypeParam := "", false
+			if !isVar && len(c.funcs[strings.ToLower(ident.Value)]) == 0 {
+				typeParamOwner, isTypeParam = c.typeParamOwner(ident.Value)
+			}
+			if isVar || isTypeParam {
+				switch {
+				case isTypeParam:
+					c.emitAt(OpLoadTypeParam, expr.Token.Line, expr.Token.Column, c.addConstant(runtime.String{Value: ident.Value}), c.addConstant(runtime.String{Value: typeParamOwner}), 1)
+				case resolved.kind == "local":
 					c.emitAt(OpGetLocal, expr.Token.Line, expr.Token.Column, resolved.slot)
-				} else {
+				default:
 					c.emitAt(OpGetGlobal, expr.Token.Line, expr.Token.Column, resolved.slot)
 				}
 				if _, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
@@ -811,8 +823,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					if err != nil {
 						return err
 					}
-					nameIndex := int64(len(c.chunk.Constants))
-					c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+					nameIndex := c.invokeNameConstant(expr)
 					operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
 					c.emitPlantCallTypeArgs(expr)
 					c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
@@ -825,8 +836,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						return err
 					}
 				}
-				nameIndex := int64(len(c.chunk.Constants))
-				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+				nameIndex := c.invokeNameConstant(expr)
 				if hasNamedArgs {
 					operands := []int64{nameIndex, int64(len(expr.Arguments))}
 					for _, arg := range expr.Arguments {
@@ -888,8 +898,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				if err != nil {
 					return err
 				}
-				nameIndex := int64(len(c.chunk.Constants))
-				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+				nameIndex := c.invokeNameConstant(expr)
 				operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
 				c.emitPlantCallTypeArgs(expr)
 				c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
@@ -905,8 +914,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					return err
 				}
 			}
-			nameIndex := int64(len(c.chunk.Constants))
-			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+			nameIndex := c.invokeNameConstant(expr)
 			if hasNamedArgs {
 				operands := []int64{nameIndex, int64(len(expr.Arguments))}
 				for _, arg := range expr.Arguments {
@@ -1169,8 +1177,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			if err != nil {
 				return err
 			}
-			nameIndex := int64(len(c.chunk.Constants))
-			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+			nameIndex := c.invokeNameConstant(expr)
 			operands := append([]int64{nameIndex, int64(len(expr.Arguments))}, meta...)
 			c.emitPlantCallTypeArgs(expr)
 			c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, operands...)
@@ -1186,8 +1193,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				return err
 			}
 		}
-		nameIndex := int64(len(c.chunk.Constants))
-		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+		nameIndex := c.invokeNameConstant(expr)
 		if hasNamedArgs {
 			operands := []int64{nameIndex, int64(len(expr.Arguments))}
 			for _, arg := range expr.Arguments {
