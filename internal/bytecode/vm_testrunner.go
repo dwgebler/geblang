@@ -334,12 +334,14 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string, methodFilter []
 	// snapshotPatches captures the test.mock overlay on both the VM registry and the bridge evaluator so a method's mocks roll back before the next, matching the evaluator runner.
 	snapshotPatches := func() func() {
 		vmSnap := vm.NativeSnapshot()
+		methodPatches := runtime.SnapshotMethodPatches()
 		var bridgeSnap map[string]native.Function
 		if bridge != nil {
 			bridgeSnap = bridge.NativeSnapshot()
 		}
 		return func() {
 			vm.RestoreNatives(vmSnap)
+			runtime.RestoreMethodPatches(methodPatches)
 			if bridge != nil {
 				bridge.RestoreNatives(bridgeSnap)
 			}

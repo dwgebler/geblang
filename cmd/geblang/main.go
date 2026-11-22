@@ -31,6 +31,7 @@ import (
 	"geblang/internal/parser"
 	"geblang/internal/profiling"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 	geblangver "geblang/internal/version"
 )
 
@@ -1314,7 +1315,7 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 	// not re-run it.
 	analyzedDuringCompile := false
 	if mode != executionEvaluatorOnly {
-		chunk, err := loadOrCompileBytecode(sourcePath, source, program, analyze, scriptResolver)
+		chunk, err := loadOrCompileBytecode(sourcePath, source, program, analyze, scriptResolver, nil)
 		analyzedDuringCompile = true
 		if err == nil {
 			traceExecution(trace, "vm", "")
@@ -1332,7 +1333,10 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 					resolverPaths := append([]string{filepath.Dir(sp)}, modPaths...)
 					moduleResolver := modules.NewResolver(resolverPaths)
 					an := crossModuleAnalyzer(sp, prog, moduleResolver, stdout, fmt.Sprintf("warning: module %s: ", canonical))
-					return loadOrCompileBytecode(sp, src, prog, an, moduleResolver)
+					return loadOrCompileBytecode(sp, src, prog, an, moduleResolver, &moduleCacheTarget{canonical: canonical, paths: resolverPaths})
+				},
+				Cached: func(canonical, sp string, src []byte, modPaths []string) (bytecode.Chunk, bool) {
+					return cachedModuleChunk(sp, src, append([]string{filepath.Dir(sp)}, modPaths...))
 				},
 				LookupBuiltin: func(canonical, alias string) *runtime.Module {
 					return stateful.BuiltinModule(canonical, alias)
@@ -1862,6 +1866,8 @@ func runTestFile(path string, tags []string, classFilter string, methodFilters [
 	if prep == nil {
 		return 0, 0, 0, nil
 	}
+	// Patches made outside a @test method must not reach the next file.
+	defer runtime.RestoreMethodPatches(runtime.MethodPatchSnapshot{})
 	if useEval {
 		return runTestFileEvaluator(prep, allowFFI)
 	}
@@ -2078,7 +2084,64 @@ func crossModuleAnalyzer(sourcePath string, program *ast.Program, resolver *modu
 	}
 }
 
-func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Program, analyze func() error, resolver *modules.Resolver) (bytecode.Chunk, error) {
+// moduleCacheTarget names an imported module and its alias search paths, so its cached chunk can later load without parsing.
+type moduleCacheTarget struct {
+	canonical string
+	paths     []string
+}
+
+// aliasSourceSet collects the modules consulted for type aliases while a module compiles.
+type aliasSourceSet map[[2]string][32]byte
+
+func (s aliasSourceSet) add(canonical, path string, sum [32]byte) {
+	s[[2]string{canonical, path}] = sum
+}
+
+func (s aliasSourceSet) list() []bytecode.AliasSource {
+	out := make([]bytecode.AliasSource, 0, len(s))
+	for key, sum := range s {
+		out = append(out, bytecode.AliasSource{Module: key[0], Path: key[1], Hash: sum})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Module != out[j].Module {
+			return out[i].Module < out[j].Module
+		}
+		return out[i].Path < out[j].Path
+	})
+	return out
+}
+
+// cachedModuleChunk returns a module's cached chunk when it can be used without parsing the source.
+func cachedModuleChunk(sourcePath string, source []byte, paths []string) (bytecode.Chunk, bool) {
+	if bytecode.AssertionsDisabled {
+		return bytecode.Chunk{}, false
+	}
+	data, err := os.ReadFile(bytecode.CachePath(bytecodeCacheDir(), sourcePath, source, version))
+	if err != nil {
+		return bytecode.Chunk{}, false
+	}
+	chunk, err := bytecode.Decode(data)
+	if err != nil || !chunk.ClassAliasesResolved || chunk.Compiler != version || chunk.SourceHash != bytecode.SourceHash(source) || !bytecode.EmbedsFresh(chunk, sourcePath) || !bcloader.AliasSourcesFresh(chunk, paths) {
+		return bytecode.Chunk{}, false
+	}
+	return chunk, true
+}
+
+// compileModuleChunk compiles an imported module with its aliases resolved and fingerprinted, so its cache entry loads without parsing.
+func compileModuleChunk(program *ast.Program, source []byte, resolver *modules.Resolver, module moduleCacheTarget) (bytecode.Chunk, error) {
+	sources := aliasSourceSet{}
+	chunk, err := bytecode.CompileWithOptions(program, source, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols(), TypeAliasLookup: check.TypeAliasLookupRecording(program, resolver, sources.add)})
+	if err != nil {
+		return bytecode.Chunk{}, err
+	}
+	bytecode.ResolveClassTypeAliases(&chunk, bcloader.SourceTypeAliasLookupRecording(program, module.canonical, module.paths, sources.add))
+	chunk.ClassAliasesResolved = true
+	chunk.ExportedTypeAliases = typealias.ExportedFromProgram(program, module.canonical)
+	chunk.AliasSources = sources.list()
+	return chunk, nil
+}
+
+func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Program, analyze func() error, resolver *modules.Resolver, module *moduleCacheTarget) (bytecode.Chunk, error) {
 	cacheDir := bytecodeCacheDir()
 	cachePath := bytecode.CachePath(cacheDir, sourcePath, source, version)
 	// --no-assert mutates the compiled chunk in a way the cache key
@@ -2087,7 +2150,7 @@ func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Pro
 	if !bytecode.AssertionsDisabled {
 		if data, err := os.ReadFile(cachePath); err == nil {
 			chunk, err := bytecode.Decode(data)
-			if err == nil && chunk.Compiler == version && chunk.SourceHash == bytecode.SourceHash(source) && bytecode.EmbedsFresh(chunk, sourcePath) && bytecode.TypeAliasDepsFresh(chunk, check.TypeAliasLookup(astProgram, resolver, nil)) {
+			if err == nil && chunk.Compiler == version && chunk.SourceHash == bytecode.SourceHash(source) && bytecode.EmbedsFresh(chunk, sourcePath) && bytecode.TypeAliasDepsFresh(chunk, check.TypeAliasLookup(astProgram, resolver, nil)) && (!chunk.ClassAliasesResolved || (module != nil && bcloader.AliasSourcesFresh(chunk, module.paths))) {
 				return chunk, nil
 			}
 		}
@@ -2099,7 +2162,13 @@ func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Pro
 			return bytecode.Chunk{}, err
 		}
 	}
-	chunk, err := bytecode.CompileWithOptions(astProgram, source, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols(), TypeAliasLookup: check.TypeAliasLookup(astProgram, resolver, nil)})
+	var chunk bytecode.Chunk
+	var err error
+	if module != nil {
+		chunk, err = compileModuleChunk(astProgram, source, resolver, *module)
+	} else {
+		chunk, err = bytecode.CompileWithOptions(astProgram, source, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols(), TypeAliasLookup: check.TypeAliasLookup(astProgram, resolver, nil)})
+	}
 	if err != nil {
 		return bytecode.Chunk{}, err
 	}

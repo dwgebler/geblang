@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(104)
+	Version = uint16(105)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -439,7 +439,19 @@ type Chunk struct {
 	FromImports   map[string]string
 	// TypeAliasDeps pins imported aliases expanded at compile time so a cached chunk can revalidate them.
 	TypeAliasDeps map[string]string
-	operandPool   []int64 // contiguous backing store for all Instruction.Operands slices
+	// ClassAliasesResolved marks a module chunk whose signatures ResolveClassTypeAliases already expanded before caching.
+	ClassAliasesResolved bool
+	// ExportedTypeAliases and AliasSources let a cached module load without parsing its source.
+	ExportedTypeAliases map[string]string
+	AliasSources        []AliasSource
+	operandPool         []int64 // contiguous backing store for all Instruction.Operands slices
+}
+
+// AliasSource pins one module consulted for type aliases; Path is empty when the module did not resolve.
+type AliasSource struct {
+	Module string
+	Path   string
+	Hash   [32]byte
 }
 
 // EmbedRecord pins one embedded file so a cached chunk revalidates it.
@@ -930,6 +942,18 @@ func Encode(chunk Chunk) ([]byte, error) {
 	out = appendStringMap(out, chunk.ModuleAliases)
 	out = appendStringMap(out, chunk.FromImports)
 	out = appendStringMap(out, chunk.TypeAliasDeps)
+	if chunk.ClassAliasesResolved {
+		out = append(out, 1)
+	} else {
+		out = append(out, 0)
+	}
+	out = appendStringMap(out, chunk.ExportedTypeAliases)
+	out = binary.BigEndian.AppendUint32(out, uint32(len(chunk.AliasSources)))
+	for _, src := range chunk.AliasSources {
+		out = appendString(out, src.Module)
+		out = appendString(out, src.Path)
+		out = append(out, src.Hash[:]...)
+	}
 	return out, nil
 }
 
@@ -1224,6 +1248,15 @@ func Decode(data []byte) (Chunk, error) {
 	chunk.ModuleAliases = reader.stringMap()
 	chunk.FromImports = reader.stringMap()
 	chunk.TypeAliasDeps = reader.stringMap()
+	resolved := reader.read(1)
+	chunk.ClassAliasesResolved = len(resolved) == 1 && resolved[0] == 1
+	chunk.ExportedTypeAliases = reader.stringMap()
+	sourceCount := int(reader.u32())
+	for i := 0; i < sourceCount && reader.err == nil; i++ {
+		src := AliasSource{Module: reader.string(), Path: reader.string()}
+		copy(src.Hash[:], reader.read(32))
+		chunk.AliasSources = append(chunk.AliasSources, src)
+	}
 	if reader.err != nil {
 		return Chunk{}, reader.err
 	}

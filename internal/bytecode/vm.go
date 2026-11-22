@@ -94,6 +94,8 @@ type VM struct {
 	curMod            *ModuleContext
 	moduleLoader      ModuleLoader
 	moduleName        string
+	// methodPatchPushed marks that a test.patch replacement left its result where the callee's frame would have returned it.
+	methodPatchPushed bool
 	// reentry* implement goid-free same-call-chain re-entry detection for the module loader: reentryHost links a borrowed worker to the worker that borrowed it (nil for roots), reentryActive marks a worker borrowed and executing for a module, reentryDepth balances nested reuse before release.
 	reentryHost   *VM
 	reentryActive bool

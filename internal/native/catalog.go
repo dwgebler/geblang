@@ -1240,8 +1240,9 @@ var StdlibCatalog = map[string]ModuleDoc{
 	"test": {Functions: map[string]FunctionDoc{
 		"run":        Fn([]string{"Type testClass", "dict<string, any> options = {}"}, "dict<string, any>", "Runs tests for a class."),
 		"mock":       Fn([]string{"string moduleName", "dict<string, callable> replacements"}, "void", "Patch stdlib functions with user-supplied callables for the duration of the current @test method. Auto-restored between methods."),
-		"restore":    Fn([]string{"string moduleName", "string fname"}, "void", "Remove a single test.mock patch."),
-		"restoreAll": Fn([]string{}, "void", "Clear every active test.mock patch."),
+		"patch":      Fn([]string{"any classOrObject", "string methodName", "callable replacement"}, "void", "Replace an instance method on a class or one object for the current @test method; the replacement receives the receiver then the call's arguments. Auto-restored between methods."),
+		"restore":    Fn([]string{"any moduleOrTarget", "string name"}, "void", "Remove a single test.mock patch (module name, function name) or test.patch replacement (class or object, method name)."),
+		"restoreAll": Fn([]string{}, "void", "Clear every active test.mock and test.patch replacement."),
 	}, Classes: map[string]string{"Test": "Base class for unit tests. Subclass and annotate methods with @test. Use this.assertEquals / assertTrue / assertThrows / etc. inside test bodies."}},
 	"web": {Functions: map[string]FunctionDoc{
 		"new":             Fn([]string{}, "App", "Creates a web application."),

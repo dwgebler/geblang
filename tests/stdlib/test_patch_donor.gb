@@ -1,0 +1,24 @@
+module test_patch_donor;
+
+export interface Named {
+    func name(): string;
+
+    func greeting(): string {
+        return "hello " + this.name();
+    }
+}
+
+export class Base implements Named {
+    func name(): string {
+        return "base";
+    }
+
+    func label(): string {
+        return "[" + this.name() + "]";
+    }
+}
+
+/* Calls made from inside the declaring module dispatch on its own VM. */
+export func describe(Base b): string {
+    return b.name() + "/" + b.label();
+}

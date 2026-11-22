@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	rootembed "geblang"
 	"geblang/internal/ast"
@@ -126,20 +127,52 @@ func (r *Resolver) stdlibModuleNames() map[string]bool {
 	}
 	names := map[string]bool{}
 	for _, base := range r.StdlibPaths {
-		entries, err := os.ReadDir(base)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if entry.IsDir() {
-				names[name] = true
-			} else if strings.HasSuffix(name, ".gb") {
-				names[strings.TrimSuffix(name, ".gb")] = true
-			}
+		for name := range stdlibDirNames(base) {
+			names[name] = true
 		}
 	}
 	r.stdlibNamesCache = names
+	return names
+}
+
+type stdlibDirEntry struct {
+	modTime time.Time
+	names   map[string]bool
+}
+
+var (
+	stdlibDirMu    sync.Mutex
+	stdlibDirCache = map[string]stdlibDirEntry{}
+)
+
+// stdlibDirNames lists the module names in one stdlib directory, rescanning only when the directory changes.
+func stdlibDirNames(base string) map[string]bool {
+	info, err := os.Stat(base)
+	if err != nil {
+		return nil
+	}
+	stdlibDirMu.Lock()
+	entry, ok := stdlibDirCache[base]
+	stdlibDirMu.Unlock()
+	if ok && entry.modTime.Equal(info.ModTime()) {
+		return entry.names
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return nil
+	}
+	names := map[string]bool{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() {
+			names[name] = true
+		} else if strings.HasSuffix(name, ".gb") {
+			names[strings.TrimSuffix(name, ".gb")] = true
+		}
+	}
+	stdlibDirMu.Lock()
+	stdlibDirCache[base] = stdlibDirEntry{modTime: info.ModTime(), names: names}
+	stdlibDirMu.Unlock()
 	return names
 }
 

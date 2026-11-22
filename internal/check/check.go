@@ -86,7 +86,7 @@ func TypeAliasLookup(program *ast.Program, resolver *modules.Resolver, cache *Mo
 		return nil
 	}
 	if cache == nil {
-		cache = NewModuleCache()
+		return TypeAliasLookupRecording(program, resolver, nil)
 	}
 	source := typealias.NewSourceLookup(func(canonical string) (*ast.Program, bool) {
 		path, err := resolver.Resolve(canonical)
@@ -97,6 +97,15 @@ func TypeAliasLookup(program *ast.Program, resolver *modules.Resolver, cache *Mo
 		return program, err == nil
 	})
 	return typealias.ScopedLookup(program, "", source.Target)
+}
+
+// TypeAliasLookupRecording reads imported aliases from disk through the shared per-file cache, reporting each module it consults to record.
+func TypeAliasLookupRecording(program *ast.Program, resolver *modules.Resolver, record typealias.SourceRecorder) typealias.Lookup {
+	files := typealias.NewFileLookup(func(canonical string) (string, bool) {
+		path, err := resolver.Resolve(canonical)
+		return path, err == nil
+	}, false, record)
+	return typealias.ScopedLookup(program, "", files.Target)
 }
 
 // NewDefaultResolver returns a resolver rooted at the file's directory.

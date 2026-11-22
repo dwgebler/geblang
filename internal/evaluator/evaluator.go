@@ -170,6 +170,8 @@ type MethodDispatcher interface {
 	UnpatchNative(module, name string)
 	NativeSnapshot() map[string]native.Function
 	RestoreNatives(snapshot map[string]native.Function)
+	RuntimeClassFor(class runtime.BytecodeClass) (*runtime.Class, bool)
+	CallableArity(fn runtime.Value) (required, max int, variadic, ok bool)
 }
 
 type httpClientHandle struct {
@@ -6022,6 +6024,11 @@ func (e *Evaluator) applyEnumMethod(fn runtime.Function, args []runtime.Value, r
 }
 
 func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtime.Value, this *runtime.Instance) (runtime.Value, error) {
+	if fn.OwnerClass != nil && runtime.MethodPatchesActive() {
+		if replacement, receiver, ok := e.methodPatchFor(fn, this); ok {
+			return e.callValue(replacement, append([]runtime.Value{receiver}, args...))
+		}
+	}
 	previousModule := e.currentModule
 	e.currentModule = fn.DefinitionModule
 	defer func() { e.currentModule = previousModule }()

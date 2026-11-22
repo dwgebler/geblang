@@ -665,7 +665,7 @@ func (vm *VM) reflectBoundMethodCallable(class runtime.BytecodeClass, key string
 				return nil, err
 			}
 			if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
-				return vm.callCallableWithForwardThis(decorated, args, instance)
+				return vm.callDecoratedMethod(functionIndex, decorated, args, instance)
 			}
 			callArgs := append([]runtime.Value{instance}, args...)
 			return vm.CallFunctionRaw(functionIndex, callArgs)
@@ -1500,6 +1500,7 @@ func classFunctionMetadataForChunk(chunk Chunk, module string, methods map[strin
 				Parameters:     parameterMetadataFromFunctionInfo(info, paramOffset),
 				ReturnType:     info.reflectedReturnType(),
 				Async:          info.Async,
+				Generator:      info.IsGenerator,
 				Variadic:       info.Variadic,
 				Decorators:     append([]runtime.DecoratorMetadata(nil), info.Decorators...),
 				Module:         module,

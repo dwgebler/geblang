@@ -51,6 +51,43 @@ type is known before the program runs (`account.balance = "lots"` on an `int`
 field), `geblang check` and the compiler report the error up front; values typed
 `any` are checked when the write happens.
 
+An instance only has the fields its class and its parents declare. Writing any
+other name throws `RuntimeError` (`unknown field User.nickname`) unless the
+class defines [`__set`](#dynamic-access-and-method-dispatch). Methods are not
+fields, so assigning to one, such as `user.displayName = () => "x"`, throws the
+same error and the method is unchanged. `geblang check` reports both mistakes
+when the receiver's class is known, including members inherited from a parent
+in another module.
+
+Code can't monkey-patch methods, because the language keeps classes in the
+shape they're declared in. When a behaviour needs to vary, design for it:
+
+- Depend on an interface and pass the implementation in, so a test passes a
+  fake.
+- Use a subclass that overrides the method.
+- Declare a `callable` field and call the value it holds, when the behaviour
+  itself is the thing that varies:
+
+```gb
+class Clock {
+    callable now;
+
+    func Clock() {
+        this.now = () => datetime.now();
+    }
+}
+
+Clock clock = Clock();
+clock.now = () => datetime.parse("2026-01-01T00:00:00Z");
+io.println((clock.now)());
+```
+
+Tests have one exception. [`test.patch`](stdlib/18-reflect-test.md#patching-methods)
+replaces an instance method on a class or one object, and the runner restores it
+after each test. Use it for code you can't restructure, such as a class that
+creates its own collaborators. Prefer the designs above when you can: a patch
+ties the test to the method's name and to how the code calls it internally.
+
 Keep constructors focused on valid initialization. Use named static factories
 or module functions when construction needs parsing, I/O, or fallback behavior.
 

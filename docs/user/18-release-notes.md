@@ -1,5 +1,49 @@
 # Release Notes
 
+## 1.45.0
+
+### Added
+
+- `test.patch(classOrObject, methodName, replacement)` replaces an instance
+  method for the current `@test` method. Patching a class covers every instance
+  and inheriting subclass; patching one object covers only that object. The
+  replacement receives the receiver followed by the call's arguments and runs
+  for every call form, across modules, in place of the whole method including
+  its decorators. Patches roll back after each test method;
+  `test.restore(classOrObject, methodName)` removes one early and
+  `test.restoreAll()` clears them with the mocks.
+
+### Changed
+
+- Faster starts with a warm bytecode cache. A cached imported module now
+  loads without its source being parsed: the cache entry stores its resolved
+  type signatures, its exported type aliases and fingerprints of the modules it
+  read aliases from, and editing any of those files still invalidates it. Type
+  aliases are read once per process rather than once per importing module, and
+  stdlib directory listings are reused. A program that loads a 79-module web
+  framework starts in about 0.07s instead of 0.17s. Binaries built with
+  `geblang build` get the same parse-free loading from their bundled bytecode,
+  and start about twice as fast. Existing cache entries are rebuilt on the
+  first run after upgrading.
+
+### Fixed
+
+- On the bytecode VM, assigning to a field the class does not declare, or to a
+  method, was silently accepted: an undeclared name became an ad-hoc field and
+  a method kept its original body. It now throws `RuntimeError`
+  (`unknown field Class.name`) as the evaluator always has. Classes with
+  `__set` still receive undeclared writes.
+- `geblang check` reports assignments to undeclared fields and to methods when
+  the receiver's class is known (`Svc has no field nope`,
+  `Svc.greet is a method and cannot be assigned`), including members inherited
+  from a parent class in another module.
+
+### Documentation
+
+- The classes chapter explains that instances only have declared fields, how
+  to design classes so behaviour can be swapped (interfaces, subclasses,
+  `callable` fields), and when tests should use `test.patch` instead.
+
 ## 1.44.0
 
 ### Added

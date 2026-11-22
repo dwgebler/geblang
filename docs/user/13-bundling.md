@@ -52,7 +52,10 @@ collects every non-native module it can reach:
 Each collected source file is also compiled to bytecode and stored alongside it
 as a `.gbc` file. The precompiled bytecode is loaded directly into the
 interpreter's bytecode cache on first run, so the bundled program starts at
-full speed with no warm-up compilation step.
+full speed with no warm-up compilation step. Imported modules load from that
+bytecode without their source being parsed: each module's bytecode records the
+bundled files it took type aliases from, and those records are pointed at the
+extracted copies when the bundle is unpacked.
 
 Only imported modules are bundled. `geblang build` does not copy the entire
 package directory, the entire `vendor/` directory, test files, or generated

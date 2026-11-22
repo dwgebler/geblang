@@ -2,6 +2,7 @@
 package bcloader
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,9 @@ type Options struct {
 
 	// LookupBuiltin resolves a native Go-side module by canonical/alias, or nil.
 	LookupBuiltin func(canonical, alias string) *runtime.Module
+
+	// Cached returns a still-valid cached chunk for module source before it is parsed; nil disables the shortcut.
+	Cached func(canonical, sourcePath string, source []byte, modulePaths []string) (bytecode.Chunk, bool)
 }
 
 // moduleRecord is a loaded module's published state, stored once and read lock-free. globalsVM is mutated in place under globalsMu (cross-module global write-back); the record pointer is stable.
@@ -131,21 +135,69 @@ var _ bytecode.ModuleLoader = (*Loader)(nil)
 // SetMainChunk registers the entry-point chunk for cross-module reflect lookups.
 // SourceTypeAliasLookup resolves alias references written in program by reading the imported modules' sources.
 func SourceTypeAliasLookup(program *ast.Program, canonical string, paths []string) typealias.Lookup {
+	return SourceTypeAliasLookupRecording(program, canonical, paths, nil)
+}
+
+// SourceTypeAliasLookupRecording is SourceTypeAliasLookup that reports each module it consults to record.
+func SourceTypeAliasLookupRecording(program *ast.Program, canonical string, paths []string, record typealias.SourceRecorder) typealias.Lookup {
 	resolver := modules.NewResolver(paths)
-	source := typealias.NewSourceLookup(func(module string) (*ast.Program, bool) {
+	source := typealias.NewFileLookup(func(module string) (string, bool) {
 		path, err := resolver.Resolve(module)
-		if err != nil {
-			return nil, false
+		return path, err == nil
+	}, true, record)
+	return typealias.ScopedLookup(program, canonical, source.Target)
+}
+
+// AliasSourcesFresh reports whether every module a cached chunk consulted for aliases still resolves to the same unchanged file.
+func AliasSourcesFresh(chunk bytecode.Chunk, paths []string) bool {
+	resolver := modules.NewResolver(paths)
+	for _, src := range chunk.AliasSources {
+		path, err := resolver.Resolve(src.Module)
+		if src.Path == "" {
+			if err == nil {
+				return false
+			}
+			continue
+		}
+		if err != nil || path != src.Path {
+			return false
 		}
 		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, false
+		if err != nil || sha256.Sum256(data) != src.Hash {
+			return false
 		}
-		p := parser.New(lexer.New(string(data)))
-		parsed := p.ParseProgram()
-		return parsed, len(p.Errors()) == 0
-	})
-	return typealias.ScopedLookup(program, canonical, source.Target)
+	}
+	return true
+}
+
+// moduleChunk returns a module's chunk and exported aliases, from the cache when it is still valid and otherwise by parsing and compiling the source.
+func (l *Loader) moduleChunk(canonical, path string, source []byte) (bytecode.Chunk, map[string]string, error) {
+	if l.opts.Cached != nil {
+		if chunk, ok := l.opts.Cached(canonical, path, source, l.modulePaths); ok {
+			return chunk, chunk.ExportedTypeAliases, nil
+		}
+	}
+	p := parser.New(lexer.New(string(source)))
+	program := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		return bytecode.Chunk{}, nil, fmt.Errorf("parse module %s: %s", canonical, strings.Join(p.Errors(), "\n"))
+	}
+	if _, diags := embedfold.Fold(program, path, embedfold.Inline); len(diags) > 0 {
+		d := diags[0]
+		return bytecode.Chunk{}, nil, fmt.Errorf("module %s: %s:%d:%d: %s", canonical, path, d.Line, d.Column, d.Message)
+	}
+	if l.opts.Compile == nil {
+		return bytecode.Chunk{}, nil, fmt.Errorf("module %s: loader has no Compile callback", canonical)
+	}
+	chunk, err := l.opts.Compile(canonical, path, source, program, l.modulePaths)
+	if err != nil {
+		return bytecode.Chunk{}, nil, fmt.Errorf("module %s: %w", canonical, err)
+	}
+	if chunk.ClassAliasesResolved {
+		return chunk, chunk.ExportedTypeAliases, nil
+	}
+	bytecode.ResolveClassTypeAliases(&chunk, SourceTypeAliasLookup(program, canonical, append([]string{filepath.Dir(path)}, l.modulePaths...)))
+	return chunk, typealias.ExportedFromProgram(program, canonical), nil
 }
 
 // ModuleTypeAlias returns an already-loaded module's exported type alias target.
@@ -217,23 +269,10 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 	if err != nil {
 		return nil, fmt.Errorf("read module %s: %w", canonical, err)
 	}
-	p := parser.New(lexer.New(string(source)))
-	program := p.ParseProgram()
-	if len(p.Errors()) > 0 {
-		return nil, fmt.Errorf("parse module %s: %s", canonical, strings.Join(p.Errors(), "\n"))
-	}
-	if _, diags := embedfold.Fold(program, path, embedfold.Inline); len(diags) > 0 {
-		d := diags[0]
-		return nil, fmt.Errorf("module %s: %s:%d:%d: %s", canonical, path, d.Line, d.Column, d.Message)
-	}
-	if l.opts.Compile == nil {
-		return nil, fmt.Errorf("module %s: loader has no Compile callback", canonical)
-	}
-	chunk, err := l.opts.Compile(canonical, path, source, program, l.modulePaths)
+	chunk, exportedAliases, err := l.moduleChunk(canonical, path, source)
 	if err != nil {
-		return nil, fmt.Errorf("module %s: %w", canonical, err)
+		return nil, err
 	}
-	bytecode.ResolveClassTypeAliases(&chunk, SourceTypeAliasLookup(program, canonical, append([]string{filepath.Dir(path)}, l.modulePaths...)))
 	previousPaths := l.modulePaths
 	l.modulePaths = append([]string{filepath.Dir(path)}, l.modulePaths...)
 	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
@@ -252,7 +291,7 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 	if err != nil {
 		return nil, fmt.Errorf("export module %s: %w", canonical, err)
 	}
-	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports, TypeAliases: typealias.ExportedFromProgram(program, canonical)}
+	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports, TypeAliases: exportedAliases}
 	for name, value := range module.Exports {
 		if function, ok := value.(runtime.BytecodeFunction); ok {
 			if function.Module == "" {

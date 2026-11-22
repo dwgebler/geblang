@@ -118,7 +118,10 @@ func runTestFileVM(prep *preparedTest, path string, allowFFI []string) (int64, i
 			// Imported-module warnings go to stderr so the captured test output stays clean.
 			moduleResolver := modules.NewResolver(resolverPaths)
 			an := crossModuleAnalyzer(sp, prog, moduleResolver, os.Stderr, fmt.Sprintf("warning: module %s: ", canonical))
-			return loadOrCompileBytecode(sp, src, prog, an, moduleResolver)
+			return loadOrCompileBytecode(sp, src, prog, an, moduleResolver, &moduleCacheTarget{canonical: canonical, paths: resolverPaths})
+		},
+		Cached: func(canonical, sp string, src []byte, modPaths []string) (bytecode.Chunk, bool) {
+			return cachedModuleChunk(sp, src, append([]string{filepath.Dir(sp)}, modPaths...))
 		},
 		LookupBuiltin: func(canonical, alias string) *runtime.Module {
 			return stateful.BuiltinModule(canonical, alias)

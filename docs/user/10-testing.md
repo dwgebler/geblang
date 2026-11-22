@@ -238,11 +238,24 @@ fname)` to drop a single patch or `test.restoreAll()` to clear every
 active patch. Mocking a module or function that was never registered
 is harmless: the patch simply sits unused.
 
+`test.patch(target, methodName, replacement)` does the same for a method
+of your own classes. Pass a class to patch every instance, or one object
+to patch only that object; the replacement receives the receiver first:
+
+```gb
+test.patch(Mailer, "send", (Mailer self, Message m) => true);
+```
+
+See [Patching methods](stdlib/18-reflect-test.md#patching-methods) for
+how patches interact with subclasses, `parent` calls and other modules.
+
 | Function | Meaning |
 |----------|---------|
 | `test.mock(module, {name: callable, ...})` | Patch one or more functions on a module |
-| `test.restore(module, name)` | Remove a single patch |
-| `test.restoreAll()` | Clear every active patch |
+| `test.patch(classOrObject, method, callable)` | Replace an instance method on a class or one object |
+| `test.restore(module, name)` | Remove a single mock |
+| `test.restore(classOrObject, method)` | Remove a single method patch |
+| `test.restoreAll()` | Clear every active mock and method patch |
 
 ## Tags and selective runs
 

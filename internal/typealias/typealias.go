@@ -190,6 +190,7 @@ func ExportedFromProgram(program *ast.Program, canonical string) map[string]stri
 // SourceLookup reads exported aliases from module sources for static analysis.
 type SourceLookup struct {
 	resolve func(canonical string) (*ast.Program, bool)
+	aliases func(canonical string) (map[string]string, bool)
 	cache   map[string]map[string]string
 }
 
@@ -210,7 +211,9 @@ func (l *SourceLookup) Target(qualified string) (string, bool) {
 	module, name := qualified[:dot], qualified[dot+1:]
 	aliases, cached := l.cache[module]
 	if !cached {
-		if program, ok := l.resolve(module); ok && program != nil {
+		if l.aliases != nil {
+			aliases, _ = l.aliases(module)
+		} else if program, ok := l.resolve(module); ok && program != nil {
 			aliases = ExportedFromProgram(program, module)
 		}
 		l.cache[module] = aliases

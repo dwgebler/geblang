@@ -70,6 +70,7 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 			/* Snapshot test.mock patches before each method so
 			 * mocks from one test don't leak into the next. */
 			patchSnapshot := e.natives.Snapshot()
+			methodPatches := runtime.SnapshotMethodPatches()
 			var vmSnapshot map[string]native.Function
 			if e.vmDispatcher != nil {
 				vmSnapshot = e.vmDispatcher.NativeSnapshot()
@@ -80,6 +81,7 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 			}
 			teardownErr := e.applyOptionalTestHook(instance, "teardown")
 			e.natives.Restore(patchSnapshot)
+			runtime.RestoreMethodPatches(methodPatches)
 			if e.vmDispatcher != nil {
 				e.vmDispatcher.RestoreNatives(vmSnapshot)
 			}
@@ -197,7 +199,10 @@ func (e *Evaluator) testMock(call *ast.CallExpression, args []runtime.Value) (ru
 // testRestore(module, fname) removes a single patch.
 func (e *Evaluator) testRestore(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 {
-		return nil, fmt.Errorf("%s expects (moduleName, fname)", call.Callee.String())
+		return nil, fmt.Errorf("%s expects (moduleName, fname) or (classOrObject, methodName)", call.Callee.String())
+	}
+	if _, isModule := args[0].(runtime.String); !isModule {
+		return e.testRestorePatch(call, args)
 	}
 	moduleName, ok := args[0].(runtime.String)
 	if !ok {
@@ -224,6 +229,7 @@ func (e *Evaluator) testRestoreAll(call *ast.CallExpression, args []runtime.Valu
 	if e.vmDispatcher != nil {
 		e.vmDispatcher.RestoreNatives(nil)
 	}
+	runtime.RestoreMethodPatches(runtime.MethodPatchSnapshot{})
 	return runtime.Null{}, nil
 }
 

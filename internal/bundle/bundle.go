@@ -197,6 +197,18 @@ func Write(w io.Writer, manifest Manifest, files map[string][]byte) error {
 
 // ExtractTo atomically extracts the bundle into dir (temp dir + rename, so an interrupt leaves no partial dir to be reused) and pre-populates the bytecode cache via cachePathFor (nil skips seeding); skips if dir exists.
 func (b *Bundle) ExtractTo(dir string, cachePathFor func(sourcePath string, source []byte) string) error {
+	if cachePathFor == nil {
+		return b.ExtractToSeeding(dir, nil)
+	}
+	return b.ExtractToSeeding(dir, func(sourcePath string, source, bytecode []byte) {
+		cachePath := cachePathFor(sourcePath, source)
+		_ = os.MkdirAll(filepath.Dir(cachePath), 0o755)
+		_ = os.WriteFile(cachePath, bytecode, 0o644)
+	})
+}
+
+// ExtractToSeeding extracts like ExtractTo and hands each module's final source path, source and precompiled bytecode to seed; it is not called when dir already exists.
+func (b *Bundle) ExtractToSeeding(dir string, seed func(sourcePath string, source, bytecode []byte)) error {
 	if _, err := os.Stat(dir); err == nil {
 		return nil // already extracted
 	}
@@ -244,7 +256,7 @@ func (b *Bundle) ExtractTo(dir string, cachePathFor func(sourcePath string, sour
 
 		if strings.HasSuffix(f.Name, ".gb") {
 			sourceBytesMap[f.Name] = data
-		} else if strings.HasSuffix(f.Name, ".gbc") && cachePathFor != nil {
+		} else if strings.HasSuffix(f.Name, ".gbc") && seed != nil {
 			bytecodeBytesMap[f.Name] = data
 		}
 	}
@@ -256,10 +268,7 @@ func (b *Bundle) ExtractTo(dir string, cachePathFor func(sourcePath string, sour
 		if !ok {
 			continue
 		}
-		finalSrcPath := filepath.Join(dir, filepath.FromSlash(gbZipPath))
-		cachePath := cachePathFor(finalSrcPath, srcBytes)
-		_ = os.MkdirAll(filepath.Dir(cachePath), 0o755)
-		_ = os.WriteFile(cachePath, bytecodeData, 0o644)
+		seed(filepath.Join(dir, filepath.FromSlash(gbZipPath)), srcBytes, bytecodeData)
 	}
 
 	if err := os.Rename(tmpDir, dir); err != nil {

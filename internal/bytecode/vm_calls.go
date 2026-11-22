@@ -134,9 +134,7 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 		}
 		stackArgs := vm.stack[n-int(argc) : n]
 		vm.stack = vm.stack[:n-int(argc)]
-		nextIP, err := vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
-		releaseBoxed(stackArgs)
-		return nextIP, err
+		return vm.startStackArgs(instruction, ip, function, stackArgs)
 	}
 	decorated, hasDecorated := vm.decoratedFuncs[index]
 	if !hasDecorated || vm.rawFunctionCalls[index] {
@@ -148,9 +146,7 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 				}
 				stackArgs := vm.stack[n-int(argc) : n]
 				vm.stack = vm.stack[:n-int(argc)]
-				nextIP, err := vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
-				releaseBoxed(stackArgs)
-				return nextIP, err
+				return vm.startStackArgs(instruction, ip, function, stackArgs)
 			}
 		}
 	}
@@ -431,6 +427,15 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	}
 	argc := len(stackArgs)
 	paramCount := len(function.ParamSlots)
+	if argc > 0 && runtime.MethodPatchesActive() {
+		if replacement, ok := vm.methodPatchFor(function, stackArgs[0].ToValue()); ok {
+			args := make([]runtime.Value, argc)
+			for i, a := range stackArgs {
+				args[i] = a.ToValue()
+			}
+			return vm.enterMethodPatch(instruction, ip, replacement, args, returnOverride)
+		}
+	}
 
 	// Fast path requirements: fixed arity, no variadic packing, no
 	// default-arg fill, returnOverride nil. The arity check itself runs
@@ -965,6 +970,11 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	}
 	if len(vm.frames) >= maxDepth {
 		return 0, vm.fatalError(instruction, "maximum call depth exceeded (%d)", maxDepth)
+	}
+	if len(provided) > 0 && runtime.MethodPatchesActive() {
+		if replacement, ok := vm.methodPatchFor(function, provided[0]); ok {
+			return vm.enterMethodPatch(instruction, ip, replacement, append([]runtime.Value(nil), provided...), returnOverride)
+		}
 	}
 	argc := len(provided)
 	if function.Variadic && len(function.ParamSlots) > 0 {
@@ -2421,6 +2431,11 @@ func (vm *VM) callBytecodeInline(funcIndex int64, args []runtime.Value) (runtime
 	if function.IsGenerator || function.Async {
 		return nil, fmt.Errorf("inline call does not support generator/async functions")
 	}
+	if len(args) > 0 {
+		if replacement, ok := vm.methodPatchFor(function, args[0]); ok {
+			return vm.callCallable(replacement, args)
+		}
+	}
 	baseline := len(vm.frames)
 	stackArgs := make([]runtime.VMValue, len(args))
 	for i, a := range args {
@@ -2870,6 +2885,11 @@ func (vm *VM) enterDirectRun() func() {
 
 func (vm *VM) executeFunctionDirect(index int64, args []runtime.Value) (runtime.Value, error) {
 	function := &vm.curMod.Chunk.Functions[index]
+	if len(args) > 0 {
+		if replacement, ok := vm.methodPatchFor(function, args[0]); ok {
+			return vm.callCallable(replacement, args)
+		}
+	}
 	baseline := len(vm.frames)
 	defer vm.enterDirectRun()()
 	defer vm.suppressWorkerCleanup()()
@@ -3366,7 +3386,7 @@ func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name st
 		if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
 			return vm.startAsyncCallableWithForwardThis(decorated, args, instance), nil
 		}
-		return vm.callCallableWithForwardThis(decorated, args, instance)
+		return vm.callDecoratedMethod(functionIndex, decorated, args, instance)
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
 	if task, ok := vm.startAsyncMethod(functionIndex, callArgs); ok {
@@ -3412,7 +3432,7 @@ func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime
 		if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
 			return vm.startAsyncCallableWithForwardThis(decorated, args, instance), nil
 		}
-		return vm.callCallableWithForwardThis(decorated, args, instance)
+		return vm.callDecoratedMethod(functionIndex, decorated, args, instance)
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
 	if task, ok := vm.startAsyncMethod(functionIndex, callArgs); ok {
@@ -3481,7 +3501,7 @@ func (vm *VM) callBoundDecoratedValue(instance *runtime.Instance, funcIndex int6
 	if vm.curMod.Chunk.Functions[funcIndex].Async && !vm.syncMode {
 		return vm.startAsyncCallableWithForwardThis(decorated, args, instance), nil, true
 	}
-	res, err := vm.callCallableWithForwardThis(decorated, args, instance)
+	res, err := vm.callDecoratedMethod(funcIndex, decorated, args, instance)
 	if err != nil {
 		if fault, ok := boundaryFaultToError(err); ok {
 			restampDecoratedFrames(&fault, name)

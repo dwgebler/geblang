@@ -1,0 +1,31 @@
+module unknown_field_assign_donor;
+
+export class Base {
+    int n = 0;
+
+    func greet(): string {
+        return "base";
+    }
+}
+
+export class Recorder {
+    dict<string, any> seen = {};
+
+    func __set(string name, any value): void {
+        this.seen[name] = value;
+    }
+}
+
+/* Writes from inside the declaring module reach instances of subclasses defined elsewhere. */
+export func write(any target, string name): string {
+    try {
+        if (name == "n") {
+            target.n = 7;
+        } else {
+            target.nope = 1;
+        }
+        return "ok";
+    } catch (Error e) {
+        return e.message;
+    }
+}

@@ -102,8 +102,11 @@ path.
 
 When you deploy source and run it with `geblang` directly, compiled
 bytecode is cached under `.geblang-cache/<toolchain-version>/` relative
-to the working directory. First runs parse + compile + execute;
-subsequent runs skip parse/compile when the source hash matches. Run
+to the working directory. First runs parse + compile + execute.
+Later runs load each imported module straight from its cached bytecode,
+without parsing it, while its source and the modules it takes type
+aliases from are unchanged; the entry script is still parsed and
+checked, but not recompiled. Run
 each entrypoint once during the image build if you want cold starts
 deterministic, and keep the cache directory out of version control.
 Clean entries with `geblang cache clean` if you suspect staleness (the

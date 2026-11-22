@@ -943,6 +943,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 		"test": {
 			"run":        e.testRun,
 			"mock":       e.testMock,
+			"patch":      e.testPatch,
 			"restore":    e.testRestore,
 			"restoreAll": e.testRestoreAll,
 		},

@@ -1,6 +1,7 @@
 package bytecode
 
 import (
+	"path/filepath"
 	"strings"
 
 	"geblang/internal/ast"
@@ -289,4 +290,16 @@ func (vm *VM) canonicalNominalNameAt(name string, depth int) string {
 		}
 	}
 	return name
+}
+
+// BundleSourcePrefix marks an AliasSource path recorded relative to a bundle root by geblang build.
+const BundleSourcePrefix = "bundle:"
+
+// RebaseBundleSources points bundle-relative alias sources at root, the bundle's extraction directory.
+func RebaseBundleSources(chunk *Chunk, root string) {
+	for i, src := range chunk.AliasSources {
+		if rel, ok := strings.CutPrefix(src.Path, BundleSourcePrefix); ok {
+			chunk.AliasSources[i].Path = filepath.Join(root, filepath.FromSlash(rel))
+		}
+	}
 }

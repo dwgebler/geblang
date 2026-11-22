@@ -416,6 +416,77 @@ Notes:
   surface generally doesn't use them.
 - `test.mock` patches calls made from Geblang code. It doesn't
   intercept a native function calling another natively.
-- For instance-method or DI-resolved-service patching, prefer
-  constructor injection - replace the dependency in the test's
-  setup rather than reaching for `test.mock`.
+- For your own classes, prefer constructor injection, or use
+  `test.patch` (below) when the object is created out of reach.
+
+## Patching methods
+
+`test.patch(target, methodName, replacement)` replaces an instance
+method for the rest of the current `@test` method. `target` is a class,
+which patches the method for every instance of that class and its
+subclasses, or one object, which patches only that object. The
+replacement receives the receiver first, then the call's arguments.
+
+Reach for it when the code under test can't be restructured. Where you
+can, prefer passing a fake through an interface or a `callable` field
+(see [Classes](../06-classes-interfaces.md#classes)): a patch ties the
+test to the method's name and to how the code calls it internally.
+
+```gb
+import test;
+import datetime;
+
+class Clock {
+    func now(): int {
+        return datetime.nowUnix();
+    }
+    func stamp(string label): string {
+        return "${label}@${this.now()}";
+    }
+}
+
+class ClockTest extends test.Test {
+    @test
+    func freezesEveryClock(): void {
+        test.patch(Clock, "now", (Clock self) => 1_700_000_000);
+        this.assertEquals("built@1700000000", Clock().stamp("built"));
+    }
+
+    @test
+    func freezesOneClock(): void {
+        let frozen = Clock();
+        test.patch(frozen, "now", (Clock self) => 0);
+        this.assertEquals(0, frozen.now());
+        this.assertNotEquals(0, Clock().now());
+    }
+}
+```
+
+A patch applies to every call that would run the method: direct calls,
+calls through `this` inside other methods, bound method values,
+callbacks, named and spread arguments, operator and conversion methods
+such as `__add` and `__string`, and calls made inside other modules,
+including a class imported from another module. It replaces the whole
+method, so decorators on the original do not run.
+
+Patches follow normal dispatch:
+
+- Patching a parent class also covers subclasses that inherit the
+  method. A subclass that overrides the method keeps its own version,
+  but its `parent.method()` call reaches the patched parent.
+- Patching a subclass leaves the parent class unchanged.
+- Patching one object affects calls on that object only, not
+  `parent.method()` calls inside its class.
+
+The runner restores patches after each test method, including ones
+made in `setup`. `test.restore(target, methodName)` removes one patch
+early and `test.restoreAll()` removes every patch and mock. Patches
+made outside a test method last until the test file finishes.
+
+`test.patch` throws `ValueError` when the class has no such instance
+method, or when the method is static, a field, a constructor, `async`
+or a generator. It throws `TypeError` when the replacement is not
+callable or cannot accept the receiver plus each overload's arguments.
+A replacement for an overloaded method handles every overload, so give
+it parameters that accept all of them, such as `any`.
+

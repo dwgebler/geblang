@@ -3283,6 +3283,7 @@ func (a *Analyzer) markBindingDestroyed(name string) bool {
 func (a *Analyzer) analyzeAssignment(expr *ast.AssignmentExpression) {
 	a.analyzeExpression(expr.Value)
 	if selector, ok := expr.Left.(*ast.SelectorExpression); ok {
+		a.checkMemberAssignment(selector)
 		a.checkFieldAssignment(selector, expr.Value)
 		return
 	}
@@ -3315,6 +3316,43 @@ func (a *Analyzer) analyzeAssignment(expr *ast.AssignmentExpression) {
 	if target.name != "any" && !isNumericLiteralWidening(target.name, expr.Value) && !a.isAssignable(target, actual) {
 		a.errorf("cannot assign %s to %s %s", actual.display(), target.display(), ident.Value)
 	}
+}
+
+// checkMemberAssignment flags `obj.name = v` where the resolved class has no such field, matching the runtime unknown-field error.
+func (a *Analyzer) checkMemberAssignment(selector *ast.SelectorExpression) {
+	if a.classSurface == nil || selector.Name == nil || selector.Optional || isSelfReceiver(selector.Object) {
+		return
+	}
+	recv := a.expressionTypeName(selector.Object)
+	if !recv.known || recv.nullable || namesClassItself(selector.Object, recv.name) {
+		return
+	}
+	members, resolvable := a.classSurface(recv.name)
+	if !resolvable {
+		return
+	}
+	if _, hasSet := members["__set"]; hasSet {
+		return
+	}
+	isMethod, present := members[strings.ToLower(selector.Name.Value)]
+	if !present {
+		a.errorAt(selector.Name.Token, "%s has no field %s", recv.name, selector.Name.Value)
+		return
+	}
+	if isMethod {
+		a.errorAt(selector.Name.Token, "%s.%s is a method and cannot be assigned; declare a callable field to swap behaviour", recv.name, selector.Name.Value)
+	}
+}
+
+// namesClassItself reports a static receiver such as `Cls.x`, whose binding carries the class's own name as its type.
+func namesClassItself(obj ast.Expression, typeName string) bool {
+	switch o := obj.(type) {
+	case *ast.Identifier:
+		return o.Value == typeName
+	case *ast.SelectorExpression:
+		return o.Name != nil && o.Name.Value == typeName
+	}
+	return false
 }
 
 // checkFieldAssignment flags a write whose statically known value type cannot fit the declared field type.

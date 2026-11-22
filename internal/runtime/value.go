@@ -1027,6 +1027,7 @@ type FunctionMetadata struct {
 	Parameters     []ParameterMetadata
 	ReturnType     string
 	Async          bool
+	Generator      bool
 	Variadic       bool
 	Decorators     []DecoratorMetadata
 	// Module / DefLine / DefColumn capture the source position of

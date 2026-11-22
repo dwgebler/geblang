@@ -1,0 +1,136 @@
+/**
+ * @title Assigning undeclared members
+ * @summary Writing a field the class does not declare, or assigning to a
+ * method, throws "unknown field" on both backends; callable fields can be
+ * reassigned and `__set` still receives undeclared writes.
+ */
+import test;
+import unknown_field_assign_donor as donor;
+
+class Service {
+    callable hook;
+    int n = 0;
+
+    func Service() {
+        this.hook = () => "real";
+    }
+    func greet(): string {
+        return "real";
+    }
+    func poke(): void {
+        (this as any).extra = 1;
+    }
+}
+
+class SubService extends Service {
+    func SubService() {
+        parent();
+    }
+}
+
+class Open {
+    dict<string, any> seen = {};
+
+    func __set(string name, any value): void {
+        this.seen[name] = value;
+    }
+}
+
+class LocalBase extends donor.Base {}
+
+class LocalRecorder extends donor.Recorder {}
+
+func failure(callable body): string {
+    try {
+        body();
+        return "ok";
+    } catch (Error e) {
+        return e.message;
+    }
+}
+
+class UnknownFieldAssignmentTest extends test.Test {
+    @test
+    func callableFieldCanBeReassigned(): void {
+        let s = Service();
+        s.hook = () => "fake";
+        this.assertEquals("fake", (s.hook)());
+    }
+
+    @test
+    func methodCannotBeReassigned(): void {
+        let s = Service() as any;
+        this.assertEquals("unknown field Service.greet", failure(() => {
+            s.greet = () => "fake";
+        }));
+        this.assertEquals("real", s.greet());
+    }
+
+    @test
+    func undeclaredFieldThrows(): void {
+        let s = Service() as any;
+        this.assertEquals("unknown field Service.nope", failure(() => {
+            s.nope = 1;
+        }));
+        this.assertEquals("unknown field Service.extra", failure(() => {
+            s.poke();
+        }));
+    }
+
+    @test
+    func declaredFieldsStillWritable(): void {
+        let s = Service();
+        s.n += 2;
+        this.assertEquals(2, s.n);
+    }
+
+    @test
+    func subclassInheritsTheRule(): void {
+        let s = SubService() as any;
+        this.assertEquals("unknown field SubService.greet", failure(() => {
+            s.greet = 1;
+        }));
+        this.assertEquals("unknown field SubService.nope", failure(() => {
+            s.nope = 1;
+        }));
+        s.n = 5;
+        this.assertEquals(5, s.n);
+    }
+
+    @test
+    func setDunderReceivesUndeclaredWrites(): void {
+        let o = Open() as any;
+        o.anything = 3;
+        this.assertEquals(3, o.seen["anything"]);
+    }
+
+    @test
+    func importedClassRejectsUndeclaredWrites(): void {
+        let b = donor.Base() as any;
+        this.assertEquals("unknown field Base.nope", failure(() => {
+            b.nope = 1;
+        }));
+        this.assertEquals("unknown field Base.greet", failure(() => {
+            b.greet = 1;
+        }));
+    }
+
+    @test
+    func localSubclassOfImportedClass(): void {
+        let l = LocalBase() as any;
+        this.assertEquals("unknown field LocalBase.nope", failure(() => {
+            l.nope = 1;
+        }));
+        l.n = 4;
+        this.assertEquals(4, l.n);
+        this.assertEquals("ok", donor.write(LocalBase(), "n"));
+        this.assertEquals("unknown field LocalBase.nope", donor.write(LocalBase(), "nope"));
+    }
+
+    @test
+    func importedSetDunderStillApplies(): void {
+        let r = LocalRecorder() as any;
+        r.anything = 2;
+        this.assertEquals(2, r.seen["anything"]);
+    }
+}

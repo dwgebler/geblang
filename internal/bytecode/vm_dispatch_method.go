@@ -340,10 +340,10 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 			if instance, ok := receiverSlot.Boxed.(*runtime.Instance); ok {
 				stackArgs := vm.stack[base : base+argc+1]
 				vm.stack = vm.stack[:base]
-				nextIP, err := vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
-				releaseBoxed(stackArgs)
-				if err != nil {
-					return 0, err
+				depth := len(vm.frames)
+				nextIP, err := vm.startStackArgs(instruction, ip, function, stackArgs)
+				if err != nil || len(vm.frames) <= depth {
+					return nextIP, err
 				}
 				vm.inheritInstanceTypeBindings(instance)
 				return nextIP, nil
@@ -359,11 +359,14 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 	if !ok {
 		return 0, vm.runtimeError(instruction, "resolved method receiver is not an instance, got %s", callArgs[0].TypeName())
 	}
+	depth := len(vm.frames)
 	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, function, callArgs, nil)
 	if err != nil {
 		return 0, err
 	}
-	vm.inheritInstanceTypeBindings(instance)
+	if len(vm.frames) > depth {
+		vm.inheritInstanceTypeBindings(instance)
+	}
 	return nextIP, nil
 }
 
@@ -619,7 +622,7 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 				vm.push(vm.startAsyncCallableWithForwardThis(decorated, args, instance))
 				return ip, nil
 			}
-			result, err := vm.callCallableWithForwardThis(decorated, args, instance)
+			result, err := vm.callDecoratedMethod(functionIndex, decorated, args, instance)
 			if err != nil {
 				return vm.propagateDecoratedCallbackError(instruction, ip, err, vm.curMod.Chunk.Functions[functionIndex].Name)
 			}
@@ -634,11 +637,14 @@ func (vm *VM) dispatchMethodCall(instruction Instruction, ip int, callTypeArgs [
 			vm.push(vm.lazyGenerator(functionIndex, slots))
 			return ip, nil
 		}
+		depth := len(vm.frames)
 		nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], slots, nil)
 		if err != nil {
 			return 0, err
 		}
-		vm.inheritInstanceTypeBindings(instance)
+		if len(vm.frames) > depth {
+			vm.inheritInstanceTypeBindings(instance)
+		}
 		return nextIP, nil
 	}
 	if task, ok := receiver.(*runtime.Task); ok {
@@ -1648,7 +1654,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 			vm.push(vm.startAsyncCallableWithForwardThis(decorated, ordered, instance))
 			return ip, nil
 		}
-		result, err := vm.callCallableWithForwardThis(decorated, ordered, instance)
+		result, err := vm.callDecoratedMethod(functionIndex, decorated, ordered, instance)
 		if err != nil {
 			return vm.propagateDecoratedCallbackError(instruction, ip, err, vm.curMod.Chunk.Functions[functionIndex].Name)
 		}
@@ -1664,11 +1670,14 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		vm.push(vm.lazyGenerator(functionIndex, callArgs))
 		return ip, nil
 	}
+	depth := len(vm.frames)
 	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, nil)
 	if err != nil {
 		return 0, err
 	}
-	vm.inheritInstanceTypeBindings(instance)
+	if len(vm.frames) > depth {
+		vm.inheritInstanceTypeBindings(instance)
+	}
 	return nextIP, nil
 }
 

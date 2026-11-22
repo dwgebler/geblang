@@ -434,7 +434,9 @@ then length-prefixed sections for constants, instructions, functions, classes,
 interfaces, and exports. `bytecode.Decode(bytes)` is the inverse.
 
 The source hash lets the runtime skip recompilation: if the cached `.gbc` file's
-hash matches the source file, the cached chunk is loaded directly.
+hash matches the source file, the cached chunk is loaded directly. Module chunks
+also record the files they read imported type aliases from, so an edit to one of
+those files invalidates the entry too (see Bytecode module loader below).
 
 ---
 
@@ -1090,8 +1092,14 @@ The VM calls into the `ModuleLoader` implementation (`bcloader.Loader` in
 `internal/bcloader`) for each `OpImportModule` instruction. The loader:
 
 1. Resolves the module name to a file path via `modules.Resolver`.
-2. Reads and parses the source file.
-3. Compiles it to a `Chunk` (or loads from the `.gbc` cache).
+2. Reads the source file and looks for a cached `.gbc` chunk. A cached module
+   chunk carries everything that would otherwise need the source parsed: its
+   signatures with imported type aliases already expanded, the type aliases it
+   exports, and the resolved path and SHA-256 of every module it read aliases
+   from. If the source hash, those dependency files and any embedded files are
+   unchanged, the chunk is used without parsing.
+3. Otherwise parses the source, analyses it, compiles it to a `Chunk` and
+   writes the cache entry.
 4. Creates a VM, runs the chunk once, and collects the exported values and
    load-time state.
 5. Caches the resulting `runtime.Module` so subsequent imports of the same

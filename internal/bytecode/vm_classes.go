@@ -304,7 +304,7 @@ func (vm *VM) runtimeMethodWrappers(classIndex int64) map[string][]runtime.Funct
 					return nil, err
 				}
 				if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
-					return vm.callCallableWithForwardThis(decorated, args, this)
+					return vm.callDecoratedMethod(functionIndex, decorated, args, this)
 				}
 				callArgs := append([]runtime.Value{this}, args...)
 				return vm.CallFunctionRaw(functionIndex, callArgs)
@@ -673,6 +673,9 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 		if vm.hasForeignMagic(instance, "__set") && !vm.isDeclaredForeignField(instance, name) {
 			return vm.callForeignMagic(instruction, ip, instance, "__set", []runtime.Value{runtime.String{Value: name}, value}, value)
 		}
+		if !vm.isDeclaredForeignField(instance, name) {
+			return vm.throwTyped(instruction, ip, "RuntimeError", "unknown field "+instance.Class.Name+"."+name)
+		}
 		instance.SetField(name, value)
 		vm.push(value)
 		return ip, nil
@@ -691,9 +694,7 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 		}
 		return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}, value}, value)
 	}
-	instance.SetField(name, value)
-	vm.push(value)
-	return ip, nil
+	return vm.throwTyped(instruction, ip, "RuntimeError", "unknown field "+instance.Class.Name+"."+name)
 }
 
 func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error) {

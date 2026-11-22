@@ -171,6 +171,8 @@ func runBuild(args []string) {
 	files := map[string][]byte{}
 	var records []bundle.ModuleRecord
 	moduleManifests := map[string]*modules.Manifest{}
+	var pending []pendingChunk
+	zipPaths := map[string]string{}
 
 	for canonical, absPath := range allModules {
 		src, err := os.ReadFile(absPath)
@@ -197,6 +199,7 @@ func runBuild(args []string) {
 		relPath := strings.ReplaceAll(canonical, ".", "/") + ".gb"
 		zipSrcPath := prefix + "/" + relPath
 		files[zipSrcPath] = src
+		zipPaths[absPath] = zipSrcPath
 
 		p := parser.New(lexer.New(string(src)))
 		prog := p.ParseProgram()
@@ -223,14 +226,10 @@ func runBuild(args []string) {
 					os.Exit(1)
 				}
 			}
-			chunk, err := bytecode.CompileWithOptions(prog, src, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols(), TypeAliasLookup: check.TypeAliasLookup(prog, resolver, nil)})
+			target := moduleCacheTarget{canonical: canonical, paths: append([]string{filepath.Dir(absPath)}, resolver.ModulePaths...)}
+			chunk, err := compileModuleChunk(prog, src, resolver, target)
 			if err == nil {
-				encoded, err := bytecode.Encode(chunk)
-				if err == nil {
-					files[prefix+"/"+strings.ReplaceAll(canonical, ".", "/")+".gbc"] = encoded
-				} else {
-					fmt.Fprintf(os.Stderr, "geblang build: warn: encode %s: %v\n", canonical, err)
-				}
+				pending = append(pending, pendingChunk{canonical: canonical, zipPath: prefix + "/" + strings.ReplaceAll(canonical, ".", "/") + ".gbc", chunk: chunk, program: prog, source: src})
 			} else {
 				fmt.Fprintf(os.Stderr, "geblang build: warn: compile %s: %v\n", canonical, err)
 			}
@@ -242,6 +241,25 @@ func runBuild(args []string) {
 			SourceHash: bundle.SourceHash(src),
 			IsStdlib:   isStdlib,
 		})
+	}
+
+	for _, p := range pending {
+		chunk := p.chunk
+		if !bundleRelativeSources(&chunk, zipPaths) {
+			// An alias source outside the bundle cannot be revalidated after extraction, so this module keeps the parse-on-load path.
+			plain, err := bytecode.CompileWithOptions(p.program, p.source, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols(), TypeAliasLookup: check.TypeAliasLookup(p.program, resolver, nil)})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "geblang build: warn: compile %s: %v\n", p.canonical, err)
+				continue
+			}
+			chunk = plain
+		}
+		encoded, err := bytecode.Encode(chunk)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "geblang build: warn: encode %s: %v\n", p.canonical, err)
+			continue
+		}
+		files[p.zipPath] = encoded
 	}
 
 	specs := append([]resourceSpec(nil), extraResources...)
@@ -531,12 +549,52 @@ the application's own options.
 `, bin)
 }
 
+// pendingChunk is a bundled module's chunk held until every module's bundle path is known.
+type pendingChunk struct {
+	canonical string
+	zipPath   string
+	chunk     bytecode.Chunk
+	program   *ast.Program
+	source    []byte
+}
+
+// bundleRelativeSources rewrites alias-source paths to bundle zip paths; false when one lies outside the bundle.
+func bundleRelativeSources(chunk *bytecode.Chunk, zipPaths map[string]string) bool {
+	for i, src := range chunk.AliasSources {
+		if src.Path == "" {
+			continue
+		}
+		zipPath, ok := zipPaths[src.Path]
+		if !ok {
+			return false
+		}
+		chunk.AliasSources[i].Path = bytecode.BundleSourcePrefix + zipPath
+	}
+	return true
+}
+
+// rebasedBundleChunk points a bundled chunk's alias fingerprints at the extraction directory root; other chunks pass through unchanged.
+func rebasedBundleChunk(gbc []byte, root string) []byte {
+	chunk, err := bytecode.Decode(gbc)
+	if err != nil || len(chunk.AliasSources) == 0 {
+		return gbc
+	}
+	bytecode.RebaseBundleSources(&chunk, root)
+	rebased, err := bytecode.Encode(chunk)
+	if err != nil {
+		return gbc
+	}
+	return rebased
+}
+
 func runBundledWithArgs(b *bundle.Bundle, args []string) int {
 	hash := b.Hash()
 	tempDir := filepath.Join(os.TempDir(), "geblang-"+hash)
 
-	if err := b.ExtractTo(tempDir, func(sp string, src []byte) string {
-		return bytecode.CachePath(bytecodeCacheDir(), sp, src, version)
+	if err := b.ExtractToSeeding(tempDir, func(sp string, src, gbc []byte) {
+		cachePath := bytecode.CachePath(bytecodeCacheDir(), sp, src, version)
+		_ = os.MkdirAll(filepath.Dir(cachePath), 0o755)
+		_ = os.WriteFile(cachePath, rebasedBundleChunk(gbc, tempDir), 0o644)
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "geblang: bundle extract: %v\n", err)
 		return 1

@@ -1,0 +1,258 @@
+/**
+ * @title test.patch
+ * @summary Replaces instance methods on a class or one object for the
+ * current @test method, across modules, inheritance and every call form.
+ */
+import test;
+import async;
+import test_patch_donor as donor;
+
+func trace(any next): any {
+    return func(int n): string { return "traced:" + (next(n) as string); };
+}
+
+class Calc {
+    int base = 10;
+
+    func add(int a, int b = 1): int {
+        return this.base + a + b;
+    }
+
+    func addAll(int ... values): int {
+        int total = 0;
+        for (v in values) {
+            total += v;
+        }
+        return total;
+    }
+
+    func size(string s): int {
+        return s.length();
+    }
+
+    func size(list<any> items): int {
+        return items.length();
+    }
+
+    @trace
+    func double(int n): string {
+        return "${n * 2}";
+    }
+
+    func __string(): string {
+        return "Calc(${this.base})";
+    }
+
+    func __add(Calc other): int {
+        return this.base + other.base;
+    }
+
+    static func make(): Calc {
+        return Calc();
+    }
+
+    async func later(): int {
+        return 1;
+    }
+
+    func counter(): generator<int> {
+        yield 1;
+    }
+}
+
+class SubCalc extends Calc {
+    func add(int a, int b = 1): int {
+        return parent.add(a, b) * 100;
+    }
+}
+
+class Local extends donor.Base {
+    func label(): string {
+        return "local " + parent.label();
+    }
+}
+
+func failure(callable body): string {
+    try {
+        body();
+        return "ok";
+    } catch (Error e) {
+        return e.message;
+    }
+}
+
+class TestPatchTest extends test.Test {
+    Calc fromSetup;
+
+    func setup(): void {
+        this.fromSetup = Calc();
+        test.patch(this.fromSetup, "add", func(Calc self, int a, int b = 1): int { return -1; });
+    }
+
+    @test
+    func classPatchCoversEveryInstance(): void {
+        test.patch(Calc, "add", func(Calc self, int a, int b = 1): int { return a * b; });
+        this.assertEquals(6, Calc().add(2, 3));
+        this.assertEquals(2, Calc().add(2));
+        this.assertEquals(600, SubCalc().add(2, 3));
+    }
+
+    @test
+    func patchesRollBackAfterEachTest(): void {
+        this.assertEquals(15, Calc().add(2, 3));
+    }
+
+    @test
+    func setupPatchesApplyToTheTest(): void {
+        this.assertEquals(-1, this.fromSetup.add(5));
+        this.assertEquals(16, Calc().add(5));
+    }
+
+    @test
+    func instancePatchCoversOneObject(): void {
+        let a = Calc();
+        let b = Calc();
+        test.patch(a, "add", func(Calc self, int x, int y = 1): int { return 0; });
+        this.assertEquals(0, a.add(1, 1));
+        this.assertEquals(12, b.add(1, 1));
+        test.restore(a, "add");
+        this.assertEquals(12, a.add(1, 1));
+    }
+
+    @test
+    func subclassPatchKeepsParentImplementation(): void {
+        test.patch(SubCalc, "add", func(SubCalc self, int a, int b = 1): int { return 7; });
+        this.assertEquals(7, SubCalc().add(1, 1));
+        this.assertEquals(12, Calc().add(1, 1));
+    }
+
+    @test
+    func parentCallReachesParentPatch(): void {
+        test.patch(Calc, "add", func(Calc self, int a, int b = 1): int { return 1; });
+        this.assertEquals(100, SubCalc().add(4, 4));
+    }
+
+    @test
+    func instancePatchIgnoredByParentCall(): void {
+        let s = SubCalc();
+        test.patch(s, "add", func(SubCalc self, int a, int b = 1): int { return 3; });
+        this.assertEquals(3, s.add(1, 1));
+    }
+
+    @test
+    func everyCallForm(): void {
+        test.patch(Calc, "add", func(Calc self, int a, int b = 1): int { return a - b; });
+        let c = Calc();
+        let bound = c.add;
+        this.assertEquals(4, bound(5, 1));
+        this.assertEquals(3, c.add(b: 2, a: 5));
+        this.assertEquals(2, c.add(...[3, 1]));
+        this.assertEquals([0, 1], [1, 2].map((n) => c.add(n, 1)));
+        let task = async.run(() => c.add(9, 1));
+        this.assertEquals(8, task.await());
+        this.assertEquals(6, (c as any).add(7, 1));
+    }
+
+    @test
+    func variadicOverloadedAndDunderMethods(): void {
+        test.patch(Calc, "addAll", func(Calc self, int ... values): int { return values.length(); });
+        this.assertEquals(3, Calc().addAll(5, 5, 5));
+        test.patch(Calc, "size", (Calc self, any value) => -5);
+        this.assertEquals(-5, Calc().size("abc"));
+        this.assertEquals(-5, Calc().size([1]));
+        test.patch(Calc, "__string", (Calc self) => "fake");
+        this.assertEquals("fake", "${Calc()}");
+        test.patch(Calc, "__add", (Calc self, Calc other) => 99);
+        this.assertEquals(99, Calc() + Calc());
+    }
+
+    @test
+    func decoratedMethodReplacedWhole(): void {
+        this.assertEquals("traced:4", Calc().double(2));
+        test.patch(Calc, "double", (Calc self, int n) => "raw");
+        this.assertEquals("raw", Calc().double(2));
+    }
+
+    @test
+    func replacementErrorsReachTheCaller(): void {
+        test.patch(Calc, "add", func(Calc self, int a, int b = 1): int {
+            throw ValueError("boom");
+        });
+        this.assertEquals("boom", failure(() => {
+            Calc().add(1);
+        }));
+    }
+
+    @test
+    func importedClassAndItsModule(): void {
+        test.patch(donor.Base, "name", (donor.Base self) => "fake");
+        let b = donor.Base();
+        this.assertEquals("fake", b.name());
+        this.assertEquals("[fake]", b.label());
+        this.assertEquals("fake/[fake]", donor.describe(b));
+        this.assertEquals("hello fake", b.greeting());
+        this.assertEquals("local [fake]", Local().label());
+    }
+
+    @test
+    func importedInstancePatch(): void {
+        let b = donor.Base();
+        test.patch(b, "label", (donor.Base self) => "patched");
+        this.assertEquals("base/patched", donor.describe(b));
+        this.assertEquals("base/[base]", donor.describe(donor.Base()));
+    }
+
+    @test
+    func localSubclassOfImportedClass(): void {
+        test.patch(donor.Base, "label", (donor.Base self) => "donor");
+        this.assertEquals("local donor", Local().label());
+        test.patch(Local, "label", (Local self) => "mine");
+        this.assertEquals("mine", Local().label());
+        this.assertEquals("base/mine", donor.describe(Local()));
+    }
+
+    @test
+    func interfaceDefaultMethod(): void {
+        test.patch(donor.Base, "greeting", (donor.Base self) => "hi");
+        this.assertEquals("hi", donor.Base().greeting());
+    }
+
+    @test
+    func restoreAllClearsPatches(): void {
+        test.patch(Calc, "add", func(Calc self, int a, int b = 1): int { return 0; });
+        test.restoreAll();
+        this.assertEquals(12, Calc().add(1, 1));
+    }
+
+    @test
+    func rejectsWhatCannotBePatched(): void {
+        let replacement = (Calc self) => 0;
+        this.assertEquals("test.patch: Calc has no method missing", failure(() => {
+            test.patch(Calc, "missing", replacement);
+        }));
+        this.assertEquals("test.patch: Calc.make is a static method; only instance methods can be patched", failure(() => {
+            test.patch(Calc, "make", replacement);
+        }));
+        this.assertEquals("test.patch: Calc.base is a field, not a method; assign the field instead", failure(() => {
+            test.patch(Calc, "base", replacement);
+        }));
+        this.assertEquals("test.patch: Calc constructors cannot be patched", failure(() => {
+            test.patch(Calc, "Calc", replacement);
+        }));
+        this.assertEquals("test.patch: Calc.later is an async or generator method, which cannot be patched", failure(() => {
+            test.patch(Calc, "later", replacement);
+        }));
+        this.assertEquals("test.patch: Calc.counter is an async or generator method, which cannot be patched", failure(() => {
+            test.patch(Calc, "counter", replacement);
+        }));
+        this.assertEquals("test.patch: the replacement for Calc.add must accept the receiver followed by 1 to 2 argument(s)", failure(() => {
+            test.patch(Calc, "add", (Calc self, int a) => 0);
+        }));
+        this.assertEquals("test.patch replacement must be callable, got int", failure(() => {
+            test.patch(Calc, "add", 5);
+        }));
+        this.assertEquals("test.patch expects a class or an object, got string", failure(() => {
+            test.patch("Calc", "add", replacement);
+        }));
+    }
+}
