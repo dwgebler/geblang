@@ -496,23 +496,48 @@ func runBundled(b *bundle.Bundle) int {
 			native.SetBrowserEnabled(true)
 		}
 	}
+	native.SetBundledAppInfo(bundledAppInfo(b.Manifest))
 	args := os.Args[1:]
 	if len(args) > 0 {
-		switch args[0] {
-		case "--":
-			args = args[1:]
-		case "--help", "-h":
+		flag := args[0]
+		if short, ok := bundledShortFlags[flag]; ok && !b.Manifest.EntryMainArgs {
+			flag = short
+		}
+		switch flag {
+		case "--geblang-help":
 			printBundledHelp(b)
 			return 0
-		case "--version":
+		case "--geblang-version":
 			printBundledVersion(b)
 			return 0
-		case "--notices", "--licences", "--licenses":
+		case "--geblang-notices":
 			fmt.Print(licenseText)
 			return 0
 		}
 	}
 	return runBundledWithArgs(b, args)
+}
+
+// The unprefixed forms stay available when main() takes no arguments and so cannot use them.
+var bundledShortFlags = map[string]string{
+	"--help":     "--geblang-help",
+	"-h":         "--geblang-help",
+	"--version":  "--geblang-version",
+	"--notices":  "--geblang-notices",
+	"--licences": "--geblang-notices",
+	"--licenses": "--geblang-notices",
+}
+
+func bundledAppInfo(m bundle.Manifest) native.AppInfo {
+	name := m.Name
+	if name == "" {
+		name = m.Entry
+	}
+	info := native.AppInfo{Name: name, Version: m.AppVersion}
+	for _, p := range m.Packages {
+		info.Packages = append(info.Packages, native.AppPackage{Name: p.Name, Version: p.Version})
+	}
+	return info
 }
 
 func printBundledVersion(b *bundle.Bundle) {
@@ -540,15 +565,18 @@ func printBundledHelp(b *bundle.Bundle) {
 	fmt.Printf(`
 usage: %s [args...]
 
-Standard flags (recognised only as the first argument):
-  --help, -h     show this help
-  --version      show the application, runtime and bundled package versions
-  --notices      print third-party licence notices
-  --             pass everything after it to the application untouched
+Runtime flags (recognised only as the first argument):
+  --geblang-help      show this help
+  --geblang-version   show the application, runtime and bundled package versions
+  --geblang-notices   print third-party licence notices
+%s`, bin, bundledHelpTail(b.Manifest.EntryMainArgs))
+}
 
-All other arguments are passed to the application; use "-- --help" to show
-the application's own options.
-`, bin)
+func bundledHelpTail(mainTakesArgs bool) string {
+	if mainTakesArgs {
+		return "\nAll other arguments, including --help and --version, go to the application.\n"
+	}
+	return "\nThe application takes no arguments, so --help, -h, --version and --notices\nare accepted as short forms.\n"
 }
 
 // pendingChunk is a bundled module's chunk held until every module's bundle path is known.

@@ -339,8 +339,12 @@ let response = auth.login(sessions, wh.text("ok"), {"name": "Ada"}, {"httpOnly":
 let cacheStore = cache.fileCacheStore("/tmp/app-cache", 3600);
 ```
 
-Session stores are available for Redis, files, and SQL databases. The file
-store requires a `geb_sid` cookie to match the 64-character lowercase-hex id
+Session stores are available for Redis, files, and SQL databases. Each
+factory (`redisSessionStore`, `fileSessionStore`, `databaseSessionStore`) and
+store class takes an optional final `cookieName` argument, `"geb_sid"` by
+default, naming the session-id cookie the store reads, writes and clears; the
+store exposes it as `store.cookieName`. The file
+store requires the session-id cookie to match the 64-character lowercase-hex id
 shape it generates before deriving a filesystem path from it; a cookie that
 doesn't match is treated as no session rather than read or deleted.
 

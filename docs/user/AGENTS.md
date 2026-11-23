@@ -44,6 +44,12 @@ geblang build --entry main --out app <package-dir>   # add --native or --docker
 `geblang build` takes a MODULE name for `--entry` (the module must
 export `func main(list<string> args)`), not a file path.
 
+A built binary whose `main` takes `args` receives every argument, including
+`--help`, `--version` and `--`, so the app owns its own options. The runtime
+answers only `--geblang-help`, `--geblang-version` and `--geblang-notices`,
+and only as the first argument. `sys.appInfo()` returns `{name, version,
+runtime, packages}` for an app's own `--version`.
+
 ## Syntax
 
 ### Comments
@@ -539,6 +545,8 @@ reflect.decorators(target);           # [{name, args, namedArgs}]
 reflect.hasDecorator(target, "Get");
 reflect.typeBindings(value);          # {"T": "int"} for reified generics
 reflect.function("math.sqrt");        # resolve function by name (native too)
+reflect.className(target);            # class or interface name
+reflect.location(target);             # {module, line, column} of a function, class or interface
 ```
 
 `reflect.interfaces(cls)` returns the DIRECT `implements` clause
@@ -579,7 +587,7 @@ introspection builtins.
 | Module | Purpose |
 |--------|---------|
 | `io` | stdin/stdout, files (`open`, `readText`, `writeText`, `readBytes`), `exists`, `tempDir`. |
-| `sys` | env vars, args, `cwd`, `exit`, `goroutineId`, `cpuCount`, `setGcPercent`. |
+| `sys` | env vars, args, `cwd`, `exit`, `goroutineId`, `cpuCount`, `setGcPercent`, `appInfo` (app name/version, runtime, bundled packages). |
 | `path` / `pathlib` | `join`, `dir`, `base`, `ext`, `abs`; object-style paths. |
 | `json`, `yaml`, `toml`, `xml`, `csv`, `msgpack` | parse / stringify; insertion-ordered. |
 | `encoding` | base64, hex, URL encoding. |
@@ -702,6 +710,9 @@ error messages name the line and the missing piece.
   supply the currency explicitly for empty input.
 - `json.write(value, stream)` returns a byte count without flushing/closing the
   borrowed stream. Handle partial output on failure before publishing files.
+- `web.session` stores (`fileSessionStore`, `databaseSessionStore`,
+  `redisSessionStore` and the classes) take an optional final `cookieName`
+  (default `geb_sid`), exposed as `store.cookieName`.
 - `web.cache.memoryCacheStore(ttl, capacity)` adds bounded LRU storage; zero
   remains unlimited. Values are JSON snapshots and state stays shared across
   request snapshots. Capacity does not coalesce concurrent cache misses.

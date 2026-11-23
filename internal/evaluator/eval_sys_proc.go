@@ -8,6 +8,7 @@ import (
 	"geblang/internal/modules"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
+	"geblang/internal/version"
 	"io"
 	"os"
 	"os/exec"
@@ -297,6 +298,38 @@ func (e *Evaluator) sysPackageRoot(call *ast.CallExpression, args []runtime.Valu
 		}
 	}
 	return runtime.String{Value: ""}, nil
+}
+
+func (e *Evaluator) sysAppInfo(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
+	}
+	info, ok := native.BundledAppInfo()
+	if !ok {
+		for _, base := range e.modulePaths {
+			manifest, err := modules.NewResolver([]string{base}).FindManifest(base)
+			if err != nil {
+				return nil, err
+			}
+			if manifest != nil {
+				info = native.AppInfo{Name: manifest.Name, Version: manifest.Version}
+				break
+			}
+		}
+	}
+	packages := make([]runtime.Value, 0, len(info.Packages))
+	for _, p := range info.Packages {
+		entry := runtime.NewDict()
+		putDictV(entry, "name", runtime.String{Value: p.Name})
+		putDictV(entry, "version", runtime.String{Value: p.Version})
+		packages = append(packages, entry)
+	}
+	out := runtime.NewDict()
+	putDictV(out, "name", runtime.String{Value: info.Name})
+	putDictV(out, "version", runtime.String{Value: info.Version})
+	putDictV(out, "runtime", runtime.String{Value: version.Geblang})
+	putDictV(out, "packages", &runtime.List{Elements: packages})
+	return out, nil
 }
 
 func (e *Evaluator) sysArgs(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

@@ -240,7 +240,8 @@ class Dog extends Animal implements Greeter {
 }
 ```
 
-`reflect.className(target)` returns the class name as a string:
+`reflect.className(target)` returns the class name as a string. For an
+interface it returns the interface's declared name:
 
 ```gb
 io.println(reflect.className(Dog));   # Dog
@@ -516,8 +517,8 @@ let m = reflect.module("mymod");
 io.println(reflect.exports(m));   # ["Thing", "add", "sub"]
 ```
 
-`reflect.location(target)` returns the source position of a function or class
-declaration as `{module, line, column}`, or `null` when no position was
+`reflect.location(target)` returns the source position of a function, class
+or interface declaration as `{module, line, column}`, or `null` when no position was
 recorded:
 
 Function literals and capturing closures report the position of their `func`

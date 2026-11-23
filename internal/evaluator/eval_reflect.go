@@ -685,6 +685,10 @@ func reflectLocation(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 		if v != nil && v.Class != nil && (v.Class.DefinitionLine != 0 || v.Class.DefinitionColumn != 0) {
 			return makeDict(v.Class.DefinitionModule, int64(v.Class.DefinitionLine), int64(v.Class.DefinitionColumn)), nil
 		}
+	case *runtime.Interface:
+		if v != nil && (v.DefinitionLine != 0 || v.DefinitionColumn != 0) {
+			return makeDict(v.Module, int64(v.DefinitionLine), int64(v.DefinitionColumn)), nil
+		}
 	}
 	return runtime.Null{}, nil
 }
@@ -904,6 +908,9 @@ func reflectSetField(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 func reflectClassName(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
+	}
+	if iface, ok := args[0].(*runtime.Interface); ok && iface != nil {
+		return runtime.String{Value: bareInterfaceName(iface.Name)}, nil
 	}
 	metadata, err := reflectClassMetadataValue(call, args)
 	if err == nil && metadata.Name != "" {
@@ -1741,3 +1748,10 @@ func (e *Evaluator) decoratorArgValue(decoratorName string, expr ast.Expression,
 type decoratorRefError struct{ message string }
 
 func (err decoratorRefError) Error() string { return err.message }
+
+func bareInterfaceName(name string) string {
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		return name[dot+1:]
+	}
+	return name
+}

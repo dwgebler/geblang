@@ -76,7 +76,7 @@ middleware, services, and metadata.
 ### Source locations (1.0.6)
 
 `reflect.location(target)` returns a dict `{module, line, column}` for any
-function, class, or instance, or `null` when the target carries no recorded
+function, class, interface, or instance, or `null` when the target carries no recorded
 location (native builtins). Useful for diagnostics, code-generation, and
 framework error messages that want to point back at the user's source.
 

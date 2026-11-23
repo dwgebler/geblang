@@ -95,6 +95,7 @@ it; prefer passing state explicitly or sharing through a `store.Store`.
 |----------|---------|-------------|
 | `bundleDir()` | `string` | Extract directory of a built binary's embedded resources, or `""` when not running from a bundle |
 | `packageRoot()` | `string` | Directory of the current package manifest, or `""` when none is available |
+| `appInfo()` | `dict<string, any>` | Application identity: `name`, `version`, `runtime` (the Geblang version) and `packages` (a list of `{name, version}` dicts). A built binary reports its manifest and bundled dependency packages; otherwise `name` and `version` come from the nearest `geblang.yaml` (or are `""`) and `packages` is empty |
 
 `geblang build` can embed non-code files (templates, static assets, data) listed
 under `resources:` in `geblang.yaml`. A running program locates them through

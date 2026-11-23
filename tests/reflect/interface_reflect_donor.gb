@@ -1,0 +1,15 @@
+module interface_reflect_donor;
+import reflect;
+
+export interface Named {
+    func name(): string;
+}
+
+export interface Titled extends Named {
+    func title(): string;
+}
+
+export func describe(any target): string {
+    let loc = reflect.location(target);
+    return "${reflect.className(target)} ${loc["module"]}:${loc["line"]}";
+}

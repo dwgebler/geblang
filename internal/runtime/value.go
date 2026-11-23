@@ -1607,16 +1607,18 @@ func (v *Class) DeclaringModule() string {
 }
 
 type Interface struct {
-	Env            *Environment
-	DefinitionPath string
-	Name           string
-	Doc            string
-	Module         string // declaring module, for module-exact instanceof
-	TypeParameters []string
-	Parents        []*Interface
-	Methods        []*ast.FunctionSignature
-	Defaults       []*ast.FunctionStatement
-	Fields         []*ast.DeclarationStatement
+	Env              *Environment
+	DefinitionPath   string
+	DefinitionLine   int
+	DefinitionColumn int
+	Name             string
+	Doc              string
+	Module           string // declaring module, for module-exact instanceof
+	TypeParameters   []string
+	Parents          []*Interface
+	Methods          []*ast.FunctionSignature
+	Defaults         []*ast.FunctionStatement
+	Fields           []*ast.DeclarationStatement
 }
 
 func (v *Interface) TypeName() string { return "interface" }

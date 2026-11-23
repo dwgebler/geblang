@@ -508,6 +508,7 @@ func (c *Compiler) compileInterfaceStatement(stmt *ast.InterfaceStatement) error
 	index := c.declareInterface(stmt.Name.Value)
 	iface := c.chunk.Interfaces[index]
 	iface.Doc = stmt.Doc
+	iface.DefLine, iface.DefColumn = int64(stmt.Token.Line), int64(stmt.Token.Column)
 	iface.TypeParameters = typeParameterNames(stmt.Generics)
 	iface.Parents = iface.Parents[:0]
 	iface.Methods = iface.Methods[:0]

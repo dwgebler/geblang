@@ -252,6 +252,9 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.%s expects class", fn)
 		}
+		if iface, isIface := args[0].(*runtime.Interface); isIface && iface != nil && fn == "className" {
+			return runtime.String{Value: stripModulePrefix(iface.Name)}, nil
+		}
 		metadata, ok := vm.reflectClassMetadata(args[0])
 		if !ok {
 			// Fall back to built-in primitive metadata so
@@ -848,6 +851,12 @@ func (vm *VM) reflectLocation(value runtime.Value) (runtime.Value, error) {
 			return makeLocationDict(v.Class.Module, v.Class.DefLine, v.Class.DefColumn), nil
 		}
 		return runtime.Null{}, nil
+	case *runtime.Interface:
+		info, ok := vm.reflectInterfaceInfo(v)
+		if !ok || (info.DefLine == 0 && info.DefColumn == 0) {
+			return runtime.Null{}, nil
+		}
+		return makeLocationDict(v.Module, info.DefLine, info.DefColumn), nil
 	case *runtime.Instance:
 		if v == nil || v.Class == nil {
 			return runtime.Null{}, nil

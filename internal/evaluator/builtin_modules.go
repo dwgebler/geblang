@@ -130,6 +130,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"getenv":             sysGetenv,
 			"bundleDir":          sysBundleDir,
 			"packageRoot":        e.sysPackageRoot,
+			"appInfo":            e.sysAppInfo,
 			"args":               e.sysArgs,
 			"run":                sysRun,
 			"runWithOptions":     sysRunWithOptions,

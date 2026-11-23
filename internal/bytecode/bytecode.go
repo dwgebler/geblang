@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(108)
+	Version = uint16(109)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -617,6 +617,8 @@ type InterfaceInfo struct {
 	Defaults       map[string]int64
 	Fields         []string
 	FieldTypes     []string
+	DefLine        int64
+	DefColumn      int64
 }
 
 type ExportInfo struct {
@@ -938,6 +940,8 @@ func Encode(chunk Chunk) ([]byte, error) {
 			out = binary.BigEndian.AppendUint16(out, uint16(len(typeStr)))
 			out = append(out, []byte(typeStr)...)
 		}
+		out = binary.BigEndian.AppendUint64(out, uint64(iface.DefLine))
+		out = binary.BigEndian.AppendUint64(out, uint64(iface.DefColumn))
 	}
 	out = binary.BigEndian.AppendUint16(out, uint16(len(chunk.Exports)))
 	for _, export := range chunk.Exports {
@@ -1244,6 +1248,8 @@ func Decode(data []byte) (Chunk, error) {
 			iface.Fields = append(iface.Fields, string(reader.read(int(reader.u16()))))
 			iface.FieldTypes = append(iface.FieldTypes, string(reader.read(int(reader.u16()))))
 		}
+		iface.DefLine = int64(reader.u64())
+		iface.DefColumn = int64(reader.u64())
 		chunk.Interfaces = append(chunk.Interfaces, iface)
 	}
 	exportCount := int(reader.u16())

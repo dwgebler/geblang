@@ -12,9 +12,29 @@
   `TypeError` naming `T`.
 - `geblang check` reports a call that can never bind a type parameter the
   function uses as a value, such as `make()` for `func make<T>(): T { return T(); }`.
+- `sys.appInfo()` returns the application's `name` and `version`, the Geblang
+  `runtime` version, and the bundled dependency `packages`. A built binary
+  reports its own manifest; otherwise name and version come from the nearest
+  `geblang.yaml`.
+- The `web.session` stores take an optional `cookieName` (default `geb_sid`)
+  for the session-id cookie, on both the factory functions and the store
+  classes, and expose it as `store.cookieName`.
+
+### Changed
+
+- A built binary whose `main` takes arguments passes every argument to the
+  application, including `--help`, `--version` and `--`, so an application's
+  own options no longer need `-- --help`. The runtime's flags are
+  `--geblang-help`, `--geblang-version` and `--geblang-notices`, recognised as
+  the first argument. A binary whose `main` takes no arguments still answers
+  `--help`, `-h`, `--version` and `--notices`.
 
 ### Fixed
 
+- `reflect.className` returns an interface's declared name (it returned
+  `"interface"`), and `reflect.location` returns an interface's
+  `{module, line, column}` (it returned `null`), for local and imported
+  interfaces on both runtimes. Older bytecode caches are rebuilt.
 - Errors escaping a catch body on the VM run its finally block, including
   rethrows and failures from called code. Older bytecode caches are rebuilt.
 

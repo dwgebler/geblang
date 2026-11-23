@@ -1,0 +1,47 @@
+/**
+ * @title reflect on interfaces
+ * @summary reflect.className returns an interface's declared name and
+ * reflect.location its {module, line, column}, for local, imported and
+ * from-imported interfaces, whichever module asks.
+ */
+import test;
+import reflect;
+import interface_reflect_donor as donor;
+from interface_reflect_donor import Titled;
+
+interface LocalNamed {
+    func name(): string;
+}
+
+class InterfaceReflectTest extends test.Test {
+    @test
+    func localInterface(): void {
+        this.assertEquals("LocalNamed", reflect.className(LocalNamed));
+        let loc = reflect.location(LocalNamed) as dict<string, any>;
+        this.assertEquals("", loc["module"]);
+        this.assertEquals(12, loc["line"]);
+        this.assertEquals(1, loc["column"]);
+    }
+
+    @test
+    func importedInterfaces(): void {
+        this.assertEquals("Named", reflect.className(donor.Named));
+        this.assertEquals("Titled", reflect.className(Titled));
+        this.assertEquals("interface_reflect_donor", reflect.location(donor.Named)["module"]);
+        this.assertEquals(4, reflect.location(donor.Named)["line"]);
+        this.assertEquals(8, reflect.location(Titled)["line"]);
+    }
+
+    @test
+    func declaringModuleSeesTheSameAnswers(): void {
+        this.assertEquals("Named interface_reflect_donor:4", donor.describe(donor.Named));
+        this.assertEquals("LocalNamed :12", donor.describe(LocalNamed));
+    }
+
+    @test
+    func interfaceHeldInAVariable(): void {
+        any held = Titled;
+        this.assertEquals("Titled", reflect.className(held));
+        this.assertEquals(8, reflect.location(held)["line"]);
+    }
+}

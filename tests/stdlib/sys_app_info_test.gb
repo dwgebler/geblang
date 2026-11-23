@@ -1,0 +1,30 @@
+/**
+ * @title sys.appInfo (1.46.0)
+ * @summary Returns the application identity: name and version from the
+ * nearest geblang.yaml (or a built binary's manifest), the Geblang runtime
+ * version, and the bundled dependency packages (empty when not bundled).
+ */
+import test;
+import sys;
+
+class SysAppInfoTest extends test.Test {
+    @test
+    func hasTheDocumentedShape(): void {
+        let info = sys.appInfo();
+        this.assertEquals(["name", "packages", "runtime", "version"], info.keys().sorted());
+        this.assertTrue(info["name"] instanceof string);
+        this.assertTrue(info["version"] instanceof string);
+    }
+
+    @test
+    func reportsTheRuntimeVersion(): void {
+        let runtime = sys.appInfo()["runtime"] as string;
+        this.assertFalse(runtime.isEmpty());
+        this.assertEquals(3, runtime.split(".").length());
+    }
+
+    @test
+    func hasNoPackagesOutsideABuiltBinary(): void {
+        this.assertEquals([], sys.appInfo()["packages"]);
+    }
+}

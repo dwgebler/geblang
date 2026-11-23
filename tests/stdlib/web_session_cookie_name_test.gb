@@ -1,0 +1,70 @@
+/**
+ * @title Session store cookie name
+ * @summary The web.session stores take an optional cookie name (default
+ * geb_sid) used to read, write and clear the session-id cookie.
+ */
+import test;
+import io;
+import db;
+import web.session as session;
+
+func sessionId(dict<string, any> response, string cookieName): string {
+    let setCookie = (response["headers"] as dict<string, any>)["Set-Cookie"] as string;
+    assert(setCookie.startsWith(cookieName + "="));
+    return setCookie.substring(cookieName.length() + 1, setCookie.indexOf(";"));
+}
+
+func cookieRequest(string name, string id): dict<string, any> {
+    return {"headers": {"Cookie": name + "=" + id}};
+}
+
+class SessionCookieNameTest extends test.Test {
+    string root;
+
+    func setUp(): void {
+        this.root = io.tempDir("geb-session-name-*");
+    }
+
+    func tearDown(): void {
+        io.remove(this.root);
+    }
+
+    func exercise(any store): void {
+        let id = sessionId(store.save({}, {"user": "ada"}, {}) as dict<string, any>, "app_sid");
+        this.assertEquals("ada", (store.load(cookieRequest("app_sid", id)) as dict<string, any>)["user"]);
+        this.assertEquals({}, store.load(cookieRequest("geb_sid", id)));
+        let cleared = store.clear({}, cookieRequest("app_sid", id)) as dict<string, any>;
+        this.assertTrue(((cleared["headers"] as dict<string, any>)["Set-Cookie"] as string).startsWith("app_sid="));
+        this.assertEquals({}, store.load(cookieRequest("app_sid", id)));
+    }
+
+    @test
+    func fileStoreUsesTheConfiguredName(): void {
+        this.exercise(session.fileSessionStore(this.root + "/s", 3600, "app_sid"));
+    }
+
+    @test
+    func databaseStoreUsesTheConfiguredName(): void {
+        let conn = db.Connection("sqlite", ":memory:");
+        this.exercise(session.databaseSessionStore(conn, "sessions", 3600, "app_sid").install());
+    }
+
+    @test
+    func classConstructorAcceptsTheName(): void {
+        this.exercise(session.FileSessionStore(this.root + "/c", 3600, "app_sid"));
+    }
+
+    @test
+    func defaultNameIsGebSid(): void {
+        let store = session.fileSessionStore(this.root + "/d", 3600);
+        this.assertEquals("geb_sid", store.cookieName);
+        sessionId(store.save({}, {"user": "ada"}, {}) as dict<string, any>, "geb_sid");
+    }
+
+    @test
+    func emptyNameIsRejected(): void {
+        this.assertThrows(func(): void {
+            session.fileSessionStore(this.root + "/e", 3600, "");
+        });
+    }
+}

@@ -38,8 +38,13 @@ export class RedisSessionStore {
     any client;
     string prefix;
     int ttl;
+    string cookieName;
 
-    func RedisSessionStore(any client, string prefix, int ttl) {
+    func RedisSessionStore(any client, string prefix, int ttl, string cookieName = "geb_sid") {
+        if (cookieName.isEmpty()) {
+            throw ValueError("session cookie name must not be empty");
+        }
+        this.cookieName = cookieName;
         this.client = client;
         this.prefix = prefix;
         this.ttl = ttl;
@@ -50,7 +55,7 @@ export class RedisSessionStore {
     }
 
     func load(dict<string, any> request): dict<string, any> {
-        string id = http.requestObject(request).cookie("geb_sid");
+        string id = http.requestObject(request).cookie(this.cookieName);
         if (id.isEmpty()) {
             return {};
         }
@@ -72,21 +77,21 @@ export class RedisSessionStore {
         if (!options.hasKey("maxAge")) {
             options["maxAge"] = this.ttl;
         }
-        return http.withCookieOptions(response, "geb_sid", id, options);
+        return http.withCookieOptions(response, this.cookieName, id, options);
     }
 
     func clear(dict<string, any> response, dict<string, any> request): dict<string, any> {
-        string id = http.requestObject(request).cookie("geb_sid");
+        string id = http.requestObject(request).cookie(this.cookieName);
         if (!id.isEmpty()) {
             this.client.del(this.key(id));
         }
-        return http.deleteCookie(response, "geb_sid");
+        return http.deleteCookie(response, this.cookieName);
     }
 }
 
 ## Creates a Redis-backed session store.
-export func redisSessionStore(any client, string prefix, int ttl): RedisSessionStore {
-    return RedisSessionStore(client, prefix, ttl);
+export func redisSessionStore(any client, string prefix, int ttl, string cookieName = "geb_sid"): RedisSessionStore {
+    return RedisSessionStore(client, prefix, ttl, cookieName);
 }
 
 func sessionExpired(dict<string, any> payload): bool {
@@ -120,8 +125,13 @@ func isValidSessionId(string id): bool {
 export class FileSessionStore {
     string directory;
     int ttl;
+    string cookieName;
 
-    func FileSessionStore(string directory, int ttl) {
+    func FileSessionStore(string directory, int ttl, string cookieName = "geb_sid") {
+        if (cookieName.isEmpty()) {
+            throw ValueError("session cookie name must not be empty");
+        }
+        this.cookieName = cookieName;
         this.directory = directory;
         this.ttl = ttl;
         io.mkdir(directory, 493);
@@ -132,7 +142,7 @@ export class FileSessionStore {
     }
 
     func load(dict<string, any> request): dict<string, any> {
-        string id = http.requestObject(request).cookie("geb_sid");
+        string id = http.requestObject(request).cookie(this.cookieName);
         if (!isValidSessionId(id)) {
             return {};
         }
@@ -156,21 +166,21 @@ export class FileSessionStore {
         if (!options.hasKey("maxAge")) {
             options["maxAge"] = this.ttl;
         }
-        return http.withCookieOptions(response, "geb_sid", id, options);
+        return http.withCookieOptions(response, this.cookieName, id, options);
     }
 
     func clear(dict<string, any> response, dict<string, any> request): dict<string, any> {
-        string id = http.requestObject(request).cookie("geb_sid");
+        string id = http.requestObject(request).cookie(this.cookieName);
         if (isValidSessionId(id)) {
             io.remove(this.path(id));
         }
-        return http.deleteCookie(response, "geb_sid");
+        return http.deleteCookie(response, this.cookieName);
     }
 }
 
 ## Creates a file-backed session store.
-export func fileSessionStore(string directory, int ttl): FileSessionStore {
-    return FileSessionStore(directory, ttl);
+export func fileSessionStore(string directory, int ttl, string cookieName = "geb_sid"): FileSessionStore {
+    return FileSessionStore(directory, ttl, cookieName);
 }
 
 ## Session store backed by a database table with id, data, and expiry columns.
@@ -178,8 +188,13 @@ export class DatabaseSessionStore {
     any conn;
     string table;
     int ttl;
+    string cookieName;
 
-    func DatabaseSessionStore(any conn, string table, int ttl) {
+    func DatabaseSessionStore(any conn, string table, int ttl, string cookieName = "geb_sid") {
+        if (cookieName.isEmpty()) {
+            throw ValueError("session cookie name must not be empty");
+        }
+        this.cookieName = cookieName;
         this.conn = conn;
         this.table = table;
         this.ttl = ttl;
@@ -191,7 +206,7 @@ export class DatabaseSessionStore {
     }
 
     func load(dict<string, any> request): dict<string, any> {
-        string id = http.requestObject(request).cookie("geb_sid");
+        string id = http.requestObject(request).cookie(this.cookieName);
         if (id.isEmpty()) {
             return {};
         }
@@ -217,21 +232,21 @@ export class DatabaseSessionStore {
         if (!options.hasKey("maxAge")) {
             options["maxAge"] = this.ttl;
         }
-        return http.withCookieOptions(response, "geb_sid", id, options);
+        return http.withCookieOptions(response, this.cookieName, id, options);
     }
 
     func clear(dict<string, any> response, dict<string, any> request): dict<string, any> {
-        string id = http.requestObject(request).cookie("geb_sid");
+        string id = http.requestObject(request).cookie(this.cookieName);
         if (!id.isEmpty()) {
             db.exec(this.conn, "delete from " + this.table + " where id = ?", id);
         }
-        return http.deleteCookie(response, "geb_sid");
+        return http.deleteCookie(response, this.cookieName);
     }
 }
 
 ## Creates a database-backed session store; call install() to create its table.
-export func databaseSessionStore(any conn, string table, int ttl): DatabaseSessionStore {
-    return DatabaseSessionStore(conn, table, ttl);
+export func databaseSessionStore(any conn, string table, int ttl, string cookieName = "geb_sid"): DatabaseSessionStore {
+    return DatabaseSessionStore(conn, table, ttl, cookieName);
 }
 
 ## Returns queued flash messages from a session store.

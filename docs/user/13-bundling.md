@@ -316,26 +316,25 @@ Alongside the binary, `geblang build` writes a `<output-path>.NOTICES.txt`
 file containing the third-party attribution notices for the components the
 binary embeds (the Geblang runtime and its dependencies). Ship this file with
 the binary to keep the distribution licence-compliant. The same notices are
-also available at runtime through the built-in `--notices` flag (below). The
+also available at runtime through the built-in `--geblang-notices` flag (below). The
 same applies to binaries produced by `gebweb build`, which delegates to
 `geblang build`.
 
 ### Standard flags and program arguments
 
-Every built binary recognises a few standard flags, but only when one is the
+Every built binary recognises a few runtime flags, but only when one is the
 **first argument**:
 
-- `--help` / `-h` prints the binary's usage.
-- `--version` prints `<app> <version>`, then the Geblang runtime version and
-  the name and version of each bundled dependency package, one per line.
-- `--notices` prints the embedded third-party notices.
+- `--geblang-help` prints the binary's usage.
+- `--geblang-version` prints `<app> <version>`, then the Geblang runtime
+  version and the name and version of each bundled dependency package, one per
+  line.
+- `--geblang-notices` prints the embedded third-party notices.
 
-Because these are double-dash flags checked only in first position, they never
-clash with a bare-word subcommand (such as a `licenses` or `version` command)
-or any argument your own program defines: those are forwarded unchanged. A
-literal `--` also forwards everything after it verbatim, so
-`./dist/myapp -- --version` passes `--version` to your program instead of
-printing the Geblang version.
+If your entry `main` takes arguments, everything else is your program's,
+including `--help`, `--version` and a literal `--`. If `main` takes no
+arguments, `--help`, `-h`, `--version` and `--notices` are accepted as
+short forms of the runtime flags.
 
 Otherwise, pass arguments the same way you would to any other binary:
 
@@ -411,20 +410,22 @@ them run unchanged:
 
 ## Standard Flags Of Built Binaries
 
-Every built binary answers a small set of standard flags, recognised
-only when they are the FIRST argument:
+Every built binary answers a small set of runtime flags, recognised only
+when they are the FIRST argument:
 
 | Flag | Effect |
 |---|---|
-| `--help`, `-h` | Application name/version, usage, and this flag list |
-| `--version` | `<name> <version>` from `geblang.yaml`, then `geblang <version>` and each bundled dependency package's name and version, one per line |
-| `--notices`, `--licences` | Prints the embedded third-party licence notices |
-| `--` | Passes everything after it to the application untouched |
+| `--geblang-help` | Application name/version, usage, and this flag list |
+| `--geblang-version` | `<name> <version>` from `geblang.yaml`, then `geblang <version>` and each bundled dependency package's name and version, one per line |
+| `--geblang-notices` | Prints the embedded third-party licence notices |
 
-Any other first argument (and all later arguments) flow to the
-application's `main(list<string> args)` unchanged, so an application
-that defines its own `--help` can still receive it via
-`./app -- --help`.
+When the entry `main` takes arguments (`main(list<string> args)`), every
+other argument reaches the application unchanged, including `--help`,
+`--version` and `--`, so the application owns its own options. An
+application can print the same identity with `sys.appInfo()`.
+
+When `main` takes no arguments, the shorter `--help`, `-h`, `--version`
+and `--notices` (or `--licences`) forms are accepted as well.
 
 ## Full Example: A CLI Tool
 
