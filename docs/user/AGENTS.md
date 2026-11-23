@@ -159,7 +159,7 @@ set<int>          s  = {1, 2, 3};      # brace literal w/o ':' is a set
   `isHex`, `isUuid`, `isEmail`, `isUrl` (absolute with host), `isUtf8`;
   `b.isUtf8()` on bytes.
 - More primitive helpers: strings `words`, `snakeCase`, `camelCase`,
-  `kebabCase`, `slugify`, `center(width[, pad])`, `wrap(width)` (list of lines);
+  `kebabCase`, `slugify`, `center(int width)` / `center(int width, string pad)`, `wrap(width)` (list of lines);
   numbers `isBetween(lo, hi)` (inclusive), int `gcd`/`lcm`/`digits`/
   `isPowerOfTwo`/`bitCount`, float `isCloseTo(other, relTol, absTol)`; bytes
   `startsWith`/`endsWith`/`indexOf`; sets `isSubsetOf`/`isSupersetOf`/
@@ -651,7 +651,7 @@ runner picks up `Test` subclasses; no manual `test.run()`. Run with
 `geblang test path/`. Asserters include `assertEquals`,
 `assertNotEquals`, `assertTrue`, `assertFalse`, `assertNull`,
 `assertNotNull`, `assertContains`, `assertEmpty`, `assertGreaterThan`,
-`assertThrows`, and `assertThrowsOf`; `this.skip([reason])` skips a
+`assertThrows`, and `assertThrowsOf`; `this.skip()` or `this.skip(string reason)` skips a
 method and `@tag("name")` categorizes it for `--tag`.
 
 To test a module's PRIVATE members, declare the SAME module name

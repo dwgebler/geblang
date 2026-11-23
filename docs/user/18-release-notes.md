@@ -32,6 +32,12 @@
   binaries alike. Before, it showed a line from runtime-generated code that
   differed between the two.
 
+### Documentation
+
+- Reference signatures with optional arguments are listed as separate typed
+  forms, such as `trim()` and `trim(string chars)`, instead of the `[chars]`
+  bracket notation, which read like a list argument.
+
 ## 1.45.0
 
 ### Added

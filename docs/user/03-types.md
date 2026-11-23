@@ -95,7 +95,8 @@ Common to all three numeric types:
 | `digits()` | `list<int>` | Decimal digits of the absolute value: `(-120).digits()` is `[1, 2, 0]`. |
 | `isPowerOfTwo()` | `bool` | True for `1, 2, 4, 8, ...`; false for zero and negatives. |
 | `bitCount()` | `int` | Number of 1 bits in the absolute value. |
-| `toDecimal([places])` | `decimal` | Convert; with `places`, rounded to that many digits. |
+| `toDecimal()` | `decimal` | Convert exactly. |
+| `toDecimal(int places)` | `decimal` | Convert, rounded to `places` digits. |
 | `toFloat()` | `float` | Convert to float. |
 
 `decimal` and `float` add the value-keeping rounding family (each takes
@@ -808,7 +809,8 @@ let xs = (1..5).toList();     # [1, 2, 3, 4, 5]
 list<int> ys = (1..5).toList();
 ```
 
-For convenience, the top-level `range(start, end[, step])` builtin
+For convenience, the top-level `range(int start, int end)` builtin (or
+`range(int start, int end, int step)`)
 returns the list directly without an intermediate `Range`:
 
 ```gb

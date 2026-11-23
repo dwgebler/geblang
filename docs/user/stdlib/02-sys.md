@@ -331,7 +331,8 @@ if (result.isOk()) {
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `process.run(cmd, args[, opts])` | `Result` | Run command and wait |
+| `process.run(string cmd, list<string> args)` | `Result` | Run command and wait |
+| `process.run(string cmd, list<string> args, dict opts)` | `Result` | Same, with `cwd`, `env` and `timeout` options |
 | `process.runWithOptions(opts)` | `Result` | Run with options dict |
 | `process.shell(cmd)` | `Result` | Run through the host shell |
 | `process.start(cmd, args...)` | `Process` | Start a live process |

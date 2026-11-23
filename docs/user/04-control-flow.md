@@ -137,7 +137,8 @@ for (i in collections.range(10, 0, -2)) {
 on range literals for the common case; use `collections.range` when you need
 lazy evaluation or runtime-constructed sequences.
 
-Three eager integer-range builtins exist. `range(start, end[, step])` builds an
+Three eager integer-range builtins exist. `range(int start, int end)` (or
+`range(int start, int end, int step)`) builds an
 *inclusive* list (`range(0, 3)` is `[0, 1, 2, 3]`). `zrange` is the *exclusive*,
 Python-style counterpart: `zrange(0, 3)` is `[0, 1, 2]`, and the one-arg form
 `zrange(n)` ranges from 0 (`zrange(5)` is `[0, 1, 2, 3, 4]`). Both accept an

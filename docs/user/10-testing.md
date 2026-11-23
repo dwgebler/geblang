@@ -89,10 +89,14 @@ failure and continues to the next method.
 | `assertGreaterThanOrEqual(threshold, actual)` | |
 | `assertLessThan(threshold, actual)` | |
 | `assertLessThanOrEqual(threshold, actual)` | |
-| `assertThrows(callable[, substring])` | `callable` must raise; optional message substring |
-| `assertThrowsOf(callable, classOrName[, substring])` | `callable` must raise an error of that class |
-| `fail([message])` | Unconditional failure |
-| `skip([reason])` | Stop and record the method as skipped, not failed |
+| `assertThrows(callable fn)` | `fn` must raise |
+| `assertThrows(callable fn, string substring)` | `fn` must raise an error whose message contains `substring` |
+| `assertThrowsOf(callable fn, any classOrName)` | `fn` must raise an error of that class |
+| `assertThrowsOf(callable fn, any classOrName, string substring)` | Same, and the message must contain `substring` |
+| `fail()` | Unconditional failure |
+| `fail(string message)` | Unconditional failure with `message` |
+| `skip()` | Stop and record the method as skipped, not failed |
+| `skip(string reason)` | Same, recording `reason` |
 
 Equality uses Geblang's value-equality rules: lists, dicts, sets, and
 class instances are compared field by field; enum variants compare on

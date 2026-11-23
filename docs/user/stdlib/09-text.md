@@ -91,13 +91,15 @@ io.println(s.containsIgnoreCase("WORLD"));       # true
 
 ### Slicing And Substrings
 
-`substring(start[, end])` and `slice(start[, end])` are aliases - both extract a
+`substring` and `slice` are aliases - both extract a
 sub-sequence by code-point index.  Negative indices count from the end.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `substring(start[, end])` | `string` | Characters from `start` up to (not including) `end` |
-| `slice(start[, end])` | `string` | Same as `substring` |
+| `substring(int start)` | `string` | Characters from `start` to the end |
+| `substring(int start, int end)` | `string` | Characters from `start` up to (not including) `end` |
+| `slice(int start)` | `string` | Same as `substring(start)` |
+| `slice(int start, int end)` | `string` | Same as `substring(start, end)` |
 
 ```gb
 import io;
@@ -113,18 +115,26 @@ io.println(s.slice(0, -6));      # hello
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `lower([n])` | `string` | All characters lower-cased; with `n`, only the first `n` (the last `-n` when negative) |
-| `upper([n])` | `string` | All characters upper-cased; with `n`, only the first `n` (the last `-n` when negative) |
+| `lower()` | `string` | All characters lower-cased |
+| `lower(int n)` | `string` | Only the first `n` characters lower-cased (the last `-n` when negative) |
+| `upper()` | `string` | All characters upper-cased |
+| `upper(int n)` | `string` | Only the first `n` characters upper-cased (the last `-n` when negative) |
 | `capitalize()` | `string` | First character upper-cased, the rest lower-cased |
 | `title()` | `string` | Each whitespace-separated word title-cased |
-| `trim([chars])` | `string` | Leading and trailing whitespace removed, or any of the characters in `chars` |
-| `trimStart([chars])` | `string` | Leading whitespace removed, or any of the characters in `chars` |
-| `trimEnd([chars])` | `string` | Trailing whitespace removed, or any of the characters in `chars` |
-| `replace(from, to[, count])` | `string` | Replace occurrences of `from` with `to`; `count` limits replacements |
+| `trim()` | `string` | Leading and trailing whitespace removed |
+| `trim(string chars)` | `string` | Leading and trailing characters that appear in `chars` removed |
+| `trimStart()` | `string` | Leading whitespace removed |
+| `trimStart(string chars)` | `string` | Leading characters that appear in `chars` removed |
+| `trimEnd()` | `string` | Trailing whitespace removed |
+| `trimEnd(string chars)` | `string` | Trailing characters that appear in `chars` removed |
+| `replace(string from, string to)` | `string` | Replace every occurrence of `from` with `to` |
+| `replace(string from, string to, int count)` | `string` | Replace at most `count` occurrences |
 | `reverse()` | `string` | Characters in reversed order |
 | `repeat(count)` | `string` | String repeated `count` times |
-| `padStart(width[, pad])` | `string` | Pad to at least `width` characters on the left; a longer string is returned unchanged and `pad` repeats from its first character |
-| `padEnd(width[, pad])` | `string` | Pad to at least `width` characters on the right; a longer string is returned unchanged |
+| `padStart(int width)` | `string` | Pad with spaces to at least `width` characters on the left; a longer string is returned unchanged |
+| `padStart(int width, string pad)` | `string` | Same, padding with `pad` instead of spaces; `pad` repeats from its first character |
+| `padEnd(int width)` | `string` | Pad with spaces to at least `width` characters on the right; a longer string is returned unchanged |
+| `padEnd(int width, string pad)` | `string` | Same, padding with `pad` instead of spaces |
 | `removePrefix(prefix)` | `string` | Strip `prefix` if present, else unchanged |
 | `removeSuffix(suffix)` | `string` | Strip `suffix` if present, else unchanged |
 
@@ -196,7 +206,8 @@ does not raise.
 | `camelCase()` | `string` | First word lowercased, the rest capitalized, no separator |
 | `kebabCase()` | `string` | Words lowercased and joined with `-` |
 | `slugify()` | `string` | URL slug: accents stripped, lowercase ASCII letters and digits joined by `-` |
-| `center(width[, pad])` | `string` | Centered within `width` characters; the extra character goes on the right |
+| `center(int width)` | `string` | Centered within `width` characters; the extra character goes on the right |
+| `center(int width, string pad)` | `string` | Same, padding with `pad` instead of spaces |
 | `wrap(width)` | `list<string>` | Lines of at most `width` characters, breaking between words |
 
 `words()` keeps an acronym together and attaches digits to the word before
@@ -656,7 +667,8 @@ Module functions:
 
 - `renderString(source, data)` - render a template string against `data`,
   returning the result string.
-- `Template(source[, name])` - compile a reusable `Template` value.
+- `Template(string source)` or `Template(string source, string name)` - compile a
+  reusable `Template` value; the name defaults to `"inline"`.
 - `load(path)` - read and compile a template from a file.
 - `Engine(dir)` - a `TemplateEngine` rooted at a directory; accepts a string
   path or an options dict (`{"dir": ...}`).

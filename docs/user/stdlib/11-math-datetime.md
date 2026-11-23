@@ -405,8 +405,8 @@ let fromStr  = datetime.Instant("2025-12-25T09:30:00Z");  # from an RFC3339 stri
 let copy     = datetime.Instant(now);                 # copy of another Instant
 ```
 
-The calendar-component form (3 to 6 ints: `year, month, day[, hour, minute,
-second]`) is interpreted in **UTC** and uses Go-style normalization, identical
+The calendar-component form (3 to 6 ints: `year, month, day`, optionally
+followed by `hour`, `minute` and `second`) is interpreted in **UTC** and uses Go-style normalization, identical
 to `datetime.make`: out-of-range fields roll over rather than erroring. For
 example, month 13 becomes January of the next year:
 

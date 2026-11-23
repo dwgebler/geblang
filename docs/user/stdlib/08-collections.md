@@ -108,7 +108,7 @@ io.println(["foo", "bar", "baz"].searchPattern("^ba"));     # [1, 2]
 
 ### Slicing
 
-`slice(start[, end])` extracts a sub-list by index.  Negative indices count from
+`slice(int start)` and `slice(int start, int end)` extract a sub-list by index.  Negative indices count from
 the end.  The original list is not modified.
 
 ```gb
@@ -194,7 +194,8 @@ string tail = queue.takeLast();    # "c"; queue is ["b"]
 | `copy()` | `list<T>` | New list with the same elements (shallow copy) |
 | `deepCopy()` | `list<T>` | New list with nested containers and objects cloned recursively |
 | `reversed()` | `list<T>` | New list with elements in reverse order |
-| `sorted([compare])` | `list<T>` | Sorted copy |
+| `sorted()` | `list<T>` | Sorted copy |
+| `sorted(func compare)` | `list<T>` | Sorted copy using `compare` |
 
 ```gb
 import io;
@@ -238,9 +239,12 @@ io.println(words);          # []
 |--------|---------|-------------|
 | `reverse()` | `list<T>` | Reverse in place; returns the receiver |
 | `reversed()` | `list<T>` | New reversed list; receiver unchanged |
-| `sort([compare])` | `list<T>` | Sort in place; optional `(a,b)->bool` less-than or `(a,b)->int` comparator (`null` means natural order); returns the receiver |
-| `sorted([compare])` | `list<T>` | Sorted copy; receiver unchanged |
-| `sortBy(key[, descending])` | `list<T>` | Sort in place by the `key` function (`true` for descending); returns the receiver |
+| `sort()` | `list<T>` | Sort in place in natural order; returns the receiver |
+| `sort(func compare)` | `list<T>` | Sort in place with `(a,b)->bool` less-than or `(a,b)->int` comparator (`null` means natural order); returns the receiver |
+| `sorted()` | `list<T>` | Sorted copy; receiver unchanged |
+| `sorted(func compare)` | `list<T>` | Sorted copy using `compare` (same forms as `sort`); receiver unchanged |
+| `sortBy(func key)` | `list<T>` | Sort in place by the `key` function; returns the receiver |
+| `sortBy(func key, bool descending)` | `list<T>` | Same, descending when `descending` is `true` |
 | `binarySearch(value)` | `int` | Index of `value` in a sorted list, or -1 |
 | `binarySearchBy(key, target)` | `int` | Index whose `key` equals `target` in a list sorted by it, or -1 |
 | `concat(other)` | `list<T>` | New list with `other` appended |
@@ -382,7 +386,8 @@ interchangeable.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `sortBy(key[, descending])` | `list<T>` | Sort in place by the key `key` returns for each element; returns the receiver |
+| `sortBy(func key)` | `list<T>` | Sort in place by the key `key` returns for each element; returns the receiver |
+| `sortBy(func key, bool descending)` | `list<T>` | Same, descending when `descending` is `true` |
 | `minBy(key)` | `T\|null` | Element with the smallest key; `null` if empty |
 | `maxBy(key)` | `T\|null` | Element with the largest key; `null` if empty |
 | `topBy(key, k)` | `list<T>` | Top `k` elements by key (descending) |
