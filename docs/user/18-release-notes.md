@@ -15,6 +15,9 @@
 
 ### Fixed
 
+- Errors escaping a catch body on the VM run its finally block, including
+  rethrows and failures from called code. Older bytecode caches are rebuilt.
+
 - On the bytecode VM, explicit type arguments on a generic function with no
   parameters (`make<User>()`) are now bound inside the function; before, `T`
   was left unbound there and the arguments carried over into the next call,

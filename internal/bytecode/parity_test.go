@@ -6248,3 +6248,69 @@ for (done in [clean.run, child.run, child.own]) {
 }
 `, "original\noriginal\noriginal\n")
 }
+
+func TestParityFinallyRunsWhenCatchThrows(t *testing.T) {
+	runParity(t, `import io;
+func cleanup(): void { try { throw TypeError("handled"); } catch (Error e) {} io.println("cleanup"); }
+func rethrow(): void {
+    try { throw ValueError("original"); }
+    catch (Error error) { throw error; }
+    finally { cleanup(); }
+}
+func replacement(): void { throw TypeError("replacement"); }
+class Base {
+    func run(): void { rethrow(); }
+    func replace(): void {
+        try { throw ValueError("original"); }
+        catch (ValueError error) { replacement(); }
+        finally { cleanup(); }
+    }
+}
+class Child extends Base { func own(): void { rethrow(); } }
+let child = Child();
+for (run in [rethrow, child.run, child.own, child.replace]) {
+    try { run(); } catch (Error error) { io.println(error.message); }
+}
+func returns(): int {
+    try { throw ValueError("original"); }
+    catch (Error error) { return 7; }
+    finally { io.println("return-cleanup"); }
+}
+io.println(returns());
+try {
+    try { throw ValueError("unmatched"); }
+    catch (TypeError error) { io.println("unreachable"); }
+    finally { io.println("unmatched-cleanup"); }
+} catch (ValueError error) { io.println(error.message); }
+try {
+    try { throw ValueError("original"); }
+    catch (ValueError error) { throw error; }
+    finally { throw TypeError("finally-wins"); }
+} catch (TypeError error) { io.println(error.message); }
+`, "cleanup\noriginal\ncleanup\noriginal\ncleanup\noriginal\ncleanup\nreplacement\nreturn-cleanup\n7\nunmatched-cleanup\nunmatched\nfinally-wins\n")
+}
+
+func TestParityCatchFinallyAcrossModules(t *testing.T) {
+	dir := t.TempDir()
+	source := `module catch_cleanup;
+import io;
+export class Base {
+    func run(): void {
+        try { throw ValueError("original"); }
+        catch (Error error) { throw error; }
+        finally { io.println("cleanup"); }
+    }
+}
+export func run(): void { Base().run(); }
+`
+	if err := os.WriteFile(filepath.Join(dir, "catch_cleanup.gb"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runParityModulesDir(t, dir, `import io; import catch_cleanup;
+class Child extends catch_cleanup.Base { func own(): void { this.run(); } }
+let child = Child();
+for (run in [catch_cleanup.run, child.run, child.own]) {
+    try { run(); } catch (ValueError error) { io.println(error.message); }
+}
+`, "cleanup\noriginal\ncleanup\noriginal\ncleanup\noriginal\n")
+}

@@ -1,0 +1,81 @@
+import test;
+
+class CatchFinallyBase {
+    func run(callable cleanup): void {
+        try {
+            throw ValueError("original");
+        } catch (Error error) {
+            throw error;
+        } finally {
+            cleanup();
+        }
+    }
+}
+
+class CatchFinallyChild extends CatchFinallyBase {
+    func own(callable cleanup): void {
+        this.run(cleanup);
+    }
+}
+
+class CatchFinallyTest extends test.Test {
+    @test
+    func rethrowRunsCleanupForOwnAndInheritedMethods(): void {
+        let child = CatchFinallyChild();
+        for (run in [CatchFinallyBase().run, child.run, child.own]) {
+            list<string> steps = [];
+
+            try {
+                run(func(): void {
+                    try {
+                        throw TypeError("handled");
+                    } catch (Error error) {}
+                    steps.push("cleanup");
+                });
+            } catch (ValueError error) {
+                steps.push(error.message);
+            }
+
+            this.assertEquals("cleanup,original", steps.join(","));
+        }
+    }
+
+    @test
+    func finallyCanReplaceRethrownError(): void {
+        string caught = "";
+
+        try {
+            try {
+                throw ValueError("original");
+            } catch (Error error) {
+                throw error;
+            } finally {
+                throw TypeError("replacement");
+            }
+        } catch (TypeError error) {
+            caught = error.message;
+        }
+
+        this.assertEquals("replacement", caught);
+    }
+
+    @test
+    func breakAndContinueFromCatchRunCleanupExactlyOnce(): void {
+        list<int> steps = [];
+
+        for (n in 0..3) {
+            try {
+                throw ValueError("original");
+            } catch (Error error) {
+                if (n == 0) {
+                    continue;
+                }
+                break;
+            } finally {
+                steps.push(n);
+            }
+        }
+
+        this.assertEquals("0,1", steps.map(func(int n): string { return n.toString(); }).join(","));
+    }
+}

@@ -927,6 +927,11 @@ func (c *Compiler) compileTryStatement(stmt *ast.TryStatement) error {
 	c.emitAt(OpPopExceptionHandler, stmt.Token.Line, stmt.Token.Column)
 	normalJump := c.emitJump(OpJump, stmt.Token.Line, stmt.Token.Column)
 	c.patchJump(handlerJump)
+	catchHandlerJump := -1
+	if stmt.Finally != nil && len(stmt.Catches) > 0 {
+		// Exceptions from catch bodies must still pass through finally.
+		catchHandlerJump = c.emitJump(OpPushExceptionHandler, stmt.Token.Line, stmt.Token.Column)
+	}
 	catchEndJumps := []int{}
 	for _, catch := range stmt.Catches {
 		nextCatchJump := c.emitJump(OpCatch, stmt.Token.Line, stmt.Token.Column)
@@ -941,7 +946,7 @@ func (c *Compiler) compileTryStatement(stmt *ast.TryStatement) error {
 			slot = c.defineLocal(catch.Name.Value)
 		}
 		c.chunk.Instructions[nextCatchJump].Operands = append(c.chunk.Instructions[nextCatchJump].Operands, typeIndex, slot)
-		c.pushFinalizer(finalizerContext{body: stmt.Finally})
+		c.pushFinalizer(finalizerContext{body: stmt.Finally, popHandler: catchHandlerJump >= 0})
 		// The body is its own scope so it may redeclare the catch variable, as on the evaluator.
 		err := c.compileBlock(catch.Body)
 		c.popFinalizer()
@@ -949,8 +954,15 @@ func (c *Compiler) compileTryStatement(stmt *ast.TryStatement) error {
 		if err != nil {
 			return err
 		}
+		if catchHandlerJump >= 0 {
+			c.emitAt(OpPopExceptionHandler, stmt.Token.Line, stmt.Token.Column)
+		}
 		catchEndJumps = append(catchEndJumps, c.emitJump(OpJump, stmt.Token.Line, stmt.Token.Column))
 		c.patchJump(nextCatchJump)
+	}
+	if catchHandlerJump >= 0 {
+		c.emitAt(OpPopExceptionHandler, stmt.Token.Line, stmt.Token.Column)
+		c.patchJump(catchHandlerJump)
 	}
 	if stmt.Finally != nil {
 		if err := c.compileRethrowingCleanup(stmt.Token.Line, stmt.Token.Column, func() error {
