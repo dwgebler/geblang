@@ -26,7 +26,7 @@ export func verifyViews(): string {
     assert(!freeze.isFrozen(typed));
     assert(freeze.isFrozen(frozenWide));
     assert(reflect.typeBindings(typed)["V"] == "int");
-    assert(reflect.typeBindings(wide)["V"] == "any");
+    assert(reflect.typeBindings(wide)["V"] == "int");
     assert(reflect.typeBindings(frozen)["V"] == "int");
     assert(constValue(typed) == 1);
     bool rejected = false;

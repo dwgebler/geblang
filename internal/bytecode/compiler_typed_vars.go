@@ -7,6 +7,25 @@ import (
 	"geblang/internal/runtime"
 )
 
+func (c *Compiler) emitCollectionParameterBindings(index int64, params []ast.Parameter, line, column int) {
+	for _, param := range params {
+		if parameterHasCollectionType(param.Type) || (param.Variadic && param.Type != nil) {
+			c.emitAt(OpBindCollectionParams, line, column, index)
+			return
+		}
+	}
+}
+
+func parameterHasCollectionType(ref *ast.TypeRef) bool {
+	if ref == nil {
+		return false
+	}
+	if ref.Operator != "" {
+		return parameterHasCollectionType(ref.Left) || parameterHasCollectionType(ref.Right)
+	}
+	return isCollectionTypeRef(ref)
+}
+
 // emitTypedVariableCheck asserts the value on the stack against a typed variable's declared type unless the compiler can prove it fits.
 func (c *Compiler) emitTypedVariableCheck(declRef *ast.TypeRef, value ast.Expression, line, column int) {
 	if declRef == nil {

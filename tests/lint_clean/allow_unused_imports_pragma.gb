@@ -1,0 +1,11 @@
+/**
+ * @category Tests
+ * @summary geblang check --strict MUST NOT report unused imports in a file
+ *          whose leading doc block carries @allowUnusedImports, such as a
+ *          module imported only so its classes are loaded.
+ * @allowUnusedImports
+ */
+import json;
+import math;
+
+let total = 1 + 2;

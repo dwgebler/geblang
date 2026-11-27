@@ -219,7 +219,7 @@ func (s *server) userModuleCompletionItems(file, source, alias string) ([]Comple
 		}
 		kind := completionKindFunction
 		switch sym.kind {
-		case symbolKindClass, symbolKindInterface:
+		case symbolKindClass, symbolKindInterface, symbolKindTypeAlias:
 			kind = completionKindClass
 		case symbolKindEnum:
 			kind = completionKindEnum

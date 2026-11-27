@@ -116,7 +116,7 @@ io.println(b.put(null));
 io.println(b.none());
 try { any s = "x"; b.put(s); } catch (TypeError e) { io.println(e.message); }
 `)
-	want := "ok\nnull\nBox.put expects ?T for parameter 'x', got string\n"
+	want := "ok\nnull\nBox.put expects ?int for parameter 'x', got string\n"
 	if ev != want {
 		t.Fatalf("evaluator output:\n%s\nwant:\n%s", ev, want)
 	}

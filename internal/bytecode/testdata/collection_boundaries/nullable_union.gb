@@ -1,0 +1,11 @@
+import io;
+func takeUnion(?list<int> | string values): void {}
+func takeNullable(?list<int> values): void {}
+let values = [1];
+takeUnion(values);
+try { any alias = values; alias.push("mixed"); io.println("union nullable unprotected"); }
+catch (TypeError e) { io.println("union nullable protected"); }
+let direct = [1];
+takeNullable(direct);
+try { any alias = direct; alias.push("mixed"); io.println("direct nullable unprotected"); }
+catch (TypeError e) { io.println("direct nullable protected"); }

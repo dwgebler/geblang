@@ -18,7 +18,7 @@ try {
 } catch (TypeError e) {
     io.println("caught: " + e.message);
 }
-`, "caught: Box expects T for parameter 'value', got int\n")
+`, "caught: Box expects string for parameter 'value', got int\n")
 }
 
 func TestParityGenericCtorExplicitTypeArgValid(t *testing.T) {
@@ -73,7 +73,7 @@ try {
 } catch (TypeError e) {
     io.println("caught: " + e.message);
 }
-`, "caught: Sub expects T for parameter 'value', got int\n")
+`, "caught: Sub expects string for parameter 'value', got int\n")
 }
 
 func TestParityGenericCtorExplicitSecondParam(t *testing.T) {
@@ -94,7 +94,7 @@ try {
 }
 let ok = Pair<string, int>("k", 7);
 io.println(typeof(ok.value));
-`, "caught: Pair expects V for parameter 'value', got string\nint\n")
+`, "caught: Pair expects int for parameter 'value', got string\nint\n")
 }
 
 func TestParityGenericMethodParamEnforced(t *testing.T) {
@@ -113,7 +113,7 @@ try {
 }
 b.put("fine");
 io.println(b.value);
-`, "caught: Box.put expects T for parameter 'value', got int\nfine\n")
+`, "caught: Box.put expects string for parameter 'value', got int\nfine\n")
 }
 
 func TestParityGenericMethodParamCovariantAndOpen(t *testing.T) {
@@ -153,7 +153,7 @@ try {
 }
 ib.put(9);
 io.println(ib.value);
-`, "caught: Box.put expects T for parameter 'value', got string\n9\n")
+`, "caught: Box.put expects int for parameter 'value', got string\n9\n")
 }
 
 func TestParityGenericMethodInferredInstanceUnconstrained(t *testing.T) {
@@ -198,7 +198,7 @@ try {
 }
 ok.put(9);
 io.println(ok.value);
-`, "caught: Box expects T for parameter 'value', got string\ntrue\ncaught: Box.put expects T for parameter 'value', got string\n9\n")
+`, "caught: Box expects int for parameter 'value', got string\ntrue\ncaught: Box.put expects int for parameter 'value', got string\n9\n")
 }
 
 func TestParityGenericCtorOverloadResolvedByExplicitTypeArgs(t *testing.T) {
@@ -235,7 +235,7 @@ try {
 } catch (TypeError e) {
     io.println("caught: " + e.message);
 }
-`, "a caught: cannot assign int to T field Box.value\nb: generic\ncaught: Box expects T for parameter 'value', got bool\n")
+`, "a caught: cannot assign int to T field Box.value\nb: generic\ncaught: Box expects string for parameter 'value', got bool\n")
 }
 
 func TestParityGenericInstanceofBindings(t *testing.T) {
@@ -322,7 +322,7 @@ try {
 } catch (TypeError e) {
     io.println("caught: " + e.message);
 }
-`, "caught: identity expects T for parameter 'value', got int\n")
+`, "caught: identity expects string for parameter 'value', got int\n")
 }
 
 func TestParityGenericFuncExplicitTypeArgValid(t *testing.T) {
@@ -343,7 +343,7 @@ try {
 } catch (TypeError e) {
     io.println("caught: " + e.message);
 }
-`, "caught: Repo.pick expects T for parameter 'value', got int\n")
+`, "caught: Repo.pick expects string for parameter 'value', got int\n")
 }
 
 func TestParityGenericResolvedMethodExplicitTypeArgValid(t *testing.T) {

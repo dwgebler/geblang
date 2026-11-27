@@ -826,6 +826,38 @@ func (g *fuzzGen) globalWritesBlock() (decls string, calls []string) {
 	return d.String(), calls
 }
 
+// enumInterfaceBlock checks enums and classes against an interface hierarchy through parameters, typed-list writes and instanceof (enum interface parents diverged until 1.47.0).
+func (g *fuzzGen) enumInterfaceBlock() (decls string, calls []string) {
+	var d strings.Builder
+	d.WriteString("interface EiBase { func tag(): string; }\n")
+	d.WriteString("interface EiChild extends EiBase { func rank(): int; }\n")
+	d.WriteString("interface EiOther { func tag(): string; }\n")
+	d.WriteString("enum EiColor implements EiChild { Red; Blue; func tag(): string { return \"c\"; } func rank(): int { return " + g.intLit() + "; } }\n")
+	d.WriteString("enum EiFlat implements EiBase { On; func tag(): string { return \"f\"; } }\n")
+	d.WriteString("class EiBox implements EiChild { func tag(): string { return \"b\"; } func rank(): int { return 1; } }\n")
+	d.WriteString("func eiTake(EiBase v): string { return v.tag(); }\n")
+	d.WriteString("func eiChild(EiChild v): string { return v.tag(); }\n")
+	d.WriteString("func eiOther(EiOther v): string { return v.tag(); }\n")
+	values := []string{"EiColor.Red", "EiColor.Blue", "EiFlat.On", "EiBox()"}
+	targets := []string{"eiTake", "eiChild", "eiOther"}
+	lists := []string{"EiBase", "EiChild", "EiOther"}
+	for i := 0; i < 4; i++ {
+		v := values[g.rng.Intn(len(values))]
+		switch g.rng.Intn(3) {
+		case 0:
+			fn := targets[g.rng.Intn(len(targets))]
+			calls = append(calls, "try {\n    any ev = "+v+";\n    io.println("+fn+"(ev));\n} catch (TypeError e) {\n    io.println(e.message);\n}")
+		case 1:
+			elem := lists[g.rng.Intn(len(lists))]
+			calls = append(calls, "try {\n    list<"+elem+"> el = [];\n    any ev = "+v+";\n    el.push(ev);\n    io.println(el.length());\n} catch (TypeError e) {\n    io.println(e.message);\n}")
+		default:
+			elem := lists[g.rng.Intn(len(lists))]
+			calls = append(calls, "io.println("+v+" instanceof "+elem+");")
+		}
+	}
+	return d.String(), calls
+}
+
 func (g *fuzzGen) program() string {
 	var b strings.Builder
 	b.WriteString("import io;\nimport async;\n")
@@ -833,7 +865,7 @@ func (g *fuzzGen) program() string {
 	// declarations cannot collide; the rest of the budget is scalar
 	// expressions and fault statements.
 	var sectionCalls []string
-	switch g.rng.Intn(17) {
+	switch g.rng.Intn(18) {
 	case 0:
 		decls, calls := g.classBlock()
 		b.WriteString(decls)
@@ -900,6 +932,10 @@ func (g *fuzzGen) program() string {
 		sectionCalls = calls
 	case 16:
 		decls, calls := g.explicitTypeArgsBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 17:
+		decls, calls := g.enumInterfaceBlock()
 		b.WriteString(decls)
 		sectionCalls = calls
 	}

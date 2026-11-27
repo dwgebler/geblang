@@ -406,6 +406,22 @@ func (e *Evaluator) collectionsGraphMethod(name string, extraArgs int) builtinFu
 }
 
 func valuesEqualSimple(left runtime.Value, right runtime.Value) bool {
+	var guard runtime.EqualityGuard
+	return valuesEqualSimpleIn(left, right, &guard)
+}
+
+func valuesEqualSimpleIn(left runtime.Value, right runtime.Value, guard *runtime.EqualityGuard) bool {
+	if runtime.SameReference(left, right) {
+		return true
+	}
+	switch left.(type) {
+	case *runtime.List, runtime.Dict, runtime.Set, *runtime.Instance:
+		key, seen := guard.Enter(left, right)
+		if seen {
+			return true
+		}
+		defer guard.Leave(key)
+	}
 	switch leftValue := left.(type) {
 	case *runtime.List:
 		rightValue, ok := right.(*runtime.List)
@@ -413,7 +429,7 @@ func valuesEqualSimple(left runtime.Value, right runtime.Value) bool {
 			return false
 		}
 		for i, element := range leftValue.Elements {
-			if !valuesEqualSimple(element, rightValue.Elements[i]) {
+			if !valuesEqualSimpleIn(element, rightValue.Elements[i], guard) {
 				return false
 			}
 		}
@@ -426,7 +442,7 @@ func valuesEqualSimple(left runtime.Value, right runtime.Value) bool {
 		equal := true
 		leftValue.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
 			other, ok := rightValue.GetEntry(key)
-			if !ok || !valuesEqualSimple(entry.Key, other.Key) || !valuesEqualSimple(entry.Value, other.Value) {
+			if !ok || !valuesEqualSimpleIn(entry.Key, other.Key, guard) || !valuesEqualSimpleIn(entry.Value, other.Value, guard) {
 				equal = false
 				return false
 			}
@@ -440,7 +456,7 @@ func valuesEqualSimple(left runtime.Value, right runtime.Value) bool {
 		}
 		for key, entry := range leftValue.Elements {
 			other, ok := rightValue.Elements[key]
-			if !ok || !valuesEqualSimple(entry.Value, other.Value) {
+			if !ok || !valuesEqualSimpleIn(entry.Value, other.Value, guard) {
 				return false
 			}
 		}

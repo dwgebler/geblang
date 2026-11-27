@@ -1,0 +1,87 @@
+func constrained<T>(T value): bool {
+    return value instanceof T;
+}
+
+func nested<T>(list<T> values): void {}
+
+func variadic<T>(T ... values): void {}
+
+func captured<T>(): callable {
+    return func(T value): void {};
+}
+
+class DiagnosticBox<T> {
+    func DiagnosticBox(T value) {}
+    func accept(T value): void {}
+    func own<U>(U value): void {}
+    func tail<U>(U ... values): int {
+        return values.length();
+    }
+}
+
+class DiagnosticChild<T> extends DiagnosticBox<T> {
+    func DiagnosticChild(T value) {
+        parent(value);
+    }
+    func child(T value): void {}
+}
+
+func message(callable action): string {
+    try {
+        action();
+        return "accepted";
+    } catch (Error error) {
+        return error.class + ": " + error.message;
+    }
+}
+
+export func diagnostics(): list<string> {
+    any text = "hello";
+    any number = 42;
+    any mixed = [1, "bad"];
+    let child = DiagnosticChild<int>(1);
+    let closure = captured<int>();
+    return [
+        message(func(): void {
+            constrained<int>(text);
+        }),
+        message(func(): void {
+            constrained<string>(number);
+        }),
+        message(func(): void {
+            DiagnosticBox<int>(text);
+        }),
+        message(func(): void {
+            child.accept(text);
+        }),
+        message(func(): void {
+            child.child(text);
+        }),
+        message(func(): void {
+            child.own<string>(number);
+        }),
+        message(func(): void {
+            closure(text);
+        }),
+        message(func(): void {
+            variadic<int>(1, text);
+        }),
+        message(func(): void {
+            child.own<string>(value: number);
+        }),
+        message(func(): void {
+            child.tail<int>(text);
+        }),
+        message(func(): void {
+            child.tail<int>(1, text);
+        }),
+        message(func(): void {
+            nested<int>(mixed);
+        }),
+    ];
+}
+
+export func validVariadics(): list<int> {
+    let child = DiagnosticChild<int>(1);
+    return [child.tail<string>(), child.tail<string>("a", "b")];
+}

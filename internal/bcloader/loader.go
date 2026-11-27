@@ -312,6 +312,7 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 			module.Exports[name] = overloaded
 		}
 	}
+	l.exportAliasedTypes(canonical, module)
 	l.records.Store(canonical, &moduleRecord{
 		module:         module,
 		chunk:          chunk,
@@ -323,6 +324,34 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 	l.modulesGen.Add(1)
 
 	return module, nil
+}
+
+// An alias naming a class, interface or enum is exported as that type so it can be constructed and imported.
+func (l *Loader) exportAliasedTypes(canonical string, module *runtime.Module) {
+	for name, target := range module.TypeAliases {
+		if _, taken := module.Exports[name]; taken || strings.ContainsAny(target, "<>|&?") {
+			continue
+		}
+		dot := strings.LastIndexByte(target, '.')
+		if dot <= 0 {
+			continue
+		}
+		prefix, member := target[:dot], target[dot+1:]
+		var value runtime.Value
+		var found bool
+		if prefix == canonical {
+			value, found = module.Exports[member]
+		} else if other, err := l.LoadModule(prefix, prefix); err == nil && other != nil {
+			value, found = other.Exports[member]
+		}
+		if !found {
+			continue
+		}
+		switch value.(type) {
+		case runtime.BytecodeClass, *runtime.Class, *runtime.Interface, *runtime.EnumDef:
+			module.Exports[name] = value
+		}
+	}
 }
 
 // moved verbatim from cmd/geblang/main.go (receiver renamed)
@@ -523,7 +552,9 @@ func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []ru
 	vm.AdoptLiteralArgs(caller)
 	var result runtime.Value
 	var err error
-	if function.Raw {
+	if function.ParameterOnly {
+		result, err = vm.PrepareCollectionParameters(function, args)
+	} else if function.Raw {
 		result, err = vm.CallRawFunctionValue(function, args)
 	} else {
 		result, err = vm.CallFunctionBound(function.Index, args, function.TypeBindings, false)

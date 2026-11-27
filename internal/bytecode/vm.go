@@ -125,8 +125,11 @@ type VM struct {
 	generatorYield       chan vmGeneratorItem
 	generatorDone        <-chan struct{}
 	typeSpecCache        map[string]vmTypeSpec
+	nominalIDs           map[string]nominalID
+	identityTags         map[string][]string
 	canonicalTypeCache   map[typeAliasKey]string
 	castTypeRefs         map[string]*ast.TypeRef
+	collectionTypeRefs   map[typeAliasKey]*ast.TypeRef
 	typeAliasCache       map[typeAliasKey]typeAliasEntry
 	typeAssertSpecs      map[int64]vmTypeSpec
 	callArgsFree         [][]runtime.Value
@@ -350,17 +353,19 @@ type FunctionDecoratorState struct {
 const DefaultMaxCallDepth = 10000
 
 type callFrame struct {
-	returnIP       int
-	basePointer    int
-	localCount     int
-	returnOverride runtime.Value
-	typeBindings   map[string]string
-	generator      chan vmGeneratorItem
-	generatorDone  <-chan struct{}
-	functionName   string
-	meta           *frameMeta
-	returnBindings map[string]string
-	callLine       int // callLine is the frame's entry call site; stable across tail reuse.
+	collectionParamsBound bool
+	parameterOnly         bool
+	returnIP              int
+	basePointer           int
+	localCount            int
+	returnOverride        runtime.Value
+	typeBindings          map[string]string
+	generator             chan vmGeneratorItem
+	generatorDone         <-chan struct{}
+	functionName          string
+	meta                  *frameMeta
+	returnBindings        map[string]string
+	callLine              int // callLine is the frame's entry call site; stable across tail reuse.
 	// tailRepeat/tailCallLine track self-tail-call frame reuse for the [xN] trace collapse.
 	tailRepeat       int
 	tailCallLine     int
@@ -545,14 +550,14 @@ func (e vmFatalError) Error() string { return e.err.Error() }
 func (e vmFatalError) Unwrap() error { return e.err }
 
 type vmTypeSpec struct {
-	raw       string
-	base      string
-	baseLower string
-	nullable  bool
-	kind      vmTypeKind
-	args      []vmTypeSpec
-	// argTags caches elementSpecTag of each arg; collection tags share it, so it must never be written in place.
-	argTags []string
+	argTags       []string
+	collectionRef *ast.TypeRef
+	raw           string
+	base          string
+	baseLower     string
+	nullable      bool
+	kind          vmTypeKind
+	args          []vmTypeSpec
 }
 
 type vmTypeKind int8
@@ -1384,6 +1389,9 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
+			if enum, ok := value.(*runtime.EnumDef); ok {
+				vm.bindEnum(enum)
+			}
 			if err := vm.setGlobal(slot, value); err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
@@ -1528,7 +1536,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				}
 				elements[native.DictKey(value)] = runtime.SetEntry{Value: value}
 			}
-			vm.push(runtime.Set{Elements: elements})
+			vm.push(runtime.NewSet(elements))
 		case OpIndex:
 			if err := vm.index(*instruction); err != nil {
 				return err
@@ -1824,6 +1832,9 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			classIndex := instruction.Operands[0]
 			if classIndex >= 0 && int(classIndex) < len(vm.curMod.Chunk.Classes) {
 				classInfo := vm.curMod.Chunk.Classes[classIndex]
+				if err := vm.bindClassStaticCollections(*instruction, classInfo); err != nil {
+					return err
+				}
 				classValue, decorated, err := vm.applyCallableDecoratorsForClass(classIndex, classInfo)
 				if err != nil {
 					return err
@@ -2456,7 +2467,36 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return vm.fatalError(*instruction, "stack underflow")
 			}
 			vm.pushVM(vm.stack[len(vm.stack)-1])
-		case OpReturn:
+		case OpBindCollectionParams, OpReturn:
+			if instruction.Op == OpBindCollectionParams {
+				if !vm.frames[len(vm.frames)-1].collectionParamsBound {
+					if err := vm.bindCollectionParameters(*instruction); err != nil {
+						nextIP, thrown := vm.throwTyped(*instruction, ip, "TypeError", err.Error())
+						if thrown != nil {
+							return thrown
+						}
+						ip = nextIP
+						continue
+					}
+				}
+				if !vm.frames[len(vm.frames)-1].parameterOnly {
+					continue
+				}
+				function := vm.curMod.Chunk.Functions[instruction.Operands[0]]
+				prepared := &runtime.List{}
+				for i, slot := range function.ParamSlots {
+					value, err := vm.getLocal(slot)
+					if err != nil {
+						return err
+					}
+					if function.Variadic && i == len(function.ParamSlots)-1 {
+						prepared.Elements = append(prepared.Elements, value.(*runtime.List).Elements...)
+					} else {
+						prepared.Elements = append(prepared.Elements, value)
+					}
+				}
+				vm.push(prepared)
+			}
 			if len(vm.frames) == 0 {
 				if err := vm.runDefers(*instruction); err != nil {
 					return err
@@ -2480,7 +2520,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			// generator channel.
 			frameIdx := len(vm.frames) - 1
 			slot := &vm.frames[frameIdx]
-			if meta := slot.meta; meta != nil && meta.returnSpec != nil && !(meta.returnSpec.kind == vmTypeInt && valueVM.Kind == runtime.VMKindSmallInt) && !vm.matchVMValueToTypeSpecWith(meta.typeParams, slot.returnCheckBindings(), valueVM, *meta.returnSpec) {
+			if meta := slot.meta; meta != nil && meta.returnSpec != nil && !(meta.returnSpec.kind == vmTypeInt && valueVM.Kind == runtime.VMKindSmallInt) && (!vm.matchVMValueToTypeSpecWith(meta.typeParams, slot.returnCheckBindings(), valueVM, *meta.returnSpec) || !vm.bindVMCollection(valueVM, *meta.returnSpec, meta.typeParams, slot.typeBindings)) {
 				return vm.typedFault(*instruction, "TypeError", fmt.Sprintf("%s expects %s return, got %s", slot.functionName, vm.expandTypeAliases(meta.returnSpec.raw), vm.descriptiveRuntimeTypeName(valueVM.ToValue())))
 			}
 			returnIP := slot.returnIP
@@ -2572,7 +2612,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return vm.runtimeError(*instruction, "yield can only be used inside a generator function")
 			}
 			frame := &vm.frames[len(vm.frames)-1]
-			if meta := frame.meta; meta != nil && meta.yieldSpec != nil && !(meta.yieldSpec.kind == vmTypeInt && valueVM.Kind == runtime.VMKindSmallInt) && !vm.matchVMValueToTypeSpecWith(meta.typeParams, frame.returnCheckBindings(), valueVM, *meta.yieldSpec) {
+			if meta := frame.meta; meta != nil && meta.yieldSpec != nil && !(meta.yieldSpec.kind == vmTypeInt && valueVM.Kind == runtime.VMKindSmallInt) && (!vm.matchVMValueToTypeSpecWith(meta.typeParams, frame.returnCheckBindings(), valueVM, *meta.yieldSpec) || !vm.bindVMCollection(valueVM, *meta.yieldSpec, meta.typeParams, frame.typeBindings)) {
 				return vm.typedFault(*instruction, "TypeError", fmt.Sprintf("%s expects %s yield, got %s", frame.functionName, vm.expandTypeAliases(meta.yieldSpec.raw), vm.descriptiveRuntimeTypeName(valueVM.ToValue())))
 			}
 			select {
@@ -2769,6 +2809,13 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					instance.TypeBindings[paramName.Value] = resolved
 				}
 				runtime.ResolveInheritedTypeBindings(instance)
+				for name, value := range instance.Fields {
+					if !runtime.IsNull(value) {
+						if msg, ok := vm.fieldWriteMismatch(instance, name, value); !ok {
+							return vm.typedFault(*instruction, "TypeError", msg)
+						}
+					}
+				}
 			}
 		case OpPlantCallTypeBindings:
 			// Stages explicit `<TypeArgs>` from a generic function call's
@@ -3118,11 +3165,27 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 
 // deepEqual is the == operator's structural comparison: it recurses through containers and instance fields, dispatching a user __eq at every nesting depth so a nested instance compares exactly as it does at top level.
 func (vm *VM) deepEqual(left runtime.Value, right runtime.Value) (bool, error) {
+	var guard runtime.EqualityGuard
+	return vm.deepEqualIn(left, right, &guard)
+}
+
+func (vm *VM) deepEqualIn(left runtime.Value, right runtime.Value, guard *runtime.EqualityGuard) (bool, error) {
 	if leftNull, rightNull := runtime.IsNull(left), runtime.IsNull(right); leftNull || rightNull {
 		return leftNull && rightNull, nil
 	}
 	if eq, both := runtime.NumericValuesEqual(left, right); both {
 		return eq, nil
+	}
+	if _, isInstance := left.(*runtime.Instance); !isInstance && runtime.SameReference(left, right) {
+		return true, nil
+	}
+	switch left.(type) {
+	case *runtime.List, runtime.Dict, runtime.Set:
+		key, seen := guard.Enter(left, right)
+		if seen {
+			return true, nil
+		}
+		defer guard.Leave(key)
 	}
 	switch leftValue := left.(type) {
 	case *runtime.List:
@@ -3131,7 +3194,7 @@ func (vm *VM) deepEqual(left runtime.Value, right runtime.Value) (bool, error) {
 			return false, nil
 		}
 		for i, element := range leftValue.Elements {
-			eq, err := vm.deepEqual(element, rightValue.Elements[i])
+			eq, err := vm.deepEqualIn(element, rightValue.Elements[i], guard)
 			if err != nil || !eq {
 				return eq, err
 			}
@@ -3150,12 +3213,12 @@ func (vm *VM) deepEqual(left runtime.Value, right runtime.Value) (bool, error) {
 				equal = false
 				return false
 			}
-			keyEq, err := vm.deepEqual(entry.Key, other.Key)
+			keyEq, err := vm.deepEqualIn(entry.Key, other.Key, guard)
 			if err != nil {
 				iterErr, equal = err, false
 				return false
 			}
-			valEq, err := vm.deepEqual(entry.Value, other.Value)
+			valEq, err := vm.deepEqualIn(entry.Value, other.Value, guard)
 			if err != nil {
 				iterErr, equal = err, false
 				return false
@@ -3177,7 +3240,7 @@ func (vm *VM) deepEqual(left runtime.Value, right runtime.Value) (bool, error) {
 			if !ok {
 				return false, nil
 			}
-			eq, err := vm.deepEqual(entry.Value, other.Value)
+			eq, err := vm.deepEqualIn(entry.Value, other.Value, guard)
 			if err != nil || !eq {
 				return eq, err
 			}
@@ -3189,20 +3252,20 @@ func (vm *VM) deepEqual(left runtime.Value, right runtime.Value) (bool, error) {
 			return false, nil
 		}
 		for i, field := range leftValue.Fields {
-			eq, err := vm.deepEqual(field, rightValue.Fields[i])
+			eq, err := vm.deepEqualIn(field, rightValue.Fields[i], guard)
 			if err != nil || !eq {
 				return eq, err
 			}
 		}
 		return true, nil
 	case *runtime.Instance:
-		return vm.instanceDeepEqual(leftValue, right)
+		return vm.instanceDeepEqual(leftValue, right, guard)
 	}
 	return primitiveEqual(left, right), nil
 }
 
 // instanceDeepEqual dispatches a user __eq if the class declares one, else compares fields structurally.
-func (vm *VM) instanceDeepEqual(instance *runtime.Instance, right runtime.Value) (bool, error) {
+func (vm *VM) instanceDeepEqual(instance *runtime.Instance, right runtime.Value, guard *runtime.EqualityGuard) (bool, error) {
 	if result, handled, err := vm.invokeInstanceMethod(instance, "__eq", []runtime.Value{right}); err != nil {
 		return false, err
 	} else if handled {
@@ -3212,16 +3275,24 @@ func (vm *VM) instanceDeepEqual(instance *runtime.Instance, right runtime.Value)
 		}
 		return boolResult.Value, nil
 	}
+	if runtime.SameReference(instance, right) {
+		return true, nil
+	}
 	other, ok := right.(*runtime.Instance)
 	if !ok || !strings.EqualFold(instance.Class.Name, other.Class.Name) || len(instance.Fields) != len(other.Fields) {
 		return false, nil
 	}
+	key, seen := guard.Enter(instance, other)
+	if seen {
+		return true, nil
+	}
+	defer guard.Leave(key)
 	for name, value := range instance.Fields {
 		otherValue, ok := other.Fields[name]
 		if !ok {
 			return false, nil
 		}
-		eq, err := vm.deepEqual(value, otherValue)
+		eq, err := vm.deepEqualIn(value, otherValue, guard)
 		if err != nil || !eq {
 			return eq, err
 		}
@@ -4097,8 +4168,8 @@ func (vm *VM) appendListSlot(instruction Instruction) error {
 	if list.Frozen {
 		return vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 	}
-	if len(list.ElementTypes) > 0 && !vmValueSatisfiesElementTag(value, list.ElementTypes[0]) {
-		return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot push %s to list<%s>", value.TypeName(), list.ElementTypes[0])}
+	if len(runtime.CollectionElementTypes(list)) > 0 && !collectionWriteMatches(list, 0, value) {
+		return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot push %s to list<%s>", runtime.ElementValueName(value, runtime.CollectionElementTypes(list)[0]), runtime.ElementTagFor(value, runtime.CollectionElementTypes(list)[0]))}
 	}
 	list.Elements = append(list.Elements, value)
 	switch instruction.Op {
@@ -4621,9 +4692,6 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 		if value.Frozen {
 			return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify frozen list")
 		}
-		if len(value.ElementTypes) > 0 && !vmValueSatisfiesElementTag(newValue, value.ElementTypes[0]) {
-			return vm.throwTyped(instruction, ip, "TypeError", fmt.Sprintf("cannot assign %s to list<%s>", newValue.TypeName(), value.ElementTypes[0]))
-		}
 		i, err := indexInt(index)
 		if err != nil {
 			return 0, vm.callPropagate(instruction, err)
@@ -4633,6 +4701,9 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 		}
 		if i < 0 || i >= len(value.Elements) {
 			return 0, vm.typedFault(instruction, "ValueError", "list index out of range")
+		}
+		if len(runtime.CollectionElementTypes(value)) > 0 && !collectionWriteMatches(value, 0, newValue) {
+			return vm.throwTyped(instruction, ip, "TypeError", fmt.Sprintf("cannot assign %s to list<%s>", runtime.ElementValueName(newValue, runtime.CollectionElementTypes(value)[0]), runtime.ElementTagFor(newValue, runtime.CollectionElementTypes(value)[0])))
 		}
 		value.Elements[i] = newValue
 	case runtime.Dict:
@@ -5273,6 +5344,9 @@ func (vm *VM) typeAssert(instruction Instruction) error {
 		spec = vm.typeSpec(typeStr.Value)
 	}
 	typeParams := vm.declarationTypeParams()
+	if (spec.kind == vmTypeList || spec.kind == vmTypeDict || spec.kind == vmTypeSet) && !specMentionsTypeParam(spec, typeParams) && vm.bindCollection(value, spec, typeParams, nil) {
+		return nil
+	}
 	if !vm.matchValueToTypeSpec(typeParams, value, spec) {
 		declared := vm.expandTypeAliases(typeStr.Value)
 		suffix := vm.collectionMismatchSuffixStr(value, declared)
@@ -5287,7 +5361,7 @@ func (vm *VM) typeAssert(instruction Instruction) error {
 		}
 		return vm.typedFault(instruction, "TypeError", fmt.Sprintf("type error: cannot assign %s to %s%s", gotName, declared, suffix))
 	}
-	if spec.kind == vmTypeUnion || spec.kind == vmTypeIntersection || (len(typeParams) > 0 && specMentionsTypeParam(spec, typeParams)) {
+	if len(typeParams) > 0 && specMentionsTypeParam(spec, typeParams) {
 		return nil
 	}
 	if tagged, ok := vm.tagCollectionWithSpec(value, spec); ok {
@@ -5349,40 +5423,7 @@ func (vm *VM) buildDictConstKeys(instruction *Instruction) error {
 }
 
 func (vm *VM) tagCollectionWithSpec(value runtime.Value, spec vmTypeSpec) (runtime.Value, bool) {
-	switch v := value.(type) {
-	case *runtime.List:
-		if len(spec.args) >= 1 {
-			tag := spec.elementTags(len(spec.args))
-			if v.Frozen {
-				// A frozen list may be shared between tasks; tag a copy of
-				// the header rather than writing to the shared value.
-				return &runtime.List{Elements: v.Elements, Frozen: true, ElementTypes: tag}, true
-			}
-			v.ElementTypes = tag
-			return v, true
-		}
-	case runtime.Set:
-		if len(spec.args) >= 1 {
-			v.ElementTypes = spec.elementTags(1)
-			return v, true
-		}
-	case runtime.Dict:
-		if len(spec.args) >= 2 {
-			return v.WithElementTypes(spec.elementTags(2)), true
-		}
-	}
-	return value, false
-}
-
-func (spec vmTypeSpec) elementTags(n int) []string {
-	if len(spec.argTags) >= n {
-		return spec.argTags[:n:n]
-	}
-	tags := make([]string, n)
-	for i := range tags {
-		tags[i] = elementSpecTag(spec.args[i])
-	}
-	return tags
+	return value, vm.bindCollection(value, spec, nil, nil)
 }
 
 // execRange implements OpRange: pops 2 or 3 integer values and pushes a
@@ -6238,7 +6279,7 @@ func cloneContainerDefault(v runtime.Value) runtime.Value {
 		for k, entry := range val.Elements {
 			cloned[k] = entry
 		}
-		return runtime.Set{Elements: cloned}
+		return runtime.NewSet(cloned)
 	case *runtime.List:
 		if len(val.Elements) == 0 {
 			return &runtime.List{Elements: nil}
@@ -7054,4 +7095,15 @@ func (vm *VM) loadInterface(instruction Instruction) error {
 	}
 	vm.push(vm.buildRuntimeInterface(name, map[string]bool{}))
 	return nil
+}
+
+func (spec vmTypeSpec) elementTags(n int) []string {
+	if len(spec.argTags) >= n {
+		return spec.argTags[:n:n]
+	}
+	tags := make([]string, n)
+	for i := range tags {
+		tags[i] = elementSpecTag(spec.args[i])
+	}
+	return tags
 }

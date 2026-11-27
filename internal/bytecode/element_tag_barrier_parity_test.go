@@ -113,16 +113,13 @@ try {
 `, "4\n2\n2\nfalse\n{\"T\": \"int\"}\ncaught: cannot push null to list<int>\n")
 }
 
-func TestParityNestedElementTagShallow(t *testing.T) {
-	// Element tags enforce only the outer kind at write boundaries: a
-	// list<list<int>> accepts an inner list of the wrong element type
-	// (declaration-time checking is deeper; writes are shallow).
+func TestParityNestedElementTagRejectsWrongInnerElements(t *testing.T) {
 	runParity(t, `import io;
 list<list<int>> nested = [[1, 2]];
 any wrong = ["x", "y"];
-nested.push(wrong);
+try { nested.push(wrong); } catch (TypeError error) { io.println("rejected"); }
 io.println(nested.length());
-`, "2\n")
+`, "rejected\n1\n")
 }
 
 func TestParityUnaryMinusNonNumericMessage(t *testing.T) {

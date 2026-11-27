@@ -1,0 +1,8 @@
+import io;
+func skip(func next): func { return func(any values): void {}; }
+@skip
+func take(list<int> values): void {}
+let values = [1];
+take(values);
+try { any alias = values; alias.push("mixed"); io.println("decorated unprotected"); }
+catch (TypeError e) { io.println("decorated protected"); }

@@ -65,7 +65,7 @@ io.println("${typeof(l.item)} ${s.item} ${p.item}");
 try { s.put(5); } catch (TypeError e) { io.println(e.message); }
 try { p.put(["no"]); } catch (TypeError e) { io.println("pair"); }
 `)
-	want := "decimal x [1, 2]\nBox.put expects T for parameter 'v', got int\npair\n"
+	want := "decimal x [1, 2]\nBox.put expects string for parameter 'v', got int\npair\n"
 	if ev != want || vm != want {
 		t.Fatalf("inherited binding:\nevaluator: %q\nvm: %q\nwant: %q", ev, vm, want)
 	}
@@ -84,7 +84,7 @@ let n = 5;
 io.println("${b.id(n)} ${b.id(5)} ${b.id<int>(5)} ${b.id<int>(n)} ${b.id("s")} ${b.keep(2)}");
 try { b.keep(n); } catch (TypeError e) { io.println(e.message); }
 `)
-	want := "int int int int string float\nBox.keep expects T for parameter 'x', got int\n"
+	want := "int int int int string float\nBox.keep expects float for parameter 'x', got int\n"
 	if ev != want || vm != want {
 		t.Fatalf("method type param shadowing:\nevaluator: %q\nvm: %q\nwant: %q", ev, vm, want)
 	}

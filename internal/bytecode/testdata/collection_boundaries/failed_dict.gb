@@ -1,0 +1,7 @@
+import io;
+dict<list<int>, int> values = {};
+let key = [1];
+any wrong = "wrong";
+try { values[key] = wrong; } catch (Error e) { io.println("dict write rejected"); }
+try { any alias = key; alias.push("mixed"); io.println("key still untyped"); }
+catch (Error e) { io.println("key unexpectedly constrained"); }

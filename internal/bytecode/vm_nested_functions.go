@@ -14,6 +14,7 @@ func (vm *VM) bindNestedFunction(instruction Instruction) error {
 	}
 	index := instruction.Operands[1]
 	info := vm.curMod.Chunk.Functions[index]
+	signature := value
 	if len(info.Decorators) > 0 {
 		value, _, err = vm.applyFunctionDecorators(info, value)
 		if err != nil {
@@ -25,11 +26,17 @@ func (vm *VM) bindNestedFunction(instruction Instruction) error {
 		return err
 	}
 	addition := vm.boundFunctionValue(index, value)
+	if len(info.Decorators) > 0 {
+		addition.Signatures = []runtime.Value{signature}
+	} else {
+		addition.Signatures = []runtime.Value{nil}
+	}
 	bound := addition
 	if old, ok := previous.(runtime.OverloadedFunction); ok {
 		bound = old
 		bound.Overloads = append(append([]runtime.Function(nil), old.Overloads...), addition.Overloads...)
 		bound.Callables = append(append([]runtime.Value(nil), old.Callables...), addition.Callables...)
+		bound.Signatures = append(append([]runtime.Value(nil), old.Signatures...), addition.Signatures...)
 		bound.Indices = append(append([]int64(nil), old.Indices...), index)
 		bound.Defaults = append(append([][]runtime.Value(nil), old.Defaults...), addition.Defaults...)
 	}
@@ -50,7 +57,7 @@ func (vm *VM) boundFunctionValue(index int64, value runtime.Value) runtime.Overl
 			defaults[i] = vm.constantValue(constant)
 		}
 	}
-	return runtime.OverloadedFunction{Name: info.Name, Module: vm.moduleName, Overloads: []runtime.Function{metadata}, Callables: []runtime.Value{value}, Indices: []int64{index}, Defaults: [][]runtime.Value{defaults}}
+	return runtime.OverloadedFunction{Name: info.Name, Module: vm.moduleName, Overloads: []runtime.Function{metadata}, Callables: []runtime.Value{value}, Signatures: []runtime.Value{vm.bytecodeFunctionValue(index, true)}, Indices: []int64{index}, Defaults: [][]runtime.Value{defaults}}
 }
 
 func bindBoundArguments(set runtime.OverloadedFunction, pos int, args []runtime.Value, names []string) ([]runtime.Value, error) {
@@ -109,7 +116,11 @@ func (vm *VM) selectBoundNamed(instruction Instruction, set runtime.OverloadedFu
 		if selected != nil {
 			return nil, nil, fmt.Errorf("ambiguous overload for %s", set.Name)
 		}
-		selected, ordered = runtime.OverloadedFunction{Name: set.Name, Module: set.Module, Indices: []int64{set.Indices[pos]}, Overloads: []runtime.Function{set.Overloads[pos]}, Callables: []runtime.Value{set.Callables[pos]}, Defaults: [][]runtime.Value{set.Defaults[pos]}, TypeArguments: set.TypeArguments}, candidate
+		var signatures []runtime.Value
+		if pos < len(set.Signatures) {
+			signatures = []runtime.Value{set.Signatures[pos]}
+		}
+		selected, ordered = runtime.OverloadedFunction{Signatures: signatures, Name: set.Name, Module: set.Module, Indices: []int64{set.Indices[pos]}, Overloads: []runtime.Function{set.Overloads[pos]}, Callables: []runtime.Value{set.Callables[pos]}, Defaults: [][]runtime.Value{set.Defaults[pos]}, TypeArguments: set.TypeArguments}, candidate
 	}
 	if selected == nil {
 		return nil, nil, fmt.Errorf("no matching overload for %s", set.Name)

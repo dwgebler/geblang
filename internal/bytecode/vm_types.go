@@ -48,6 +48,10 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 			vm.push(runtime.Bool{Value: matched})
 			return nil
 		}
+		if ev, ok := value.(runtime.EnumVariant); ok {
+			vm.push(runtime.Bool{Value: runtime.EnumMatchesExact(ev.Enum, module, name)})
+			return nil
+		}
 		// Native values carry their module in TypeName, unlike class instances.
 		if value.TypeName() == module+"."+name {
 			vm.push(runtime.Bool{Value: true})
@@ -85,17 +89,7 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 			return nil
 		}
 		stripped := stripModulePrefix(target)
-		if strings.EqualFold(ev.Enum.Name, stripped) {
-			vm.push(runtime.Bool{Value: true})
-			return nil
-		}
-		for _, iface := range ev.Enum.Implements {
-			if strings.EqualFold(iface, stripped) {
-				vm.push(runtime.Bool{Value: true})
-				return nil
-			}
-		}
-		vm.push(runtime.Bool{Value: false})
+		vm.push(runtime.Bool{Value: strings.EqualFold(ev.Enum.Name, stripped) || runtime.EnumImplements(ev.Enum, stripped)})
 		return nil
 	}
 	if instance, ok := value.(*runtime.Instance); ok {
@@ -239,8 +233,8 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 		if base != "list" || len(args) != 1 {
 			return false
 		}
-		if len(v.ElementTypes) >= 1 {
-			return elementTagSatisfies(v.ElementTypes[0], args[0])
+		if len(runtime.CollectionElementTypes(v)) >= 1 {
+			return elementTagSatisfies(runtime.CollectionElementTypes(v)[0], args[0])
 		}
 		for _, el := range v.Elements {
 			if !elementValueMatches(el, args[0]) {
@@ -252,8 +246,8 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 		if base != "set" || len(args) != 1 {
 			return false
 		}
-		if len(v.ElementTypes) >= 1 {
-			return elementTagSatisfies(v.ElementTypes[0], args[0])
+		if len(runtime.CollectionElementTypes(v)) >= 1 {
+			return elementTagSatisfies(runtime.CollectionElementTypes(v)[0], args[0])
 		}
 		for _, e := range v.Elements {
 			if !elementValueMatches(e.Value, args[0]) {
@@ -265,8 +259,8 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 		if base != "dict" || len(args) != 2 {
 			return false
 		}
-		if len(v.ElementTypes) >= 2 {
-			return elementTagSatisfies(v.ElementTypes[0], args[0]) && elementTagSatisfies(v.ElementTypes[1], args[1])
+		if len(runtime.CollectionElementTypes(v)) >= 2 {
+			return elementTagSatisfies(runtime.CollectionElementTypes(v)[0], args[0]) && elementTagSatisfies(runtime.CollectionElementTypes(v)[1], args[1])
 		}
 		matches := true
 		v.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
@@ -379,7 +373,7 @@ func elementTagSatisfies(tag, want string) bool {
 	if strings.HasPrefix(tag, "?") && !elementArgAllowsNull(want) {
 		return false
 	}
-	return vmTypeNameSatisfies(strings.TrimPrefix(tag, "?"), strings.TrimPrefix(want, "?"))
+	return vmTypeNameSatisfies(runtime.ElementTagDisplay(strings.TrimPrefix(tag, "?")), strings.TrimPrefix(want, "?"))
 }
 
 // elementValueMatches checks one element of an untagged collection; null meets a nullable argument.
@@ -405,7 +399,7 @@ func elementArgAllowsNull(want string) bool {
 // elementTagBase drops a stored tag's nullable marker; instanceof and
 // reflect read the base type, leaving nullability to the write barrier.
 func elementTagBase(s string) string {
-	return strings.TrimPrefix(s, "?")
+	return runtime.ElementTagDisplay(strings.TrimPrefix(s, "?"))
 }
 
 func vmValueSatisfiesElementTag(value runtime.Value, tag string) bool {
@@ -415,6 +409,13 @@ func vmValueSatisfiesElementTag(value runtime.Value, tag string) bool {
 			return true
 		}
 		tag = tag[1:]
+	}
+	if written, module, ok := runtime.SplitIdentityTag(tag); ok {
+		switch value.(type) {
+		case *runtime.Instance, runtime.EnumVariant, runtime.Error:
+			return runtime.ValueIsNominalType(value, module, stripModulePrefix(written))
+		}
+		tag = written
 	}
 	if vmTypeNameSatisfies(value.TypeName(), tag) {
 		return true
@@ -433,14 +434,23 @@ func vmValueSatisfiesElementTag(value runtime.Value, tag string) bool {
 // vmCheckDictWriteTags enforces a tagged dict's key and value types on
 // any write path.
 func vmCheckDictWriteTags(dict runtime.Dict, key, value runtime.Value) error {
-	if len(dict.ElementTypes) < 2 {
+	if len(runtime.CollectionElementTypes(dict)) < 2 {
 		return nil
 	}
-	if !vmValueSatisfiesElementTag(key, dict.ElementTypes[0]) {
-		return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot use %s key in dict<%s, %s>", key.TypeName(), dict.ElementTypes[0], dict.ElementTypes[1])}
+	if runtime.HasCollectionType(dict) {
+		if matched, index := runtime.CollectionDictWriteMatches(dict, key, value); !matched {
+			if index == 0 {
+				return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot use %s key in dict<%s, %s>", runtime.ElementValueName(key, runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagFor(key, runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagDisplay(runtime.CollectionElementTypes(dict)[1]))}
+			}
+			return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot assign %s to dict<%s, %s>", runtime.ElementValueName(value, runtime.CollectionElementTypes(dict)[1]), runtime.ElementTagDisplay(runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagFor(value, runtime.CollectionElementTypes(dict)[1]))}
+		}
+		return nil
 	}
-	if !vmValueSatisfiesElementTag(value, dict.ElementTypes[1]) {
-		return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot assign %s to dict<%s, %s>", value.TypeName(), dict.ElementTypes[0], dict.ElementTypes[1])}
+	if !collectionWriteMatches(dict, 0, key) {
+		return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot use %s key in dict<%s, %s>", runtime.ElementValueName(key, runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagFor(key, runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagDisplay(runtime.CollectionElementTypes(dict)[1]))}
+	}
+	if !collectionWriteMatches(dict, 1, value) {
+		return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot assign %s to dict<%s, %s>", runtime.ElementValueName(value, runtime.CollectionElementTypes(dict)[1]), runtime.ElementTagDisplay(runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagFor(value, runtime.CollectionElementTypes(dict)[1]))}
 	}
 	return nil
 }
@@ -524,6 +534,9 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 		if !runtime.MatchesCheckedCast(converted, castRef, matches) {
 			return vm.throwTyped(instruction, ip, "TypeError", fmt.Sprintf("cannot cast %s to %s%s", converted.TypeName(), declared, runtime.CastMismatchDetail(converted, castRef, matches)))
 		}
+		if !vm.bindCollection(converted, spec, nil, nil) {
+			return vm.throwTyped(instruction, ip, "TypeError", "cannot bind collection cast")
+		}
 		vm.push(converted)
 		return ip, nil
 	}
@@ -600,8 +613,9 @@ func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, in
 		if len(args) < min || (!variadic && len(args) > max) {
 			return 0, vm.runtimeError(instruction, "no matching overload for %s", vm.overloadLabel(name, indices))
 		}
-		if !vm.runtimeArgumentsMatchWith(function, args, paramOffset, bindingsFor(function)) {
-			if msg := vm.argumentMismatchMessage(function, args, paramOffset); msg != "" {
+		bindings := bindingsFor(function)
+		if !vm.runtimeArgumentsMatchWith(function, args, paramOffset, bindings) {
+			if msg := vm.argumentMismatchMessage(function, args, paramOffset, bindings); msg != "" {
 				return 0, vm.typedFault(instruction, "TypeError", msg)
 			}
 			return 0, vm.runtimeError(instruction, "no matching overload for %s", vm.overloadLabel(name, indices))
@@ -729,7 +743,7 @@ func (vm *VM) selectRuntimeNamedFunction(instruction Instruction, name string, i
 		}
 		if !vm.runtimeArgumentsMatchWith(function, ordered, paramOffset, bindings) {
 			if len(indices) == 1 {
-				if msg := vm.argumentMismatchMessage(vm.curMod.Chunk.Functions[index], ordered, paramOffset); msg != "" {
+				if msg := vm.argumentMismatchMessage(vm.curMod.Chunk.Functions[index], ordered, paramOffset, bindings); msg != "" {
 					return 0, nil, vm.typedFault(instruction, "TypeError", msg)
 				}
 			}
@@ -1014,11 +1028,8 @@ func (vm *VM) typeSpec(typ string) vmTypeSpec {
 
 func parseVMTypeSpec(typ string) vmTypeSpec {
 	spec := parseVMTypeSpecShape(typ)
-	if len(spec.args) > 0 {
-		spec.argTags = make([]string, len(spec.args))
-		for i, arg := range spec.args {
-			spec.argTags[i] = elementSpecTag(arg)
-		}
+	if specHasCollection(spec) && collectionSpecUsesBuiltins(spec) {
+		spec.collectionRef, _ = parser.ParseTypeRef(typ)
 	}
 	return spec
 }
@@ -1128,6 +1139,11 @@ func (vm *VM) forInAccepts(value runtime.Value) bool {
 }
 
 func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Value, spec vmTypeSpec) bool {
+	if spec.collectionRef != nil && len(typeParams) == 0 {
+		if declared := runtime.CollectionDeclaredType(value); declared != nil && runtime.CollectionTypeAccepts(declared, spec.collectionRef) {
+			return true
+		}
+	}
 	if typeParams[spec.baseLower] {
 		return true
 	}
@@ -1167,6 +1183,13 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 	}
 	if !vm.runtimeValueMatchesTypeSpec(value, spec) {
 		return false
+	}
+	if len(spec.args) > 0 && !specMentionsTypeParam(spec, typeParams) {
+		if matched, handled := runtime.MatchCollectionType(value, vm.collectionTypeRef(spec.raw), func(value runtime.Value, ref *ast.TypeRef) bool {
+			return vm.matchValueToTypeSpec(typeParams, value, vm.typeRefSpec(ref))
+		}); handled {
+			return matched
+		}
 	}
 	if len(spec.args) == 0 {
 		return true
@@ -1358,6 +1381,12 @@ func (vm *VM) runtimeValueMatchesTypeSpec(value runtime.Value, spec vmTypeSpec) 
 	case vmTypeIterable:
 		return vm.forInAccepts(value)
 	}
+	switch value.(type) {
+	case *runtime.Instance, runtime.EnumVariant:
+		if module, name, ok := vm.nominalIdentity(spec.base); ok {
+			return runtime.ValueIsNominalType(value, module, name)
+		}
+	}
 	if value.TypeName() == spec.base {
 		return true
 	}
@@ -1374,12 +1403,7 @@ func (vm *VM) runtimeValueMatchesTypeSpec(value runtime.Value, spec vmTypeSpec) 
 		if strings.EqualFold(ev.Enum.Name, stripped) && vm.qualifierNamesModule(spec.base, ev.Enum.Module) {
 			return true
 		}
-		for _, iface := range ev.Enum.Implements {
-			if strings.EqualFold(iface, stripped) {
-				return true
-			}
-		}
-		return false
+		return runtime.EnumImplements(ev.Enum, stripped)
 	}
 	instance, ok := value.(*runtime.Instance)
 	if !ok {
@@ -1648,7 +1672,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 				}
 				elements[k] = runtime.SetEntry{Value: elem}
 			}
-			return runtime.Set{Elements: elements}, nil
+			return runtime.NewSet(elements), nil
 		}
 	}
 	return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("cannot cast %s to %s", value.TypeName(), target)}
@@ -1825,33 +1849,20 @@ func shadowsClassTypeParameter(params []string, name string) bool {
 }
 
 // argumentMismatchMessage describes the first argument that does not fit function's declared parameter type.
-func (vm *VM) argumentMismatchMessage(function FunctionInfo, args []runtime.Value, paramOffset int) string {
+func (vm *VM) argumentMismatchMessage(function FunctionInfo, args []runtime.Value, paramOffset int, inherited map[string]string) string {
 	for i, arg := range args {
 		position := i + paramOffset
-		if position >= len(function.ParamTypes) || (function.Variadic && position == len(function.ParamTypes)-1) {
+		if function.Variadic && len(function.ParamTypes) > 0 && position >= len(function.ParamTypes)-1 {
+			position = len(function.ParamTypes) - 1
+		} else if position >= len(function.ParamTypes) {
 			return ""
 		}
 		if arg == nil || isPendingDefault(arg) || function.ParamTypes[position] == "" {
 			continue
 		}
-		if vm.runtimeArgumentsMatch(function, args[i:i+1], position) {
-			continue
+		if msg, ok := vm.paramMismatchMessage(&function, position, arg, function.matchTypeParams, inherited); !ok {
+			return msg
 		}
-		declared := vm.expandTypeAliases(function.ParamTypes[position])
-		suffix := vm.collectionMismatchSuffixStr(arg, declared)
-		gotName := vm.descriptiveRuntimeTypeName(arg)
-		if suffix != "" {
-			gotName = arg.TypeName()
-		}
-		declared = vm.paramMessageType(function, position, declared)
-		label := function.Name
-		if compiledConstructorName(label) {
-			label = label[:strings.IndexByte(label, '.')]
-		}
-		if position < len(function.ParamNames) {
-			return fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", label, declared, function.displayParamName(position), gotName, suffix)
-		}
-		return fmt.Sprintf("%s expects %s, got %s%s", label, declared, gotName, suffix)
 	}
 	return ""
 }

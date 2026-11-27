@@ -363,7 +363,7 @@ try {
 } catch (TypeError e) {
     io.println("caught: " + e.message);
 }
-`, "true\ntrue\ncaught: Box expects T for parameter 'v', got string\n")
+`, "true\ntrue\ncaught: Box expects int for parameter 'v', got string\n")
 }
 
 func TestParityGenericListParamInfersElementType(t *testing.T) {

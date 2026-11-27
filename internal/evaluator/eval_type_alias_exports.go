@@ -72,6 +72,33 @@ func (e *Evaluator) exportedTypeAlias(name string, env *runtime.Environment) (*a
 	return ref, true
 }
 
+// An alias naming a class, interface or enum is exported as that type so it can be constructed and imported.
+func (e *Evaluator) exportAliasedTypes(canonical string, exports map[string]runtime.Value, aliases map[string]string, env *runtime.Environment) {
+	for name, target := range aliases {
+		if _, taken := exports[name]; taken || strings.ContainsAny(target, "<>|&?") {
+			continue
+		}
+		if value, ok := e.aliasTargetValue(canonical, target, exports, env); ok {
+			exports[name] = value
+		}
+	}
+}
+
+func (e *Evaluator) aliasTargetValue(canonical, target string, exports map[string]runtime.Value, env *runtime.Environment) (runtime.Value, bool) {
+	prefix, member, qualified := cutLastDot(target)
+	if !qualified {
+		return nil, false
+	}
+	var value runtime.Value
+	var found bool
+	if prefix == canonical {
+		value, found = exports[member]
+	} else if module := e.moduleForPrefix(prefix, env); module != nil {
+		value, found = module.Exports[member]
+	}
+	return value, found && isTypeValue(value)
+}
+
 func (e *Evaluator) resolveAliasedTypeValue(ref *ast.TypeRef, env *runtime.Environment) (runtime.Value, bool) {
 	target := e.resolveTypeRef(ref, env)
 	if target == nil || target.Operator != "" {

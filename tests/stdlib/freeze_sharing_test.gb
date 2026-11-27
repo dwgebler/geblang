@@ -70,7 +70,7 @@ class FreezeSharingTest extends test.Test {
         let f = freeze.deep(xs);
         let list<any> ys = f;
         this.assertEquals({"T": "int"}, reflect.typeBindings(f));
-        this.assertEquals({"T": "any"}, reflect.typeBindings(ys));
+        this.assertEquals({"T": "int"}, reflect.typeBindings(ys));
         this.assertTrue(freeze.isFrozen(ys));
     }
 

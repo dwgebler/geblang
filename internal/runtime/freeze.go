@@ -7,7 +7,7 @@ func FreezeShallowCopy(v Value) Value {
 	case *List:
 		elems := make([]Value, len(val.Elements))
 		copy(elems, val.Elements)
-		return &List{Elements: elems, Frozen: true, ElementTypes: append([]string(nil), val.ElementTypes...)}
+		return PreserveCollectionType(val, &List{Elements: elems, Frozen: true, ElementTypes: append([]string(nil), val.ElementTypes...)})
 	case Dict:
 		frozen := NewDictHint(val.Len())
 		val.ForEachEntry(func(k string, e DictEntry) bool {
@@ -15,6 +15,7 @@ func FreezeShallowCopy(v Value) Value {
 			return true
 		})
 		frozen.Frozen = true
+		CopyCollectionType(val, frozen)
 		if val.dictHeader != nil {
 			frozen.ElementTypes = append([]string(nil), val.ElementTypes...)
 		}
@@ -24,7 +25,10 @@ func FreezeShallowCopy(v Value) Value {
 		for k, e := range val.Elements {
 			elements[k] = e
 		}
-		return Set{Elements: elements, Frozen: true, ElementTypes: append([]string(nil), val.ElementTypes...)}
+		frozen := NewSet(elements)
+		frozen.Frozen = true
+		frozen.ElementTypes = append([]string(nil), val.ElementTypes...)
+		return PreserveCollectionType(val, frozen)
 	case *Instance:
 		if val == nil {
 			return v
@@ -76,7 +80,7 @@ func DeepFreeze(v Value) Value {
 		for i, e := range val.Elements {
 			elems[i] = DeepFreeze(e)
 		}
-		return &List{Elements: elems, Frozen: true, ElementTypes: append([]string(nil), val.ElementTypes...)}
+		return PreserveCollectionType(val, &List{Elements: elems, Frozen: true, ElementTypes: append([]string(nil), val.ElementTypes...)})
 	case Dict:
 		frozen := NewDictHint(val.Len())
 		val.ForEachEntry(func(k string, entry DictEntry) bool {
@@ -84,6 +88,7 @@ func DeepFreeze(v Value) Value {
 			return true
 		})
 		frozen.Frozen = true
+		CopyCollectionType(val, frozen)
 		if val.dictHeader != nil {
 			frozen.ElementTypes = append([]string(nil), val.ElementTypes...)
 		}
@@ -93,7 +98,10 @@ func DeepFreeze(v Value) Value {
 		for k, entry := range val.Elements {
 			elements[k] = SetEntry{Value: DeepFreeze(entry.Value)}
 		}
-		return Set{Elements: elements, Frozen: true, ElementTypes: append([]string(nil), val.ElementTypes...)}
+		frozen := NewSet(elements)
+		frozen.Frozen = true
+		frozen.ElementTypes = append([]string(nil), val.ElementTypes...)
+		return PreserveCollectionType(val, frozen)
 	case *Instance:
 		if val != nil {
 			for k, fv := range val.Fields {

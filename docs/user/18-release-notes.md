@@ -1,5 +1,77 @@
 # Release Notes
 
+## 1.47.0
+
+### Added
+
+- `geblang check` honours an `@allowUnusedImports` tag in a file's leading doc
+  block: unused-import warnings are not reported for that file, for imports
+  needed only to load a module. Other checks still run, and editors show the
+  same result.
+- An exported type alias whose target is a class, interface or enum can be
+  used as that type: `facade.Widget(...)` constructs the aliased class, static
+  methods and enum variants are reached through it, and `from facade import
+  Widget` binds the type. Aliases of other types stay type-only.
+
+### Changed
+
+- Typed lists, sets and dicts retain their concrete backing types across
+  covariant references and `any` aliases. Writes must satisfy that backing
+  type, including nested collection writes. Compatible concrete typed
+  boundaries reuse validated metadata instead of rescanning all elements;
+  explicitly dynamic `any` collections remain mixed-type and still scan at
+  dynamic-to-specific boundaries. A rejected call does not leave earlier
+  arguments newly constrained. Older bytecode caches are rebuilt.
+
+- Parameters, typed declarations and writes into typed lists, sets and dicts
+  now check a class, interface or enum by the module that declares it, as
+  `instanceof` and casts already did. A same-named type from another module
+  is rejected, so a `list<b.Named>` no longer accepts an object implementing
+  `a.Named`. A facade that re-exports a class as an empty subclass
+  (`export class Client extends inner.Client {}`) defines a separate type, and
+  objects created as `inner.Client` no longer pass where `Client` is declared;
+  re-export it with `export type Client = inner.Client;` instead.
+- When a value is rejected because its type only shares a name with the
+  expected one, the `TypeError` names both modules: `label expects
+  shipping.Address for parameter 'to', got billing.Address`.
+
+### Fixed
+
+- Const lambda parameters on the VM use the same shallow-copy/freeze rules as
+  named functions. Mutating such a parameter previously succeeded on the VM
+  while the evaluator rejected it.
+
+- Generic argument errors name the bound expected type, such as `int` or
+  `list<int>`, on both runtimes. Nested collection details identify the actual
+  offending element. A single generic-method mismatch reports `TypeError`
+  consistently instead of a VM-only overload error.
+
+- `==`, `!=`, `assertEquals`, `contains` and `indexOf` no longer crash the
+  process on values that contain themselves, such as an object whose field
+  points back to it or a list that holds itself. The same object is equal to
+  itself, cyclic values with the same shape are equal, and a class's own
+  `__eq` is still called.
+- A subclass of a class imported from another module is accepted where its
+  parent type is expected: by a parameter typed with the qualified parent
+  name (`func take(shapes.Node n)`) and by a field the parent class declares.
+  Both were rejected as type errors before the program ran.
+- `web.http.Request.form()` and `formValue()` now return the text fields of
+  a `multipart/form-data` body. They returned nothing, so `verifyCsrf`
+  rejected every upload form that sent its token as a `_csrf` field.
+- Certificates from `crypt.generateSelfSignedCert` and
+  `crypt.signCertificate` are valid from five minutes before issuance. They
+  started at the instant of issue, so a verifier with a slightly slower clock
+  rejected them as expired. A new `notBefore` option sets the start time.
+- An enum implementing an interface imported from another module now matches
+  that interface in parameters, typed collections and `instanceof`; it was
+  rejected on the default runtime and, under `--disable-vm`, matched any
+  same-named interface.
+- An enum is accepted where a parent of an interface it implements is
+  expected.
+- `geblang check` types `Color.Red` as `Color`, so assigning or passing an
+  enum variant where another type is expected is reported before the program
+  runs.
+
 ## 1.46.0
 
 ### Added

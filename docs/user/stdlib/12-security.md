@@ -471,6 +471,11 @@ let leafPem = crypt.signCertificate({
 isCA=true` and adds `KeyUsageCertSign`). The default is a leaf certificate
 suitable for server / client authentication.
 
+Both `generateSelfSignedCert` and `signCertificate` make a certificate valid
+from five minutes before it is issued, so a verifier whose clock is slightly
+behind the issuer's still accepts it; `validDays` counts from issuance. Pass
+`"notBefore": "2026-01-01T00:00:00Z"` (RFC 3339) to set the start yourself.
+
 #### Parsing certificates
 
 `crypt.parseCert(pem)` decodes an X.509 certificate PEM and returns a dict:

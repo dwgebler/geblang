@@ -6477,7 +6477,7 @@ try {
 	if _, err := evaluator.New(&out).Eval(prog); err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
-	if got, want := out.String(), "true\ntrue\ncaught: Box expects T for parameter 'v', got string\n"; got != want {
+	if got, want := out.String(), "true\ntrue\ncaught: Box expects int for parameter 'v', got string\n"; got != want {
 		t.Fatalf("output: got %q, want %q", got, want)
 	}
 }

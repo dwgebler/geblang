@@ -73,7 +73,9 @@ crypt;` alongside if you need both the namespace and a hoisted name.
 
 A class imported this way can be used directly as a parent: `from
 shapes import Shape; class Circle extends Shape { ... }` works the same
-as the qualified `extends shapes.Shape`.
+as the qualified `extends shapes.Shape`. Either way, an instance of the
+subclass is accepted wherever the parent type is expected: by a parameter
+typed `shapes.Shape`, and by a field that `Shape` declares with its own type.
 
 `from` is a soft keyword: existing identifiers named `from` (function
 parameters, class fields) keep working unchanged.
@@ -135,10 +137,10 @@ session.Session();                    # error: no exported member Session
 
 ### Exporting type aliases
 
-`export type` publishes a type alias that importers can use under the module's
-name. The alias is transparent: it means exactly its target in every type
-position, including parameter, return, variable, and field annotations, generic
-arguments, `implements`, `extends`, `instanceof`, and `as`.
+`export type` publishes another name for a type. Importers use the alias under
+the exporting module's name, and it means exactly its target wherever a type is
+written: parameter, return, variable and field annotations, generic arguments,
+`implements`, `extends`, `instanceof` and `as`.
 
 ```gb
 module shop;
@@ -160,10 +162,111 @@ class LocalClient implements shop.Client {
 }
 ```
 
-Aliases are type-only, so `shop.Client(...)` is not a constructor call. A common
-use is re-exporting an interface that lives in a leaf module, so implementations
-in other submodules can declare `implements` without importing the facade
-(which would be a circular import).
+When the target is an exported class, interface or enum, the alias is also
+that type in code: `shop.Client(...)` constructs the aliased class, static
+methods and enum variants are reached through it (`shop.Status.Open`), and
+`from shop import Client` imports the type itself. The object is created as the
+target class, so it is accepted wherever the target is expected. An alias of any
+other type, such as `Money = decimal` or `list<string>`, can only be used as a
+type.
+
+#### Re-exporting a class from a facade
+
+Aliases are how a package presents classes from its submodules under one
+name. Suppose `shop.orders` declares the class and creates the objects:
+
+```gb
+module shop.orders;
+
+export class Order {
+    string id;
+
+    func Order(string id) {
+        this.id = id;
+    }
+}
+
+export func place(string id): Order {
+    return Order(id);
+}
+```
+
+The `shop` facade re-exports both:
+
+```gb
+module shop;
+import shop.orders as orders;
+
+export type Order = orders.Order;
+
+export func place(string id): Order {
+    return orders.place(id);
+}
+```
+
+Application code then needs only `shop`:
+
+```gb
+import io;
+import shop;
+
+func receipt(shop.Order order): string {
+    return "Receipt for ${order.id}";
+}
+
+io.println(receipt(shop.place("A-1")));   # Receipt for A-1
+io.println(receipt(shop.Order("A-2")));   # Receipt for A-2
+```
+
+Do not re-export with an empty subclass such as
+`export class Order extends orders.Order {}`. That declares a new class, and the
+orders that `shop.orders` creates are not instances of it, so a parameter typed
+`shop.Order` rejects them:
+
+```text
+receipt expects shop.Order for parameter 'order', got shop.orders.Order
+```
+
+#### Same-named types in different modules
+
+A class, interface or enum belongs to the module that declares it. Two modules
+can each declare an `Address`, and they are different types: a parameter,
+typed variable or typed collection that expects one rejects the other, just as
+`instanceof` and `as` do.
+
+```gb
+module shipping;
+
+export class Address {
+    string line = "2 Ship Rd";
+}
+
+export func label(Address to): string {
+    return "Ship to ${to.line}";
+}
+```
+
+```gb
+import billing;
+import shipping;
+
+any billTo = billing.Address();
+shipping.label(billTo);
+```
+
+The call fails with a `TypeError` that names both modules:
+
+```text
+label expects shipping.Address for parameter 'to', got billing.Address
+```
+
+The rule applies wherever the value goes. A `list<Address>` created in
+`shipping` and returned to another module still accepts only
+`shipping.Address`, and an object that implements `a.Named` is not accepted
+where another module's `b.Named` is expected, even though the interfaces share
+a name. A common use of interface aliases is re-exporting an interface from a
+leaf module, so implementations in other submodules can declare `implements`
+without importing the facade (which would be a circular import).
 
 A name brought in with `from M import N` is not part of the importing module's
 public surface. To re-export a type, declare an `export type` alias for it.

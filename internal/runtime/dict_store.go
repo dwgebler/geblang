@@ -43,6 +43,7 @@ type dictDataWithHeader struct {
 }
 
 type dictData struct {
+	typing        CollectionTyping
 	items         []dictItem
 	m             map[string]dictSlot
 	order         []string

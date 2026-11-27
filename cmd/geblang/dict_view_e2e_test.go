@@ -32,7 +32,7 @@ func TestDictionaryViewsAcrossCachedAndBuiltExecution(t *testing.T) {
 		cmd := exec.Command(path, args...)
 		cmd.Dir = project
 		output, err := cmd.CombinedOutput()
-		want := "views-ok\nint\nany\n{}\n[1, 1]\n7\n1\n"
+		want := "views-ok\nint\nint\n{\"K\": \"string\", \"V\": \"int\"}\n[1, 1]\n7\n1\n"
 		if err != nil || string(output) != want {
 			t.Fatalf("%v: %v\noutput %q, want %q", cmd.Args, err, output, want)
 		}

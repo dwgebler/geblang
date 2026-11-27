@@ -1,0 +1,7 @@
+module cyclic_links_donor;
+
+export class Link {
+    string label;
+    ?Link next = null;
+    func Link(string label) { this.label = label; }
+}

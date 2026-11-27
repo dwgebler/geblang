@@ -797,7 +797,15 @@ func (c *Compiler) compileEnumStatement(stmt *ast.EnumStatement) error {
 	}
 	if enumDef != nil {
 		for _, ifaceRef := range stmt.Implements {
-			enumDef.Implements = append(enumDef.Implements, ifaceRef.Name)
+			name := ifaceRef.Name
+			if _, local := c.interfaces[strings.ToLower(name)]; !local {
+				if strings.Contains(name, ".") {
+					name = c.resolveQualifiedClassName(name)
+				} else if qual, ok := c.fromImports[name]; ok {
+					name = qual
+				}
+			}
+			enumDef.Implements = append(enumDef.Implements, name)
 		}
 		if err := c.checkEnumConformance(stmt, enumDef); err != nil {
 			return err
@@ -1062,7 +1070,7 @@ func (c *Compiler) decoratorConstantValue(expr ast.Expression) (runtime.Value, e
 			}
 			entries[native.DictKey(value)] = runtime.SetEntry{Value: value}
 		}
-		return runtime.Set{Elements: entries}, nil
+		return runtime.NewSet(entries), nil
 	default:
 		if kind := ast.DecoratorReferenceKind(expr); kind != "" {
 			return c.decoratorThunk(expr, kind == "type")

@@ -123,7 +123,10 @@ func registerCryptPKI(r *Registry) {
 		subject := parsePkixName(opts, "subject")
 		dnsNames := parseDNSNames(opts)
 		ipAddresses := parseIPAddresses(opts)
-		validDays := dictInt(opts, "validDays", 365)
+		notBefore, notAfter, err := certValidity(opts, "crypt.generateSelfSignedCert")
+		if err != nil {
+			return nil, err
+		}
 
 		var privKey interface{}
 		var privKeyPEM string
@@ -157,12 +160,11 @@ func registerCryptPKI(r *Registry) {
 		if err != nil {
 			return nil, fmt.Errorf("crypt.generateSelfSignedCert serial: %w", err)
 		}
-		now := time.Now()
 		tmpl := &x509.Certificate{
 			SerialNumber:          serial,
 			Subject:               subject,
-			NotBefore:             now,
-			NotAfter:              now.Add(time.Duration(validDays) * 24 * time.Hour),
+			NotBefore:             notBefore,
+			NotAfter:              notAfter,
 			KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 			BasicConstraintsValid: true,
@@ -342,7 +344,10 @@ func registerCryptPKI(r *Registry) {
 			return nil, err
 		}
 
-		validDays := dictInt(opts, "validDays", 365)
+		notBefore, notAfter, err := certValidity(opts, "crypt.signCertificate")
+		if err != nil {
+			return nil, err
+		}
 		isCA := dictBool(opts, "isCA")
 		serialBits := dictInt(opts, "serialBits", 128)
 		if serialBits < 32 {
@@ -353,7 +358,6 @@ func registerCryptPKI(r *Registry) {
 			return nil, fmt.Errorf("crypt.signCertificate serial: %w", err)
 		}
 
-		now := time.Now()
 		keyUsage := x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
 		if isCA {
 			keyUsage |= x509.KeyUsageCertSign
@@ -361,8 +365,8 @@ func registerCryptPKI(r *Registry) {
 		tmpl := &x509.Certificate{
 			SerialNumber:          serial,
 			Subject:               csr.Subject,
-			NotBefore:             now,
-			NotAfter:              now.Add(time.Duration(validDays) * 24 * time.Hour),
+			NotBefore:             notBefore,
+			NotAfter:              notAfter,
 			KeyUsage:              keyUsage,
 			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 			BasicConstraintsValid: true,
@@ -722,6 +726,26 @@ func dictStr(d runtime.Dict, key string) string {
 		return ""
 	}
 	return s.Value
+}
+
+// certClockSkew backdates certificates so verifiers with slightly slower clocks accept them.
+const certClockSkew = 5 * time.Minute
+
+func certValidity(opts runtime.Dict, fn string) (time.Time, time.Time, error) {
+	now := time.Now()
+	notBefore := now.Add(-certClockSkew)
+	if raw := dictString(opts, "notBefore"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("%s notBefore must be an RFC 3339 time: %w", fn, err)
+		}
+		notBefore = parsed
+	}
+	notAfter := now.Add(time.Duration(dictInt(opts, "validDays", 365)) * 24 * time.Hour)
+	if !notAfter.After(notBefore) {
+		return time.Time{}, time.Time{}, fmt.Errorf("%s notBefore must be before the end of the validity period", fn)
+	}
+	return notBefore, notAfter, nil
 }
 
 func dictInt(d runtime.Dict, key string, defaultVal int) int {

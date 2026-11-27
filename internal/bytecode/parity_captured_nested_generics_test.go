@@ -105,7 +105,7 @@ wrongNested: rejected: <closure> expects dict<string, list<T>> return, got dict<
 ownArr: [1]
 ownArrParam: 2
 paramList: 2
-paramWrong: rejected: <closure> expects list<T> for parameter 'xs', got list (element at index 0 is string)
+paramWrong: rejected: <closure> expects list<int> for parameter 'xs', got list (element at index 0 is string)
 donorList: ["s"]
 donorWrong: rejected: <closure> expects list<T> return, got list<string>
 donorParam: 1

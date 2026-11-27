@@ -1,0 +1,190 @@
+/**
+ * @title Module-exact type identity through import forms (1.47.0)
+ * @summary Identity holds whether a type is named through an aliased import,
+ * a from-import, a re-exporting type alias or a local declaration that shares
+ * its name with an imported one; a same-named local interface never accepts an
+ * imported interface's implementers.
+ */
+import test;
+import identity_a_donor as alpha;
+import identity_facade_donor as facade;
+from identity_b_donor import Named, User;
+import identity_b_donor as beta;
+
+class Box<T> extends alpha.Box<string> {}
+
+interface Local {
+    func name(): string;
+}
+
+class AlphaBox implements alpha.Named {
+    func name(): string {
+        return "alpha";
+    }
+}
+
+class BetaBox implements Named {
+    func name(): string {
+        return "beta";
+    }
+}
+
+enum Signal implements alpha.Named {
+    Up;
+
+    func name(): string {
+        return "up";
+    }
+}
+
+func takeFromImported(Named n): string {
+    return n.name();
+}
+
+func takeFacade(facade.Named n): string {
+    return n.name();
+}
+
+func takeLocal(Local n): string {
+    return n.name();
+}
+
+func consumeAlphaUsers(list<alpha.User> values): void {}
+
+func consumeBetaUsers(list<User> values): void {}
+
+func consumeFacadeNames(list<facade.Named> values): void {}
+
+func consumeOtherNames(list<Named> values): void {}
+
+class ModuleIdentityFormsTest extends test.Test {
+    @test
+    func fromImportedTypeMatchesOnlyItsModule(): void {
+        any beta = BetaBox();
+        any alphaBox = AlphaBox();
+        any signal = Signal.Up;
+
+        this.assertEquals("beta", takeFromImported(beta));
+        this.assertThrows(func(): void {
+            takeFromImported(alphaBox);
+        });
+        this.assertThrows(func(): void {
+            takeFromImported(signal);
+        });
+        this.assertTrue(beta instanceof Named);
+        this.assertFalse(signal instanceof Named);
+    }
+
+    @test
+    func reExportedAliasResolvesToTheDeclaringModule(): void {
+        any alphaBox = AlphaBox();
+        any signal = Signal.Up;
+        any beta = BetaBox();
+        list<facade.Named> viaFacade = [];
+
+        this.assertEquals("alpha", takeFacade(alphaBox));
+        this.assertEquals("up", takeFacade(signal));
+        viaFacade.push(alphaBox);
+        viaFacade.push(signal);
+        this.assertThrows(func(): void {
+            takeFacade(beta);
+        });
+        this.assertThrows(func(): void {
+            viaFacade.push(beta);
+        });
+        this.assertEquals(2, viaFacade.length());
+    }
+
+    @test
+    func localInterfaceDoesNotAcceptImportedImplementers(): void {
+        any alphaBox = AlphaBox();
+        list<Local> locals = [];
+
+        this.assertThrows(func(): void {
+            takeLocal(alphaBox);
+        });
+        this.assertThrows(func(): void {
+            locals.push(alphaBox);
+        });
+    }
+
+    @test
+    func fromImportedClassMatchesOnlyItsModule(): void {
+        any mine = alpha.User();
+        list<User> users = [User()];
+
+        this.assertThrows(func(): void {
+            users.push(mine);
+        });
+        this.assertEquals(1, users.length());
+    }
+
+    @test
+    func errorsShowTheTypeAsWritten(): void {
+        any alphaBox = AlphaBox();
+        list<Named> named = [];
+        string message = "";
+        try {
+            named.push(alphaBox);
+        } catch (TypeError e) {
+            message = e.message;
+        }
+
+        this.assertEquals("cannot push AlphaBox to list<Named>", message);
+    }
+
+    @test
+    func sameNamedTypesAreQualifiedInErrors(): void {
+        any mine = alpha.User();
+        list<User> users = [];
+        string pushed = "";
+        try {
+            users.push(mine);
+        } catch (TypeError e) {
+            pushed = e.message;
+        }
+
+        this.assertEquals("cannot push identity_a_donor.User to list<identity_b_donor.User>", pushed);
+    }
+    @test
+    func establishedCollectionMetadataRetainsItsDeclaringModule(): void {
+        list<alpha.User> users = [alpha.User()];
+        list<Signal> signals = [Signal.Up];
+        for (int i = 0; i < 3; i += 1) {
+            consumeAlphaUsers(users);
+            consumeFacadeNames(signals);
+        }
+
+        this.assertThrows(func(): void { consumeBetaUsers(users); });
+        this.assertThrows(func(): void { consumeOtherNames(signals); });
+        this.assertThrows(func(): void { any alias = users; alias.push(User()); });
+    }
+
+    @test
+    func dynamicDescendantsRetainExactDictionaryKeyChecks(): void {
+        list<any> child = [1];
+        dict<alpha.User, list<int>> entries = {alpha.User(): child};
+        any alias = entries;
+
+        this.assertThrows(func(): void { alias[User()] = [1]; });
+        child.push("mixed");
+        this.assertEquals(2, child.length());
+        this.assertEquals(1, entries.length());
+    }
+    @test
+    func genericFallbackKeysAndSameNamedAncestorsKeepIdentity(): void {
+        list<any> child = [1];
+        dict<alpha.Box<int>, list<int>> entries = {alpha.Box<int>(): child};
+        any alias = entries;
+        list<alpha.Box<int>> wrong = [];
+        list<alpha.Box<string>> valid = [];
+
+        this.assertThrows(func(): void { alias[beta.Box<int>()] = [2]; });
+        entries[alpha.Box<int>()] = [2];
+        any descendant = Box<int>();
+        this.assertThrows(func(): void { any target = wrong; target.push(descendant); });
+        valid.push(descendant);
+        this.assertEquals(1, valid.length());
+        this.assertEquals(2, entries.length());
+    }
+}

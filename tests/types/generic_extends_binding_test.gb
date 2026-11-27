@@ -62,9 +62,9 @@ class GenericExtendsBindingTest extends test.Test {
         let sub = Sub<string>();
         sub.put("x");
         this.assertEquals("x", sub.item);
-        this.assertThrowsOf(func(): void { sub.put(5); }, "TypeError", "Box.put expects T for parameter 'v', got int");
+        this.assertThrowsOf(func(): void { sub.put(5); }, "TypeError", "Box.put expects string for parameter 'v', got int");
         any wrong = ["no"];
-        this.assertThrowsOf(func(): void { pair.put(wrong); }, "TypeError", "Box.put expects T for parameter 'v', got list<string>");
+        this.assertThrowsOf(func(): void { pair.put(wrong); }, "TypeError", "Box.put expects list<int> for parameter 'v', got list (element at index 0 is string)");
     }
 
     @test
@@ -87,7 +87,7 @@ class GenericExtendsBindingTest extends test.Test {
         this.assertEquals("int", box.id<int>(n));
         this.assertEquals("string", box.id("s"));
         this.assertEquals("float", box.keep(2));
-        this.assertThrowsOf(func(): void { box.keep(n); }, "TypeError", "Box.keep expects T for parameter 'x', got int");
+        this.assertThrowsOf(func(): void { box.keep(n); }, "TypeError", "Box.keep expects float for parameter 'x', got int");
         this.assertEquals("int", RemoteLeaf<decimal>().id(5));
     }
 }

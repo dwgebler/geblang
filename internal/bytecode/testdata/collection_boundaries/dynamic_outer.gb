@@ -1,0 +1,6 @@
+import io;
+list<any> child=[1];
+list<list<int>> outer=[child];
+any alias=outer;
+try {alias.push("wrong");io.println("wrong allowed");}catch(TypeError e){io.println("wrong rejected");}
+child.push("still dynamic");io.println(child.length());

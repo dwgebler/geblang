@@ -352,7 +352,9 @@ func (e *Evaluator) loadUserModule(canonical, alias string) (*runtime.Module, er
 	if err != nil {
 		return nil, fmt.Errorf("export module %s: %w", canonical, err)
 	}
-	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports, TypeAliases: typealias.ExportedFromProgram(program, canonical)}
+	typeAliases := typealias.ExportedFromProgram(program, canonical)
+	e.exportAliasedTypes(canonical, exports, typeAliases, moduleEnv)
+	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports, TypeAliases: typeAliases}
 	e.modules[canonical] = module
 	return module, nil
 }

@@ -60,6 +60,13 @@ export class Request {
     }
 
     func form(): dict<string, any> {
+        if (this.header("Content-Type").lower().contains("multipart/form-data")) {
+            try {
+                return web.parseMultipart(this.data)["fields"] as dict<string, any>;
+            } catch (Error e) {
+                return {};
+            }
+        }
         if (this.body() instanceof string) {
             return parsePairs(this.body() as string);
         }

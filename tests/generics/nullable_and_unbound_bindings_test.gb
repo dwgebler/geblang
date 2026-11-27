@@ -28,7 +28,7 @@ class NullableAndUnboundBindingsTest extends test.Test {
         this.assertEquals("ok", b.put(null));
         this.assertEquals(null, b.none());
         any s = "x";
-        this.assertThrowsOf(func(): void { b.put(s); }, "TypeError", "Box.put expects ?T for parameter 'x', got string");
+        this.assertThrowsOf(func(): void { b.put(s); }, "TypeError", "Box.put expects ?int for parameter 'x', got string");
     }
 
     @test

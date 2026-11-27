@@ -18,8 +18,9 @@ class NativeDictKeyTypesTest extends test.Test {
     @test
     func keyTypeCheckFollowsMutation(): void {
         let results = ch.Channel<string>(1);
-        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
-            list<string> out = [acceptsStringKeyed(request)];
+        let server = http.listen("127.0.0.1:0", func(dict request): dict {
+            list<string> out = [];
+            if (request instanceof dict<string, any>) { out.push("ok"); }
             any loose = request;
             loose[1] = "int key";
             try {
@@ -29,12 +30,14 @@ class NativeDictKeyTypesTest extends test.Test {
             }
             loose.remove(1);
             out.push(acceptsStringKeyed(loose));
+            try { loose[1] = "int key"; }
+            catch (TypeError e) { out.push("guarded"); }
             results.send(out.join(" "));
             return {"status": 200, "body": "ok"};
         });
         http.get("http://${http.serverAddr(server)}/");
         let got = results.recv();
         http.close(server);
-        this.assertEquals("ok TypeError ok", got);
+        this.assertEquals("ok TypeError ok guarded", got);
     }
 }

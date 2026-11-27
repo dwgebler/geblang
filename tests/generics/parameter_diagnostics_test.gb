@@ -1,0 +1,44 @@
+import test;
+import parameter_diagnostic_cases as cases;
+
+class GenericParameterDiagnosticsTest extends test.Test {
+    @test
+    func argumentErrorsNameTheBoundParameterTypes(): void {
+        let messages = cases.diagnostics();
+
+        this.assertEquals(
+            [
+                "TypeError: constrained expects int for parameter 'value', got string",
+                "TypeError: constrained expects string for parameter 'value', got int",
+                "TypeError: DiagnosticBox expects int for parameter 'value', got string",
+                "TypeError: DiagnosticBox.accept expects int for parameter 'value', got string",
+                "TypeError: DiagnosticChild.child expects int for parameter 'value', got string",
+                "TypeError: DiagnosticBox.own expects string for parameter 'value', got int",
+                "TypeError: <closure> expects int for parameter 'value', got string",
+                "TypeError: variadic expects int for parameter 'values', got string",
+                "TypeError: DiagnosticBox.own expects string for parameter 'value', got int",
+                "TypeError: DiagnosticBox.tail expects int for parameter 'values', got string",
+                "TypeError: DiagnosticBox.tail expects int for parameter 'values', got string",
+                "TypeError: nested expects list<int> for parameter 'values', got list (element at index 1 is string)",
+            ],
+            messages
+        );
+    }
+
+    @test
+    func matchingGenericVariadicArgumentsStillExecute(): void {
+        this.assertEquals([0, 2], cases.validVariadics());
+    }
+
+    @test
+    func anyParameterLetsInstanceofReturnFalseInsteadOfRejectingTheCall(): void {
+        func isType<T>(any value): bool {
+            return value instanceof T;
+        }
+
+        this.assertTrue(isType<string>("hello"));
+        this.assertFalse(isType<int>("hello"));
+        this.assertFalse(isType<integer>("hello"));
+        this.assertFalse(isType<bool>("hello"));
+    }
+}

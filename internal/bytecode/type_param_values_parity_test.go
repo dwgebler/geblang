@@ -74,9 +74,9 @@ func TestTypeParamValuesParity(t *testing.T) {
 	want := "Mara\n" +
 		"TypeError: cannot assign string to int field User.id\n" +
 		"5 true {\"T\": \"int\"}\n" +
-		"TypeError: Box expects T for parameter 'v', got string\n" +
+		"TypeError: Box expects int for parameter 'v', got string\n" +
 		"true\n3\n" +
-		"TypeError: Box expects T for parameter 'v', got string\n" +
+		"TypeError: Box expects int for parameter 'v', got string\n" +
 		"true\n" +
 		"TypeError: type parameter T is bound to int, which cannot be constructed\n" +
 		"<class User> int <class Box<string>> Box\n" +

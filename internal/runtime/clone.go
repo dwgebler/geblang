@@ -155,6 +155,7 @@ func (s *cloneState) cloneValue(value Value) Value {
 			return cloned
 		}
 		cloned := &List{Elements: make([]Value, len(value.Elements)), ElementTypes: append([]string(nil), value.ElementTypes...)}
+		CopyCollectionType(value, cloned)
 		cloned.Frozen = s.keepFrozen && value.Frozen
 		s.lists[value] = cloned
 		for i, element := range value.Elements {
@@ -172,6 +173,7 @@ func (s *cloneState) cloneValue(value Value) Value {
 			}
 		}
 		cloned := NewDictHint(value.Len())
+		CopyCollectionType(value, cloned)
 		cloned.ElementTypes = append([]string(nil), value.ElementTypes...)
 		if id != 0 {
 			s.dicts[id] = cloned
@@ -199,7 +201,10 @@ func (s *cloneState) cloneValue(value Value) Value {
 			}
 		}
 		elements := make(map[string]SetEntry, len(value.Elements))
-		cloned := Set{Elements: elements, ElementTypes: append([]string(nil), value.ElementTypes...), Frozen: s.keepFrozen && value.Frozen}
+		cloned := NewSet(elements)
+		cloned.ElementTypes = append([]string(nil), value.ElementTypes...)
+		cloned.Frozen = s.keepFrozen && value.Frozen
+		CopyCollectionType(value, cloned)
 		if id != 0 {
 			s.sets[id] = cloned
 		}
@@ -225,7 +230,11 @@ func (s *cloneState) cloneValue(value Value) Value {
 		for i, callable := range value.Callables {
 			callables[i] = s.cloneValue(callable)
 		}
-		return OverloadedFunction{Name: value.Name, Overloads: overloads, Module: value.Module, Indices: append([]int64(nil), value.Indices...), Callables: callables, Defaults: value.Defaults, TypeArguments: value.TypeArguments}
+		signatures := make([]Value, len(value.Signatures))
+		for i, signature := range value.Signatures {
+			signatures[i] = s.cloneValue(signature)
+		}
+		return OverloadedFunction{Signatures: signatures, Name: value.Name, Overloads: overloads, Module: value.Module, Indices: append([]int64(nil), value.Indices...), Callables: callables, Defaults: value.Defaults, TypeArguments: value.TypeArguments}
 	case *Module:
 		return s.cloneModule(value)
 	case BytecodeFunction:

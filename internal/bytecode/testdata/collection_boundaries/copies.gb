@@ -1,0 +1,14 @@
+import io;
+list<int> original = [2, 1];
+let copied = original.copy();
+let sorted = original.sorted();
+let reversed = original.reversed();
+let sliced = original.slice(0);
+for (pair in [["copy", copied], ["sorted", sorted], ["reversed", reversed], ["slice", sliced]]) {
+    try { any alias = pair[1]; alias.push("mixed"); io.println(pair[0] + " unprotected"); }
+    catch (Error e) { io.println(pair[0] + " protected"); }
+}
+any extra = ["mixed"];
+let combined = original.concat(extra);
+try { list<int> wrong = combined; io.println("concat unchecked"); }
+catch (TypeError error) { io.println("concat checked"); }

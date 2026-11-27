@@ -1,0 +1,74 @@
+/**
+ * @title Exported type aliases name their type (1.47.0)
+ * @summary An exported alias for a class, enum or interface can be used as
+ * that type wherever the type itself can: constructed, extended (with or
+ * without an explicit parent call), reached for static methods and enum
+ * variants, imported with from, and matched by instanceof; values built
+ * through the alias are the aliased type.
+ */
+import test;
+import alias_types_facade_donor as facade;
+import alias_types_leaf_donor as leaf;
+from alias_types_facade_donor import Widget, Shade;
+
+class Fancy extends facade.Widget {
+    func Fancy() {
+        parent("fancy");
+    }
+}
+
+class Bare extends Widget {}
+
+class Round implements facade.Shaped {
+    func shape(): string {
+        return "round";
+    }
+}
+
+func describe(leaf.Widget w): string {
+    return w.label;
+}
+
+class ConstructibleTypeAliasTest extends test.Test {
+    @test
+    func aliasConstructsTheAliasedClass(): void {
+        let made = facade.Widget("made");
+        let defaulted = facade.Widget();
+
+        this.assertEquals("made", made.label);
+        this.assertEquals("plain", defaulted.label);
+        this.assertTrue(made instanceof leaf.Widget);
+        this.assertTrue(made instanceof facade.Widget);
+        this.assertEquals("made", describe(made));
+    }
+
+    @test
+    func fromImportedAliasConstructs(): void {
+        let made = Widget("from");
+
+        this.assertEquals("from", made.label);
+        this.assertTrue(made instanceof leaf.Widget);
+    }
+
+    @test
+    func subclassesOfAnAliasAreTheAliasedType(): void {
+        this.assertEquals("fancy", describe(Fancy()));
+        this.assertEquals("plain", describe(Bare()));
+        this.assertTrue(Fancy() instanceof leaf.Widget);
+    }
+
+    @test
+    func staticMethodsAndEnumVariantsThroughAnAlias(): void {
+        this.assertEquals("static", facade.Widget.named("static").label);
+        this.assertEquals(leaf.Shade.Dark, facade.Shade.Dark);
+        this.assertEquals(leaf.Shade.Light, Shade.Light);
+    }
+
+    @test
+    func interfaceAliasIsTheAliasedInterface(): void {
+        any round = Round();
+
+        this.assertTrue(round instanceof leaf.Shaped);
+        this.assertTrue(round instanceof facade.Shaped);
+    }
+}

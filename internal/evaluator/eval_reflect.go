@@ -1007,17 +1007,17 @@ func reflectTypeBindings(call *ast.CallExpression, args []runtime.Value) (runtim
 			putDict(entries, name, runtime.String{Value: typeName})
 		}
 	case *runtime.List:
-		if len(v.ElementTypes) >= 1 {
-			putDict(entries, "T", runtime.String{Value: elementTagBase(v.ElementTypes[0])})
+		if len(runtime.CollectionElementTypes(v)) >= 1 {
+			putDict(entries, "T", runtime.String{Value: elementTagBase(runtime.CollectionElementTypes(v)[0])})
 		}
 	case runtime.Set:
-		if len(v.ElementTypes) >= 1 {
-			putDict(entries, "T", runtime.String{Value: elementTagBase(v.ElementTypes[0])})
+		if len(runtime.CollectionElementTypes(v)) >= 1 {
+			putDict(entries, "T", runtime.String{Value: elementTagBase(runtime.CollectionElementTypes(v)[0])})
 		}
 	case runtime.Dict:
-		if len(v.ElementTypes) >= 2 {
-			putDict(entries, "K", runtime.String{Value: elementTagBase(v.ElementTypes[0])})
-			putDict(entries, "V", runtime.String{Value: elementTagBase(v.ElementTypes[1])})
+		if len(runtime.CollectionElementTypes(v)) >= 2 {
+			putDict(entries, "K", runtime.String{Value: elementTagBase(runtime.CollectionElementTypes(v)[0])})
+			putDict(entries, "V", runtime.String{Value: elementTagBase(runtime.CollectionElementTypes(v)[1])})
 		}
 	default:
 		return nil, fmt.Errorf("%s expects instance or generic collection, got %s", call.Callee.String(), args[0].TypeName())
@@ -1728,7 +1728,7 @@ func (e *Evaluator) decoratorArgValue(decoratorName string, expr ast.Expression,
 			}
 			entries[dictKey(value)] = runtime.SetEntry{Value: value}
 		}
-		return runtime.Set{Elements: entries}, nil
+		return runtime.NewSet(entries), nil
 	default:
 		kind := ast.DecoratorReferenceKind(expr)
 		if kind == "" || env == nil {

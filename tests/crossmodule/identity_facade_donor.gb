@@ -1,0 +1,5 @@
+module identity_facade_donor;
+
+import identity_a_donor as leaf;
+
+export type Named = leaf.Named;

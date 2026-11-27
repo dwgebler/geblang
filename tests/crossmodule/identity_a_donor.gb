@@ -1,0 +1,15 @@
+module identity_a_donor;
+
+export interface Named {
+    func name(): string;
+}
+
+export interface Child extends Named {
+    func age(): int;
+}
+
+export class User {
+    string id = "a";
+}
+
+export class Box<T> {}

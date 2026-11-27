@@ -1,0 +1,69 @@
+/**
+ * @title crypt certificate start time (1.47.0)
+ * @summary generateSelfSignedCert and signCertificate backdate a certificate's
+ * notBefore by five minutes so verifiers with slightly slower clocks accept it,
+ * and both take an explicit RFC 3339 notBefore.
+ */
+import crypt;
+import datetime;
+import test;
+
+class CryptCertValidityTest extends test.Test {
+    func issue(dict<string, any> leafOpts): dict<string, any> {
+        let caKey = crypt.generateEcKey("P-256");
+        let ca = crypt.generateSelfSignedCert({"subject": {"commonName": "Root"}, "key": caKey});
+        let csr = crypt.generateCsr({"key": crypt.generateEcKey("P-256"), "subject": {"commonName": "leaf"}});
+        leafOpts["csr"] = csr;
+        leafOpts["caCert"] = ca["cert"];
+        leafOpts["caKey"] = caKey;
+        return {"ca": ca["cert"], "leaf": crypt.signCertificate(leafOpts)};
+    }
+
+    func startsAgo(string pem): int {
+        return datetime.nowUnix() - (datetime.parseRFC3339(crypt.parseCert(pem)["notBefore"] as string) as int);
+    }
+
+    @test
+    func certificatesStartBeforeTheyAreIssued(): void {
+        let c = this.issue({});
+
+        this.assertTrue(this.startsAgo(c["ca"] as string) >= 300);
+        this.assertTrue(this.startsAgo(c["leaf"] as string) >= 300);
+        this.assertTrue(this.startsAgo(c["leaf"] as string) < 360);
+    }
+
+    @test
+    func validDaysStillCountsFromIssuance(): void {
+        let c = this.issue({"validDays": 1});
+        let ends = datetime.parseRFC3339(crypt.parseCert(c["leaf"] as string)["notAfter"] as string) as int;
+
+        this.assertTrue(ends - datetime.nowUnix() > 86000);
+        this.assertTrue(ends - datetime.nowUnix() <= 86400);
+    }
+
+    @test
+    func explicitNotBefore(): void {
+        let self = crypt.generateSelfSignedCert({"subject": {"commonName": "x"}, "notBefore": "2026-01-02T03:04:05Z"});
+        let c = this.issue({"notBefore": "2026-02-03T04:05:06Z"});
+
+        this.assertEquals("2026-01-02T03:04:05Z", crypt.parseCert(self["cert"] as string)["notBefore"]);
+        this.assertEquals("2026-02-03T04:05:06Z", crypt.parseCert(c["leaf"] as string)["notBefore"]);
+    }
+
+    @test
+    func invalidNotBeforeIsRejected(): void {
+        this.assertThrows(func(): void {
+            crypt.generateSelfSignedCert({"subject": {"commonName": "x"}, "notBefore": "yesterday"});
+        });
+        this.assertThrows(func(): void {
+            this.issue({"notBefore": "2999-01-01T00:00:00Z", "validDays": 1});
+        });
+    }
+
+    @test
+    func backdatedChainVerifies(): void {
+        let c = this.issue({});
+
+        this.assertEquals(2, crypt.verifyCertChain({"leaf": c["leaf"], "roots": [c["ca"]]}).length());
+    }
+}

@@ -78,7 +78,7 @@ func setExtraMethod(s runtime.Set, name string, args []runtime.Value, call CallF
 				elements[key] = entry
 			}
 		}
-		return runtime.Set{Elements: elements}, true, nil
+		return runtime.NewSet(elements), true, nil
 	case "filter", "map", "any", "all":
 		if err := callbackArg(label, args, call); err != nil {
 			return nil, true, err
@@ -113,7 +113,7 @@ func setExtraMethod(s runtime.Set, name string, args []runtime.Value, call CallF
 		case "all":
 			return runtime.Bool{Value: true}, true, nil
 		}
-		return runtime.Set{Elements: elements}, true, nil
+		return runtime.NewSet(elements), true, nil
 	}
 	return nil, false, nil
 }

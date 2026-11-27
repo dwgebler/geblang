@@ -45,8 +45,9 @@ func (e *Evaluator) valueMatchesType(value runtime.Value, typeName string) bool 
 
 // instanceofExact does module-exact matching for the instanceof operator when the RHS resolves to a user class or interface; handled=false falls back to name-based matching.
 func (e *Evaluator) instanceofExact(value runtime.Value, typeName string, env *runtime.Environment) (bool, bool) {
-	instance, ok := value.(*runtime.Instance)
-	if !ok {
+	instance, isInstance := value.(*runtime.Instance)
+	variant, isEnum := value.(runtime.EnumVariant)
+	if !isInstance && !isEnum {
 		return false, false
 	}
 	if runtime.IsBuiltinTypeName(typeName) || strings.ContainsAny(typeName, "<|&") {
@@ -62,8 +63,13 @@ func (e *Evaluator) instanceofExact(value runtime.Value, typeName string, env *r
 		module, name = decl.DeclaringModule(), decl.Name
 	case *runtime.Interface:
 		module, name = decl.Module, decl.Name
+	case *runtime.EnumDef:
+		module, name = decl.Module, decl.Name
 	default:
 		return false, false
+	}
+	if isEnum {
+		return runtime.EnumMatchesExact(variant.Enum, module, name), true
 	}
 	matched := runtime.InstanceClassMatchesExact(instance.Class, module, name)
 	for _, extra := range instance.ExtraTypeNames {
@@ -215,8 +221,8 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 		if base != "list" || len(args) != 1 {
 			return false
 		}
-		if len(v.ElementTypes) >= 1 {
-			return elementTagSatisfies(v.ElementTypes[0], args[0])
+		if len(runtime.CollectionElementTypes(v)) >= 1 {
+			return elementTagSatisfies(runtime.CollectionElementTypes(v)[0], args[0])
 		}
 		for _, el := range v.Elements {
 			if !elementValueMatches(el, args[0]) {
@@ -228,8 +234,8 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 		if base != "set" || len(args) != 1 {
 			return false
 		}
-		if len(v.ElementTypes) >= 1 {
-			return elementTagSatisfies(v.ElementTypes[0], args[0])
+		if len(runtime.CollectionElementTypes(v)) >= 1 {
+			return elementTagSatisfies(runtime.CollectionElementTypes(v)[0], args[0])
 		}
 		for _, e := range v.Elements {
 			if !elementValueMatches(e.Value, args[0]) {
@@ -241,8 +247,8 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 		if base != "dict" || len(args) != 2 {
 			return false
 		}
-		if len(v.ElementTypes) >= 2 {
-			return elementTagSatisfies(v.ElementTypes[0], args[0]) && elementTagSatisfies(v.ElementTypes[1], args[1])
+		if len(runtime.CollectionElementTypes(v)) >= 2 {
+			return elementTagSatisfies(runtime.CollectionElementTypes(v)[0], args[0]) && elementTagSatisfies(runtime.CollectionElementTypes(v)[1], args[1])
 		}
 		matches := true
 		v.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
@@ -306,14 +312,23 @@ func splitTopLevelUnion(typeName string) ([]string, bool) {
 // checkDictWriteTags enforces a tagged dict's key and value types on
 // any write path.
 func checkDictWriteTags(dict runtime.Dict, key, value runtime.Value) error {
-	if len(dict.ElementTypes) < 2 {
+	if len(runtime.CollectionElementTypes(dict)) < 2 {
 		return nil
 	}
-	if !valueSatisfiesElementTag(key, dict.ElementTypes[0]) {
-		return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot use %s key in dict<%s, %s>", key.TypeName(), dict.ElementTypes[0], dict.ElementTypes[1])}}
+	if runtime.HasCollectionType(dict) {
+		if matched, index := runtime.CollectionDictWriteMatches(dict, key, value); !matched {
+			if index == 0 {
+				return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot use %s key in dict<%s, %s>", runtime.ElementValueName(key, runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagFor(key, runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagDisplay(runtime.CollectionElementTypes(dict)[1]))}}
+			}
+			return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to dict<%s, %s>", runtime.ElementValueName(value, runtime.CollectionElementTypes(dict)[1]), runtime.ElementTagDisplay(runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagFor(value, runtime.CollectionElementTypes(dict)[1]))}}
+		}
+		return nil
 	}
-	if !valueSatisfiesElementTag(value, dict.ElementTypes[1]) {
-		return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to dict<%s, %s>", value.TypeName(), dict.ElementTypes[0], dict.ElementTypes[1])}}
+	if !collectionWriteMatches(dict, 0, key) {
+		return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot use %s key in dict<%s, %s>", runtime.ElementValueName(key, runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagFor(key, runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagDisplay(runtime.CollectionElementTypes(dict)[1]))}}
+	}
+	if !collectionWriteMatches(dict, 1, value) {
+		return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to dict<%s, %s>", runtime.ElementValueName(value, runtime.CollectionElementTypes(dict)[1]), runtime.ElementTagDisplay(runtime.CollectionElementTypes(dict)[0]), runtime.ElementTagFor(value, runtime.CollectionElementTypes(dict)[1]))}}
 	}
 	return nil
 }
@@ -326,7 +341,7 @@ func elementTagSatisfies(tag, want string) bool {
 	if strings.HasPrefix(tag, "?") && !elementArgAllowsNull(want) {
 		return false
 	}
-	return typeNameSatisfies(strings.TrimPrefix(tag, "?"), strings.TrimPrefix(want, "?"))
+	return typeNameSatisfies(runtime.ElementTagDisplay(strings.TrimPrefix(tag, "?")), strings.TrimPrefix(want, "?"))
 }
 
 // elementValueMatches checks one element of an untagged collection; null meets a nullable argument.
@@ -355,7 +370,7 @@ func elementArgAllowsNull(want string) bool {
 // elementTagBase drops a stored tag's nullable marker; instanceof and
 // reflect read the base type, leaving nullability to the write barrier.
 func elementTagBase(s string) string {
-	return strings.TrimPrefix(s, "?")
+	return runtime.ElementTagDisplay(strings.TrimPrefix(s, "?"))
 }
 
 // elementTagName renders a generic argument as a stored element tag,
@@ -364,10 +379,15 @@ func elementTagName(ref *ast.TypeRef) string {
 	if ref == nil {
 		return ""
 	}
-	if ref.Nullable {
-		return "?" + ref.Name
+	tag := ref.Name
+	if ref.CanonicalName != "" && ref.Operator == "" && len(ref.Arguments) == 0 {
+		module, _ := runtime.SplitCanonicalTypeName(ref.CanonicalName)
+		tag = runtime.IdentityTag(ref.Name, module)
 	}
-	return ref.Name
+	if ref.Nullable {
+		return "?" + tag
+	}
+	return tag
 }
 
 func valueSatisfiesElementTag(value runtime.Value, tag string) bool {
@@ -377,6 +397,13 @@ func valueSatisfiesElementTag(value runtime.Value, tag string) bool {
 			return true
 		}
 		tag = tag[1:]
+	}
+	if written, module, ok := runtime.SplitIdentityTag(tag); ok {
+		switch value.(type) {
+		case *runtime.Instance, runtime.EnumVariant, runtime.Error:
+			return runtime.ValueIsNominalType(value, module, simpleTypeName(written))
+		}
+		tag = written
 	}
 	if typeNameSatisfies(value.TypeName(), tag) {
 		return true
@@ -730,7 +757,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 				}
 				elements[k] = runtime.SetEntry{Value: elem}
 			}
-			return runtime.Set{Elements: elements}, nil
+			return runtime.NewSet(elements), nil
 		}
 	}
 	return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("cannot cast %s to %s", value.TypeName(), target)}
@@ -909,8 +936,13 @@ func valueMatchesTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 		_, ok := value.(*runtime.Generator)
 		return ok
 	}
-	if ev, ok := value.(runtime.EnumVariant); ok && typ.ResolvedModule != "" && ev.Enum.Module != "" && !strings.EqualFold(typ.ResolvedModule, ev.Enum.Module) && typeNamesEqual(ev.Enum.Name, typ.Name) {
-		return false
+	if module, name, ok := nominalIdentity(typ, typeParams); ok {
+		switch v := value.(type) {
+		case *runtime.Instance:
+			return runtime.ValueIsNominalType(v, module, name) && instanceMatchesTypeArgs(typeParams, v, typ)
+		case runtime.EnumVariant:
+			return runtime.ValueIsNominalType(v, module, name)
+		}
 	}
 	if typeNamesEqual(value.TypeName(), typ.Name) {
 		if instance, ok := value.(*runtime.Instance); ok && !instanceMatchesTypeArgs(typeParams, instance, typ) {
@@ -925,13 +957,7 @@ func valueMatchesTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 		return runtime.ErrorValueIsA(errValue, simpleTypeName(typ.Name), typeNamesEqual)
 	}
 	if ev, ok := value.(runtime.EnumVariant); ok {
-		target := simpleTypeName(typ.Name)
-		for _, iface := range ev.Enum.Implements {
-			if typeNamesEqual(iface, target) {
-				return true
-			}
-		}
-		return false
+		return runtime.EnumImplements(ev.Enum, simpleTypeName(typ.Name))
 	}
 	instance, ok := value.(*runtime.Instance)
 	if !ok {
@@ -946,6 +972,14 @@ func valueMatchesTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 		}
 	}
 	return classImplementsInterface(instance.Class, simpleTypeName(typ.Name))
+}
+
+func nominalIdentity(typ *ast.TypeRef, typeParams map[string]bool) (string, string, bool) {
+	if typ.CanonicalName == "" || typeParams[typ.Name] {
+		return "", "", false
+	}
+	module, name := runtime.SplitCanonicalTypeName(typ.CanonicalName)
+	return module, name, true
 }
 
 // instanceMatchesTypeArgs enforces invariance on the type arguments of a
@@ -1094,6 +1128,13 @@ func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 		return typ.Nullable
 	}
 	typeName := simpleTypeName(typ.Name)
+	if isCollectionTypeRef(typ) && !runtime.TypeRefUsesTypeParameter(typ, typeParams) {
+		if matched, handled := runtime.MatchCollectionType(value, typ, func(value runtime.Value, ref *ast.TypeRef) bool {
+			return matchValueToTypeRef(typeParams, value, ref)
+		}); handled {
+			return matched
+		}
+	}
 	if strings.EqualFold(typeName, "iterable") {
 		if !forInAccepts(value) {
 			return false

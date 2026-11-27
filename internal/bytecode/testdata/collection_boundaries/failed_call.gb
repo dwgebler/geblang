@@ -1,0 +1,7 @@
+import io;
+func take(list<int> values, int n): void {}
+let values = [1];
+any wrong = "wrong";
+try { take(values, wrong); } catch (Error e) { io.println("call rejected"); }
+try { any alias = values; alias.push("mixed"); io.println("still untyped"); }
+catch (Error e) { io.println("unexpectedly constrained"); }

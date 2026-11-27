@@ -626,10 +626,10 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 				}
 			}
 			if start >= end {
-				return &runtime.List{Elements: nil}, nil
+				return runtime.PreserveCollectionType(value, &runtime.List{Elements: nil}), nil
 			}
 			// A new list: writes to it (or pushes) must not reach the original.
-			return &runtime.List{Elements: append([]runtime.Value(nil), value.Elements[start:end]...)}, nil
+			return runtime.PreserveCollectionType(value, &runtime.List{Elements: append([]runtime.Value(nil), value.Elements[start:end]...)}), nil
 		case runtime.Bytes:
 			if len(args) < 1 || len(args) > 2 {
 				return nil, fmt.Errorf("bytes.slice expects (start[, end])")
@@ -774,20 +774,20 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 		case *runtime.List:
 			elems := make([]runtime.Value, len(value.Elements))
 			copy(elems, value.Elements)
-			return &runtime.List{Elements: elems}, nil
+			return runtime.PreserveCollectionType(value, &runtime.List{Elements: elems}), nil
 		case runtime.Dict:
 			d := runtime.NewDict()
 			value.ForEachEntry(func(k string, e runtime.DictEntry) bool {
 				d.PutEntry(k, e)
 				return true
 			})
-			return d, nil
+			return runtime.PreserveCollectionType(value, d), nil
 		case runtime.Set:
 			elements := make(map[string]runtime.SetEntry, len(value.Elements))
 			for k, v := range value.Elements {
 				elements[k] = v
 			}
-			return runtime.Set{Elements: elements}, nil
+			return runtime.PreserveCollectionType(value, runtime.NewSet(elements)), nil
 		default:
 			return nil, native.UnknownMethodError(receiver.TypeName(), "copy")
 		}
@@ -810,9 +810,6 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 			if value.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 			}
-			if len(value.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[1], value.ElementTypes[0]) {
-				return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot assign %s to list<%s>", args[1].TypeName(), value.ElementTypes[0])}
-			}
 			i, err := indexInt(args[0])
 			if err != nil {
 				return nil, err
@@ -822,6 +819,9 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 			}
 			if i < 0 || i >= len(value.Elements) {
 				return nil, fmt.Errorf("list index out of range")
+			}
+			if len(runtime.CollectionElementTypes(value)) > 0 && !collectionWriteMatches(value, 0, args[1]) {
+				return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot assign %s to list<%s>", runtime.ElementValueName(args[1], runtime.CollectionElementTypes(value)[0]), runtime.ElementTagFor(args[1], runtime.CollectionElementTypes(value)[0]))}
 			}
 			value.Elements[i] = args[1]
 			return runtime.Null{}, nil
@@ -884,8 +884,8 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 			if list.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 			}
-			if len(list.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[1], list.ElementTypes[0]) {
-				return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot insert %s to list<%s>", args[1].TypeName(), list.ElementTypes[0])}
+			if len(runtime.CollectionElementTypes(list)) > 0 && !collectionWriteMatches(list, 0, args[1]) {
+				return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot insert %s to list<%s>", runtime.ElementValueName(args[1], runtime.CollectionElementTypes(list)[0]), runtime.ElementTagFor(args[1], runtime.CollectionElementTypes(list)[0]))}
 			}
 			list.Elements = append(list.Elements, nil)
 			copy(list.Elements[i+1:], list.Elements[i:])
@@ -904,8 +904,8 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 		if value.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen set"}
 		}
-		if len(value.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
-			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot add %s to set<%s>", args[0].TypeName(), value.ElementTypes[0])}
+		if len(runtime.CollectionElementTypes(value)) > 0 && !collectionWriteMatches(value, 0, args[0]) {
+			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot add %s to set<%s>", runtime.ElementValueName(args[0], runtime.CollectionElementTypes(value)[0]), runtime.ElementTagFor(args[0], runtime.CollectionElementTypes(value)[0]))}
 		}
 		value.Elements[native.DictKey(args[0])] = runtime.SetEntry{Value: args[0]}
 		return value, nil
@@ -972,7 +972,7 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 		for key, entry := range other.Elements {
 			elements[key] = entry
 		}
-		return runtime.Set{Elements: elements}, nil
+		return runtime.NewSet(elements), nil
 	case "intersection":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("set.intersection expects one argument")
@@ -991,7 +991,7 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 				elements[key] = entry
 			}
 		}
-		return runtime.Set{Elements: elements}, nil
+		return runtime.NewSet(elements), nil
 	case "difference":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("set.difference expects one argument")
@@ -1010,7 +1010,7 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 				elements[key] = entry
 			}
 		}
-		return runtime.Set{Elements: elements}, nil
+		return runtime.NewSet(elements), nil
 	case "hasKey":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("dict.hasKey expects one argument")
@@ -1113,8 +1113,8 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 		if list.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 		}
-		if len(list.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[0], list.ElementTypes[0]) {
-			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot push %s to list<%s>", args[0].TypeName(), list.ElementTypes[0])}
+		if len(runtime.CollectionElementTypes(list)) > 0 && !collectionWriteMatches(list, 0, args[0]) {
+			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot push %s to list<%s>", runtime.ElementValueName(args[0], runtime.CollectionElementTypes(list)[0]), runtime.ElementTagFor(args[0], runtime.CollectionElementTypes(list)[0]))}
 		}
 		list.Elements = append(list.Elements, args[0])
 		return list, nil
@@ -1136,8 +1136,8 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 		if count < 0 {
 			return nil, vmTypedError{class: "ValueError", message: "list.fill count must be >= 0"}
 		}
-		if count > 0 && len(list.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[0], list.ElementTypes[0]) {
-			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot fill list<%s> with %s", list.ElementTypes[0], args[0].TypeName())}
+		if count > 0 && len(runtime.CollectionElementTypes(list)) > 0 && !collectionWriteMatches(list, 0, args[0]) {
+			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot fill list<%s> with %s", runtime.ElementTagFor(args[0], runtime.CollectionElementTypes(list)[0]), runtime.ElementValueName(args[0], runtime.CollectionElementTypes(list)[0]))}
 		}
 		for i := 0; i < count; i++ {
 			list.Elements = append(list.Elements, args[0])
@@ -1154,11 +1154,11 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 		if list.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 		}
-		if len(list.ElementTypes) > 0 {
-			if !vmValueSatisfiesElementTag(args[0], list.ElementTypes[0]) {
+		if len(runtime.CollectionElementTypes(list)) > 0 {
+			if !collectionWriteMatches(list, 0, args[0]) {
 				return nil, vmTypedError{
 					class:   "TypeError",
-					message: fmt.Sprintf("cannot append %s to list<%s>", args[0].TypeName(), list.ElementTypes[0]),
+					message: fmt.Sprintf("cannot append %s to list<%s>", runtime.ElementValueName(args[0], runtime.CollectionElementTypes(list)[0]), runtime.ElementTagFor(args[0], runtime.CollectionElementTypes(list)[0])),
 				}
 			}
 		}
@@ -1179,15 +1179,8 @@ func builtinPrimitiveMethod(receiver runtime.Value, name string, args []runtime.
 		if list.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 		}
-		if len(list.ElementTypes) > 0 {
-			for i, el := range other.Elements {
-				if !vmValueSatisfiesElementTag(el, list.ElementTypes[0]) {
-					return nil, vmTypedError{
-						class:   "TypeError",
-						message: fmt.Sprintf("cannot extend list<%s> with %s at index %d", list.ElementTypes[0], el.TypeName(), i),
-					}
-				}
-			}
+		if matched, i := collectionExtendMatches(list, other.Elements); !matched {
+			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot extend list<%s> with %s at index %d", runtime.ElementTagFor(other.Elements[i], runtime.CollectionElementTypes(list)[0]), runtime.ElementValueName(other.Elements[i], runtime.CollectionElementTypes(list)[0]), i)}
 		}
 		list.Elements = append(list.Elements, other.Elements...)
 		return runtime.Null{}, nil
@@ -1582,6 +1575,22 @@ func numericSignCheck(value runtime.Value, check func(int) bool) (runtime.Value,
 }
 
 func valuesEqual(left runtime.Value, right runtime.Value) bool {
+	var guard runtime.EqualityGuard
+	return valuesEqualIn(left, right, &guard)
+}
+
+func valuesEqualIn(left runtime.Value, right runtime.Value, guard *runtime.EqualityGuard) bool {
+	if runtime.SameReference(left, right) {
+		return true
+	}
+	switch left.(type) {
+	case *runtime.List, runtime.Dict, runtime.Set, *runtime.Instance:
+		key, seen := guard.Enter(left, right)
+		if seen {
+			return true
+		}
+		defer guard.Leave(key)
+	}
 	if eq, both := runtime.NumericValuesEqual(left, right); both {
 		return eq
 	}
@@ -1592,7 +1601,7 @@ func valuesEqual(left runtime.Value, right runtime.Value) bool {
 			return false
 		}
 		for i, element := range leftValue.Elements {
-			if !valuesEqual(element, rightValue.Elements[i]) {
+			if !valuesEqualIn(element, rightValue.Elements[i], guard) {
 				return false
 			}
 		}
@@ -1605,7 +1614,7 @@ func valuesEqual(left runtime.Value, right runtime.Value) bool {
 		equal := true
 		leftValue.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
 			other, ok := rightValue.GetEntry(key)
-			if !ok || !valuesEqual(entry.Key, other.Key) || !valuesEqual(entry.Value, other.Value) {
+			if !ok || !valuesEqualIn(entry.Key, other.Key, guard) || !valuesEqualIn(entry.Value, other.Value, guard) {
 				equal = false
 				return false
 			}
@@ -1619,7 +1628,7 @@ func valuesEqual(left runtime.Value, right runtime.Value) bool {
 		}
 		for key, entry := range leftValue.Elements {
 			other, ok := rightValue.Elements[key]
-			if !ok || !valuesEqual(entry.Value, other.Value) {
+			if !ok || !valuesEqualIn(entry.Value, other.Value, guard) {
 				return false
 			}
 		}
@@ -1630,7 +1639,7 @@ func valuesEqual(left runtime.Value, right runtime.Value) bool {
 			return false
 		}
 		for i, f := range leftValue.Fields {
-			if !valuesEqual(f, rv.Fields[i]) {
+			if !valuesEqualIn(f, rv.Fields[i], guard) {
 				return false
 			}
 		}
@@ -1642,7 +1651,7 @@ func valuesEqual(left runtime.Value, right runtime.Value) bool {
 		}
 		for name, value := range leftValue.Fields {
 			other, ok := rightValue.Fields[name]
-			if !ok || !valuesEqual(value, other) {
+			if !ok || !valuesEqualIn(value, other, guard) {
 				return false
 			}
 		}

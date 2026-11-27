@@ -1,0 +1,12 @@
+module subclass_assignability_donor;
+
+export class Node {
+    string label = "";
+    ?Node next = null;
+    list<Node> children = [];
+}
+
+export class Box {
+    Node item;
+    func Box(Node item) { this.item = item; }
+}

@@ -1,0 +1,45 @@
+/**
+ * @title Enums satisfy the parents of the interfaces they implement (1.47.0)
+ * @summary An enum implementing a child interface is accepted wherever the
+ * parent interface is expected: parameters, typed lists and instanceof.
+ */
+import test;
+
+interface Labelled {
+    func label(): string;
+}
+
+interface Ranked extends Labelled {
+    func rank(): int;
+}
+
+enum Level implements Ranked {
+    Low;
+    High;
+
+    func label(): string {
+        return "level";
+    }
+
+    func rank(): int {
+        return 1;
+    }
+}
+
+func describe(Labelled item): string {
+    return item.label();
+}
+
+class EnumInterfaceParentsTest extends test.Test {
+    @test
+    func parentInterfaceAcceptsTheEnum(): void {
+        any high = Level.High;
+        list<Labelled> items = [];
+        items.push(high);
+
+        this.assertEquals("level", describe(high));
+        this.assertEquals(1, items.length());
+        this.assertTrue(Level.Low instanceof Labelled);
+        this.assertTrue(Level.Low instanceof Ranked);
+    }
+}

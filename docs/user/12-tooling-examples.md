@@ -72,6 +72,27 @@ normal module resolver, verifies declared module names resolve back to their
 files, reports duplicate module declarations across a checked directory, and
 reports lint warnings such as unused imports and unreachable statements.
 
+Some imports are needed only for their effect of loading a module, for example
+so a framework that scans loaded classes can find the classes it declares.
+Nothing in the importing file names them, so `check` reports them as unused.
+Put an `@allowUnusedImports` tag in the file's leading doc block to turn off
+the unused-import warning for that file:
+
+```gb
+/**
+ * Wires the application's controllers and handlers.
+ * @allowUnusedImports
+ */
+import io;
+
+io.println("controllers loaded");
+```
+
+The tag counts only at the start of a doc line in a `/** ... */` block before
+the file's first statement. It affects only unused-import warnings in that
+file; every other check and lint rule still runs, and so does the warning in
+every other file.
+
 It also performs cross-module symbol resolution: a `module.member` access or
 `from module import name` is an error when the module does not export that
 name. This works for both built-in modules and your own modules across a

@@ -1,0 +1,5 @@
+import io;
+func mutate(func next):func {return func(any value):void {try {value.push("mixed");io.println("mutated");}catch(ImmutableError e){io.println("frozen");}};}
+@mutate
+func take(const any value):void {}
+let values=[1];take(values);io.println(values.length());

@@ -1,0 +1,67 @@
+/**
+ * @title Subclasses of imported classes where the parent type is expected (1.47.0)
+ * @summary A local subclass of a class from another module is accepted by a
+ * parameter typed with the qualified parent name and by an inherited field
+ * typed with the parent's own name, including through aliases, from-imports
+ * and a subclass of a subclass; an unrelated class is still rejected.
+ */
+import test;
+import subclass_assignability_donor as shapes;
+from subclass_assignability_donor import Node;
+
+class Tagged extends shapes.Node {}
+class DeepTagged extends Tagged {}
+class FromImported extends Node {}
+class Unrelated {}
+
+func label(shapes.Node n): string {
+    return "node";
+}
+
+func labelNullable(?shapes.Node n): string {
+    return n == null ? "none" : "node";
+}
+
+func wantsUnrelated(Unrelated u): string {
+    return "unrelated";
+}
+
+class SubclassAssignabilityTest extends test.Test {
+    @test
+    func qualifiedParameterAcceptsLocalSubclasses(): void {
+        this.assertEquals("node", label(Tagged()));
+        this.assertEquals("node", label(DeepTagged()));
+        this.assertEquals("node", labelNullable(FromImported()));
+    }
+
+    @test
+    func inheritedFieldAcceptsSubclasses(): void {
+        let t = Tagged();
+        t.next = DeepTagged();
+        let d = DeepTagged();
+        d.next = Tagged();
+
+        this.assertTrue(t.next instanceof DeepTagged);
+        this.assertTrue(d.next instanceof Tagged);
+    }
+
+    @test
+    func inheritedListFieldAcceptsSubclasses(): void {
+        let t = Tagged();
+        t.children.push(DeepTagged());
+
+        this.assertEquals(1, t.children.length());
+    }
+
+    @test
+    func constructorParameterAcceptsSubclass(): void {
+        let box = shapes.Box(DeepTagged());
+
+        this.assertTrue(box.item instanceof DeepTagged);
+    }
+
+    @test
+    func unrelatedClassIsStillRejectedAtRuntime(): void {
+        this.assertThrowsOf(func(): void { wantsUnrelated(Tagged() as any); }, "TypeError", "expects Unrelated");
+    }
+}

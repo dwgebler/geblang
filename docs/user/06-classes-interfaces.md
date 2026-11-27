@@ -316,8 +316,11 @@ Both forms give the subclass full access to inherited fields and methods.
 class or interface declaration named in scope and matches by identity, walking
 the value's real parent chain, so `x instanceof shapes.Shape` matches instances
 of `Shape` (and its subclasses) declared in `shapes`, but never a same-named
-class or interface from another module. Use `instanceof` rather than `typeof`,
-which matches by name, to distinguish same-named types across modules.
+class or interface from another module. An enum value matches its own enum and
+every interface it implements, including those interfaces' parents, by the same
+rule. Use `instanceof` rather than `typeof`, which matches by name, to
+distinguish same-named types across modules. Parameters and typed collections
+check types the same way; see [Types](03-types.md#checked-collection-and-class-casts).
 
 Use inheritance for true specialization. Prefer composition when one object
 merely needs to use another service:
@@ -1260,6 +1263,32 @@ An instance nested in a list, dict, or set compares the same way it does at top
 level: two containers are equal when their instance elements are equal field by
 field (or by `__eq` when the class defines one), not by object identity. So
 `[Money(500)] == [Money(500)]` is `true`.
+
+Values that contain themselves compare without looping forever: an object is
+always equal to itself, and two cyclic structures are equal when they have the
+same shape and field values. A class that defines `__eq` is still asked, even
+when an object is compared with itself.
+
+```gb
+import io;
+
+class Node {
+    string name;
+    ?Node next = null;
+    func Node(string name) {
+        this.name = name;
+    }
+}
+
+func ring(): Node {
+    let first = Node("a");
+    first.next = Node("b");
+    first.next.next = first;
+    return first;
+}
+
+io.println(ring() == ring());   # true
+```
 
 Operator methods should return the type users expect from the operator.
 Comparison and equality methods must return `bool`; arithmetic methods should

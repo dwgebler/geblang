@@ -1,0 +1,3 @@
+module alias_value_donor;
+
+export type Labels = list<string>;

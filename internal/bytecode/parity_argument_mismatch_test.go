@@ -83,7 +83,7 @@ any raw = true;
 io.println("${f(a)} ${f(b)} ${C(a).kind} ${C(b).kind} ${Box<string>(b).which}");
 try { Box<string>(raw); } catch (TypeError e) { io.println(e.message); }
 `)
-	want := "f-int f-str C-int C-str generic\nBox expects T for parameter 'value', got bool\n"
+	want := "f-int f-str C-int C-str generic\nBox expects string for parameter 'value', got bool\n"
 	if ev != want || vm != want {
 		t.Fatalf("overloads from any arguments:\nevaluator: %q\nvm: %q\nwant: %q", ev, vm, want)
 	}

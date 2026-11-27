@@ -545,6 +545,7 @@ func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment)
 			enum.Methods[key] = append(enum.Methods[key], decorated)
 		}
 	}
+	var enumIfaces []*runtime.Interface
 	for _, ifaceRef := range stmt.Implements {
 		ifaceValue, ok, err := e.resolveTypeValue(ifaceRef, env)
 		if err != nil {
@@ -558,6 +559,7 @@ func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment)
 			return nil, fmt.Errorf("%q is not an interface", ifaceRef.Name)
 		}
 		enum.Implements = append(enum.Implements, iface.Name)
+		enumIfaces = append(enumIfaces, iface)
 		if enum.Methods == nil {
 			enum.Methods = map[string][]runtime.Function{}
 		}
@@ -568,6 +570,7 @@ func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment)
 			return nil, err
 		}
 	}
+	enum.BindInterfaces(enumIfaces)
 	return enum, nil
 }
 
@@ -1871,7 +1874,15 @@ func (e *Evaluator) resolveTypeRef(ref *ast.TypeRef, env *runtime.Environment) *
 	} else {
 		nominalValue, _ = env.Get(out.Name)
 	}
+	if nominalValue == nil {
+		if module, name, qualified := cutLastDot(out.Name); qualified {
+			if class, found := e.classInModule(module, name); found {
+				nominalValue = class
+			}
+		}
+	}
 	if value := nominalValue; value != nil {
+		out.Supertypes = runtime.NominalSupertypes(value, out.Arguments)
 		switch nominal := value.(type) {
 		case *runtime.Class:
 			out.CanonicalName = runtime.QualifiedTypeName(nominal.DeclaringModule(), nominal.Name)

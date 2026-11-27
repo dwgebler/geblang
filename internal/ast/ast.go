@@ -57,6 +57,8 @@ type TypeRef struct {
 	ResolvedModule string
 	// CanonicalName keeps nominal identity separate from the source spelling used in diagnostics.
 	CanonicalName string
+	// Supertypes records resolved nominal ancestry for collection type comparisons.
+	Supertypes []*TypeRef
 	// Inferred marks an arrow parameter written without a type; it reads as any until inference fills it in.
 	Inferred bool
 }

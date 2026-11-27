@@ -80,6 +80,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 		vm.profileSample(0, true)
 	}
 	frame.meta = function.frameMeta
+	frame.collectionParamsBound = false
 	frame.returnBindings = nil
 	if function.frameMeta != nil && function.frameMeta.needsBindings && len(args) > 0 {
 		frame.returnBindings = vm.returnBindingsFor(&function, args[0].ToValue())
@@ -457,6 +458,7 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 
 	// Type validation, inline against VMValues. Skips the spec lookup
 	// when a typed-int param meets a SmallInt arg (the dominant case).
+	collectionParamsBound := true
 	if function.requiresParamValidation {
 		typeParams := function.matchTypeParams
 		inherited := vm.pendingTypeBindings
@@ -482,6 +484,12 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 			} else {
 				spec = vm.typeSpec(pt)
 			}
+			if spec.collectionRef != nil && len(typeParams) == 0 && len(inherited) == 0 && stackArgs[i].Kind == runtime.VMKindBoxed {
+				if declared := runtime.CollectionDeclaredType(stackArgs[i].Boxed); declared != nil && runtime.CollectionTypeAccepts(declared, spec.collectionRef) {
+					continue
+				}
+			}
+			collectionParamsBound = false
 			if !vm.matchVMValueToTypeSpecWith(typeParams, inherited, stackArgs[i], spec) {
 				// Fall back to the slow path so the existing error
 				// reporting (which formats runtime.Value descriptions)
@@ -517,6 +525,7 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 		vm.profileSample(0, true)
 	}
 	frame.meta = function.frameMeta
+	frame.collectionParamsBound = collectionParamsBound
 	frame.returnBindings = nil
 	if function.frameMeta != nil && function.frameMeta.needsBindings {
 		var receiver runtime.Value
@@ -588,7 +597,11 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	if len(vm.pendingTypeBindings) > 0 {
 		vm.mergePendingTypeBindings()
 	}
-	return int(function.Entry) - 1, nil
+	entry := int(function.Entry)
+	if collectionParamsBound && entry < len(vm.curMod.Chunk.Instructions) && vm.curMod.Chunk.Instructions[entry].Op == OpBindCollectionParams {
+		entry++
+	}
+	return entry - 1, nil
 }
 
 // compiledConstructorName reports the Class.Class constructor name form;
@@ -749,6 +762,9 @@ func (frame *callFrame) mergedReturnBindings() map[string]string {
 }
 
 func specMentionsTypeParam(spec vmTypeSpec, params map[string]bool) bool {
+	if len(params) == 0 {
+		return false
+	}
 	if params[spec.baseLower] {
 		return true
 	}
@@ -1088,6 +1104,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 		vm.profileSample(0, true)
 	}
 	frame.meta = function.frameMeta
+	frame.collectionParamsBound = false
 	frame.returnBindings = nil
 	if function.frameMeta != nil && function.frameMeta.needsBindings {
 		var receiver runtime.Value
@@ -2191,29 +2208,44 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool, seen *
 		if len(callable.Callables) == 0 {
 			return callable
 		}
+		vm.bridgeActive.Store(true)
+		vm.noteEscape()
+		original := callable
 		callable.Overloads = append([]runtime.Function(nil), callable.Overloads...)
-		for i, bound := range callable.Callables {
-			bridged := vm.wrapStatefulNativeValue(bound, isolated, seen).(runtime.Function)
-			callable.Overloads[i].Native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-				ordered, err := bindBoundArguments(callable, i, args, nil)
-				if err != nil {
-					return nil, err
-				}
-				return bridged.Native(nil, ordered)
+		for i := range callable.Callables {
+			selected := original
+			selected.Overloads = []runtime.Function{original.Overloads[i]}
+			selected.Callables = []runtime.Value{original.Callables[i]}
+			selected.Indices = []int64{original.Indices[i]}
+			selected.Defaults = [][]runtime.Value{original.Defaults[i]}
+			selected.Signatures = nil
+			if i < len(original.Signatures) {
+				selected.Signatures = []runtime.Value{original.Signatures[i]}
 			}
-			callable.Overloads[i].BridgeInvoke = func(host any, args []runtime.Value) (runtime.Value, error) {
-				ordered, err := bindBoundArguments(callable, i, args, nil)
-				if err != nil {
-					return nil, err
+			invoke := func(args []runtime.Value, host *VM) (runtime.Value, error) {
+				if isolated {
+					return vm.callCallableIsolated(selected, args)
 				}
-				return bridged.BridgeInvoke(host, ordered)
+				constants, wrapper := invokeWrapper(selected, args)
+				return vm.runWrapperWithRawCall(constants, wrapper, -1, false, host, nil)
+			}
+			callable.Overloads[i].Native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) { return invoke(args, nil) }
+			callable.Overloads[i].BridgeInvoke = func(host any, args []runtime.Value) (runtime.Value, error) {
+				caller, _ := host.(*VM)
+				return invoke(args, caller)
 			}
 			callable.Overloads[i].NativeNamed = func(_ *runtime.Instance, args []runtime.Value, names []string) (runtime.Value, error) {
-				ordered, err := bindBoundArguments(callable, i, args, names)
+				ordered, err := bindBoundArguments(selected, 0, args, names)
 				if err != nil {
 					return nil, err
 				}
-				return bridged.Native(nil, ordered)
+				return invoke(ordered, nil)
+			}
+			callable.Overloads[i].ScopedInvoke = func(caller any, args []runtime.Value) (runtime.Value, error) {
+				if native, ok := caller.(StatefulNativeCaller); ok {
+					return vm.callScoped(selected, args, isolated, native)
+				}
+				return invoke(args, nil)
 			}
 		}
 		return callable
@@ -2548,6 +2580,17 @@ func (vm *VM) callCallableIsolatedNative(fn runtime.Value, args []runtime.Value,
 		f = clonedF.(runtime.BytecodeClosure)
 		constants, wrapper := invokeWrapper(f, args)
 		return vm.runWrapperNative(constants, wrapper, -1, true, nil, clonedGlobals, native)
+	case runtime.OverloadedFunction:
+		if f.Module != vm.moduleName && vm.moduleLoader != nil {
+			return vm.callModuleHandlerIsolated(fn, f.Module, args, native)
+		}
+		vm.globalsMu.Lock()
+		snapshot := append([]runtime.VMValue(nil), vm.globals...)
+		vm.globalsMu.Unlock()
+		clonedGlobals, cloned := runtime.CloneIsolated(snapshot, f)
+		constants, wrapper := invokeWrapper(cloned, args)
+		return vm.runWrapperNative(constants, wrapper, -1, true, nil, clonedGlobals, native)
+
 	default:
 		return vm.callCallableSlow(fn, args)
 	}
@@ -2709,8 +2752,14 @@ func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value,
 				if len(info.ParamNames)-offset > len(chosen.Parameters) {
 					offset++
 				}
-				if message := vm.argumentMismatchMessage(info, ordered, offset); message != "" {
+				if message := vm.argumentMismatchMessage(info, ordered, offset, chosen.TypeBindings); message != "" {
 					return nil, vm.typedFault(Instruction{}, "TypeError", message)
+				}
+			}
+			if pos < len(f.Signatures) {
+				ordered, err = vm.prepareDecoratedCollectionArguments(vm.bindCallableTypeArgs(f.Signatures[pos], f.TypeArguments), ordered, reentryHost)
+				if err != nil {
+					return nil, err
 				}
 			}
 			return vm.callCallableModeHostedSync(vm.bindCallableTypeArgs(f.Callables[pos], f.TypeArguments), ordered, allowInline, reentryHost, syncMode)
@@ -2739,6 +2788,9 @@ func (vm *VM) callCallableModeHostedSync(fn runtime.Value, args []runtime.Value,
 			}
 			res, err := vm.moduleLoader.CallModuleFunction(f, vm.wrapStatefulNativeArgs("", "", args), vm)
 			return res, vm.stitchHofCallbackError(err)
+		}
+		if f.ParameterOnly {
+			return vm.PrepareCollectionParameters(f, args)
 		}
 		if f.Raw {
 			if vm.methodReceiverFuncs[f.Index] {
@@ -3778,6 +3830,7 @@ func (vm *VM) runWrapperNative(args []runtime.Value, wrapper []Instruction, rawI
 		chunk.Functions = append([]FunctionInfo(nil), vm.chunk.Functions...)
 		for i := range chunk.Functions {
 			chunk.Functions[i].Entry += int64(shift)
+			chunk.Functions[i].ParameterEntry += int64(shift)
 			chunk.Functions[i].DefaultConstants = append([]int64(nil), chunk.Functions[i].DefaultConstants...)
 			for j, defaultIndex := range chunk.Functions[i].DefaultConstants {
 				if defaultIndex >= 0 {
@@ -4201,6 +4254,10 @@ func bindCallableBindings(value runtime.Value, bindings map[string]string) runti
 	case runtime.OverloadedFunction:
 		f.Overloads = append([]runtime.Function(nil), f.Overloads...)
 		f.Callables = append([]runtime.Value(nil), f.Callables...)
+		f.Signatures = append([]runtime.Value(nil), f.Signatures...)
+		for i := range f.Signatures {
+			f.Signatures[i] = bindCallableBindings(f.Signatures[i], bindings)
+		}
 		for i := range f.Overloads {
 			f.Overloads[i].TypeBindings = mergedTypeBindings(bindings, f.Overloads[i].TypeBindings)
 		}

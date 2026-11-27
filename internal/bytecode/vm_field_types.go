@@ -81,7 +81,7 @@ func (vm *VM) resolveFieldType(class *runtime.Class, name string) *fieldTypeCach
 			if declared != "" && declared != "any" {
 				cache.depth = depth
 				cache.declared = declared
-				cache.spec = vm.typeSpec(vm.canonicalTypeQualifiers(declared, c.Module))
+				cache.spec = vm.typeSpec(vm.collectionFieldType(declared, c))
 				if params := classTypeParamSet(c); typeMentionsParams(declared, params) {
 					cache.typeParams = params
 				}
@@ -120,14 +120,14 @@ func (vm *VM) fieldWriteMismatch(instance *runtime.Instance, name string, value 
 		return "", true
 	}
 	field := vm.resolveFieldType(instance.Class, name)
-	if field.declared == "" || primitiveFieldMatch(field.spec.kind, value) || collectionTagMatch(field.spec.kind, field.tags, value) {
+	if field.declared == "" || primitiveFieldMatch(field.spec.kind, value) || (runtime.HasCollectionType(value) && collectionTagMatch(field.spec.kind, field.tags, value)) {
 		return "", true
 	}
 	var bindings map[string]string
 	if field.typeParams != nil {
 		bindings = runtime.DeclaringClassBindings(instance, ancestorAt(instance.Class, field.depth))
 	}
-	if vm.matchValueToTypeSpecWith(field.typeParams, bindings, value, field.spec) {
+	if vm.matchValueToTypeSpecWith(field.typeParams, bindings, value, field.spec) && vm.bindCollection(value, field.spec, field.typeParams, bindings) {
 		return "", true
 	}
 	return vm.fieldMismatchMessage(value, field.declared, instance.Class.Name, name), false
@@ -178,17 +178,17 @@ func collectionTagMatch(kind vmTypeKind, want []string, value runtime.Value) boo
 		if kind != vmTypeList {
 			return false
 		}
-		tags = v.ElementTypes
+		tags = runtime.CollectionElementTypes(v)
 	case runtime.Set:
 		if kind != vmTypeSet {
 			return false
 		}
-		tags = v.ElementTypes
+		tags = runtime.CollectionElementTypes(v)
 	case runtime.Dict:
 		if kind != vmTypeDict {
 			return false
 		}
-		tags = v.ElementTypes
+		tags = runtime.CollectionElementTypes(v)
 	default:
 		return false
 	}
@@ -289,7 +289,8 @@ func (vm *VM) setClassStatic(instruction Instruction, ip int, class runtime.Byte
 		if intLiteral {
 			value = typedIntLiteralConstant(value, vm.expandTypeAliases(declared))
 		}
-		if !vm.matchValueToTypeStrWith(nil, nil, value, vm.canonicalTypeQualifiers(declared, ownerModule)) {
+		spec := vm.typeSpec(vm.collectionFieldType(declared, &runtime.Class{Module: ownerModule}))
+		if !vm.matchValueToTypeSpec(nil, value, spec) || !vm.bindCollection(value, spec, nil, nil) {
 			return vm.throwTyped(instruction, ip, "TypeError", vm.fieldMismatchMessage(value, declared, owner, name))
 		}
 	}

@@ -6,6 +6,7 @@ import (
 
 	"geblang/internal/ast"
 	"geblang/internal/runtime"
+	"geblang/internal/typealias"
 )
 
 // literalFieldValue types an integer literal by its target field, as declarations do.
@@ -105,7 +106,7 @@ func checkFieldWrite(instance *runtime.Instance, name string, value runtime.Valu
 	}
 	check := resolveFieldCheck(instance.Class, name)
 	declared := check.declared
-	if declared == nil || primitiveFieldMatch(declared, value) || collectionTagsMatch(check.kind, check.tags, value) {
+	if declared == nil || primitiveFieldMatch(declared, value) || (runtime.HasCollectionType(value) && collectionTagsMatch(check.kind, check.tags, value)) {
 		return nil
 	}
 	var bindings map[string]string
@@ -113,6 +114,10 @@ func checkFieldWrite(instance *runtime.Instance, name string, value runtime.Valu
 		bindings = runtime.DeclaringClassBindings(instance, check.declaring)
 	}
 	if matchValueToTypeRefWith(check.params, bindings, value, declared) {
+		bound := typealias.Expand(declared, func(name string) (string, bool) { value, ok := bindings[name]; return value, ok })
+		if !runtime.TypeRefUsesTypeParameter(bound, check.params) {
+			tagCollectionWithTypeRef(value, bound)
+		}
 		return nil
 	}
 	return fieldMismatchError(value, declared, instance.Class.Name, name)
@@ -130,7 +135,11 @@ func fieldMismatchError(value runtime.Value, declared *ast.TypeRef, className, n
 // checkStaticWrite enforces a typed static field's declared type.
 func checkStaticWrite(class *runtime.Class, name string, value runtime.Value) error {
 	declared := class.StaticTypes[name]
-	if declared == nil || matchValueToTypeRef(nil, value, declared) {
+	if declared == nil {
+		return nil
+	}
+	if matchValueToTypeRef(nil, value, declared) {
+		tagCollectionWithTypeRef(value, declared)
 		return nil
 	}
 	return fieldMismatchError(value, declared, class.Name, name)
@@ -207,17 +216,17 @@ func collectionTagsMatch(kind string, want []string, value runtime.Value) bool {
 		if kind != "list" {
 			return false
 		}
-		tags = v.ElementTypes
+		tags = runtime.CollectionElementTypes(v)
 	case runtime.Set:
 		if kind != "set" {
 			return false
 		}
-		tags = v.ElementTypes
+		tags = runtime.CollectionElementTypes(v)
 	case runtime.Dict:
 		if kind != "dict" {
 			return false
 		}
-		tags = v.ElementTypes
+		tags = runtime.CollectionElementTypes(v)
 	default:
 		return false
 	}

@@ -1,0 +1,28 @@
+module alias_types_leaf_donor;
+
+export class Widget {
+    string label;
+
+    func Widget(string label = "plain") {
+        this.label = label;
+    }
+
+    static func named(string label): Widget {
+        return Widget(label);
+    }
+}
+
+export enum Shade {
+    Light;
+    Dark;
+}
+
+export interface Shaped {
+    func shape(): string;
+}
+
+class Hidden {}
+
+export func hidden(): any {
+    return Hidden();
+}

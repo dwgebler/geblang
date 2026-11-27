@@ -2,6 +2,7 @@ package check
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"geblang/internal/ast"
@@ -19,7 +20,7 @@ type lintImport struct {
 // lintProgram runs the package's optional lint rules:
 // - unused-import warning (when an `import x` alias is never referenced)
 // - unreachable-statement warning (statements after return/throw/break/continue)
-func lintProgram(file string, program *ast.Program) []Diagnostic {
+func lintProgram(file, source string, program *ast.Program) []Diagnostic {
 	diagnostics := []Diagnostic{}
 	imports := map[string]*lintImport{}
 	for _, stmt := range program.Statements {
@@ -84,8 +85,9 @@ func lintProgram(file string, program *ast.Program) []Diagnostic {
 		},
 	}
 	walker.program(program)
+	allowUnused := allowsUnusedImports(source, program)
 	for _, imp := range imports {
-		if !imp.used {
+		if !imp.used && !allowUnused {
 			diagnostics = append(diagnostics, Diagnostic{
 				File:     file,
 				Line:     imp.line,
@@ -97,6 +99,38 @@ func lintProgram(file string, program *ast.Program) []Diagnostic {
 		}
 	}
 	return append(diagnostics, unreachable...)
+}
+
+var (
+	docBlockPattern       = regexp.MustCompile(`(?s)/\*\*.*?\*/`)
+	allowUnusedImportsTag = regexp.MustCompile(`(?m)^[ \t]*(?:/\*\*)?[ \t]*\*?[ \t]*@allowUnusedImports\b`)
+)
+
+// allowsUnusedImports reports whether a doc block before the first statement carries @allowUnusedImports.
+func allowsUnusedImports(source string, program *ast.Program) bool {
+	head := source
+	if len(program.Statements) > 0 {
+		line, _ := statementPosition(program.Statements[0])
+		head = linePrefix(source, line)
+	}
+	for _, block := range docBlockPattern.FindAllString(head, -1) {
+		if allowUnusedImportsTag.MatchString(block) {
+			return true
+		}
+	}
+	return false
+}
+
+func linePrefix(source string, line int) string {
+	offset := 0
+	for i := 1; i < line; i++ {
+		next := strings.IndexByte(source[offset:], '\n')
+		if next < 0 {
+			return source
+		}
+		offset += next + 1
+	}
+	return source[:offset]
 }
 
 func lintUnreachableBlock(file string, block *ast.BlockStatement) []Diagnostic {

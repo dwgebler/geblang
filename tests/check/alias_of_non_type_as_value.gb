@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST still reject using an exported alias of a
+ *          non-class type, such as list<string>, as a value.
+ */
+import donors.alias_value_donor as donor;
+
+let labels = donor.Labels();

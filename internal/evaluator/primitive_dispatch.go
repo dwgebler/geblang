@@ -105,7 +105,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				copied.PutEntry(k, e)
 				return true
 			})
-			return copied, nil
+			return runtime.PreserveCollectionType(value, copied), nil
 		case "deepCopy":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.deepCopy expects no arguments")
@@ -435,7 +435,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("set.copy expects no arguments")
 			}
-			return runtime.Set{Elements: cloneSetEntries(value.Elements)}, nil
+			return runtime.PreserveCollectionType(value, runtime.NewSet(cloneSetEntries(value.Elements))), nil
 		case "deepCopy":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("set.deepCopy expects no arguments")
@@ -464,8 +464,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen set"}}
 			}
-			if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
-				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot add %s to set<%s>", args[0].TypeName(), value.ElementTypes[0])}}
+			if len(runtime.CollectionElementTypes(value)) > 0 && !collectionWriteMatches(value, 0, args[0]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot add %s to set<%s>", runtime.ElementValueName(args[0], runtime.CollectionElementTypes(value)[0]), runtime.ElementTagFor(args[0], runtime.CollectionElementTypes(value)[0]))}}
 			}
 			value.Elements[dictKey(args[0])] = runtime.SetEntry{Value: args[0]}
 			return value, nil
@@ -495,7 +495,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			for key, entry := range other.Elements {
 				elements[key] = entry
 			}
-			return runtime.Set{Elements: elements}, nil
+			return runtime.NewSet(elements), nil
 		case "intersection":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("set.intersection expects one argument")
@@ -510,7 +510,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					elements[key] = entry
 				}
 			}
-			return runtime.Set{Elements: elements}, nil
+			return runtime.NewSet(elements), nil
 		case "difference":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("set.difference expects one argument")
@@ -525,7 +525,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					elements[key] = entry
 				}
 			}
-			return runtime.Set{Elements: elements}, nil
+			return runtime.NewSet(elements), nil
 		}
 	case *runtime.List:
 		switch name {
@@ -535,7 +535,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			elems := make([]runtime.Value, len(value.Elements))
 			copy(elems, value.Elements)
-			return &runtime.List{Elements: elems}, nil
+			return runtime.PreserveCollectionType(value, &runtime.List{Elements: elems}), nil
 		case "deepCopy":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.deepCopy expects no arguments")
@@ -570,9 +570,6 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
-			if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[1], value.ElementTypes[0]) {
-				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to list<%s>", args[1].TypeName(), value.ElementTypes[0])}}
-			}
 			i, err := indexInt(args[0])
 			if err != nil {
 				return nil, err
@@ -582,6 +579,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			if i < 0 || i >= len(value.Elements) {
 				return nil, fmt.Errorf("list index out of range")
+			}
+			if len(runtime.CollectionElementTypes(value)) > 0 && !collectionWriteMatches(value, 0, args[1]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to list<%s>", runtime.ElementValueName(args[1], runtime.CollectionElementTypes(value)[0]), runtime.ElementTagFor(args[1], runtime.CollectionElementTypes(value)[0]))}}
 			}
 			value.Elements[i] = args[1]
 			return runtime.Null{}, nil
@@ -698,10 +698,10 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				}
 			}
 			if start >= end {
-				return &runtime.List{Elements: nil}, nil
+				return runtime.PreserveCollectionType(value, &runtime.List{}), nil
 			}
 			// A new list: writes to it (or pushes) must not reach the original.
-			return &runtime.List{Elements: append([]runtime.Value(nil), value.Elements[start:end]...)}, nil
+			return runtime.PreserveCollectionType(value, &runtime.List{Elements: append([]runtime.Value(nil), value.Elements[start:end]...)}), nil
 		case "join":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.join expects one argument (separator)")
@@ -738,8 +738,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
-			if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
-				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot push %s to list<%s>", args[0].TypeName(), value.ElementTypes[0])}}
+			if len(runtime.CollectionElementTypes(value)) > 0 && !collectionWriteMatches(value, 0, args[0]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot push %s to list<%s>", runtime.ElementValueName(args[0], runtime.CollectionElementTypes(value)[0]), runtime.ElementTagFor(args[0], runtime.CollectionElementTypes(value)[0]))}}
 			}
 			value.Elements = append(value.Elements, args[0])
 			return value, nil
@@ -757,8 +757,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if count < 0 {
 				return nil, thrownError{value: runtime.Error{Class: "ValueError", Message: "list.fill count must be >= 0"}}
 			}
-			if count > 0 && len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
-				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot fill list<%s> with %s", value.ElementTypes[0], args[0].TypeName())}}
+			if count > 0 && len(runtime.CollectionElementTypes(value)) > 0 && !collectionWriteMatches(value, 0, args[0]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot fill list<%s> with %s", runtime.ElementTagFor(args[0], runtime.CollectionElementTypes(value)[0]), runtime.ElementValueName(args[0], runtime.CollectionElementTypes(value)[0]))}}
 			}
 			for i := 0; i < count; i++ {
 				value.Elements = append(value.Elements, args[0])
@@ -771,11 +771,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
-			if len(value.ElementTypes) > 0 {
-				if !valueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
+			if len(runtime.CollectionElementTypes(value)) > 0 {
+				if !collectionWriteMatches(value, 0, args[0]) {
 					return nil, thrownError{value: runtime.Error{
 						Class:   "TypeError",
-						Message: fmt.Sprintf("cannot append %s to list<%s>", args[0].TypeName(), value.ElementTypes[0]),
+						Message: fmt.Sprintf("cannot append %s to list<%s>", runtime.ElementValueName(args[0], runtime.CollectionElementTypes(value)[0]), runtime.ElementTagFor(args[0], runtime.CollectionElementTypes(value)[0])),
 					}}
 				}
 			}
@@ -792,15 +792,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
-			if len(value.ElementTypes) > 0 {
-				for i, el := range other.Elements {
-					if !valueSatisfiesElementTag(el, value.ElementTypes[0]) {
-						return nil, thrownError{value: runtime.Error{
-							Class:   "TypeError",
-							Message: fmt.Sprintf("cannot extend list<%s> with %s at index %d", value.ElementTypes[0], el.TypeName(), i),
-						}}
-					}
-				}
+			if matched, i := collectionExtendMatches(value, other.Elements); !matched {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot extend list<%s> with %s at index %d", runtime.ElementTagFor(other.Elements[i], runtime.CollectionElementTypes(value)[0]), runtime.ElementValueName(other.Elements[i], runtime.CollectionElementTypes(value)[0]), i)}}
 			}
 			value.Elements = append(value.Elements, other.Elements...)
 			return runtime.Null{}, nil
@@ -853,8 +846,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
-			if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[1], value.ElementTypes[0]) {
-				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot insert %s to list<%s>", args[1].TypeName(), value.ElementTypes[0])}}
+			if len(runtime.CollectionElementTypes(value)) > 0 && !collectionWriteMatches(value, 0, args[1]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot insert %s to list<%s>", runtime.ElementValueName(args[1], runtime.CollectionElementTypes(value)[0]), runtime.ElementTagFor(args[1], runtime.CollectionElementTypes(value)[0]))}}
 			}
 			value.Elements = append(value.Elements, nil)
 			copy(value.Elements[i+1:], value.Elements[i:])
@@ -1027,7 +1020,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if sortErr := e.sortElements(newElements, args); sortErr != nil {
 				return nil, sortErr
 			}
-			return &runtime.List{Elements: newElements}, nil
+			return runtime.PreserveCollectionType(value, &runtime.List{Elements: newElements}), nil
 		case "reverse", "reversed":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.%s expects no arguments", name)
@@ -1045,7 +1038,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			for i, el := range value.Elements {
 				newElements[len(value.Elements)-1-i] = el
 			}
-			return &runtime.List{Elements: newElements, ElementTypes: value.ElementTypes}, nil
+			return runtime.PreserveCollectionType(value, &runtime.List{Elements: newElements, ElementTypes: runtime.CollectionElementTypes(value)}), nil
 		case "prepend", "unshift":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.%s expects one argument", name)
@@ -1053,8 +1046,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
-			if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
-				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot %s %s to list<%s>", name, args[0].TypeName(), value.ElementTypes[0])}}
+			if len(runtime.CollectionElementTypes(value)) > 0 && !collectionWriteMatches(value, 0, args[0]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot %s %s to list<%s>", name, runtime.ElementValueName(args[0], runtime.CollectionElementTypes(value)[0]), runtime.ElementTagFor(args[0], runtime.CollectionElementTypes(value)[0]))}}
 			}
 			value.Elements = append(value.Elements, nil)
 			copy(value.Elements[1:], value.Elements)

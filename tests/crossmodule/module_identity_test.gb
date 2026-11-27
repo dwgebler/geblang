@@ -1,0 +1,151 @@
+/**
+ * @title Module-exact type identity at runtime (1.47.0)
+ * @summary Parameters, typed-container writes and typed declarations accept
+ * a class, interface or enum value only when its type comes from the declared
+ * module: a same-named type from another module is rejected in every context,
+ * while the right type, its subclasses and enums implementing it (directly or
+ * through a child interface) are accepted, also when the declaration lives in
+ * another module.
+ */
+import test;
+import identity_a_donor as a;
+import identity_b_donor as b;
+
+class Box implements a.Named {
+    func name(): string {
+        return "box";
+    }
+}
+
+class SubUser extends a.User {}
+
+enum Color implements a.Named {
+    Red;
+
+    func name(): string {
+        return "red";
+    }
+}
+
+enum Mood implements a.Child {
+    Calm;
+
+    func name(): string {
+        return "calm";
+    }
+
+    func age(): int {
+        return 1;
+    }
+}
+
+func takeA(a.Named n): string {
+    return n.name();
+}
+
+func takeB(b.Named n): string {
+    return n.name();
+}
+
+func takeAUser(a.User u): string {
+    return u.id;
+}
+
+func takeBUser(b.User u): string {
+    return u.id;
+}
+
+func namedValues(): list<any> {
+    return [Box(), Color.Red, Mood.Calm];
+}
+
+func userValues(): list<any> {
+    return [a.User(), SubUser()];
+}
+
+class ModuleIdentityTest extends test.Test {
+    @test
+    func parametersAcceptOnlyTheDeclaredModulesInterface(): void {
+        for (value in namedValues()) {
+            this.assertTrue(takeA(value).length() > 0);
+            this.assertThrows(func(): void {
+                takeB(value);
+            });
+            this.assertThrows(func(): void {
+                b.takeNamed(value);
+            });
+        }
+    }
+
+    @test
+    func parametersAcceptOnlyTheDeclaredModulesClass(): void {
+        for (value in userValues()) {
+            this.assertEquals("a", takeAUser(value));
+            this.assertThrows(func(): void {
+                takeBUser(value);
+            });
+            this.assertThrows(func(): void {
+                b.takeUser(value);
+            });
+        }
+        this.assertEquals("b", b.takeUser(b.User()));
+    }
+
+    @test
+    func pushChecksTheModule(): void {
+        list<a.Named> mine = [];
+        list<b.Named> theirs = [];
+        list<b.Named> fromB = b.namedList();
+        for (value in namedValues()) {
+            mine.push(value);
+            this.assertThrows(func(): void {
+                theirs.push(value);
+            });
+            this.assertThrows(func(): void {
+                fromB.push(value);
+            });
+        }
+        this.assertEquals(3, mine.length());
+        this.assertEquals(0, theirs.length() + fromB.length());
+    }
+
+    @test
+    func indexAndDictWritesCheckTheModule(): void {
+        any mineUser = a.User();
+        list<b.User> users = [b.User()];
+        dict<string, b.User> local = {};
+        dict<string, b.User> fromB = b.userMap();
+
+        this.assertThrows(func(): void {
+            users[0] = mineUser;
+        });
+        this.assertThrows(func(): void {
+            local["k"] = mineUser;
+        });
+        this.assertThrows(func(): void {
+            fromB["k"] = mineUser;
+        });
+        local["ok"] = b.User();
+        this.assertEquals(1, local.length());
+    }
+
+    @test
+    func typedDeclarationsCheckEachElement(): void {
+        list<any> raw = namedValues();
+        list<a.Named> accepted = raw;
+
+        this.assertEquals(3, accepted.length());
+        this.assertThrows(func(): void {
+            list<b.Named> rejected = raw;
+        });
+    }
+
+    @test
+    func enumsMatchTheirOwnImportedInterface(): void {
+        this.assertTrue(Color.Red instanceof a.Named);
+        this.assertTrue(Mood.Calm instanceof a.Named);
+        this.assertTrue(Mood.Calm instanceof a.Child);
+        this.assertFalse(Color.Red instanceof b.Named);
+        this.assertFalse(Mood.Calm instanceof b.Named);
+    }
+}

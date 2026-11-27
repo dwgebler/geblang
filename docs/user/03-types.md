@@ -505,6 +505,16 @@ classes retain that identity; an unrelated class with the same name does not
 satisfy the cast. A qualified factory name used as a type resolves to the
 factory's declared return class, preserving facade APIs.
 
+The same identity applies to every runtime type check: parameters, typed
+variable declarations, and writes into typed lists, sets and dicts (`push`,
+index and key assignment) accept a class, interface or enum value only when its
+type, a parent class or an implemented interface (including that interface's
+parents) is the declared type from the declaring module. A `list<b.Named>`
+rejects an object that implements a different module's `a.Named`, even though
+both interfaces are called `Named`. This holds wherever the code runs: a list
+created as `list<Named>` in one module keeps checking that module's `Named`
+after it is passed to another.
+
 ### Conversion methods
 
 `value as type` is the idiomatic cast. Primitives also carry conversion
@@ -553,6 +563,19 @@ The value-keeping rounding methods (`round`, `floor`, `ceil`,
 types; see [Numeric methods](#numeric-methods) above for the full list.
 
 ### Generic type parameters and built-in collections
+
+Concrete collection types are retained by the backing storage. Wider covariant
+references and `any` aliases do not replace them, and every write checks the
+backing type. After the first validation, compatible typed boundaries compare
+metadata without scanning the elements. Nested concrete collections retain their
+own guarantees. See [collection semantics](stdlib/08-collections.md) for nested
+writes and copies.
+
+Explicitly dynamic collections remain mixed-type. A `list<any>` containing
+integers can be passed to a `list<int>` parameter, but this validates the current
+contents without narrowing the backing type. A later string insertion remains
+valid and the next `list<int>` call rejects the mixed contents. Such dynamic
+boundaries continue to scan.
 
 `typeof([1, 2, 3])` returns `list` (not `list<int>`); the base type
 name remains the canonical identifier for the kind. There is no
@@ -889,6 +912,12 @@ the value's type against T at runtime. T is bound from the explicit
 `<int>` / `<string>` at the call site, and `instanceof T` consults that
 binding inside the body.
 
+Declaring the parameter as `T value` instead makes it a constraint: a mismatched
+argument is rejected before the body runs. For example, an `int` binding rejects
+a string with `TypeError`, reporting `expects int for parameter 'value'` rather
+than the unbound name `T`. Nested parameter types and element diagnostics also
+use the resolved bindings, such as `list<int>`.
+
 Call-site bindings also project through to instances the body constructs
 (1.16.0). A generic function returning a generic class reports the
 concrete types, whether T was inferred from an argument or passed
@@ -1041,7 +1070,7 @@ func raw(any x): any {
 }
 
 let ok  = Box<string>("hello");     # fine
-let bad = Box<string>(raw(42));     # TypeError: Box expects T for parameter 'value', got int
+let bad = Box<string>(raw(42));     # TypeError: Box expects string for parameter 'value', got int
 # Box<string>(42) is rejected before the program runs
 ```
 
@@ -1057,7 +1086,7 @@ same way, against the instance's reified bindings:
 
 ```gb
 let b = Box<string>("hello");
-b.put(42);    # TypeError: Box.put expects T for parameter 'value', got int
+b.put(42);    # TypeError: Box.put expects string for parameter 'value', got int
 ```
 
 This applies to inherited methods too: with `class IntBox extends Box<int>`,

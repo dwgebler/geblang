@@ -154,19 +154,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 			if arg == nil || isPendingDefault(arg) || pi >= len(fn.ParamTypes) || fn.ParamTypes[pi] == "" {
 				continue
 			}
-			if !vm.matchValueToTypeSpecWith(fn.typeParamSet, explicitBindings, arg, vm.typeSpec(fn.ParamTypes[pi])) {
-				paramName := ""
-				if pi < len(fn.ParamNames) {
-					paramName = fn.displayParamName(pi)
-				}
-				declared := vm.expandTypeAliases(fn.ParamTypes[pi])
-				suffix := vm.collectionMismatchSuffixStr(arg, declared)
-				gotName := vm.descriptiveRuntimeTypeName(arg)
-				if suffix != "" {
-					gotName = arg.TypeName()
-				}
-				declared = vm.paramMessageType(*fn, pi, declared)
-				msg := fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", classInfo.Name, declared, paramName, gotName, suffix)
+			if msg, ok := vm.paramMismatchMessage(fn, pi, arg, fn.typeParamSet, explicitBindings); !ok {
 				return vm.throwTyped(instruction, ip, "TypeError", msg)
 			}
 		}
@@ -345,6 +333,11 @@ func (vm *VM) initializeFields(instruction Instruction, instance *runtime.Instan
 			 * fresh empty dict/list/set. Sharing across instances
 			 * is the Python-style mutable-default trap. */
 			value = cloneContainerDefault(vm.constantValue(defaultIndex))
+		}
+		if !runtime.IsNull(value) {
+			if msg, ok := vm.fieldWriteMismatch(instance, field, value); !ok {
+				return runtime.ClassifiedError{Class: "TypeError", Message: msg}
+			}
 		}
 		instance.Fields[field] = value
 	}
@@ -1202,8 +1195,11 @@ func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
 	for ci := classIndex; ci >= 0; {
 		classInfo := vm.curMod.Chunk.Classes[ci]
 		if constIdx, present := classInfo.StaticValues[name]; present && constIdx >= 0 && int(constIdx) < vm.constantsLen() {
-			if declared := classInfo.StaticTypes[name]; declared != "" && !vm.matchValueToTypeStrWith(nil, nil, value, declared) {
-				return vm.throwTyped(instruction, ip, "TypeError", vm.fieldMismatchMessage(value, declared, classInfo.Name, name))
+			if declared := classInfo.StaticTypes[name]; declared != "" {
+				spec := vm.typeSpec(declared)
+				if !vm.matchValueToTypeSpec(nil, value, spec) || !vm.bindCollection(value, spec, nil, nil) {
+					return vm.throwTyped(instruction, ip, "TypeError", vm.fieldMismatchMessage(value, declared, classInfo.Name, name))
+				}
 			}
 			vm.writeStaticValue(constIdx, value)
 			vm.push(value)

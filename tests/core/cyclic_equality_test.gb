@@ -1,0 +1,69 @@
+/**
+ * @title Equality on cyclic values (1.47.0)
+ * @summary == and assertEquals compare values that contain themselves:
+ * the same object is equal to itself, isomorphic cycles are equal, and
+ * cycles that differ are not; a user __eq is still called.
+ */
+import test;
+
+class Node {
+    string name;
+    ?Node next = null;
+    func Node(string name) { this.name = name; }
+}
+
+class Never {
+    func __eq(any other): bool { return false; }
+}
+
+func ring(string a, string b): Node {
+    let first = Node(a);
+    first.next = Node(b);
+    first.next.next = first;
+    return first;
+}
+
+class CyclicEqualityTest extends test.Test {
+    @test
+    func instanceContainingItselfEqualsItself(): void {
+        let n = Node("a");
+        n.next = n;
+
+        this.assertTrue(n == n);
+    }
+
+    @test
+    func isomorphicCyclesAreEqual(): void {
+        this.assertTrue(ring("x", "y") == ring("x", "y"));
+        this.assertEquals(ring("x", "y"), ring("x", "y"));
+    }
+
+    @test
+    func differingCyclesAreNotEqual(): void {
+        this.assertFalse(ring("x", "y") == ring("x", "z"));
+        this.assertTrue(ring("x", "y") != ring("x", "z"));
+    }
+
+    @test
+    func selfContainingCollectionsCompare(): void {
+        list<any> l = [1];
+        l.push(l);
+        list<any> m = [1];
+        m.push(m);
+        dict<string, any> d = {"k": 1};
+        d["me"] = d;
+
+        this.assertTrue(l == m);
+        this.assertEquals(l, m);
+        this.assertTrue(d == d);
+        this.assertTrue([l].contains(m));
+        this.assertEquals(0, [l].indexOf(m));
+    }
+
+    @test
+    func userEqIsCalledEvenForTheSameObject(): void {
+        let never = Never();
+
+        this.assertFalse(never == never);
+    }
+}

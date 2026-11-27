@@ -1,0 +1,11 @@
+import io;
+func skip(func next):func {return func(any tag,any value):void {};}
+func run():void {
+func take(int tag,list<int> values):void {}
+@skip
+func take(string tag,list<string> values):void {}
+let values=["a"];take("tag",values);
+try {any alias=values;alias.push(1);io.println("unprotected");}catch(TypeError e){io.println("protected");}
+let ints=[1];try {take(1,ints);io.println("plain accepted");}catch(TypeError e){io.println("plain rejected");}
+}
+run();

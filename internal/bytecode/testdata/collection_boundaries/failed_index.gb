@@ -1,0 +1,6 @@
+import io;
+list<list<int>> outer = [[]];
+let child = [1];
+try { outer[10] = child; } catch (Error e) { io.println("index rejected"); }
+try { any alias = child; alias.push("mixed"); io.println("still untyped"); }
+catch (Error e) { io.println("unexpectedly constrained: " + e.message); }

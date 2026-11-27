@@ -88,7 +88,7 @@ class TypeParamValuesTest extends test.Test {
         let b = decode<Box<int>>("{\"v\": 5}");
         this.assertTrue(b instanceof Box<int>);
         this.assertEquals({"T": "int"}, reflect.typeBindings(b));
-        this.assertEquals("Box expects T for parameter 'v', got string", typeErrorOf(func(): void {
+        this.assertEquals("Box expects int for parameter 'v', got string", typeErrorOf(func(): void {
             decode<Box<int>>("{\"v\": \"x\"}");
         }));
         this.assertTrue(decode<Wrap<User>>("{\"inner\": {\"id\": 2}}").inner instanceof User);

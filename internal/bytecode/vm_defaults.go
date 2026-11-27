@@ -3,6 +3,7 @@ package bytecode
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"geblang/internal/runtime"
 )
@@ -23,17 +24,26 @@ func (vm *VM) paramMismatchMessage(function *FunctionInfo, i int, arg runtime.Va
 	if matches {
 		return "", true
 	}
-	declared := vm.expandTypeAliases(function.ParamTypes[i])
+	written := function.ParamTypes[i]
+	declared := vm.paramMessageType(*function, i, vm.expandTypeAliases(written))
+	if bound, changed := runtime.SubstituteTypeBindings(vm.castTypeRef(declared), inherited, vm.castTypeRef); changed {
+		written = bound.String()
+		declared = vm.expandTypeAliases(written)
+	}
 	suffix := vm.collectionMismatchSuffixStr(arg, declared)
 	gotName := vm.descriptiveRuntimeTypeName(arg)
 	if suffix != "" {
 		gotName = arg.TypeName()
 	}
-	declared = vm.paramMessageType(*function, i, declared)
-	if i < len(function.ParamNames) {
-		return fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, declared, function.displayParamName(i), gotName, suffix), false
+	declared, gotName = vm.disambiguateParamTypes(written, declared, gotName, suffix, arg)
+	name := function.Name
+	if compiledConstructorName(name) {
+		name = name[:strings.IndexByte(name, '.')]
 	}
-	return fmt.Sprintf("%s expects %s, got %s%s", function.Name, declared, gotName, suffix), false
+	if i < len(function.ParamNames) {
+		return fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", name, declared, function.displayParamName(i), gotName, suffix), false
+	}
+	return fmt.Sprintf("%s expects %s, got %s%s", name, declared, gotName, suffix), false
 }
 
 func (vm *VM) argSlotPending(slot int64) (bool, error) {
@@ -114,6 +124,11 @@ func (vm *VM) initializeForeignFieldDefaults(instance *runtime.Instance, class *
 			value = runtime.Null{}
 		} else {
 			value = cloneContainerDefault(value)
+		}
+		if !runtime.IsNull(value) {
+			if msg, ok := vm.fieldWriteMismatch(instance, field.Name, value); !ok {
+				return runtime.ClassifiedError{Class: "TypeError", Message: msg}
+			}
 		}
 		instance.Fields[field.Name] = value
 	}

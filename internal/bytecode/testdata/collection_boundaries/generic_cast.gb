@@ -1,0 +1,8 @@
+import io;
+class Animal {}
+class Dog extends Animal {}
+func narrow<T>(T example, any raw): any { return raw as list<T>; }
+func take(list<Animal> values): int { return values.length(); }
+let values = narrow(Dog(), [Dog()]);
+try { io.println(take(values)); }
+catch (TypeError e) { io.println("covariance rejected: " + e.message); }

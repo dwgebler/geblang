@@ -1,0 +1,29 @@
+module identity_b_donor;
+
+export interface Named {
+    func name(): string;
+}
+
+export class User {
+    string id = "b";
+}
+
+export func takeNamed(Named n): string {
+    return n.name();
+}
+
+export func takeUser(User u): string {
+    return u.id;
+}
+
+export func namedList(): list<Named> {
+    list<Named> xs = [];
+    return xs;
+}
+
+export func userMap(): dict<string, User> {
+    dict<string, User> m = {};
+    return m;
+}
+
+export class Box<T> {}

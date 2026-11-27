@@ -49,7 +49,7 @@ class ConstructorTypeArgsTest extends test.Test {
             let b = Box<string>(wrongValue);
         } catch (TypeError e) {
             threw = true;
-            this.assertEquals("Box expects T for parameter 'value', got int", e.message);
+            this.assertEquals("Box expects string for parameter 'value', got int", e.message);
         }
         this.assertTrue(threw);
     }
@@ -94,7 +94,7 @@ class ConstructorTypeArgsTest extends test.Test {
             let p = Pair<string, int>("k", wrongValue);
         } catch (TypeError e) {
             threw = true;
-            this.assertEquals("Pair expects V for parameter 'value', got string", e.message);
+            this.assertEquals("Pair expects int for parameter 'value', got string", e.message);
         }
         this.assertTrue(threw);
     }

@@ -37,7 +37,7 @@ class GenericValuesTest extends test.Test {
         this.assertThrowsOf(func(): void { nestedExplicit<int>(s); }, "TypeError", "nestedExplicit expects list<T> return, got list<string>");
         this.assertThrowsOf(func(): void { donor.wrap<int>(s); }, "TypeError", "wrap expects list<T> return, got list<string>");
         this.assertThrowsOf(func(): void { donor.Box<int>(1).nested(s); }, "TypeError", "Box.nested expects list<T> return");
-        this.assertThrowsOf(func(): void { IntBox().take(bad); }, "TypeError", "Box.take expects list<T> for parameter 'xs'");
+        this.assertThrowsOf(func(): void { IntBox().take(bad); }, "TypeError", "Box.take expects list<int> for parameter 'xs'");
         this.assertEquals([1], nestedExplicit<int>(one));
         this.assertEquals(["x"], nestedInferred(one, s));
     }

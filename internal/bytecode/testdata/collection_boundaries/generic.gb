@@ -1,0 +1,10 @@
+import io;
+func accept<T>(T sample, list<T> values): void {}
+func produce<T>(T sample): list<T> { return [sample]; }
+let values = [1];
+accept(0, values);
+try { any alias = values; alias.push("mixed"); io.println("parameter unchecked"); }
+catch (TypeError e) { io.println("parameter constrained"); }
+let returned = produce(1);
+try { any alias = returned; alias.push("mixed"); io.println("return unchecked"); }
+catch (TypeError e) { io.println("return constrained"); }

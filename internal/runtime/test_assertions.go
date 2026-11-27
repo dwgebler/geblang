@@ -159,6 +159,22 @@ func assertEqual(expected Value, actual Value, format string) (Value, bool, erro
 // ValuesEqual compares runtime values using the same deep equality rules used
 // by the evaluator and VM for plain data.
 func ValuesEqual(left Value, right Value) bool {
+	var guard EqualityGuard
+	return valuesEqualIn(left, right, &guard)
+}
+
+func valuesEqualIn(left Value, right Value, guard *EqualityGuard) bool {
+	if SameReference(left, right) {
+		return true
+	}
+	switch left.(type) {
+	case *List, Dict, Set, *Instance:
+		key, seen := guard.Enter(left, right)
+		if seen {
+			return true
+		}
+		defer guard.Leave(key)
+	}
 	switch leftValue := left.(type) {
 	case *List:
 		rightValue, ok := right.(*List)
@@ -166,7 +182,7 @@ func ValuesEqual(left Value, right Value) bool {
 			return false
 		}
 		for i, element := range leftValue.Elements {
-			if !ValuesEqual(element, rightValue.Elements[i]) {
+			if !valuesEqualIn(element, rightValue.Elements[i], guard) {
 				return false
 			}
 		}
@@ -179,7 +195,7 @@ func ValuesEqual(left Value, right Value) bool {
 		for _, key := range leftValue.EntryKeys() {
 			entry, _ := leftValue.GetEntry(key)
 			other, ok := rightValue.GetEntry(key)
-			if !ok || !ValuesEqual(entry.Key, other.Key) || !ValuesEqual(entry.Value, other.Value) {
+			if !ok || !valuesEqualIn(entry.Key, other.Key, guard) || !valuesEqualIn(entry.Value, other.Value, guard) {
 				return false
 			}
 		}
@@ -191,7 +207,7 @@ func ValuesEqual(left Value, right Value) bool {
 		}
 		for key, entry := range leftValue.Elements {
 			other, ok := rightValue.Elements[key]
-			if !ok || !ValuesEqual(entry.Value, other.Value) {
+			if !ok || !valuesEqualIn(entry.Value, other.Value, guard) {
 				return false
 			}
 		}
@@ -202,7 +218,7 @@ func ValuesEqual(left Value, right Value) bool {
 			return false
 		}
 		for i, field := range leftValue.Fields {
-			if !ValuesEqual(field, rightValue.Fields[i]) {
+			if !valuesEqualIn(field, rightValue.Fields[i], guard) {
 				return false
 			}
 		}
@@ -214,7 +230,7 @@ func ValuesEqual(left Value, right Value) bool {
 		}
 		for name, value := range leftValue.Fields {
 			other, ok := rightValue.Fields[name]
-			if !ok || !ValuesEqual(value, other) {
+			if !ok || !valuesEqualIn(value, other, guard) {
 				return false
 			}
 		}

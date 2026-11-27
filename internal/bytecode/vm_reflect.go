@@ -332,17 +332,17 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 				putBinding(name, typeName)
 			}
 		case *runtime.List:
-			if len(v.ElementTypes) >= 1 {
-				putBinding("T", elementTagBase(v.ElementTypes[0]))
+			if len(runtime.CollectionElementTypes(v)) >= 1 {
+				putBinding("T", elementTagBase(runtime.CollectionElementTypes(v)[0]))
 			}
 		case runtime.Set:
-			if len(v.ElementTypes) >= 1 {
-				putBinding("T", elementTagBase(v.ElementTypes[0]))
+			if len(runtime.CollectionElementTypes(v)) >= 1 {
+				putBinding("T", elementTagBase(runtime.CollectionElementTypes(v)[0]))
 			}
 		case runtime.Dict:
-			if len(v.ElementTypes) >= 2 {
-				putBinding("K", elementTagBase(v.ElementTypes[0]))
-				putBinding("V", elementTagBase(v.ElementTypes[1]))
+			if len(runtime.CollectionElementTypes(v)) >= 2 {
+				putBinding("K", elementTagBase(runtime.CollectionElementTypes(v)[0]))
+				putBinding("V", elementTagBase(runtime.CollectionElementTypes(v)[1]))
 			}
 		default:
 			return nil, fmt.Errorf("reflect.typeBindings expects instance or generic collection, got %s", args[0].TypeName())

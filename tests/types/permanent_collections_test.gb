@@ -1,0 +1,252 @@
+import test;
+import io;
+
+class CollectionAnimal {}
+
+class CollectionDog extends CollectionAnimal {}
+
+class CollectionCat extends CollectionAnimal {}
+
+class CollectionStaticBase {
+    static list<CollectionDog> dogs = [];
+}
+
+class CollectionStaticChild extends CollectionStaticBase {}
+
+func acceptCollectionInts(list<int> values): void {}
+
+func acceptNestedCollectionInts(list<list<int>> values): void {}
+
+func produceCollectionInts(): list<int> {
+    return [1];
+}
+
+func skipCollectionBody(func next): func {
+    return func(any values = null): void {};
+}
+
+@skipCollectionBody
+func acceptDecoratedCollection(list<int> values): void {}
+
+func acceptInferredCollection<T>(T sample, list<T> values): void {}
+
+func produceInferredCollection<T>(T sample): list<T> { return [sample]; }
+
+func acceptVariadicCollection(list<int> ...values): void {}
+
+func acceptUnionCollection(?list<int> | string values): void {}
+
+class PermanentCollectionTest extends test.Test {
+    @test
+    func inheritedStaticFieldsKeepTheirBackingType(): void {
+        list<CollectionAnimal> animals = CollectionStaticChild.dogs;
+
+        this.assertThrows(func(): void {
+            animals.push(CollectionCat());
+        });
+        CollectionStaticBase.dogs = [];
+        list<CollectionAnimal> replaced = CollectionStaticChild.dogs;
+        this.assertThrows(func(): void {
+            replaced.push(CollectionCat());
+        });
+    }
+
+    @test
+    func failedExtendLeavesCandidateChildrenUntyped(): void {
+        list<list<int>> outer = [];
+        let child = [1];
+        any candidates = [child, ["wrong"]];
+
+        this.assertThrows(func(): void {
+            outer.extend(candidates);
+        });
+        any alias = child;
+        alias.push("mixed");
+        this.assertEquals(0, outer.length());
+        this.assertEquals(2, child.length());
+    }
+
+    @test
+    func covariantAliasesPreserveTheBackingType(): void {
+        list<CollectionDog> dogs = [CollectionDog()];
+        list<CollectionAnimal> animals = dogs;
+        animals.push(CollectionDog());
+
+        this.assertThrows(func(): void {
+            animals.push(CollectionCat());
+        });
+        this.assertEquals(2, dogs.length());
+        this.assertTrue(dogs is animals);
+    }
+
+    @test
+    func dictionariesAndSetsShareBackingTypes(): void {
+        dict<string, CollectionDog> dogs = {"first": CollectionDog()};
+        dict<string, CollectionAnimal> animals = dogs;
+        set<CollectionDog> pack = {CollectionDog()};
+        set<CollectionAnimal> wider = pack;
+
+        this.assertThrows(func(): void {
+            animals["wrong"] = CollectionCat();
+        });
+        this.assertThrows(func(): void {
+            wider.add(CollectionCat());
+        });
+        this.assertEquals(1, dogs.length());
+        this.assertEquals(1, pack.length());
+    }
+
+    @test
+    func nestedTypesConstrainAliasesCreatedBeforeValidation(): void {
+        let inner = [1];
+        any alias = inner;
+        list<list<int>> nested = [inner];
+
+        this.assertThrows(func(): void {
+            alias.push("wrong");
+        });
+        this.assertThrows(func(): void {
+            any wrong = ["wrong"];
+            nested.push(wrong);
+        });
+        this.assertEquals(1, nested.length());
+    }
+
+    @test
+    func parametersAndReturnsEstablishPermanentTypes(): void {
+        let values = [1];
+        acceptCollectionInts(values);
+        let returned = produceCollectionInts();
+
+        this.assertThrows(func(): void {
+            any alias = values;
+            alias.push("wrong");
+        });
+        this.assertThrows(func(): void {
+            any alias = returned;
+            alias.push("wrong");
+        });
+    }
+
+    @test
+    func dynamicCollectionsKeepMixedValuesAfterNarrowValidation(): void {
+        list<any> values = [1, 2];
+        acceptCollectionInts(values);
+        values.push("mixed");
+        values.push(true);
+
+        this.assertEquals(4, values.length());
+        this.assertThrows(func(): void {
+            acceptCollectionInts(values);
+        });
+    }
+
+    @test
+    func protectedNestedCollectionsRejectDynamicChildren(): void {
+        list<list<int>> outer = [];
+        list<any> child = [1];
+
+        this.assertThrows(func(): void {
+            outer.push(child);
+        });
+        child.push("mixed");
+        this.assertEquals(2, child.length());
+        this.assertEquals(0, outer.length());
+    }
+    @test
+    func constFunctionLiteralsCopyAndFreezeTheirParameters(): void {
+        let take = func(const list<int> values): void {
+            values.push(2);
+        };
+        let values = [1];
+
+        this.assertThrows(func(): void { take(values); });
+        this.assertEquals(1, values.length());
+        any alias = values;
+        alias.push("mixed");
+        this.assertEquals(2, values.length());
+    }
+
+    @test
+    func rejectedCallsLeaveEarlierArgumentsUnconstrained(): void {
+        let take = func(list<int> values, int count): void {};
+        let values = [1];
+        any wrong = "wrong";
+
+        this.assertThrows(func(): void { take(values, wrong); });
+        any alias = values;
+        alias.push("mixed");
+        this.assertEquals(2, values.length());
+    }
+
+    @test
+    func rejectedWritesLeaveCandidateChildrenUnconstrained(): void {
+        dict<list<int>, int> entries = {};
+        list<list<int>> outer = [[]];
+        list<list<int> & list<string>> impossible = [];
+        let key = [1];
+        let child = [1];
+        let empty = [];
+        any wrong = "wrong";
+
+        this.assertThrows(func(): void { entries[key] = wrong; });
+        this.assertThrows(func(): void { outer[10] = child; });
+        this.assertThrows(func(): void { impossible.push(empty); });
+        any keyAlias = key;
+        any childAlias = child;
+        any emptyAlias = empty;
+        keyAlias.push("mixed");
+        childAlias.push("mixed");
+        emptyAlias.push("mixed");
+        this.assertEquals(2, key.length());
+        this.assertEquals(2, child.length());
+        this.assertEquals(1, empty.length());
+    }
+
+    @test
+    func copiesRetainTheBackingType(): void {
+        list<int> values = [2, 1];
+        for (copy in [values.copy(), values.sorted(), values.reversed(), values.slice(0), values.slice(2)]) {
+            this.assertThrows(func(): void { any alias = copy; alias.push("wrong"); });
+        }
+        any extra = ["mixed"];
+        let combined = values.concat(extra);
+        this.assertThrows(func(): void { acceptCollectionInts(combined); });
+    }
+    @test
+    func publicCallBoundariesEstablishTypesAcrossDispatchForms(): void {
+        let decorated = [1];
+        let inferred = [1];
+        let variadic = [1];
+        let unionValue = [1];
+
+        acceptDecoratedCollection(decorated);
+        acceptInferredCollection(0, inferred);
+        acceptVariadicCollection(variadic);
+        acceptUnionCollection(unionValue);
+        let returned = produceInferredCollection(1);
+        for (value in [decorated, inferred, variadic, unionValue, returned]) {
+            this.assertThrows(func(): void { any alias = value; alias.push("wrong"); });
+        }
+    }
+    @test
+    func nativeCallbacksEnforceDecoratedPublicSignatures(): void {
+        let values = [1];
+        @skipCollectionBody
+        func take(list<int> value = values): void {}
+
+        io.withStdin("", take);
+        this.assertThrows(func(): void { any alias = values; alias.push("wrong"); });
+    }
+    @test
+    func dynamicChildrenKeepTheOuterWriteConstraints(): void {
+        list<any> child = [1];
+        list<list<int>> outer = [child];
+        any alias = outer;
+
+        this.assertThrows(func(): void { alias.push("wrong"); });
+        child.push("mixed");
+        this.assertEquals(2, child.length());
+        this.assertThrows(func(): void { acceptNestedCollectionInts(outer); });
+    }
+}

@@ -1,0 +1,10 @@
+import io;
+func skip(func next):func {return func(any value=null):void {};}
+func run():void {
+let values=[1];
+@skip
+func take(list<int> value=values):void {}
+io.withStdin("",take);
+try {any alias=values;alias.push("mixed");io.println("native unprotected");}catch(TypeError e){io.println("native protected");}
+}
+run();

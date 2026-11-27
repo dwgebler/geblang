@@ -1,0 +1,75 @@
+/**
+ * @title web.http form fields from multipart bodies (1.47.0)
+ * @summary Request.form() and formValue() return the text fields of a
+ * multipart/form-data body as they do for urlencoded bodies, so verifyCsrf
+ * finds a _csrf field in an upload form; files stay out of form().
+ */
+import bytes;
+import crypt;
+import test;
+import web.auth as wauth;
+import web.http as whttp;
+
+func multipartBody(string token): string {
+    return "--B\r\n"
+        + "Content-Disposition: form-data; name=\"title\"\r\n\r\nQuarterly report\r\n"
+        + "--B\r\n"
+        + "Content-Disposition: form-data; name=\"_csrf\"\r\n\r\n${token}\r\n"
+        + "--B\r\n"
+        + "Content-Disposition: form-data; name=\"doc\"; filename=\"r.txt\"\r\nContent-Type: text/plain\r\n\r\nhello\r\n"
+        + "--B--\r\n";
+}
+
+func request(any body, string token): dict<string, any> {
+    return {
+        "method": "POST",
+        "path": "/upload",
+        "headers": {"Content-Type": "multipart/form-data; boundary=B", "Cookie": "geb_csrf=${token}"},
+        "body": body,
+    };
+}
+
+class WebFormMultipartTest extends test.Test {
+    @test
+    func formReturnsMultipartTextFields(): void {
+        let req = whttp.Request(request(multipartBody("t"), "t"));
+
+        this.assertEquals(["_csrf", "title"], req.form().keys().sorted());
+        this.assertEquals("Quarterly report", req.formValue("title"));
+        this.assertEquals("", req.formValue("doc"));
+    }
+
+    @test
+    func bytesBodyIsParsedToo(): void {
+        let req = whttp.Request(request(bytes.fromString(multipartBody("t")), "t"));
+
+        this.assertEquals("Quarterly report", req.formValue("title"));
+    }
+
+    @test
+    func urlencodedFormsAreUnchanged(): void {
+        let req = whttp.Request({
+            "method": "POST",
+            "path": "/",
+            "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+            "body": "a=1&b=two",
+        });
+
+        this.assertEquals("two", req.formValue("b"));
+    }
+
+    @test
+    func malformedMultipartGivesNoFields(): void {
+        let req = whttp.Request(request("not multipart", "t"));
+
+        this.assertEquals({}, req.form());
+    }
+
+    @test
+    func verifyCsrfAcceptsTheMultipartField(): void {
+        let token = crypt.jwtSign({"csrf": "abc"}, "secret-value");
+
+        this.assertTrue(wauth.verifyCsrf(request(multipartBody(token), token), "secret-value"));
+        this.assertFalse(wauth.verifyCsrf(request(multipartBody("forged"), token), "secret-value"));
+    }
+}

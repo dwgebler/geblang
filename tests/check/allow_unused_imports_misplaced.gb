@@ -1,0 +1,9 @@
+/**
+ * @category Tests
+ * @summary geblang check --strict MUST still report an unused import when the
+ *          unused-imports tag sits in a doc block after the first statement.
+ */
+import json;
+
+/** @allowUnusedImports */
+let total = 1 + 2;

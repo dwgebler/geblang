@@ -1697,7 +1697,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			}
 			elements[dictKey(value)] = runtime.SetEntry{Value: value}
 		}
-		return runtime.Set{Elements: elements}, nil
+		return runtime.NewSet(elements), nil
 	case *ast.RangeExpression:
 		return e.evalRangeExpression(expr, env)
 	case *ast.PrefixExpression:
@@ -1880,13 +1880,13 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		if castIsIdentity(value, expr.Type, env) {
 			return value, nil
 		}
-		target := typealias.Qualified(typealias.Expand(e.resolveTypeRef(expr.Type, env), env.GetTypeBinding))
+		target := typealias.Qualified(e.resolveTypeRef(typealias.Expand(e.resolveTypeRef(expr.Type, env), env.GetTypeBinding), env))
 		finish := func(converted runtime.Value) (runtime.Value, error) {
 			matches := func(value runtime.Value, typ *ast.TypeRef) bool { return matchValueToTypeRef(nil, value, typ) }
 			if !runtime.MatchesCheckedCast(converted, target, matches) {
 				return nil, thrownError{value: e.withTrace(runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot cast %s to %s%s", converted.TypeName(), target.String(), runtime.CastMismatchDetail(converted, target, matches))})}
 			}
-			return converted, nil
+			return tagCollectionWithTypeRef(converted, target), nil
 		}
 		baseTarget := target.Name
 		if target.ListAlias {
@@ -1989,7 +1989,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		}); err != nil {
 			return nil, err
 		}
-		return runtime.Set{Elements: elements}, nil
+		return runtime.NewSet(elements), nil
 	case *ast.DictComprehension:
 		out := runtime.NewDict()
 		if err := e.walkComprehensionClauses(expr.Clauses, 0, env, func(itEnv *runtime.Environment) error {
@@ -4844,9 +4844,6 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, evalValue func() (run
 		if value.Frozen {
 			return thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 		}
-		if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(newValue, value.ElementTypes[0]) {
-			return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to list<%s>", newValue.TypeName(), value.ElementTypes[0])}}
-		}
 		i, err := indexInt(index)
 		if err != nil {
 			return err
@@ -4856,6 +4853,9 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, evalValue func() (run
 		}
 		if i < 0 || i >= len(value.Elements) {
 			return runtime.ClassifiedError{Class: "ValueError", Message: "list index out of range"}
+		}
+		if len(runtime.CollectionElementTypes(value)) > 0 && !collectionWriteMatches(value, 0, newValue) {
+			return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to list<%s>", runtime.ElementValueName(newValue, runtime.CollectionElementTypes(value)[0]), runtime.ElementTagFor(newValue, runtime.CollectionElementTypes(value)[0]))}}
 		}
 		value.Elements[i] = newValue
 		return nil
@@ -5053,7 +5053,7 @@ func (e *Evaluator) checkTypedVariable(expected *ast.TypeRef, value runtime.Valu
 		return value, nil
 	}
 	typeParams := e.declarationTypeParams()
-	if !isCollectionTypeRef(expected) {
+	if !isCollectionTypeRef(expected) && expected.Operator == "" {
 		if expected.Operator == "" && strings.EqualFold(expected.Name, "any") {
 			return value, nil
 		}
@@ -5061,6 +5061,13 @@ func (e *Evaluator) checkTypedVariable(expected *ast.TypeRef, value runtime.Valu
 			return value, nil
 		}
 		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("type error: cannot assign %s to %s", descriptiveTypeName(value), expected.String())}
+	}
+	if !runtime.TypeRefUsesTypeParameter(expected, typeParams) {
+		if matched, handled := runtime.CheckCollectionType(value, expected, func(value runtime.Value, ref *ast.TypeRef) bool {
+			return matchValueToTypeRef(typeParams, value, ref)
+		}); handled && matched {
+			return value, nil
+		}
 	}
 	if !matchValueToTypeRef(typeParams, value, expected) {
 		suffix := collectionMismatchSuffix(value, expected)
@@ -5111,45 +5118,15 @@ func (e *Evaluator) declarationTypeParams() map[string]bool {
 }
 
 func tagCollectionWithTypeRef(value runtime.Value, typ *ast.TypeRef) runtime.Value {
-	if typ == nil || typ.Operator != "" {
+	if typ == nil || runtime.HasCollectionType(value) {
 		return value
 	}
-	switch v := value.(type) {
-	case *runtime.List:
-		var tag []string
-		if typ.ListAlias && len(typ.Arguments) == 0 && typ.Name != "" && !strings.EqualFold(typ.Name, "list") {
-			tag = []string{typ.Name}
-		} else if len(typ.Arguments) > 0 {
-			tag = make([]string, 0, len(typ.Arguments))
-			for _, arg := range typ.Arguments {
-				tag = append(tag, elementTagName(arg))
-			}
-		}
-		if tag != nil {
-			if v.Frozen {
-				// A frozen list may be shared between tasks; tag a copy of
-				// the header rather than writing to the shared value.
-				return &runtime.List{Elements: v.Elements, Frozen: true, ElementTypes: tag}
-			}
-			v.ElementTypes = tag
-		}
-		return v
-	case runtime.Set:
-		if len(typ.Arguments) > 0 && typ.Arguments[0] != nil {
-			v.ElementTypes = []string{elementTagName(typ.Arguments[0])}
-		}
-		return v
-	case runtime.Dict:
-		if len(typ.Arguments) >= 2 && typ.Arguments[0] != nil && typ.Arguments[1] != nil {
-			return v.WithElementTypes([]string{elementTagName(typ.Arguments[0]), elementTagName(typ.Arguments[1])})
-		}
-		return v
-	}
+	runtime.CheckCollectionType(value, typ, func(value runtime.Value, ref *ast.TypeRef) bool {
+		return matchValueToTypeRef(nil, value, ref)
+	})
 	return value
 }
 
-// rangeToList materialises a range value as a list<int>. Shared by
-// `range()` and `Range.toList()` so both produce identical output.
 func rangeToList(rng runtime.Range) *runtime.List {
 	var elements []runtime.Value
 	current := new(big.Int).Set(rng.Start)
@@ -5791,15 +5768,27 @@ func parameterMismatchError(fn runtime.Function, param ast.Parameter, arg runtim
 	if matchValueToTypeRefWith(typeParams, inherited, arg, param.Type) {
 		return nil
 	}
+	expected, substituted := runtime.SubstituteTypeBindings(param.Type, inherited, boundTypeRefOrNil)
 	paramTypeName := ""
-	if param.Type != nil {
-		paramTypeName = param.Type.String()
+	if expected != nil {
+		paramTypeName = expected.String()
 	}
 	name := functionDisplayName(fn)
-	suffix := collectionMismatchSuffix(arg, param.Type)
+	suffix := collectionMismatchSuffix(arg, expected)
 	gotName := descriptiveTypeName(arg)
 	if suffix != "" {
 		gotName = arg.TypeName()
+	} else if expected != nil {
+		canonical := expected.CanonicalName
+		if canonical == "" && substituted {
+			canonical = expected.Name
+		}
+		if canonical != "" {
+			module, _ := runtime.SplitCanonicalTypeName(canonical)
+			if declared, got, same := runtime.QualifySameNamedTypes(paramTypeName, module, arg); same {
+				paramTypeName, gotName = declared, got
+			}
+		}
 	}
 	return runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", name, paramTypeName, param.Name.Value, gotName, suffix)}
 }
@@ -6060,29 +6049,18 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	e.currentModule = fn.DefinitionModule
 	defer func() { e.currentModule = previousModule }()
 	if fn.OriginalEnv != nil {
-		args = append([]runtime.Value(nil), args...)
-		env := runtime.NewLocalEnclosedEnvironment(fn.OriginalEnv)
-		if this != nil {
-			_ = env.Define("this", this, false)
+		signature := fn
+		signature.Parameters, signature.Env = fn.OriginalParameters, fn.OriginalEnv
+		signature.OriginalEnv, signature.OriginalParameters, signature.OriginalReturnType = nil, nil, nil
+		signature.Native, signature.NativeTyped, signature.NativeNamed, signature.NativeFrom = nil, nil, nil, nil
+		signature.ScopedInvoke, signature.BridgeInvoke, signature.Bound = nil, nil, nil
+		signature.Async, signature.IsGenerator, signature.ParameterOnly = false, false, true
+		signature.ReturnType = nil
+		prepared, err := e.applyFunctionWithThisSync(signature, args, this)
+		if err != nil {
+			return nil, err
 		}
-		for i, param := range fn.OriginalParameters {
-			if param.Variadic {
-				break
-			}
-			if i >= len(args) {
-				args = append(args, nil)
-			}
-			if args[i] == nil && param.Default != nil {
-				value, err := e.evalExpression(param.Default, env)
-				if err != nil {
-					return nil, err
-				}
-				args[i] = value
-			}
-			if args[i] != nil && param.Name != nil {
-				_ = env.DefineTyped(param.Name.Value, args[i], false, parameterDeclaredType(param))
-			}
-		}
+		args = prepared.(*runtime.List).Elements
 	}
 
 	if fn.IsGenerator {
@@ -6166,6 +6144,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	}
 	e.pushFunction(&fn, callEnv)
 	defer e.popFunction()
+	var collectionArguments []runtime.CollectionBoundary
 	for i, param := range fn.Parameters {
 		var value runtime.Value
 		if param.Variadic {
@@ -6197,9 +6176,33 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 		if param.Const {
 			value = runtime.FreezeShallowCopy(value)
 		}
+		ref := param.Type
+		if param.Variadic && ref != nil {
+			ref = &ast.TypeRef{Name: "list", Arguments: []*ast.TypeRef{ref}}
+		}
+		if ref != nil && (isCollectionTypeRef(ref) || ref.Operator != "") {
+			if boundary, ok := e.collectionBoundary(value, ref, callEnv, functionTypeParameterSetOrNil(fn)); ok {
+				collectionArguments = append(collectionArguments, boundary)
+			}
+		}
 		if err := callEnv.DefineTyped(param.Name.Value, value, false, parameterDeclaredType(param)); err != nil {
 			return nil, err
 		}
+	}
+	if matched, _ := runtime.CheckCollectionBoundaries(collectionArguments, func(value runtime.Value, ref *ast.TypeRef) bool { return matchValueToTypeRef(nil, value, ref) }); !matched {
+		return nil, runtime.ClassifiedError{Class: "TypeError", Message: "incompatible collection arguments"}
+	}
+	if fn.ParameterOnly {
+		prepared := &runtime.List{}
+		for _, param := range fn.Parameters {
+			value, _ := callEnv.Get(param.Name.Value)
+			if param.Variadic {
+				prepared.Elements = append(prepared.Elements, value.(*runtime.List).Elements...)
+			} else {
+				prepared.Elements = append(prepared.Elements, value)
+			}
+		}
+		return prepared, nil
 	}
 	e.pushDeferFrame()
 	sig, err := e.evalBlock(fn.Body, callEnv)
@@ -6238,6 +6241,9 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 			name = fn.OwnerClass.Name + "." + fn.Name
 		}
 		return nil, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s expects %s return, got %s", name, fn.ReturnType.String(), descriptiveTypeName(result))}
+	}
+	if fn.ReturnType != nil && (isCollectionTypeRef(fn.ReturnType) || fn.ReturnType.Operator != "") {
+		e.bindCollection(result, fn.ReturnType, callEnv, functionTypeParameterSetOrNil(fn))
 	}
 	return result, nil
 }
@@ -6446,6 +6452,10 @@ func (e *Evaluator) appendYield(value runtime.Value) (bool, error) {
 	if c := frame.check; c != nil && !matchValueToTypeRefWith(c.typeParams, c.bindings, value, c.elem) {
 		return false, runtime.ClassifiedError{Class: "TypeError", Message: fmt.Sprintf("%s expects %s yield, got %s", c.name, c.elem.String(), descriptiveTypeName(value))}
 	}
+	if c := frame.check; c != nil && len(e.callStack) > 0 {
+		e.bindCollection(value, c.elem, e.callStack[len(e.callStack)-1].env, c.typeParams)
+	}
+
 	if frame.ch != nil {
 		select {
 		case frame.ch <- generatorItem{value: value}:
@@ -6967,6 +6977,11 @@ func operatorMethodName(operator string) (string, bool) {
 }
 
 func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, error) {
+	var guard runtime.EqualityGuard
+	return e.valuesEqualIn(left, right, &guard)
+}
+
+func (e *Evaluator) valuesEqualIn(left runtime.Value, right runtime.Value, guard *runtime.EqualityGuard) (bool, error) {
 	// Equality with null never consults __eq: a user dunder typed for its own class must not receive null.
 	if leftNull, rightNull := runtime.IsNull(left), runtime.IsNull(right); leftNull || rightNull {
 		return leftNull && rightNull, nil
@@ -6977,7 +6992,7 @@ func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, 
 			return false, nil
 		}
 		for i, f := range ev.Fields {
-			eq, err := e.valuesEqual(f, rv.Fields[i])
+			eq, err := e.valuesEqualIn(f, rv.Fields[i], guard)
 			if !eq || err != nil {
 				return eq, err
 			}
@@ -6996,10 +7011,18 @@ func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, 
 			}
 			return result.Value, nil
 		}
+		if runtime.SameReference(instance, right) {
+			return true, nil
+		}
 		other, ok := right.(*runtime.Instance)
 		if !ok || other.Class != instance.Class {
 			return false, nil
 		}
+		key, seen := guard.Enter(instance, other)
+		if seen {
+			return true, nil
+		}
+		defer guard.Leave(key)
 		if len(instance.Fields) != len(other.Fields) {
 			return false, nil
 		}
@@ -7008,7 +7031,7 @@ func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, 
 			if !ok {
 				return false, nil
 			}
-			equal, err := e.valuesEqual(leftField, rightField)
+			equal, err := e.valuesEqualIn(leftField, rightField, guard)
 			if err != nil {
 				return false, err
 			}
@@ -7019,6 +7042,17 @@ func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, 
 		return true, nil
 	}
 	// Container recursion routes back through valuesEqual so a nested instance compares exactly as it does at top level (structural, honoring __eq), not by identity.
+	if runtime.SameReference(left, right) {
+		return true, nil
+	}
+	switch left.(type) {
+	case *runtime.List, runtime.Dict, runtime.Set:
+		key, seen := guard.Enter(left, right)
+		if seen {
+			return true, nil
+		}
+		defer guard.Leave(key)
+	}
 	switch leftValue := left.(type) {
 	case *runtime.List:
 		rightValue, ok := right.(*runtime.List)
@@ -7026,7 +7060,7 @@ func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, 
 			return false, nil
 		}
 		for i, element := range leftValue.Elements {
-			equal, err := e.valuesEqual(element, rightValue.Elements[i])
+			equal, err := e.valuesEqualIn(element, rightValue.Elements[i], guard)
 			if err != nil || !equal {
 				return equal, err
 			}
@@ -7045,12 +7079,12 @@ func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, 
 				equal = false
 				return false
 			}
-			keyEq, err := e.valuesEqual(entry.Key, other.Key)
+			keyEq, err := e.valuesEqualIn(entry.Key, other.Key, guard)
 			if err != nil {
 				iterErr, equal = err, false
 				return false
 			}
-			valEq, err := e.valuesEqual(entry.Value, other.Value)
+			valEq, err := e.valuesEqualIn(entry.Value, other.Value, guard)
 			if err != nil {
 				iterErr, equal = err, false
 				return false
@@ -7072,7 +7106,7 @@ func (e *Evaluator) valuesEqual(left runtime.Value, right runtime.Value) (bool, 
 			if !ok {
 				return false, nil
 			}
-			equal, err := e.valuesEqual(entry.Value, other.Value)
+			equal, err := e.valuesEqualIn(entry.Value, other.Value, guard)
 			if err != nil || !equal {
 				return equal, err
 			}

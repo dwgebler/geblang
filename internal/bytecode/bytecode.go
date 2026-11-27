@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(109)
+	Version = uint16(110)
 )
 
 // Spread-call per-argument metadata: a named arg carries its name constant index, others use these sentinels.
@@ -365,6 +365,7 @@ const (
 	OpCheckIterable
 	// OpLoadTypeParam {nameIndex, ownerIndex[, callee]} pushes the frame's binding of an in-scope type parameter as a value; callee=1 rejects a builtin binding about to be called.
 	OpLoadTypeParam
+	OpBindCollectionParams
 )
 
 // Method IDs carried by OpPrimMethod.
@@ -508,6 +509,7 @@ type FunctionInfo struct {
 	TypeParamConstraintExprs []string // parallel to TypeParameters; "" if no constraint
 	OuterTypeParameters      []string // enclosing scopes' type parameters, unchecked when unbound
 	Entry                    int64
+	ParameterEntry           int64
 	ParamNames               []string
 	ParamDisplayNames        []string // original-case names for reflection/error display; ParamNames stays lowercased for matching
 	ParamSlots               []int64
@@ -697,6 +699,7 @@ func Encode(chunk Chunk) ([]byte, error) {
 			out = append(out, []byte(name)...)
 		}
 		out = binary.BigEndian.AppendUint64(out, uint64(function.Entry))
+		out = binary.BigEndian.AppendUint64(out, uint64(function.ParameterEntry))
 		out = binary.BigEndian.AppendUint16(out, uint16(len(function.ParamNames)))
 		for _, name := range function.ParamNames {
 			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
@@ -1052,6 +1055,7 @@ func Decode(data []byte) (Chunk, error) {
 			}
 		}
 		function.Entry = int64(reader.u64())
+		function.ParameterEntry = int64(reader.u64())
 		nameCount := int(reader.u16())
 		function.ParamNames = make([]string, 0, nameCount)
 		for j := 0; j < nameCount; j++ {
@@ -1805,7 +1809,7 @@ func (r *byteReader) constant() runtime.Value {
 	case 11:
 		return &runtime.List{Elements: nil}
 	case 12:
-		return runtime.Set{Elements: map[string]runtime.SetEntry{}}
+		return runtime.NewSet(map[string]runtime.SetEntry{})
 	case 13:
 		data := r.read(int(r.u32()))
 		value := make([]byte, len(data))
@@ -1982,7 +1986,7 @@ func (r *byteReader) metadataValue() runtime.Value {
 			value := r.metadataValue()
 			entries[native.DictKey(value)] = runtime.SetEntry{Value: value}
 		}
-		return runtime.Set{Elements: entries}
+		return runtime.NewSet(entries)
 	case 10:
 		fn := int64(r.u64())
 		isType := r.u8() != 0

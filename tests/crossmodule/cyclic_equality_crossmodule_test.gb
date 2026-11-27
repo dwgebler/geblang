@@ -1,0 +1,36 @@
+/**
+ * @title Cyclic equality across modules (1.47.0)
+ * @summary A class from another module, and a subclass of it, compare
+ * correctly when their instances form a cycle.
+ */
+import test;
+import cyclic_links_donor as links;
+
+class TaggedLink extends links.Link {
+    string tag;
+    func TaggedLink(string label, string tag) { parent(label); this.tag = tag; }
+}
+
+func loop(string tag): TaggedLink {
+    let t = TaggedLink("a", tag);
+    t.next = TaggedLink("b", tag);
+    t.next.next = t;
+    return t;
+}
+
+class CyclicEqualityCrossModuleTest extends test.Test {
+    @test
+    func baseClassFromAnotherModuleEqualsItself(): void {
+        let base = links.Link("solo");
+        base.next = base;
+
+        this.assertTrue(base == base);
+    }
+
+    @test
+    func subclassCyclesCompareByStructure(): void {
+        this.assertTrue(loop("x") == loop("x"));
+        this.assertFalse(loop("x") == loop("y"));
+        this.assertEquals(loop("x"), loop("x"));
+    }
+}

@@ -62,12 +62,30 @@ Mutation methods work in place (1.16.0):
 All in-place mutators raise `ImmutableError` on a frozen list.
 
 Generic annotations such as `list<int>` are checked when values cross typed
-declaration and function/method call boundaries. They are not a permanent
-runtime lock; the in-place mutators (`append`, `extend`) honour the declared
-element type and raise `TypeError` on mismatch, but only when the list value
-still carries its element-type tag at runtime. Untagged values (lists that
-flowed through `any` without a typed boundary on the way back) skip the check.
-Validate before mutation when accepting dynamic data.
+declarations, calls, returns and casts. The first validation establishes a
+backing type shared by all aliases, including aliases held in `any`. Mutators
+check incoming values against that type and raise `TypeError` on mismatch.
+Nested concrete collections receive the same protection.
+
+Covariant passing remains supported: a `list<Dog>` can be passed as
+`list<Animal>`, but inserting a Cat through the Animal reference raises
+`TypeError`. Wider annotations do not replace the backing type;
+`reflect.typeBindings` reports that original type. `copy`, `deepCopy`, `sorted`,
+`reversed`, `slice` and frozen snapshots preserve it. Transforms that can change
+element types, such as `map` and `concat`, produce unconstrained collections.
+
+The initial validation scans the contents. Later compatible boundaries compare
+type metadata, independent of the collection's length. Explicitly dynamic
+collections remain dynamic: `list<any>` accepts mixed values, and passing it
+as `list<int>` validates its current contents without restricting later writes.
+Such dynamic-to-specific boundaries retain content scans, including when a
+nested collection remains dynamic.
+
+A protected nested collection only accepts children that can retain its
+required type. For example, inserting a `list<any>` into an established
+`list<list<int>>` raises `TypeError`, even if the child's current values are
+integers. An untyped child containing integers can be validated and bound on
+insertion instead.
 
 ### Inspection
 

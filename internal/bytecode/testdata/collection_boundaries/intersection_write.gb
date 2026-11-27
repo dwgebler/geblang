@@ -1,0 +1,7 @@
+import io;
+list<list<int> & list<string>> outer=[];
+let child=[];
+try { outer.push(child); io.println("accepted"); }
+catch(TypeError e) { io.println("rejected"); }
+try { any alias=child; alias.push("mixed"); io.println("child dynamic"); }
+catch(TypeError e) { io.println("child bound"); }

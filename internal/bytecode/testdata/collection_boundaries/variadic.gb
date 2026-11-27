@@ -1,0 +1,6 @@
+import io;
+func take(list<int> ...values): void {}
+let values = [1];
+take(values);
+try { any alias = values; alias.push("mixed"); io.println("variadic unprotected"); }
+catch (TypeError e) { io.println("variadic protected"); }

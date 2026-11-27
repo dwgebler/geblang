@@ -44,6 +44,11 @@ io.println("${upload["filename"]} (${upload["contentType"]})");
 let content = upload["bytes"];
 ```
 
+`web.http.Request.form()` and `formValue(name)` return the text fields of a
+`multipart/form-data` body as they do for an urlencoded form, so
+`web.auth.verifyCsrf` reads a `_csrf` field from an upload form. Files are
+not included; read them with `parseMultipart`.
+
 ## Routing And HTTP Helpers
 
 ```gb

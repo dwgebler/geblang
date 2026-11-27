@@ -1714,6 +1714,7 @@ func (c *Compiler) compileFunctionLiteralAt(expr *ast.FunctionLiteral, reserved 
 	// Allocate parameter slots.
 	preParams := maps.Clone(c.scopes[len(c.scopes)-1])
 	var computed []computedDefault
+	var constSlots []int64
 	for _, param := range expr.Parameters {
 		if param.Name == nil {
 			c.popFunctionLocals()
@@ -1721,6 +1722,9 @@ func (c *Compiler) compileFunctionLiteralAt(expr *ast.FunctionLiteral, reserved 
 			return fmt.Errorf("function literal parameter has no name")
 		}
 		slot := c.defineTypedLocal(param.Name.Value, c.bytecodeTypeName(param.Type), c.parameterDeclaredType(param))
+		if param.Const {
+			constSlots = append(constSlots, slot)
+		}
 		paramSlots = append(paramSlots, slot)
 		paramNames = append(paramNames, strings.ToLower(param.Name.Value))
 		paramDisplayNames = append(paramDisplayNames, param.Name.Value)
@@ -1739,6 +1743,7 @@ func (c *Compiler) compileFunctionLiteralAt(expr *ast.FunctionLiteral, reserved 
 
 	fn := &c.chunk.Functions[index]
 	fn.Entry = entry
+	fn.ParameterEntry = entry
 	fn.ParamNames = paramNames
 	fn.ParamDisplayNames = paramDisplayNames
 	fn.ParamSlots = paramSlots
@@ -1768,6 +1773,10 @@ func (c *Compiler) compileFunctionLiteralAt(expr *ast.FunctionLiteral, reserved 
 		c.popScope()
 		return err
 	}
+	for _, slot := range constSlots {
+		c.emitAt(OpFreezeLocal, expr.Token.Line, expr.Token.Column, slot)
+	}
+	c.emitCollectionParameterBindings(index, expr.Parameters, expr.Token.Line, expr.Token.Column)
 	if err := c.compileBlock(expr.Body); err != nil {
 		c.inFunc--
 		c.returnTypes = c.returnTypes[:len(c.returnTypes)-1]
@@ -3340,7 +3349,11 @@ func (c *Compiler) staticClassAssignable(target string, actual string) bool {
 			}
 		}
 		if classInfo.ParentIndex < 0 {
-			return false
+			if classInfo.ParentName == "" {
+				return false
+			}
+			// A parent from another module ends this chunk's chain; its ancestry is checked at runtime.
+			return true
 		}
 		classIndex = classInfo.ParentIndex
 	}

@@ -676,7 +676,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		if sortErr := vm.sortElements(newElements, args); sortErr != nil {
 			return nil, true, sortErr
 		}
-		return &runtime.List{Elements: newElements}, true, nil
+		return runtime.PreserveCollectionType(list, &runtime.List{Elements: newElements}), true, nil
 	case "sort":
 		if len(args) > 1 {
 			return nil, true, fmt.Errorf("list.%s expects zero or one argument", name)
@@ -696,7 +696,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		for i, el := range list.Elements {
 			newElements[len(list.Elements)-1-i] = el
 		}
-		return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, true, nil
+		return runtime.PreserveCollectionType(list, &runtime.List{Elements: newElements, ElementTypes: runtime.CollectionElementTypes(list)}), true, nil
 	case "reverse":
 		if len(args) != 0 {
 			return nil, true, fmt.Errorf("list.%s expects no arguments", name)
@@ -715,8 +715,8 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		if list.Frozen {
 			return nil, true, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 		}
-		if len(list.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[0], list.ElementTypes[0]) {
-			return nil, true, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot %s %s to list<%s>", name, args[0].TypeName(), list.ElementTypes[0])}
+		if len(runtime.CollectionElementTypes(list)) > 0 && !collectionWriteMatches(list, 0, args[0]) {
+			return nil, true, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot %s %s to list<%s>", name, runtime.ElementValueName(args[0], runtime.CollectionElementTypes(list)[0]), runtime.ElementTagFor(args[0], runtime.CollectionElementTypes(list)[0]))}
 		}
 		list.Elements = append(list.Elements, nil)
 		copy(list.Elements[1:], list.Elements)

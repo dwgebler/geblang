@@ -204,3 +204,62 @@ func sameInterface(left, right *Interface) bool {
 	}
 	return left.Module == right.Module && bareTypeName(left.Name) == bareTypeName(right.Name)
 }
+
+const equalityTrackDepth = 64
+
+// EqualityGuard keeps structural equality finite on cyclic values by treating a container pair already under comparison as equal.
+type EqualityGuard struct {
+	depth int
+	pairs map[[2]uintptr]struct{}
+}
+
+// Enter reports seen=true when the pair is already being compared; otherwise the caller must Leave(key) when done.
+func (g *EqualityGuard) Enter(left, right Value) (key [2]uintptr, seen bool) {
+	g.depth++
+	if g.depth <= equalityTrackDepth {
+		return key, false
+	}
+	l, lok := referenceIdentity(left)
+	r, rok := referenceIdentity(right)
+	if !lok || !rok {
+		return key, false
+	}
+	key = [2]uintptr{l, r}
+	if g.pairs == nil {
+		g.pairs = map[[2]uintptr]struct{}{}
+	}
+	if _, ok := g.pairs[key]; ok {
+		g.depth--
+		return key, true
+	}
+	g.pairs[key] = struct{}{}
+	return key, false
+}
+
+func (g *EqualityGuard) Leave(key [2]uintptr) {
+	g.depth--
+	if key != ([2]uintptr{}) {
+		delete(g.pairs, key)
+	}
+}
+
+// SameReference reports whether both values are the same list, dict, set or instance.
+func SameReference(left, right Value) bool {
+	l, lok := referenceIdentity(left)
+	r, rok := referenceIdentity(right)
+	return lok && rok && l == r
+}
+
+func referenceIdentity(v Value) (uintptr, bool) {
+	switch value := v.(type) {
+	case *List:
+		return reflect.ValueOf(value).Pointer(), value != nil
+	case Dict:
+		return reflect.ValueOf(value.dictHeader).Pointer(), value.dictHeader != nil
+	case Set:
+		return reflect.ValueOf(value.Elements).Pointer(), value.Elements != nil
+	case *Instance:
+		return reflect.ValueOf(value).Pointer(), value != nil
+	}
+	return 0, false
+}

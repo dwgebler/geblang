@@ -46,7 +46,7 @@ func TestCapturedNestedGenericsAcrossCachedAndBuiltPaths(t *testing.T) {
 		`[5]`,
 		`[7]`,
 		`<closure> expects list<T> return, got list<string>`,
-		`<closure> expects list<T> for parameter 'xs', got list (element at index 0 is string)`,
+		`<closure> expects list<int> for parameter 'xs', got list (element at index 0 is string)`,
 		`<closure> expects list<int> for parameter 'xs', got list (element at index 0 is string)`,
 		`takeScores expects dict<string, int> for parameter 's', got dict (value for key a is string)`,
 		`Base.take expects int[] for parameter 'xs', got list (element at index 0 is string)`,

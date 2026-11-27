@@ -60,7 +60,7 @@ func (d DefaultLiteral) Value() runtime.Value {
 	case DefaultDict:
 		return runtime.NewDict()
 	case DefaultSet:
-		return runtime.Set{Elements: map[string]runtime.SetEntry{}}
+		return runtime.NewSet(map[string]runtime.SetEntry{})
 	}
 	return runtime.Null{}
 }

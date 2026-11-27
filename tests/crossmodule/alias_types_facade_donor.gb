@@ -1,0 +1,8 @@
+module alias_types_facade_donor;
+
+import alias_types_leaf_donor as leaf;
+
+export type Widget = leaf.Widget;
+export type Shade = leaf.Shade;
+export type Shaped = leaf.Shaped;
+export type Labels = list<string>;

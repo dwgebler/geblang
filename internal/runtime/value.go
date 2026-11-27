@@ -219,17 +219,15 @@ func (v TemplateEngine) TypeName() string { return "template.Engine" }
 func (v TemplateEngine) Inspect() string  { return "<template.Engine " + v.Dir + ">" }
 
 type List struct {
+	typing   CollectionTyping
 	Elements []Value
 	Frozen   bool
-	// ElementTypes is the optional declared element-type tag attached
-	// when the list flows through a typed-declaration boundary
-	// (`list<int> xs = ...`). nil for untagged lists. Mutating methods
-	// propagate the tag through; reflect.typeBindings reads it.
+	// ElementTypes preserves legacy native tags until a backing type is established.
 	ElementTypes []string
 }
 
-func (v List) TypeName() string { return "list" }
-func (v List) Inspect() string {
+func (v *List) TypeName() string { return "list" }
+func (v *List) Inspect() string {
 	parts := make([]string, 0, len(v.Elements))
 	for _, el := range v.Elements {
 		parts = append(parts, inspectInsideContainer(el, 0))
@@ -243,14 +241,14 @@ type Dict struct {
 }
 
 type dictHeader struct {
+	typing  *CollectionTyping
 	data    *dictData
 	Entries map[string]DictEntry
 	Order   *[]string
 	// keyState caches HasOnlyStringKeys for Entries-backed dicts; shared by header copies of the same map.
 	keyState *atomic.Int32
 	Frozen   bool
-	// ElementTypes mirrors List.ElementTypes for dicts. When set, the
-	// slice has two entries: [keyType, valueType] for `dict<K, V>`.
+	// ElementTypes remains view-local; backing constraints live in the shared store.
 	ElementTypes []string
 }
 
@@ -266,7 +264,7 @@ const (
 )
 
 func DictFromEntries(entries map[string]DictEntry, order *[]string) Dict {
-	return Dict{&dictHeader{Entries: entries, Order: order, keyState: new(atomic.Int32)}}
+	return Dict{&dictHeader{Entries: entries, Order: order, keyState: new(atomic.Int32), typing: &CollectionTyping{}}}
 }
 
 func dictFromData(header *dictHeader, data *dictData) Dict {
@@ -601,10 +599,10 @@ type DictEntry struct {
 }
 
 type Set struct {
+	Typing   *CollectionTyping
 	Elements map[string]SetEntry
 	Frozen   bool
-	// ElementTypes mirrors List.ElementTypes for sets. When set, the
-	// slice has one entry: [elementType] for `set<T>`.
+	// ElementTypes preserves legacy native tags until a backing type is established.
 	ElementTypes []string
 }
 
@@ -917,6 +915,7 @@ type Function struct {
 	ForwardThis          bool
 	// OriginalParameters preserve the public signature across decorators.
 	OriginalParameters []ast.Parameter
+	ParameterOnly      bool
 	OriginalEnv        *Environment
 	OriginalReturnType *ast.TypeRef
 	// OwnerClass is set when the function is a class method/constructor; it
@@ -973,6 +972,7 @@ type OverloadedFunction struct {
 	Name          string
 	Overloads     []Function
 	Callables     []Value
+	Signatures    []Value
 	Defaults      [][]Value
 	// Set for an exported bytecode overload set; a cross-module member call selects a home-chunk overload by Indices.
 	Module  string
@@ -1085,6 +1085,7 @@ type BytecodeFunction struct {
 	TypeParameters []string
 	Index          int64
 	Raw            bool
+	ParameterOnly  bool
 	Parameters     []ParameterMetadata
 	ReturnType     string
 	// DeclaredReturnType keeps the type arguments ReturnType erases, for reflection.
@@ -1212,6 +1213,23 @@ type EnumDef struct {
 	// MethodIndices is the VM's method table: lowercased name -> chunk
 	// function indices. Round-trips through the .gbc encoding.
 	MethodIndices map[string][]int64
+	interfaces    atomic.Pointer[[]*Interface]
+}
+
+func (v *EnumDef) Interfaces() []*Interface {
+	if list := v.interfaces.Load(); list != nil {
+		return *list
+	}
+	return nil
+}
+
+// First binding wins: VMs sharing a chunk may bind the same enum concurrently.
+func (v *EnumDef) BindInterfaces(list []*Interface) {
+	v.interfaces.CompareAndSwap(nil, &list)
+}
+
+func (v *EnumDef) InterfacesBound() bool {
+	return v.interfaces.Load() != nil
 }
 
 func (v *EnumDef) TypeName() string { return v.Name }

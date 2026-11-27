@@ -836,6 +836,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 			return err
 		}
 	}
+	c.chunk.Functions[index].ParameterEntry = int64(len(c.chunk.Instructions))
 	if err := c.compileComputedDefaults(index, stmt.Parameters, computed, preParams); err != nil {
 		c.inFunc--
 		c.returnTypes = c.returnTypes[:len(c.returnTypes)-1]
@@ -845,6 +846,11 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	}
 	for _, slot := range constSlots {
 		c.emitAt(OpFreezeLocal, stmt.Token.Line, stmt.Token.Column, slot)
+	}
+	if len(stmt.Decorators) > 0 {
+		c.emitAt(OpBindCollectionParams, stmt.Token.Line, stmt.Token.Column, index)
+	} else {
+		c.emitCollectionParameterBindings(index, stmt.Parameters, stmt.Token.Line, stmt.Token.Column)
 	}
 	if err := c.compileBlock(stmt.Body); err != nil {
 		c.inFunc--

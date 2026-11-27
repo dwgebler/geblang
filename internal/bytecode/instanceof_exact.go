@@ -48,6 +48,9 @@ func (c *Compiler) instanceofExactTarget(rt *ast.TypeRef) (string, bool) {
 	if _, ok := c.interfaces[strings.ToLower(name)]; ok {
 		return encodeExactInstanceofTarget("", name), true
 	}
+	if _, ok := c.enums[strings.ToLower(name)]; ok {
+		return encodeExactInstanceofTarget("", name), true
+	}
 	if qual, ok := c.fromImports[name]; ok {
 		if module, member, ok := splitQualifiedClassName(qual); ok {
 			return encodeExactInstanceofTarget(module, member), true

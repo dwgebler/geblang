@@ -1077,7 +1077,7 @@ func (c *Compiler) constantValueFromExpression(expr ast.Expression) (runtime.Val
 		}
 	case *ast.SetLiteral:
 		if len(expr.Elements) == 0 {
-			return runtime.Set{Elements: map[string]runtime.SetEntry{}}, nil
+			return runtime.NewSet(map[string]runtime.SetEntry{}), nil
 		}
 	case *ast.DictLiteral:
 		if len(expr.Entries) == 0 {

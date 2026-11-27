@@ -38,7 +38,7 @@ class MethodTypeEnforcementTest extends test.Test {
             b.put(42);
         } catch (TypeError e) {
             threw = true;
-            this.assertEquals("Box.put expects T for parameter 'value', got int", e.message);
+            this.assertEquals("Box.put expects string for parameter 'value', got int", e.message);
         }
         this.assertTrue(threw);
         this.assertEquals("hello", b.value);

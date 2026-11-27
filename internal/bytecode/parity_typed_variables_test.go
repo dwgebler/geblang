@@ -72,7 +72,7 @@ run("listReassign", func(): any { list<int> xs = [1]; xs = raw(["s"]); return xs
 run("untyped", func(): any { let w = 1; w = raw(2); return w; });
 run("crossMethodDecl", func(): any { return donor.Base().pick(1); });
 run("crossMethodReassign", func(): any { return donor.Base().swap("s"); });
-run("unionParamUntagged", func(): any { return unionParam("s"); });
+run("unionParamBackingType", func(): any { return unionParam("s"); });
 run("unionParamBad", func(): any { return unionParam(raw(true)); });
 run("inheritedMethod", func(): any { return Child().pick(1); });
 `
@@ -110,7 +110,7 @@ listReassign: rejected: type error: cannot assign list to list<int> (element at 
 untyped: 2
 crossMethodDecl: rejected: type error: cannot assign int to string
 crossMethodReassign: rejected: type error: cannot assign string to int
-unionParamUntagged: {}
+unionParamBackingType: {"T": "int"}
 unionParamBad: rejected: unionParam expects list<int> | string for parameter 'x', got bool
 inheritedMethod: rejected: type error: cannot assign int to string
 `

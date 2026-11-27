@@ -9,6 +9,7 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/lexer"
 	"geblang/internal/parser"
+	"geblang/internal/runtime"
 )
 
 // ModuleCache memoises parsed module sources so successive
@@ -98,6 +99,10 @@ func exportedName(stmt ast.Statement) string {
 		}
 	case *ast.DeclarationStatement:
 		if s.Name != nil {
+			return s.Name.Value
+		}
+	case *ast.TypeAliasStatement:
+		if s.Name != nil && s.Type != nil && s.Type.Operator == "" && len(s.Type.Arguments) == 0 && !runtime.IsBuiltinTypeName(s.Type.Name) {
 			return s.Name.Value
 		}
 	}

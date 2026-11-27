@@ -94,7 +94,7 @@ func TestParityDictionaryViewsKeepPrivateMetadataAndSharedEntries(t *testing.T) 
 		runParityModulesDir(t, t.TempDir(), "import io;\n"+single+"\nio.println(verifyViews());", "views-ok\n")
 	})
 	t.Run("imported inheritance", func(t *testing.T) {
-		runParityModulesDir(t, dir, string(probe)+"\nmain();", "views-ok\nint\nany\n{}\n[1, 1]\n7\n1\n")
+		runParityModulesDir(t, dir, string(probe)+"\nmain();", "views-ok\nint\nint\n{\"K\": \"string\", \"V\": \"int\"}\n[1, 1]\n7\n1\n")
 	})
 }
 
@@ -5878,7 +5878,7 @@ func TestParityNominalIdentityIsStrictForNestedCasts(t *testing.T) {
 	runParityModulesDir(t, dir, `import first;import second;import facade;import io;
 func legacyParameter(facade.Item item): int {return 1;}
 func strictParameter<T>(T item): void {}
-io.println(legacyParameter(first.Item()));
+try {io.println(legacyParameter(first.Item()));} catch(TypeError e) {io.println("rejected legacyParameter");}
 any value=first.Item();io.println((value as first.Item) is value);
 for (mode in ["list","set","dict","union","intersection","facade","parameter","nestedParameter"]) {
  try {
@@ -5892,7 +5892,7 @@ for (mode in ["list","set","dict","union","intersection","facade","parameter","n
   else {strictParameter<list<facade.Item>>([value]);}
  } catch(TypeError e) {io.println("rejected "+mode);}
 }
-`, "1\ntrue\nrejected list\nrejected set\nrejected dict\nrejected union\nrejected intersection\nrejected facade\nrejected parameter\nrejected nestedParameter\n")
+`, "rejected legacyParameter\ntrue\nrejected list\nrejected set\nrejected dict\nrejected union\nrejected intersection\nrejected facade\nrejected parameter\nrejected nestedParameter\n")
 }
 
 func TestParityPatchAPIs(t *testing.T) {
@@ -6313,4 +6313,350 @@ for (run in [catch_cleanup.run, child.run, child.own]) {
     try { run(); } catch (ValueError error) { io.println(error.message); }
 }
 `, "cleanup\noriginal\ncleanup\noriginal\ncleanup\noriginal\n")
+}
+
+func TestParityPermanentCollectionTypesKeepCovariantAliasesSafe(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+class Animal {}
+class Dog extends Animal {}
+class Cat extends Animal {}
+func rejects(func action): void {
+    try { action(); io.println("unchecked"); }
+    catch (TypeError error) { io.println("rejected"); }
+}
+list<Dog> dogs = [Dog()];
+list<Animal> animals = dogs;
+list<any> dynamicView = animals;
+animals.push(Dog());
+rejects(func(): void { animals.push(Cat()); });
+rejects(func(): void { dynamicView[0] = Cat(); });
+io.println(reflect.typeBindings(dogs));
+dict<string, Dog> byName = {"first": Dog()};
+dict<string, Animal> widerDict = byName;
+rejects(func(): void { widerDict["wrong"] = Cat(); });
+set<Dog> pack = {Dog()};
+set<Animal> widerSet = pack;
+rejects(func(): void { widerSet.add(Cat()); });
+list<Dog> empty = [];
+list<Animal> emptyView = empty;
+emptyView.push(Dog());
+rejects(func(): void { emptyView.push(Cat()); });
+io.println("${dogs.length()} ${byName.length()} ${pack.length()} ${empty.length()}");
+`, "rejected\nrejected\n{\"T\": \"Dog\"}\nrejected\nrejected\nrejected\n2 1 1 1\n")
+}
+
+func TestParityPermanentNestedCollectionTypesProtectExistingAliases(t *testing.T) {
+	runParity(t, `import io;
+func rejects(func action): void {
+    try { action(); io.println("unchecked"); }
+    catch (TypeError error) { io.println("rejected"); }
+}
+let inner = [1];
+any alias = inner;
+list<list<int>> nested = [inner];
+rejects(func(): void { alias.push("wrong"); });
+any wrong = ["wrong"];
+rejects(func(): void { nested.push(wrong); });
+let next = [2];
+nested.push(next);
+rejects(func(): void { any dynamic = next; dynamic[0] = "wrong"; });
+let values = {"n": [3]};
+any dictAlias = values;
+list<dict<string, list<int>>> rows = [values];
+rejects(func(): void { dictAlias["n"] = ["wrong"]; });
+io.println("${nested.length()} ${rows[0]["n"][0]}");
+`, "rejected\nrejected\nrejected\nrejected\n2 3\n")
+}
+
+func TestParityPermanentCollectionTypesBindFunctionBoundaries(t *testing.T) {
+	runParity(t, `import io;
+func accept(list<int> values): void {}
+func produce(): list<int> { return [1]; }
+func rejects(func action): void {
+    try { action(); io.println("unchecked"); }
+    catch (TypeError error) { io.println("rejected"); }
+}
+
+let values = [1];
+accept(values);
+rejects(func(): void { any alias = values; alias.push("wrong"); });
+let returned = produce();
+rejects(func(): void { any alias = returned; alias.push("wrong"); });
+`, "rejected\nrejected\n")
+}
+
+func TestParityPermanentCollectionTypesKeepDynamicInputsMixed(t *testing.T) {
+	runParity(t, `import io;
+func accept(list<int> values): int { return values.length(); }
+list<any> values = [1, 2];
+io.println(accept(values));
+values.push("mixed");
+values.push(true);
+try { accept(values); } catch (TypeError error) { io.println("mixed"); }
+list<list<int>> outer = [];
+list<any> child = [1];
+try { outer.push(child); } catch (TypeError error) { io.println("protected"); }
+child.push("mixed");
+io.println("${values.length()} ${outer.length()} ${child.length()}");
+`, "2\nmixed\nprotected\n4 0 2\n")
+}
+
+func TestParityPermanentCollectionTypesPreserveImportedErrorNames(t *testing.T) {
+	ev, vm := parityModuleOutputs(t, map[string]string{
+		"animals.gb": `module animals;
+export class Animal {}
+export class Dog extends Animal {}
+export class Cat extends Animal {}
+`,
+	}, `import io;
+import animals as a;
+list<a.Dog> dogs = [a.Dog()];
+list<a.Animal> view = dogs;
+try { view.push(a.Cat()); } catch (TypeError error) { io.println(error.message); }
+`)
+	if ev != vm || ev != "cannot push Cat to list<a.Dog>\n" {
+		t.Fatalf("evaluator=%q VM=%q", ev, vm)
+	}
+}
+
+func TestParityPermanentCollectionTypesBindGenericFields(t *testing.T) {
+	runParity(t, `import io;
+class Box<T> { list<T> values = []; }
+let box = Box<int>();
+box.values.push(1);
+try { any alias = box.values; alias.push("wrong"); }
+catch (TypeError error) { io.println("rejected"); }
+io.println(box.values.length());
+`, "rejected\n1\n")
+}
+
+func TestParityPermanentCollectionTypesKeepParameterizedAncestors(t *testing.T) {
+	runParity(t, `import io;
+class Box<T> { T value; func Box(T value) { this.value = value; } }
+class TextBox extends Box<string> { func TextBox() { parent("value"); } }
+func accept(list<Box<string>> values): string { return values[0].value; }
+list<TextBox> values = [TextBox()];
+io.println(accept(values));
+list<Box<int>> ints = [Box<int>(1)];
+any wrong = Box<string>("wrong");
+try { ints.push(wrong); } catch (TypeError error) { io.println("rejected"); }
+`, "value\nrejected\n")
+}
+
+func TestParityPermanentCollectionTypesFailedExtendDoesNotBindChildren(t *testing.T) {
+	runParity(t, `import io;
+list<list<int>> outer = [];
+let child = [1];
+any candidates = [child, ["wrong"]];
+try { outer.extend(candidates); } catch (TypeError error) { io.println("rejected"); }
+any alias = child;
+alias.push("mixed");
+io.println("${outer.length()} ${child.length()}");
+`, "rejected\n0 2\n")
+}
+
+func TestParityPermanentCollectionTypesProtectInheritedStaticFields(t *testing.T) {
+	runParity(t, `import io;
+class Animal {}
+class Dog extends Animal {}
+class Cat extends Animal {}
+class Base { static list<Dog> dogs = []; }
+class Child extends Base {}
+list<Animal> animals = Child.dogs;
+animals.push(Dog());
+try { animals.push(Cat()); } catch (TypeError error) { io.println("initial"); }
+Base.dogs = [];
+list<Animal> replaced = Child.dogs;
+try { replaced.push(Cat()); } catch (TypeError error) { io.println("replacement"); }
+io.println("${animals.length()} ${replaced.length()}");
+`, "initial\nreplacement\n1 0\n")
+}
+
+func TestParityConstFunctionLiteralCopiesAndFreezesParameter(t *testing.T) {
+	runParity(t, `import io;
+let take = func(const list<int> values): void {
+    try { values.push(2); io.println("mutated"); }
+    catch (ImmutableError error) { io.println("frozen"); }
+};
+let values = [1];
+take(values);
+io.println(values.length());
+`, "frozen\n1\n")
+}
+
+func TestParityPermanentCollectionBoundaryRegressions(t *testing.T) {
+	cases := []struct{ name, want string }{
+		{"failed_call", "call rejected\nstill untyped\n"},
+		{"generic", "parameter constrained\nreturn constrained\n"},
+		{"const_call", "original still untyped\n"},
+		{"variadic", "variadic protected\n"},
+		{"method", "method protected\nstatic protected\n"},
+		{"failed_dict", "dict write rejected\nkey still untyped\n"},
+		{"failed_index", "index rejected\nstill untyped\n"},
+		{"copies", "copy protected\nsorted protected\nreversed protected\nslice protected\nconcat checked\n"},
+		{"nullable_union", "union nullable protected\ndirect nullable protected\n"},
+		{"generic_cast", "1\n"},
+		{"decorator", "decorated protected\n"},
+		{"intersection_write", "rejected\nchild dynamic\n"},
+		{"decorator_any_const", "frozen\n1\n"},
+		{"decorator_mixed_overload", "protected\nplain accepted\n"},
+		{"decorator_native_context", "native protected\n"},
+		{"dynamic_outer", "wrong rejected\n2\n"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			source, err := os.ReadFile(filepath.Join("testdata", "collection_boundaries", test.name+".gb"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			runParityStateful(t, string(source), test.want)
+		})
+	}
+}
+
+func TestParityPermanentCollectionDecoratorsPrepareOriginalSignature(t *testing.T) {
+	runParity(t, `import io;
+func skip(func next): func { return func(any values = null): void { io.println(values.length()); }; }
+func nested(): void {
+    let seed = [1];
+    @skip
+    func take(list<int> values = seed): void { io.println("unexpected"); }
+    take();
+    try { any alias = seed; alias.push("mixed"); } catch (TypeError e) { io.println("captured"); }
+}
+nested();
+@skip
+func frozen(const list<int> values): void {}
+let original = [1];
+frozen(original);
+any alias = original;
+alias.push("mixed");
+io.println(original.length());
+class Base {
+    @skip
+    func take(list<int> values): void {}
+    @skip
+    static func staticTake(list<int> values): void {}
+}
+class Child extends Base {}
+let a = [1];
+Child().take(a);
+try { any aliasA = a; aliasA.push("mixed"); } catch(TypeError e) { io.println("method"); }
+let b = [1];
+Child.staticTake(b);
+try { any aliasB = b; aliasB.push("mixed"); } catch(TypeError e) { io.println("static"); }
+`, "1\ncaptured\n1\n2\n1\nmethod\n1\nstatic\n")
+}
+
+func TestPermanentCollectionMetadataPreservesResolvedNominalIdentity(t *testing.T) {
+	ev, vm := parityModuleOutputs(t, map[string]string{
+		"exacta.gb": `module exacta;
+export class User {}
+export interface Named { func name(): string; }
+export interface Child extends Named { func age(): int; }
+export enum Color implements Child { Red; func name(): string { return "red"; } func age(): int { return 1; } }
+`,
+		"exactb.gb":      `module exactb; export class User {} export interface Named { func name(): string; }`,
+		"exactfacade.gb": `module exactfacade; import exacta as a; export type User = a.User; export type Named = a.Named;`,
+	}, `import io;
+import exacta as a;
+import exactb as b;
+import exactfacade as facade;
+enum Color { Local; }
+func users(list<a.User> values): void {}
+func wrongUsers(list<b.User> values): void {}
+func facadeUsers(list<facade.User> values): void {}
+func names(list<facade.Named> values): void {}
+func wrongNames(list<b.Named> values): void {}
+list<Color> localColors = [];
+try { any alias = localColors; alias.push(a.Color.Red); } catch (TypeError error) { io.println("local enum identity"); }
+list<a.User> values = [a.User()];
+for (int i = 0; i < 3; i += 1) { users(values); facadeUsers(values); }
+try { wrongUsers(values); } catch (TypeError error) { io.println("user metadata"); }
+try { any alias = values; alias.push(b.User()); } catch (TypeError error) { io.println("user write"); }
+list<a.Color> colors = [a.Color.Red];
+for (int i = 0; i < 3; i += 1) { names(colors); }
+try { wrongNames(colors); } catch (TypeError error) { io.println("enum metadata"); }
+list<any> child = [1];
+dict<a.User, list<int>> entries = {a.User(): child};
+try { any alias = entries; alias[b.User()] = [1]; } catch (TypeError error) { io.println("fallback identity"); }
+child.push("mixed");
+io.println(child.length());
+`)
+	want := "local enum identity\nuser metadata\nuser write\nenum metadata\nfallback identity\n2\n"
+	if ev != want || vm != want {
+		t.Fatalf("evaluator=%q VM=%q want=%q", ev, vm, want)
+	}
+}
+
+func TestPermanentCollectionGenericAncestorsAndFallbackKeysKeepIdentity(t *testing.T) {
+	ev, vm := parityModuleOutputs(t, map[string]string{
+		"boxa.gb": `module boxa; export class Box<T> {}`,
+		"boxb.gb": `module boxb; export class Box<T> {}`,
+		"boxc.gb": `module boxc; import boxa as a; export class Box<T> extends a.Box<string> {}`,
+	}, `import io;
+import boxa as a;
+import boxb as b;
+import boxc as c;
+list<any> child = [1];
+dict<a.Box<int>, list<int>> entries = {a.Box<int>(): child};
+try { any alias = entries; alias[b.Box<int>()] = [2]; } catch (TypeError error) { io.println("key rejected"); }
+entries[a.Box<int>()] = [2];
+list<a.Box<int>> wrongParent = [];
+try { any alias = wrongParent; alias.push(c.Box<int>()); } catch (TypeError error) { io.println("parent rejected"); }
+list<a.Box<string>> validParent = [];
+validParent.push(c.Box<int>());
+io.println(validParent.length());
+`)
+	want := "key rejected\nparent rejected\n1\n"
+	if ev != want || vm != want {
+		t.Fatalf("evaluator=%q VM=%q want=%q", ev, vm, want)
+	}
+}
+
+func TestParityGenericArgumentDiagnosticsNameBoundTypes(t *testing.T) {
+	source, err := os.ReadFile("../../tests/generics/parameter_diagnostic_cases.gb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "TypeError: constrained expects int for parameter 'value', got string\n" +
+		"TypeError: constrained expects string for parameter 'value', got int\n" +
+		"TypeError: DiagnosticBox expects int for parameter 'value', got string\n" +
+		"TypeError: DiagnosticBox.accept expects int for parameter 'value', got string\n" +
+		"TypeError: DiagnosticChild.child expects int for parameter 'value', got string\n" +
+		"TypeError: DiagnosticBox.own expects string for parameter 'value', got int\n" +
+		"TypeError: <closure> expects int for parameter 'value', got string\n" +
+		"TypeError: variadic expects int for parameter 'values', got string\n" +
+		"TypeError: DiagnosticBox.own expects string for parameter 'value', got int\n" +
+		"TypeError: DiagnosticBox.tail expects int for parameter 'values', got string\n" +
+		"TypeError: DiagnosticBox.tail expects int for parameter 'values', got string\n" +
+		"TypeError: nested expects list<int> for parameter 'values', got list (element at index 1 is string)\n"
+	t.Run("single file", func(t *testing.T) {
+		runParity(t, string(source)+"\nimport io;\nfor (text in diagnostics()) { io.println(text); }", want)
+	})
+	t.Run("imported", func(t *testing.T) {
+		ev, vm := parityModuleOutputs(t, map[string]string{"cases.gb": string(source)},
+			"import io; import cases; for (text in cases.diagnostics()) { io.println(text); }")
+		if ev != want || vm != want {
+			t.Fatalf("diagnostics: evaluator %q, VM %q, want %q", ev, vm, want)
+		}
+	})
+}
+
+func TestParityGenericArgumentDiagnosticKeepsNominalModules(t *testing.T) {
+	ev, vm := parityModuleOutputs(t, map[string]string{
+		"a.gb": "export class User {}",
+		"b.gb": "export class User {}",
+	}, `import io;
+import a;
+import b;
+func accept<T>(T value): void {}
+any value = b.User();
+try { accept<a.User>(value); } catch (TypeError error) { io.println(error.message); }
+`)
+	want := "accept expects a.User for parameter 'value', got b.User\n"
+	if ev != want || vm != want {
+		t.Fatalf("nominal diagnostic: evaluator %q, VM %q, want %q", ev, vm, want)
+	}
 }

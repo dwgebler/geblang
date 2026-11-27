@@ -277,7 +277,7 @@ func typeBinding(name string, bindings map[string]string) (string, bool) {
 
 // TypeRefUsesTypeParameter reports whether typ names any of params (lower-cased keys).
 func TypeRefUsesTypeParameter(typ *ast.TypeRef, params map[string]bool) bool {
-	if typ == nil {
+	if typ == nil || len(params) == 0 {
 		return false
 	}
 	if params[strings.ToLower(typ.Name)] {

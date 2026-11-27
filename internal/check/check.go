@@ -219,7 +219,7 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 	diags = suppressRedundantOverloadErrors(diags)
 	diags = suppressEmbedFoldCascade(diags)
 	if opts.Lint {
-		diags = append(diags, lintProgram(file, program)...)
+		diags = append(diags, lintProgram(file, source, program)...)
 	}
 	return program, diags
 }

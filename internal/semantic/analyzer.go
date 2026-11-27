@@ -173,6 +173,7 @@ type enumInfo struct {
 	implements  []string
 	methods     map[string][]methodInfo
 	variants    []string
+	payload     map[string]bool
 }
 
 type methodInfo struct {
@@ -469,6 +470,12 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 			for _, v := range stmt.Variants {
 				if v.Name != nil {
 					info.variants = append(info.variants, v.Name.Value)
+					if len(v.FieldTypes) > 0 {
+						if info.payload == nil {
+							info.payload = map[string]bool{}
+						}
+						info.payload[v.Name.Value] = true
+					}
 				}
 			}
 			for _, iface := range stmt.Implements {
@@ -3581,6 +3588,9 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 			return typeInfo{}
 		}
 	case *ast.SelectorExpression:
+		if variant, ok := a.enumVariantType(expr); ok {
+			return variant
+		}
 		if expr.Name == nil || a.classFieldType == nil {
 			return typeInfo{}
 		}
@@ -3612,6 +3622,27 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 	default:
 		return typeInfo{}
 	}
+}
+
+// A payload variant is a constructor, not a value of the enum.
+func (a *Analyzer) enumVariantType(expr *ast.SelectorExpression) (typeInfo, bool) {
+	ident, ok := expr.Object.(*ast.Identifier)
+	if !ok || expr.Name == nil {
+		return typeInfo{}, false
+	}
+	enum, ok := a.enums[ident.Value]
+	if !ok || enum.payload[expr.Name.Value] {
+		return typeInfo{}, false
+	}
+	if bound, ok := a.lookup(ident.Value); ok && bound.name != enum.name {
+		return typeInfo{}, false
+	}
+	for _, variant := range enum.variants {
+		if variant == expr.Name.Value {
+			return typeInfo{name: enum.name, known: true}, true
+		}
+	}
+	return typeInfo{}, false
 }
 
 // primitiveMethodResult types `recv.method(...)` on a statically known primitive from the canonical method catalog, so chained calls stay typed; generic or `any` results stay unknown.
@@ -3717,7 +3748,25 @@ func (a *Analyzer) isAssignableType(target, actual string) bool {
 	if strings.Contains(target, ".") && (a.classImplements(actual, target) || a.enumImplements(actual, target)) {
 		return true
 	}
-	return false
+	// A bare class name from another module (an inherited field's declared type) cannot be judged here.
+	return !strings.Contains(target, ".") && !a.declaresTypeHere(target)
+}
+
+func (a *Analyzer) declaresTypeHere(name string) bool {
+	if _, builtin := builtinTypeNames[strings.ToLower(name)]; builtin {
+		return true
+	}
+	if _, ok := a.classes[name]; ok {
+		return true
+	}
+	if _, ok := a.interfaces[name]; ok {
+		return true
+	}
+	if _, ok := a.enums[name]; ok {
+		return true
+	}
+	_, ok := a.aliases[strings.ToLower(name)]
+	return ok
 }
 
 func isCallableTypeName(name string) bool {

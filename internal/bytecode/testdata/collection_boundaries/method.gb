@@ -1,0 +1,13 @@
+import io;
+class Receiver {
+    func take(list<int> values): void {}
+    static func takeStatic(list<int> values): void {}
+}
+let a = [1];
+Receiver().take(a);
+try { any alias = a; alias.push("mixed"); io.println("method unprotected"); }
+catch (TypeError e) { io.println("method protected"); }
+let b = [1];
+Receiver.takeStatic(b);
+try { any alias = b; alias.push("mixed"); io.println("static unprotected"); }
+catch (TypeError e) { io.println("static protected"); }
