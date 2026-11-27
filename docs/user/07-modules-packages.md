@@ -140,7 +140,8 @@ session.Session();                    # error: no exported member Session
 `export type` publishes another name for a type. Importers use the alias under
 the exporting module's name, and it means exactly its target wherever a type is
 written: parameter, return, variable and field annotations, generic arguments,
-`implements`, `extends`, `instanceof` and `as`.
+`implements`, `extends`, `instanceof` and `as`. It does not create a new type
+or a subtype: values accepted under either name are accepted under the other.
 
 ```gb
 module shop;
@@ -149,6 +150,9 @@ import shop.contract;
 export type Client = contract.Client;
 export type Money = decimal;
 ```
+
+Here `contract.Client` is an exported interface. Another module can implement
+that same interface through `shop.Client`, and use `Money` to mean `decimal`:
 
 ```gb
 import shop;
@@ -162,13 +166,23 @@ class LocalClient implements shop.Client {
 }
 ```
 
-When the target is an exported class, interface or enum, the alias is also
-that type in code: `shop.Client(...)` constructs the aliased class, static
-methods and enum variants are reached through it (`shop.Status.Open`), and
-`from shop import Client` imports the type itself. The object is created as the
-target class, so it is accepted wherever the target is expected. An alias of any
-other type, such as `Money = decimal` or `list<string>`, can only be used as a
-type.
+Aliases of exported classes, interfaces and enums also expose the target type
+in executable code. What you can do depends on the target:
+
+- A class alias supports construction and access to static members. For example,
+  an alias `Order = orders.Order` lets `shop.Order(...)` construct an
+  `orders.Order`. It is the original class, with no wrapper or subclass.
+- An interface alias names the original interface; it does not make the
+  interface constructible.
+- An enum alias exposes its variants, such as `shop.Status.Open`.
+
+`from shop import Order` likewise imports the aliased class itself.
+
+Aliases of other types work only in type positions. For example, `Money amount`
+declares a decimal variable, but `Money = decimal` does not introduce a callable
+`Money(...)` constructor. The same restriction applies to a collection alias
+such as `Names = list<string>`. These aliases still work in annotations,
+generic arguments, `instanceof` and `as`.
 
 #### Re-exporting a class from a facade
 
